@@ -50,6 +50,9 @@ from .perm_dominance import (  # noqa: F401
 from .scope import (  # noqa: F401
     TermwiseScopeCertificate, is_forest, shortest_cycle,
 )
+from .matching_free_energy import (  # noqa: F401
+    CompetitorExtremalityCertificate, near_star_edges, rho as matching_rho,
+)
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
