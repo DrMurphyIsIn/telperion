@@ -58,6 +58,25 @@ Lean kernel); `certify(workers=N)` fork-parallel certification;
 `telperion package` reviewer bundles (family + frozen + certificates.json +
 standalone rechecker + generated REVIEWING.md).
 
+**The honesty engine** (from a review of what made the origin proof
+possible): (1) tie pinning — `family.ties`/`family.anchors` declarations; the
+certifier asserts the target AND the certificate vanish exactly at declared
+ties (the campaign's overclaim trap, which killed three false proofs, as a
+standing invariant) and that anchors evaluate exactly (the pi(T(3,3,3)) =
+19683/256 pattern); (2) the relaxation probe (`telperion relax`) — the
+campaign's decisive maneuver as a tool: interpolate an integer grid axis
+continuously and hunt for exact violations; ARITHMETIC verdict with witness
+means no smooth certificate can close the family; (3) the adversarial hunt
+(`telperion hunt`) — exact-rational minimization in three modes: coordinate
+descent, GA with memetic descent refinement (the Arda evolution engine's
+transferable core), and a MAP-Elites quality-diversity archive returning
+DIVERSE near-tight points (tie varieties have many points; a pure minimizer
+finds one — demonstrated: both basins of a bimodal tie landscape recovered
+exactly). diagnose escalates from sampling to hunting before concluding
+NOT_POLYA. Deliberately not ported from Arda: Rust kernels (audit surface),
+island/climate machinery (overkill). Named future step: pluggable hunt
+domains (the origin hunted over TREES via Prufer sequences).
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);

@@ -58,6 +58,12 @@ def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
         if family.den_atoms is not None:
             for a in family.den_atoms(pt):
                 feed("den_atom", canonical_srepr(a))
+        if family.ties is not None:
+            for tie in family.ties(pt):
+                feed("tie", json.dumps(sorted((str(k), str(v)) for k, v in tie.items())))
+        if family.anchors is not None:
+            for subs, val in family.anchors(pt):
+                feed("anchor", json.dumps(sorted((str(k), str(v)) for k, v in subs.items())) + f"={val}")
     feed("profile.ns", ".".join(profile.namespace))
     feed("profile.imports", ",".join(profile.imports))
     feed("profile.prelude", profile.prelude)

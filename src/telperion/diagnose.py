@@ -169,6 +169,12 @@ def diagnose_expr(expr: sp.Expr, syms, trials: int = 400) -> Diagnosis:
         )
     except ValueError as refusal:
         wit = find_counterexample(expr, syms, trials=trials)
+        if wit is None:
+            from .hunt import hunt_minimum
+
+            res = hunt_minimum(expr, syms, iters=200, restarts=3)
+            if res.is_disproof:
+                wit = res.argmin
         if wit is not None:
             return Diagnosis(
                 "FALSE",

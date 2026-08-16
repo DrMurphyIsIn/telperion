@@ -166,6 +166,27 @@ def ties(expression: str, symbols: str = "u") -> str:
 
 
 @mcp.tool()
+def hunt(expression: str, symbols: str = "u", iters: int = 400) -> str:
+    """Adversarially minimize 0 <= expression over the nonneg orthant in EXACT
+    rational arithmetic (coordinate descent + restarts). A negative minimum is
+    a theorem: the claim is false, witness attached. Run before designing a
+    certificate family around a conjectured inequality."""
+    code, out = _cli(["hunt", expression, "--symbols", symbols, "--iters", str(iters)])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def relax(family: str, axis: str, iters: int = 200) -> str:
+    """The smooth-vs-arithmetic verdict: interpolate an integer grid axis
+    continuously and hunt for exact violations. ARITHMETIC (with witness)
+    means the family is true only through integrality -- no Polya lift or SOS
+    can close it; use symbolic tails/unimodality/decide. SMOOTH-SO-FAR means
+    analytic certificates remain viable."""
+    code, out = _cli(["relax", family, "--axis", axis, "--iters", str(iters)])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
 def read_manifest(frozen_dir: str) -> str:
     """Read a frozen directory's provenance manifest (family, input hash,
     tool version, files, theorem count)."""

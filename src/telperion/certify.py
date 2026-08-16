@@ -141,6 +141,37 @@ def polya_certify(
     return PolyaCertificate(expr=expr, numerator=num, denominator=den, lift_n=lift_n)
 
 
+def _pin_checks(family, pt, cert) -> int:
+    """The honesty declarations, enforced.  Returns the number of checks run;
+    raises ValueError on a wrong tie declaration, an OVERCLAIMING certificate
+    (positive slack at a declared tie), or an anchor mismatch."""
+    checks = 0
+    target = family.target(pt) if family.target is not None else None
+    if family.ties is not None and target is not None:
+        for tie in family.ties(pt):
+            tval = sp.simplify(target.subs(tie))
+            if tval != 0:
+                raise ValueError(
+                    f"declared tie {tie} is not tight: target = {tval}"
+                )
+            nval = sp.simplify(cert.numerator.subs(tie))
+            if nval != 0:
+                raise ValueError(
+                    f"OVERCLAIM: certificate has slack {nval} at declared tie "
+                    f"{tie} — the certificate does not achieve the tie"
+                )
+            checks += 2
+    if family.anchors is not None and target is not None:
+        for subs, val in family.anchors(pt):
+            got = sp.simplify(target.subs(subs) - val)
+            if got != 0:
+                raise ValueError(
+                    f"anchor mismatch at {subs}: off by {got} from declared {val}"
+                )
+            checks += 1
+    return checks
+
+
 def restrict_instances(cf: CertifiedFamily, indices) -> CertifiedFamily:
     """A CertifiedFamily view holding a subset of instances (for per-unit
     rendering and sharding).  Internal: preserves the construction guard."""
@@ -245,12 +276,13 @@ def _certify_point(args):
             cert = polya_certify(
                 family.target(pt), family.symbols, lift_max=family.auto_lift
             )
+            n_pin = _pin_checks(family, pt, cert)
             atoms = tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
             inst = CertifiedInstance(
                 point=dict(pt), lean_name=name, corners=(cert,),
                 decomposition=None, den_atoms=atoms,
             )
-            return ("ok", [inst], None, 1)
+            return ("ok", [inst], None, 1 + n_pin)
         qa, ra = family.box(pt)
         sub_inst, tree, box_checks = _certify_box(
             family, pt, name, qa, ra, 0, family.auto_subdivide, force_subdivide
@@ -338,7 +370,7 @@ def certify(
                 cert = polya_certify(
                     family.target(pt), family.symbols, lift_max=family.auto_lift
                 )
-                checks += 1
+                checks += 1 + _pin_checks(family, pt, cert)
                 atoms = (
                     tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
                 )

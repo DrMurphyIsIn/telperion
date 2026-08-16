@@ -313,6 +313,39 @@ together they leave no single trusted component except the Lean kernel):
     return 0
 
 
+def cmd_hunt(args) -> int:
+    """Adversarially minimize a claim, exactly. A negative result is a disproof."""
+    import sympy as sp
+
+    from .hunt import hunt_diverse, hunt_evolve, hunt_minimum
+    from .parsing import safe_parse_expr
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
+    expr = safe_parse_expr(args.expression, syms)
+    if args.mode == "diverse":
+        results = hunt_diverse(expr, syms, iters=max(args.iters, 400))
+        for r in results:
+            print(r.render())
+        return 1 if any(r.is_disproof for r in results) else 0
+    res = (
+        hunt_evolve(expr, syms, seed=0)
+        if args.mode == "evolve"
+        else hunt_minimum(expr, syms, iters=args.iters, restarts=args.restarts)
+    )
+    print(res.render() + f"  [{res.evaluations} exact evaluations]")
+    return 1 if res.is_disproof else 0
+
+
+def cmd_relax(args) -> int:
+    """Smooth or arithmetic? Hunt the continuous interpolation of an integer axis."""
+    from .relax import relax_probe
+
+    fam, _ = _load(args.family)
+    verdict = relax_probe(fam, args.axis, iters=args.iters)
+    print(verdict.render())
+    return 1 if verdict.verdict == "ARITHMETIC" else 0
+
+
 def cmd_probe(args) -> int:
     """Quick answer to: does this expression have a Polya certificate?"""
     import sympy as sp
@@ -407,6 +440,22 @@ def main(argv=None) -> int:
     p.add_argument("-o", "--out", required=True)
     p.add_argument("--frozen")
     p.set_defaults(fn=cmd_package)
+
+    p = sub.add_parser("hunt", help="adversarial exact minimization (negative = disproof)")
+    p.add_argument("expression")
+    p.add_argument("--symbols", default="u")
+    p.add_argument("--iters", type=int, default=400)
+    p.add_argument("--restarts", type=int, default=6)
+    p.add_argument("--mode", default="descent", choices=["descent", "evolve", "diverse"],
+                   help="descent = coordinate descent; evolve = GA + memetic refinement; "
+                        "diverse = MAP-Elites archive of distinct near-tight points")
+    p.set_defaults(fn=cmd_hunt)
+
+    p = sub.add_parser("relax", help="smooth-vs-arithmetic verdict for an integer grid axis")
+    p.add_argument("family")
+    p.add_argument("--axis", required=True)
+    p.add_argument("--iters", type=int, default=200)
+    p.set_defaults(fn=cmd_relax)
 
     p = sub.add_parser("probe", help="check one expression for a Polya certificate")
     p.add_argument("expression")

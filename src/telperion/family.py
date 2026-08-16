@@ -96,6 +96,14 @@ class InequalityFamily:
     den_atoms: Callable[[GridPoint], Sequence[sp.Expr]] | None = None
     auto_lift: int = 0        # max Polya-lift exponent tried on numerator refusals
     auto_subdivide: int = 0   # max box-bisection depth on corner refusals
+    # The honesty declarations (the origin campaign's overclaim trap):
+    # ties(pt) -> substitution dicts where the claim MUST be exactly tight; the
+    # certifier asserts both the target and the certificate numerator vanish
+    # there exactly (a certificate with positive slack at a declared tie is
+    # refused as an overclaim).  anchors(pt) -> (substitution, exact value)
+    # pairs pinning the pipeline to known evaluations.
+    ties: Callable[[GridPoint], Sequence[Mapping]] | None = None
+    anchors: Callable[[GridPoint], Sequence[tuple[Mapping, sp.Rational]]] | None = None
 
     def __post_init__(self):
         direct = self.target is not None
