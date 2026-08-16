@@ -27,7 +27,8 @@ from .emit_adapters import (  # noqa: F401
 from .parsing import UnsafeExpressionError, safe_parse_expr  # noqa: F401
 from .tails import TailFrom, TailNatEmitter, tail_family  # noqa: F401
 from .cache import DiskCache, memoize  # noqa: F401
-from .cone import ConeCombination, cone_combination  # noqa: F401
+from .cone import ConeCombination, FarkasDual, cone_combination, cone_decide  # noqa: F401
+from .unimodal import UnimodalityCertificate, unimodal_certificate  # noqa: F401
 from .interval import interval_family  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401

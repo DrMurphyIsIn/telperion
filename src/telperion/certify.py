@@ -356,8 +356,14 @@ def _certify_point(args):
                 except ValueError as we:
                     reasons.append(f"{label}: {we}")
             if cert is None:
+                tag = (
+                    "PROVEN IMPOSSIBLE: the declared-COMPLETE candidate "
+                    "space is exhausted"
+                    if family.witnesses_complete
+                    else "no certifiable witness"
+                )
                 raise ValueError(
-                    f"no certifiable witness among {len(cands)} candidate(s); "
+                    f"{tag} among {len(cands)} candidate(s); "
                     + " | ".join(reasons[:3])
                 )
             atoms = tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
@@ -497,8 +503,14 @@ def certify(
                     except ValueError as we:
                         reasons.append(f"{label}: {we}")
                 if cert is None:
+                    tag = (
+                        "PROVEN IMPOSSIBLE: the declared-COMPLETE candidate "
+                        "space is exhausted"
+                        if family.witnesses_complete
+                        else "no certifiable witness"
+                    )
                     raise ValueError(
-                        f"no certifiable witness among {len(cands)} candidate(s); "
+                        f"{tag} among {len(cands)} candidate(s); "
                         + " | ".join(reasons[:3])
                     )
                 checks += 1

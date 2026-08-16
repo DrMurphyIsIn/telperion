@@ -132,6 +132,18 @@ theorem IS the quantified statement; composes with ExactFact bracket lemmas —
 demonstrated on a miniature G1 floor claim over the campaign's real
 log-bracket constants).  The G1 floor stratum is now expressible end to end.
 
+**J + I (completing the three brainstorms)**: unimodality certificates
+(`unimodal_certificate` — the near-star integrality proof's shape composed
+from existing primitives: ratio log-concavity as a symbolic-tail Polya claim,
+exact crossing localization, and EXACT TIE detection when r(s*) = 1 — the
+R(5) = 1 double-maximum pattern reported rather than glossed; closes the loop
+the ARITHMETIC relax verdict opens); Farkas dual witnesses (`cone_decide` —
+cone refusals upgraded to verified impossibility proofs: an exact functional
+with y·basisᵢ ≤ 0 and y·target > 0, for both inconsistent systems and
+forced-negative weights; 'change the basis, not the search'); declared-
+complete witness spaces (`witnesses_complete=True` — exhaustion becomes
+PROVEN IMPOSSIBLE, ledger-ready).
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
@@ -140,8 +152,8 @@ multi-axis grids; the SOS Lean-emitter path (certificates found by sos.py are
 surfaced in diagnose but not yet emitted — needs a squares-aware skeleton);
 incremental per-instance certification caching; bilinear tails; retrofitting
 the R7 star-of-hubs family onto the witness API (it hand-rolls the search);
-float-guided LP for underdetermined cone membership; Farkas dual witnesses
-on cone/witness refusals (brainstorm item I); unimodality certificates
-(item J — the relax-verdict's prescribed arithmetic tool); generic induction
+float-guided LP for underdetermined cone membership; the generic Lean lemma for
+unimodal integer maxima (the emitted pieces close its hypotheses; the
+induction skeleton is documented); generic induction
 emission for telescoping potentials (the v2 headline); hunt over pluggable
 combinatorial domains.

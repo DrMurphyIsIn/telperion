@@ -97,6 +97,8 @@ class InequalityFamily:
     # deloading_winner_table pattern); the emitted theorem states the found
     # witness concretely.
     witnesses: Callable[[GridPoint], Sequence[tuple[str, sp.Expr]]] | None = None
+    witnesses_complete: bool = False   # declared-complete candidate space:
+                                       # exhaustion becomes PROVEN impossibility
     before: Callable[[GridPoint], sp.Expr] | None = None
     after: Callable[[GridPoint], sp.Expr] | None = None
     box: Callable[[GridPoint], tuple[BoxAxis, BoxAxis]] | None = None
