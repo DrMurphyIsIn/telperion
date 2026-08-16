@@ -26,6 +26,8 @@ from .emit_adapters import (  # noqa: F401
 )
 from .parsing import UnsafeExpressionError, safe_parse_expr  # noqa: F401
 from .tails import TailFrom, TailNatEmitter, tail_family  # noqa: F401
+from .cone import ConeCombination, cone_combination  # noqa: F401
+from .potential import fixed_points, per_node_family  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401

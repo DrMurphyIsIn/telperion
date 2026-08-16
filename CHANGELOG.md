@@ -101,14 +101,31 @@ in unevaluated-power spelling closed by decide/norm_num — regenerates the
 origin's `s_tail_crux : (3:ℤ)^317 * 2^81 ≤ 23^129 := by decide` verbatim, and
 makes VerifiedConstant brackets emittable. Closes two named-opens.
 
+**The second-brainstorm batch (A, D–H)**: witness-search claims
+(`family.witnesses` — the per-residue comparator pattern as API: existential
+claims, first certifiable candidate wins, label recorded and exported: the
+winner-table pattern); the sharpness probe (`telperion sharpen` — bisect a cap
+between the CERTIFICATE boundary and the TRUTH boundary; the gap is the room a
+better method could win — the G3/G4 cap-widening question as a tool);
+`emit --pilot N` (validate the template on N instances in CI before a
+972-theorem batch — the campaign's first-try-green ritual as a flag);
+`telperion cilog` (the Lean-failure knowledge base: seven hard-won gotcha
+classes as executable diagnostics, error COUNT always reported first);
+`per_node_family` + `fixed_points` (the telescoping-potential shape's
+achievable half: per-node inequality families with the step map's fixed point
+as the pinned tie — full induction emission stays the v2 headline); exact cone
+membership (`cone_combination` — target = Σ λᵢ·basisᵢ with λ ≥ 0 decided in
+exact rational arithmetic; the LP cutting-plane maneuver's solvable core,
+float-guided LP for the underdetermined case named-open).
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
 bilinear-family built-in assembly (use `CustomAssemblyEmitter`); Kind-3
 multi-axis grids; the SOS Lean-emitter path (certificates found by sos.py are
 surfaced in diagnose but not yet emitted — needs a squares-aware skeleton);
-incremental per-instance certification caching; bilinear tails; witness
-search as first-class API (hand-rolled in the R7 star-of-hubs family — see
-the second history-review brainstorm, item A); the sharpness probe, pilot
-mode, Lean-failure knowledge base, telescoping-potential shape, LP-driven
-certificate search (items D-H of the same brainstorm).
+incremental per-instance certification caching; bilinear tails; retrofitting
+the R7 star-of-hubs family onto the witness API (it hand-rolls the search);
+float-guided LP for underdetermined cone membership; generic induction
+emission for telescoping potentials (the v2 headline); hunt over pluggable
+combinatorial domains.

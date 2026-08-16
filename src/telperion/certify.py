@@ -62,6 +62,7 @@ class CertifiedInstance:
     decomposition: BilinearDecomposition | None = None
     den_atoms: tuple[sp.Expr, ...] = ()
     equation: tuple[sp.Expr, sp.Expr] | None = None   # identity claims: (lhs, rhs)
+    witness: str | None = None                        # winning candidate label
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,13 @@ class CertifiedFamily:
             raise RuntimeError(
                 "CertifiedFamily may only be constructed by certify()"
             )
+
+    def witness_table(self) -> dict[str, str]:
+        """lean_name -> winning witness label (the deloading_winner_table
+        pattern), for export beside the frozen output."""
+        return {
+            i.lean_name: i.witness for i in self.instances if i.witness is not None
+        }
 
 
 class _Guard:
@@ -283,6 +291,27 @@ def _certify_point(args):
                 decomposition=None, den_atoms=atoms, equation=(lhs, rhs),
             )
             return ("ok", [inst], None, 1)
+        if family.kind == "witness":
+            cands = list(family.witnesses(pt))
+            cert, win, reasons = None, None, []
+            for label, cand in cands:
+                try:
+                    cert = polya_certify(cand, family.symbols, lift_max=family.auto_lift)
+                    win = label
+                    break
+                except ValueError as we:
+                    reasons.append(f"{label}: {we}")
+            if cert is None:
+                raise ValueError(
+                    f"no certifiable witness among {len(cands)} candidate(s); "
+                    + " | ".join(reasons[:3])
+                )
+            atoms = tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
+            inst = CertifiedInstance(
+                point=dict(pt), lean_name=name, corners=(cert,),
+                decomposition=None, den_atoms=atoms, witness=win,
+            )
+            return ("ok", [inst], None, 1)
         if family.kind == "direct":
             cert = polya_certify(
                 family.target(pt), family.symbols, lift_max=family.auto_lift
@@ -389,6 +418,34 @@ def certify(
                     CertifiedInstance(
                         point=dict(pt), lean_name=name, corners=(),
                         decomposition=None, den_atoms=atoms, equation=(lhs, rhs),
+                    )
+                )
+            elif family.kind == "witness":
+                cands = list(family.witnesses(pt))
+                cert = None
+                reasons = []
+                for label, cand in cands:
+                    try:
+                        cert = polya_certify(
+                            cand, family.symbols, lift_max=family.auto_lift
+                        )
+                        win = label
+                        break
+                    except ValueError as we:
+                        reasons.append(f"{label}: {we}")
+                if cert is None:
+                    raise ValueError(
+                        f"no certifiable witness among {len(cands)} candidate(s); "
+                        + " | ".join(reasons[:3])
+                    )
+                checks += 1
+                atoms = (
+                    tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
+                )
+                instances.append(
+                    CertifiedInstance(
+                        point=dict(pt), lean_name=name, corners=(cert,),
+                        decomposition=None, den_atoms=atoms, witness=win,
                     )
                 )
             elif family.kind == "direct":

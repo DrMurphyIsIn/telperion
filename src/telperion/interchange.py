@@ -66,6 +66,8 @@ def export_certificates(cf: CertifiedFamily, input_hash: str) -> dict:
             "point": {k: v for k, v in inst.point.items() if isinstance(v, (int, str))},
             "corners": [],
         }
+        if inst.witness is not None:
+            entry["witness"] = inst.witness
         if inst.equation is not None:
             lhs, rhs = inst.equation
             entry["equation"] = {

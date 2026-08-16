@@ -91,6 +91,12 @@ class InequalityFamily:
     constants: Mapping[str, sp.Rational] = field(default_factory=dict)
     target: Callable[[GridPoint], sp.Expr] | None = None
     equation: Callable[[GridPoint], tuple[sp.Expr, sp.Expr]] | None = None
+    # Witness-search claims (the per-residue comparator pattern): candidates(pt)
+    # yields (label, expr) pairs; the claim is EXISTENTIAL — some candidate
+    # certifies 0 <= expr.  The certifier records the winning label (the
+    # deloading_winner_table pattern); the emitted theorem states the found
+    # witness concretely.
+    witnesses: Callable[[GridPoint], Sequence[tuple[str, sp.Expr]]] | None = None
     before: Callable[[GridPoint], sp.Expr] | None = None
     after: Callable[[GridPoint], sp.Expr] | None = None
     box: Callable[[GridPoint], tuple[BoxAxis, BoxAxis]] | None = None
@@ -111,10 +117,12 @@ class InequalityFamily:
             self.target is not None,
             self.before is not None and self.after is not None,
             self.equation is not None,
+            self.witnesses is not None,
         ]
         if sum(modes) != 1:
             raise ValueError(
-                "supply exactly one of `target`, (`before`, `after`), or `equation`"
+                "supply exactly one of `target`, (`before`, `after`), "
+                "`equation`, or `witnesses`"
             )
         if modes[1] and self.box is None:
             raise ValueError("bilinear families require `box`")
@@ -125,4 +133,6 @@ class InequalityFamily:
             return "direct"
         if self.equation is not None:
             return "equation"
+        if self.witnesses is not None:
+            return "witness"
         return "bilinear"
