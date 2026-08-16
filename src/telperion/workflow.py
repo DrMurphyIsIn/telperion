@@ -12,7 +12,7 @@ from typing import Callable, Sequence
 
 from .certify import CertifiedFamily
 from .lean import LeanProfile
-from .provenance import EmitResult, family_hash, header
+from .provenance import EmitResult, family_hash, header, heartbeat
 
 
 class WorkflowError(RuntimeError):
@@ -82,12 +82,16 @@ class Emitter:
         re-render each instance through emit_body on a restricted view.
         Emitters with cross-instance state (e.g. a single assembled theorem)
         should override to return themselves as ONE unit."""
+        import time
+
         from .certify import restrict_instances
 
-        return [
-            self.emit_body(restrict_instances(fam, [i]), profile)
-            for i in range(len(fam.instances))
-        ]
+        units = []
+        t0, n = time.time(), len(fam.instances)
+        for i in range(n):
+            units.append(self.emit_body(restrict_instances(fam, [i]), profile))
+            heartbeat(f"render {fam.family.name} [{self.kind}]", i + 1, n, t0)
+        return units
 
     def config_fingerprint(self) -> str:
         """Stable serialization of this emitter's configuration for the input
@@ -122,12 +126,22 @@ def emit(
             f"({[n for n, ok in validation.checks if not ok]})"
         )
     import hashlib
+    import sys
+    import time
 
     from dataclasses import replace as _dc_replace
 
     from .lint import lint_files
 
+    def _phase(msg: str) -> None:
+        print(f"[telperion] emit {fam.family.name}: {msg}",
+              file=sys.stderr, flush=True)
+
+    _phase(f"input hash over {fam.family.grid.size()} cells...")
+    t_hash = time.time()
     ihash = family_hash(fam.family, profile)
+    _phase(f"input hash done ({time.time() - t_hash:.1f}s); rendering...")
+    t_render = time.time()
     h = hashlib.sha256(ihash.encode())
     for em in emitters:
         h.update(em.config_fingerprint().encode())
@@ -177,6 +191,8 @@ def emit(
                 fname = f"{base}{i}.lean"
             files[fname] = prof_i.file_shell(hdr, "\n".join(pack))
 
+    _phase(f"rendered {n_theorems} theorems in {len(files)} file(s) "
+           f"({time.time() - t_render:.1f}s); linting...")
     lint_files(files)
     return EmitResult(
         family_name=fam.family.name,

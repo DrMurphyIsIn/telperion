@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,8 +24,23 @@ from .family import InequalityFamily
 from .lean import DEFAULT_SKELETONS, LeanProfile
 
 
+def heartbeat(phase: str, done: int, total: int, t0: float,
+              every: int = 200) -> None:
+    """Active progress logging for long serial phases (the R7 stall lesson:
+    a silent 70-minute phase is indistinguishable from a hang — narrate).
+    Prints to stderr, flushed, at most every `every` items plus the final."""
+    if done % every and done != total:
+        return
+    dt = time.time() - t0
+    rate = done / dt if dt > 0 else 0.0
+    eta = (total - done) / rate if rate > 0 else float("inf")
+    print(f"[telperion] {phase}: {done}/{total} ({dt:.0f}s, "
+          f"eta {eta:.0f}s)", file=sys.stderr, flush=True)
+
+
 def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
     h = hashlib.sha256()
+    t0, total, done = time.time(), family.grid.size(), 0
 
     def feed(tag: str, s: str) -> None:
         h.update(tag.encode())
@@ -71,6 +88,8 @@ def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
         if family.anchors is not None:
             for subs, val in family.anchors(pt):
                 feed("anchor", json.dumps(sorted((str(k), str(v)) for k, v in subs.items())) + f"={val}")
+        done += 1
+        heartbeat(f"family_hash {family.name}", done, total, t0)
     feed("profile.ns", ".".join(profile.namespace))
     feed("profile.imports", ",".join(profile.imports))
     feed("profile.prelude", profile.prelude)

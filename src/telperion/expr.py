@@ -205,5 +205,15 @@ def expr_lean_raw(e: sp.Expr, syms: Sequence[sp.Symbol]) -> str:
 
 
 def canonical_srepr(e: sp.Expr) -> str:
-    """Canonical serialization for hashing: srepr of the expanded, together'd form."""
-    return sp.srepr(sp.together(sp.expand(e)))
+    """Construction-canonical serialization for hashing.
+
+    ``order="none"`` is load-bearing: srepr's DEFAULT term ordering calls
+    ``as_terms`` -> ``__complex__`` -> ``evalf`` on every Add node —
+    catastrophic on large exact-rational trees (the R7 hash stall: 972 cells
+    x ~15 candidates projected to ~6 h in the default path).  Likewise no
+    ``expand``/``together``: semantic canonicalization is deliberately NOT
+    attempted — the input hash captures the *specified* construction (which
+    is deterministic for a fixed family definition); emission drift is caught
+    by the freeze/diff byte comparison, not the hash.  Hash values are
+    tool-version-scoped; changing this function requires a version bump."""
+    return sp.srepr(e, order="none")
