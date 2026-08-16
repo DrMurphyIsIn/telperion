@@ -89,10 +89,26 @@ surrounding conjecture.  `telperion review-brief` fills the adversarial
 review checklist with the family's actual facts — and nags when ties or
 anchors are undeclared.
 
+**Identity families + kernel facts** (second history-review run, items B+C):
+`equation=(lhs, rhs)` claims — certified by exact symbolic zero-check, emitted
+by `IdentityEmitter` in the proven field_simp shape with a RAW tree renderer
+that preserves the author's spelling (a together-based render had produced a
+vacuous `1 = 1`; construction-time evaluation caveat documented — use
+UnevaluatedExpr/evaluate=False when spelling matters); identities flow through
+interchange/recheck (stdlib identity spot-checks) and latex.
+`ExactFactEmitter` + `fact_pow`/`int_expr_lean`: kernel integer/rational facts
+in unevaluated-power spelling closed by decide/norm_num — regenerates the
+origin's `s_tail_crux : (3:ℤ)^317 * 2^81 ≤ 23^129 := by decide` verbatim, and
+makes VerifiedConstant brackets emittable. Closes two named-opens.
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
 bilinear-family built-in assembly (use `CustomAssemblyEmitter`); Kind-3
 multi-axis grids; the SOS Lean-emitter path (certificates found by sos.py are
 surfaced in diagnose but not yet emitted — needs a squares-aware skeleton);
-incremental per-instance certification caching; bilinear tails.
+incremental per-instance certification caching; bilinear tails; witness
+search as first-class API (hand-rolled in the R7 star-of-hubs family — see
+the second history-review brainstorm, item A); the sharpness probe, pilot
+mode, Lean-failure knowledge base, telescoping-potential shape, LP-driven
+certificate search (items D-H of the same brainstorm).

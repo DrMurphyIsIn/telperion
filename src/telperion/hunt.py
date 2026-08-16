@@ -118,7 +118,7 @@ def hunt_minimum(
         if best_v is None or cur < best_v:
             best_v, best_p = cur, dict(point)
     return HuntResult(
-        minimum=sp.nsimplify(best_v),
+        minimum=best_v,
         argmin={str(k): v for k, v in best_p.items()},
         evaluations=evals,
     )
@@ -230,7 +230,7 @@ def hunt_evolve(
                 population.append((rv, rp))
     best_v, best_p = min(population, key=lambda t: t[0])
     return HuntResult(
-        minimum=sp.nsimplify(best_v),
+        minimum=best_v,
         argmin={str(k): v for k, v in best_p.items()},
         evaluations=evals,
     )
@@ -301,7 +301,7 @@ def hunt_diverse(
     ranked = sorted(archive.values(), key=lambda t: t[0])[:top]
     return [
         HuntResult(
-            minimum=sp.nsimplify(v),
+            minimum=v,
             argmin={str(k): x for k, x in p.items()},
             evaluations=evals,
         )

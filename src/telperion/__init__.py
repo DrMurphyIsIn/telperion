@@ -16,6 +16,7 @@ from .certify import (  # noqa: F401
     polya_certify,
 )
 from .emit import BilinearBoxEmitter, DirectPolyaEmitter  # noqa: F401
+from .emit_facts import ExactFactEmitter, IdentityEmitter, fact_pow, int_expr_lean  # noqa: F401
 from .emit_adapters import (  # noqa: F401
     CaseDispatchAssemblyEmitter,
     CustomAssemblyEmitter,

@@ -61,6 +61,7 @@ class CertifiedInstance:
     corners: tuple[PolyaCertificate, ...]          # direct: 1; bilinear: 4 (00,01,10,11)
     decomposition: BilinearDecomposition | None = None
     den_atoms: tuple[sp.Expr, ...] = ()
+    equation: tuple[sp.Expr, sp.Expr] | None = None   # identity claims: (lhs, rhs)
 
 
 @dataclass(frozen=True)
@@ -272,6 +273,16 @@ def _certify_point(args):
     family = _FORK_STATE["family"]
     name = family.lean_name(pt)
     try:
+        if family.kind == "equation":
+            lhs, rhs = family.equation(pt)
+            if sp.simplify(sp.together(lhs - rhs)) != 0:
+                raise ValueError("identity self-check failed: lhs - rhs != 0")
+            atoms = tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
+            inst = CertifiedInstance(
+                point=dict(pt), lean_name=name, corners=(),
+                decomposition=None, den_atoms=atoms, equation=(lhs, rhs),
+            )
+            return ("ok", [inst], None, 1)
         if family.kind == "direct":
             cert = polya_certify(
                 family.target(pt), family.symbols, lift_max=family.auto_lift
@@ -366,7 +377,21 @@ def certify(
             continue
         seen_names.add(name)
         try:
-            if family.kind == "direct":
+            if family.kind == "equation":
+                lhs, rhs = family.equation(pt)
+                if sp.simplify(sp.together(lhs - rhs)) != 0:
+                    raise ValueError("identity self-check failed: lhs - rhs != 0")
+                checks += 1
+                atoms = (
+                    tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
+                )
+                instances.append(
+                    CertifiedInstance(
+                        point=dict(pt), lean_name=name, corners=(),
+                        decomposition=None, den_atoms=atoms, equation=(lhs, rhs),
+                    )
+                )
+            elif family.kind == "direct":
                 cert = polya_certify(
                     family.target(pt), family.symbols, lift_max=family.auto_lift
                 )

@@ -47,6 +47,10 @@ def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
         feed("lean_name", family.lean_name(pt))
         if family.kind == "direct":
             feed("target", canonical_srepr(family.target(pt)))
+        elif family.kind == "equation":
+            lhs, rhs = family.equation(pt)
+            feed("eq_lhs", canonical_srepr(lhs))
+            feed("eq_rhs", canonical_srepr(rhs))
         else:
             feed("before", canonical_srepr(family.before(pt)))
             feed("after", canonical_srepr(family.after(pt)))

@@ -157,6 +157,53 @@ def expr_lean_factored(e: sp.Expr, syms: Sequence[sp.Symbol]) -> str:
     return f"({num_s}) / ({den_lean(den, syms)})"
 
 
+def expr_lean_raw(e: sp.Expr, syms: Sequence[sp.Symbol]) -> str:
+    """Render the expression TREE as written — no together, no expand, no
+    cancellation — for identity statements where the user's spelling IS the
+    theorem.  Caveat: sympy evaluates at construction ((1+u)/(1+u) is already
+    1 before any renderer runs); wrap with sp.UnevaluatedExpr or build with
+    evaluate=False when construction-time simplification must be prevented."""
+
+    def rec(e, prec=0):
+        # prec: 0 add-level, 1 mul-level, 2 atom/pow-level
+        if isinstance(e, sp.UnevaluatedExpr):
+            return rec(e.args[0], prec)
+        if e.is_Symbol:
+            return str(e)
+        if e.is_Rational:
+            return rat_lean(e)
+        if e.is_Add:
+            inner = " + ".join(rec(a, 1) for a in e.args)
+            return f"({inner})" if prec >= 1 else inner
+        if e.is_Mul:
+            num_parts, den_parts = [], []
+            for a in e.args:
+                if a.is_Pow and a.args[1].is_Integer and a.args[1] < 0:
+                    den_parts.append(rec(a.args[0] ** (-a.args[1]), 2))
+                elif a.is_Rational and a.q != 1 and a.p in (1, -1):
+                    den_parts.append(str(a.q))
+                    if a.p == -1:
+                        num_parts.insert(0, "-1")
+                else:
+                    num_parts.append(rec(a, 2))
+            num_s = " * ".join(num_parts) if num_parts else "1"
+            if den_parts:
+                den_s = " * ".join(den_parts)
+                out = f"{num_s} / ({den_s})" if len(den_parts) > 1 else f"{num_s} / {den_s}"
+                return f"({out})" if prec >= 2 else out
+            return f"({num_s})" if prec >= 2 and len(num_parts) > 1 else num_s
+        if e.is_Pow:
+            base, exp = e.args
+            if exp.is_Integer and exp > 0:
+                return f"{rec(base, 2)} ^ {int(exp)}"
+            if exp.is_Integer and exp < 0:
+                return f"(1 / {rec(base ** (-exp), 2)})"
+            raise SerializationError(f"non-integer exponent in raw render: {e}")
+        raise SerializationError(f"unsupported node in raw render: {e.func}")
+
+    return rec(e)
+
+
 def canonical_srepr(e: sp.Expr) -> str:
     """Canonical serialization for hashing: srepr of the expanded, together'd form."""
     return sp.srepr(sp.together(sp.expand(e)))

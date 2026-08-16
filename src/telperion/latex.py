@@ -27,12 +27,12 @@ def _tex(e: sp.Expr) -> str:
 
 
 def _statement_tex(inst, syms) -> str:
-    cert = inst.corners[0]
-    return (
-        f"0 \\le {_tex(cert.expr)}"
-        if inst.decomposition is None
-        else "\\text{before} \\le \\text{after on the certified box}"
-    )
+    if inst.equation is not None:
+        lhs, rhs = inst.equation
+        return f"{_tex(lhs)} = {_tex(rhs)}"
+    if inst.decomposition is None:
+        return f"0 \\le {_tex(inst.corners[0].expr)}"
+    return "\\text{before} \\le \\text{after on the certified box}"
 
 
 def latex_appendix(
@@ -50,7 +50,6 @@ def latex_appendix(
     out = [head]
     if blueprint:
         for inst in cf.instances:
-            cert = inst.corners[0]
             out.append(
                 "\\begin{theorem}\n"
                 f"  \\label{{thm:{inst.lean_name}}}\n"
@@ -73,15 +72,18 @@ def latex_appendix(
     out.append("instance & grid point & certificate & ties \\\\")
     out.append("\\midrule")
     for inst in cf.instances:
-        cert = inst.corners[0]
-        if inst.decomposition is None:
+        if inst.equation is not None:
+            shape, cert = "identity", None
+        elif inst.decomposition is None:
+            cert = inst.corners[0]
             shape = (
                 f"P\\'olya (lift $N={cert.lift_n}$)" if cert.lift_n else "P\\'olya"
             )
         else:
+            cert = inst.corners[0]
             shape = "bilinear box (4 corners)"
         try:
-            faces = tie_faces(cert.numerator, syms) if syms else []
+            faces = tie_faces(cert.numerator, syms) if (syms and cert) else []
         except ValueError:
             faces = []
         tie_s = (

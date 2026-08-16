@@ -66,6 +66,12 @@ def export_certificates(cf: CertifiedFamily, input_hash: str) -> dict:
             "point": {k: v for k, v in inst.point.items() if isinstance(v, (int, str))},
             "corners": [],
         }
+        if inst.equation is not None:
+            lhs, rhs = inst.equation
+            entry["equation"] = {
+                "lhs": expr_to_ast(sp.together(lhs)),
+                "rhs": expr_to_ast(sp.together(rhs)),
+            }
         for cert in inst.corners:
             entry["corners"].append(
                 {

@@ -80,7 +80,7 @@ def tie_points(num: sp.Expr, syms) -> list[dict]:
         for root in sp.Poly(num, s).real_roots():
             if root >= 0 and root not in seen:
                 seen.add(root)
-                out.append({str(s): sp.nsimplify(root)})
+                out.append({str(s): root})
         return out
     try:
         sols = sp.solve(sp.Eq(num, 0), list(syms), dict=True)

@@ -90,6 +90,7 @@ class InequalityFamily:
     lean_name: Callable[[GridPoint], str]
     constants: Mapping[str, sp.Rational] = field(default_factory=dict)
     target: Callable[[GridPoint], sp.Expr] | None = None
+    equation: Callable[[GridPoint], tuple[sp.Expr, sp.Expr]] | None = None
     before: Callable[[GridPoint], sp.Expr] | None = None
     after: Callable[[GridPoint], sp.Expr] | None = None
     box: Callable[[GridPoint], tuple[BoxAxis, BoxAxis]] | None = None
@@ -106,15 +107,22 @@ class InequalityFamily:
     anchors: Callable[[GridPoint], Sequence[tuple[Mapping, sp.Rational]]] | None = None
 
     def __post_init__(self):
-        direct = self.target is not None
-        bilinear = self.before is not None and self.after is not None
-        if direct == bilinear:
+        modes = [
+            self.target is not None,
+            self.before is not None and self.after is not None,
+            self.equation is not None,
+        ]
+        if sum(modes) != 1:
             raise ValueError(
-                "supply exactly one of `target` or (`before`, `after`)"
+                "supply exactly one of `target`, (`before`, `after`), or `equation`"
             )
-        if bilinear and self.box is None:
+        if modes[1] and self.box is None:
             raise ValueError("bilinear families require `box`")
 
     @property
     def kind(self) -> str:
-        return "direct" if self.target is not None else "bilinear"
+        if self.target is not None:
+            return "direct"
+        if self.equation is not None:
+            return "equation"
+        return "bilinear"

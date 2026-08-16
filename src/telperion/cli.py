@@ -46,7 +46,13 @@ def _load(spec: str):
 
 
 def _default_emitters(fam):
-    return [DirectPolyaEmitter()] if fam.kind == "direct" else [BilinearBoxEmitter()]
+    if fam.kind == "direct":
+        return [DirectPolyaEmitter()]
+    if fam.kind == "equation":
+        from .emit_facts import IdentityEmitter
+
+        return [IdentityEmitter()]
+    return [BilinearBoxEmitter()]
 
 
 def cmd_init(args) -> int:

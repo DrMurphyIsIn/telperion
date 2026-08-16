@@ -98,7 +98,7 @@ def relax_probe(
             if res.is_disproof:
                 wit = dict(res.argmin)
                 frac = wit.pop("_theta")
-                wit[axis] = sp.nsimplify(a0 + frac * (a1 - a0))
+                wit[axis] = a0 + frac * (a1 - a0)
                 return RelaxationVerdict(
                     axis=axis,
                     verdict="ARITHMETIC",

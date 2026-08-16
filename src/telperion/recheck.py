@@ -68,6 +68,19 @@ def recheck(doc: dict, trials: int = 30, seed: int = 0) -> list[str]:
     for inst in doc["instances"]:
         name = inst["lean_name"]
         box = inst.get("box")
+        eq = inst.get("equation")
+        if eq is not None:
+            for _ in range(trials):
+                point = [
+                    Fraction(rng.randint(0, 400), rng.randint(1, 20)) for _ in syms
+                ]
+                env = dict(zip(syms, point))
+                try:
+                    if eval_ast(eq["lhs"], env) != eval_ast(eq["rhs"], env):
+                        problems.append(f"{name}: IDENTITY FAILS at {env}")
+                        break
+                except ZeroDivisionError:
+                    continue
         for ci, corner in enumerate(inst["corners"]):
             # 1. numerator coefficients nonnegative
             for key, coeff in corner["numerator"].items():
