@@ -34,6 +34,18 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .lorentzian import (  # noqa: F401
+    HodgeRiemannCertificate,
+    is_lorentzian_form,
+    signature,
+)
+from .heights import (  # noqa: F401
+    displacement_convex,
+    global_height_nonneg,
+    local_heights,
+    product_formula_residual,
+    wasserstein1,
+)
 from .interlacing import (  # noqa: F401
     InterlacingCertificate,
     interlaces,
