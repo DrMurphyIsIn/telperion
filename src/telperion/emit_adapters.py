@@ -132,6 +132,10 @@ class CaseDispatchAssemblyEmitter(Emitter):
     def __post_init__(self):
         self.kind = "case_dispatch_assembly"
 
+    def emit_units(self, fam: CertifiedFamily, profile: LeanProfile) -> list[tuple[str, int]]:
+        # one assembled theorem spanning all instances -> a single indivisible unit
+        return [self.emit_body(fam, profile)]
+
     def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
         if len(fam.family.grid.axes) != 1:
             raise ValueError("v0.1 assembly supports a single grid axis")

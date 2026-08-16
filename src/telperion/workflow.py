@@ -20,6 +20,18 @@ class WorkflowError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ShardSpec:
+    """Split emission across files: at most max_theorems per file.  Files are
+    named from module_base's last component (Cells.lean, Cells2.lean, ...);
+    shard n >= 2 imports every earlier shard's module and omits the prelude
+    (which lives only in shard 1) -- the origin campaign's CertB/C/D split,
+    automated, with the import-DAG gotcha handled."""
+
+    max_theorems: int
+    module_base: str
+
+
+@dataclass(frozen=True)
 class ValidationReport:
     """Result of the exact-numeric validation layer.
 
@@ -65,6 +77,18 @@ class Emitter:
         """Return (Lean body text, number of theorems)."""
         raise NotImplementedError
 
+    def emit_units(self, fam: CertifiedFamily, profile: LeanProfile) -> list[tuple[str, int]]:
+        """Per-instance (text, n_theorems) units, for sharding.  Default:
+        re-render each instance through emit_body on a restricted view.
+        Emitters with cross-instance state (e.g. a single assembled theorem)
+        should override to return themselves as ONE unit."""
+        from .certify import restrict_instances
+
+        return [
+            self.emit_body(restrict_instances(fam, [i]), profile)
+            for i in range(len(fam.instances))
+        ]
+
     def config_fingerprint(self) -> str:
         """Stable serialization of this emitter's configuration for the input
         hash.  Callable fields cannot be hashed semantically; their effect is
@@ -82,6 +106,7 @@ def emit(
     emitters: Sequence[Emitter],
     validation: ValidationReport,
     file_name: str | None = None,
+    shard: "ShardSpec | None" = None,
 ) -> EmitResult:
     """Render the certified family through the emitters into stamped Lean text.
 
@@ -98,25 +123,65 @@ def emit(
         )
     import hashlib
 
+    from dataclasses import replace as _dc_replace
+
+    from .lint import lint_files
+
     ihash = family_hash(fam.family, profile)
     h = hashlib.sha256(ihash.encode())
     for em in emitters:
         h.update(em.config_fingerprint().encode())
         h.update(b"\x00")
+    if shard is not None:
+        h.update(f"shard:{shard.max_theorems}:{shard.module_base}".encode())
     ihash = h.hexdigest()
-    bodies: list[str] = []
-    n_theorems = 0
-    for em in emitters:
-        body, n = em.emit_body(fam, profile)
-        bodies.append(body)
-        n_theorems += n
-    hdr = header(fam.family, ihash, n_theorems, fam.checks_passed)
-    text = profile.file_shell(hdr, "\n".join(bodies))
-    fname = file_name or f"{fam.family.name}.lean"
+
+    if shard is None:
+        bodies: list[str] = []
+        n_theorems = 0
+        for em in emitters:
+            body, n = em.emit_body(fam, profile)
+            bodies.append(body)
+            n_theorems += n
+        hdr = header(fam.family, ihash, n_theorems, fam.checks_passed)
+        text = profile.file_shell(hdr, "\n".join(bodies))
+        fname = file_name or f"{fam.family.name}.lean"
+        files = {fname: text}
+    else:
+        units: list[tuple[str, int]] = []
+        for em in emitters:
+            units.extend(em.emit_units(fam, profile))
+        n_theorems = sum(n for _, n in units)
+        base = shard.module_base.rsplit(".", 1)[-1]
+        # greedy in-order packing at instance boundaries
+        packs: list[list[str]] = [[]]
+        counts = [0]
+        for text, n in units:
+            if counts[-1] and counts[-1] + n > shard.max_theorems:
+                packs.append([])
+                counts.append(0)
+            packs[-1].append(text)
+            counts[-1] += n
+        files = {}
+        for i, (pack, cnt) in enumerate(zip(packs, counts), 1):
+            hdr = header(fam.family, ihash, cnt, fam.checks_passed)
+            if i == 1:
+                prof_i = profile
+                fname = f"{base}.lean"
+            else:
+                earlier = tuple(
+                    shard.module_base if j == 1 else f"{shard.module_base}{j}"
+                    for j in range(1, i)
+                )
+                prof_i = _dc_replace(profile, prelude="", imports=profile.imports + earlier)
+                fname = f"{base}{i}.lean"
+            files[fname] = prof_i.file_shell(hdr, "\n".join(pack))
+
+    lint_files(files)
     return EmitResult(
         family_name=fam.family.name,
         input_hash=ihash,
-        files={fname: text},
+        files=files,
         n_theorems=n_theorems,
         n_checks=fam.checks_passed,
     )

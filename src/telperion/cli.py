@@ -95,6 +95,75 @@ def cmd_diff(args) -> int:
     return 0
 
 
+def cmd_verify(args) -> int:
+    """Run every manifest check (regeneration diffs for all frozen families).
+
+    Also fails if an examples/*/generate.py exists that the manifest does not
+    list — a family cannot silently fall out of the drift-check net."""
+    import subprocess
+    import tomllib
+
+    root = Path(args.manifest).resolve().parent
+    with open(args.manifest, "rb") as f:
+        manifest = tomllib.load(f)
+    checks = manifest.get("check", [])
+    listed = {str((root / c["script"]).resolve()) for c in checks}
+    unlisted = [
+        str(p)
+        for p in sorted(root.glob("examples/*/generate.py"))
+        if str(p.resolve()) not in listed
+    ]
+    if unlisted:
+        print("MANIFEST INCOMPLETE — unlisted generate scripts:")
+        for p in unlisted:
+            print(f"  {p}")
+        return 1
+    failed = []
+    for c in checks:
+        if args.group != "all" and c.get("group", "quick") != args.group:
+            continue
+        name = c["name"]
+        print(f"=== {name} ===", flush=True)
+        r = subprocess.run(
+            [sys.executable, str(root / c["script"]), "--check"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        tail = (r.stdout + r.stderr).strip().splitlines()
+        print("\n".join(tail[-3:]) if tail else "(no output)")
+        if r.returncode != 0:
+            failed.append(name)
+    if failed:
+        print(f"VERIFY FAILED: {failed}")
+        return 1
+    print("verify: all manifest checks green")
+    return 0
+
+
+def cmd_diagnose(args) -> int:
+    """Triage: certifiable / provably false (witness) / non-Polya with hints."""
+    import sympy as sp
+
+    from .diagnose import diagnose_expr, diagnose_family
+
+    if ":" in args.target and Path(args.target.partition(":")[0]).exists():
+        fam, _ = _load(args.target)
+        results = diagnose_family(fam, trials=args.trials)
+        if not results:
+            print(f"all instances of {fam.name} are certifiable")
+            return 0
+        for pt, d in results:
+            print(f"[{pt}]")
+            print(d.render())
+        return 1
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
+    expr = sp.parse_expr(args.target, local_dict={str(s): s for s in syms})
+    d = diagnose_expr(expr, syms, trials=args.trials)
+    print(d.render())
+    return 0 if d.verdict == "CERTIFIABLE" else 1
+
+
 def cmd_probe(args) -> int:
     """Quick answer to: does this expression have a Polya certificate?"""
     import sympy as sp
@@ -136,6 +205,17 @@ def main(argv=None) -> int:
         else:
             p.add_argument("--frozen", required=True)
             p.set_defaults(fn=cmd_diff)
+
+    p = sub.add_parser("verify", help="run every manifest check (drift net for all frozen families)")
+    p.add_argument("--manifest", default="telperion.toml")
+    p.add_argument("--group", default="all", help="quick | heavy | all")
+    p.set_defaults(fn=cmd_verify)
+
+    p = sub.add_parser("diagnose", help="triage a refusal: false vs non-Polya vs misuse")
+    p.add_argument("target", help="path.py:factory OR a raw sympy expression")
+    p.add_argument("--symbols", default="u", help="symbols when target is an expression")
+    p.add_argument("--trials", type=int, default=400)
+    p.set_defaults(fn=cmd_diagnose)
 
     p = sub.add_parser("probe", help="check one expression for a Polya certificate")
     p.add_argument("expression")

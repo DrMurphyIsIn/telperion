@@ -66,6 +66,19 @@ def polya_probe(expression: str, symbols: str = "u") -> str:
 
 
 @mcp.tool()
+def diagnose(target: str, symbols: str = "u", trials: int = 400) -> str:
+    """Triage a refused inequality: distinguishes FALSE (returns an exact
+    rational counterexample — a proof of falsity), NOT_POLYA_IN_THIS_FORM
+    (with remedy hints naming the negative monomials and cheap
+    transformations), and CERTIFIABLE. target: 'path/to/family.py:factory'
+    to triage every failing instance of a family, or a raw sympy expression
+    with the symbols argument."""
+    args = ["diagnose", target, "--symbols", symbols, "--trials", str(trials)]
+    code, out = _cli(args)
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
 def certify_family(family: str) -> str:
     """Run every symbolic self-check for a family. family: 'path/to/family.py:factory'
     where factory() returns an InequalityFamily. Returns the green summary or
@@ -110,6 +123,15 @@ def diff_family(
     if validation:
         args += ["--validation", validation]
     code, out = _cli(args)
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def verify_project(manifest: str = "telperion.toml", group: str = "all") -> str:
+    """Run every check in the project manifest (regeneration diffs for all
+    frozen families; fails on unlisted generate scripts). group: quick |
+    heavy | all."""
+    code, out = _cli(["verify", "--manifest", manifest, "--group", group])
     return out.strip() or f"exit {code}"
 
 

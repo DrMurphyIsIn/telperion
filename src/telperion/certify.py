@@ -121,6 +121,20 @@ def polya_certify(expr: sp.Expr, syms: Sequence[sp.Symbol]) -> PolyaCertificate:
     return PolyaCertificate(expr=expr, numerator=num, denominator=den)
 
 
+def restrict_instances(cf: CertifiedFamily, indices) -> CertifiedFamily:
+    """A CertifiedFamily view holding a subset of instances (for per-unit
+    rendering and sharding).  Internal: preserves the construction guard."""
+    _construction_guard.open = True
+    try:
+        return CertifiedFamily(
+            family=cf.family,
+            instances=tuple(cf.instances[i] for i in indices),
+            checks_passed=cf.checks_passed,
+        )
+    finally:
+        _construction_guard.open = False
+
+
 def certify(family: InequalityFamily) -> CertifiedFamily:
     """Run every self-check for every grid point; return the emission witness."""
     instances: list[CertifiedInstance] = []
