@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "telperion"
+version = "0.1.0"
+description = "Certify families of rational-function inequalities in sympy, validate them in exact arithmetic, and batch-emit kernel-checked Lean 4."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Peter W. Murphy" }]
+keywords = ["lean4", "mathlib", "polya", "positivity", "certificates", "sympy", "formal-verification"]
+dependencies = ["sympy>=1.12"]
+
+[project.optional-dependencies]
+flint = ["python-flint>=0.6"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+telperion = "telperion.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telperion"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
