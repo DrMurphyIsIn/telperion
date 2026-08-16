@@ -189,7 +189,13 @@ class BilinearBoxEmitter(Emitter):
                     f"{name}c1 {args} + {name}c2 {args} * {qv_l} + {name}c3 {args} * {rv_l}\n"
                     f"        + {name}c4 {args} * ({qv_l} * {rv_l})"
                 )
-                num = poly_lean(sp.Poly(cert.numerator, *syms), syms)
+                from .expr import rat_lean
+
+                num = (
+                    poly_lean(sp.Poly(cert.numerator, *syms), syms)
+                    if syms
+                    else rat_lean(cert.numerator)
+                )
                 out.append(
                     render(
                         profile.skeleton("polya_nonneg"),
