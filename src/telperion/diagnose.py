@@ -84,7 +84,19 @@ def _remedy_hints(expr: sp.Expr, syms, num: sp.Expr) -> tuple[str, ...]:
             f"certifiable via Pólya lift N={lifted[0]} — set auto_lift={lifted[0]} "
             "on the family (or pass lift_max to polya_certify)"
         )
-    elif lifted is None:
+    if lifted is None:
+        from .sos import sos_certify
+
+        sos = sos_certify(expr, syms)
+        if sos is not None:
+            cert, _den = sos
+            terms = " + ".join(f"{c}*({s})^2" for c, s in cert.terms)
+            hints.append(
+                f"exact SOS certificate exists: numerator = {terms} — "
+                "an interior-tie claim certifiable by squares (SOS emitter: "
+                "named-open; use a custom skeleton meanwhile)"
+            )
+    if lifted is None:
         from .margins import tie_points
 
         located = tie_points(sp.expand(sp.fraction(sp.together(expr))[0]), syms)

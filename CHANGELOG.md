@@ -43,8 +43,25 @@ exact real roots for refused univariate claims; per-certificate margin reports
 (constant-term floor + exact-rational sample minimum with argmin), tight
 instances first.  diagnose now names the tie points when lifting fails.
 
+**Wishlist 3–7**: `telperion latex` — paper appendix / leanblueprint nodes
+stamped with the SAME input hash as the Lean (sync checkable by comparing two
+hex strings); symbolic-tail families (`TailFrom` axis: finite table + one
+``K = K₀ + t`` certificate, `TailNatEmitter` emitting the ℕ-quantified
+``∀ K ≥ K₀`` theorem; the certifier's integrality check even catches int/int
+float contamination in user targets); exact SOS certificates for the
+rationalizable subset (even powers + iterated quadratic completion — reaches
+interior-tie shapes lifting cannot; surfaced via diagnose); CAS-neutral
+certificate interchange (JSON with expression ASTs + a PURE-stdlib
+`recheck.py` — coefficient signs, factor positivity, Schwartz–Zippel identity
+spot-checks in `fractions` — a third independent verifier beside sympy and the
+Lean kernel); `certify(workers=N)` fork-parallel certification;
+`telperion package` reviewer bundles (family + frozen + certificates.json +
+standalone rechecker + generated REVIEWING.md).
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
 bilinear-family built-in assembly (use `CustomAssemblyEmitter`); Kind-3
-multi-axis grids.
+multi-axis grids; the SOS Lean-emitter path (certificates found by sos.py are
+surfaced in diagnose but not yet emitted — needs a squares-aware skeleton);
+incremental per-instance certification caching; bilinear tails.

@@ -66,7 +66,7 @@ def cmd_certify(args) -> int:
         def progress(i, total, pt):
             print(f"  [{i}/{total}] {pt}", flush=True)
     try:
-        cf = certify(fam, progress=progress)
+        cf = certify(fam, progress=progress, workers=args.workers)
     except CertificationError as e:
         print(f"REFUSED: {e}")
         return 1
@@ -231,6 +231,88 @@ def cmd_ties(args) -> int:
         return 0
 
 
+def cmd_latex(args) -> int:
+    """Paper-ready appendix, stamped with the same input hash as the Lean."""
+    from .latex import latex_appendix
+    from .provenance import family_hash
+    from .lean import LeanProfile as _LP
+
+    fam, mod = _load(args.family)
+    profile = _load(args.profile)[0] if args.profile else (
+        mod.profile() if hasattr(mod, "profile") else _LP()
+    )
+    cf = certify(fam)
+    ihash = family_hash(fam, profile)
+    text = latex_appendix(cf, ihash, blueprint=args.blueprint)
+    if args.out:
+        Path(args.out).write_text(text)
+        print(f"wrote {args.out} (input-hash {ihash[:16]})")
+    else:
+        print(text)
+    return 0
+
+
+def cmd_export_certs(args) -> int:
+    """CAS-neutral certificate JSON for independent rechecking."""
+    from .interchange import write_certificates
+    from .provenance import family_hash
+    from .lean import LeanProfile as _LP
+
+    fam, mod = _load(args.family)
+    profile = mod.profile() if hasattr(mod, "profile") else _LP()
+    cf = certify(fam)
+    write_certificates(cf, family_hash(fam, profile), args.out)
+    print(f"wrote {args.out}")
+    return 0
+
+
+def cmd_recheck(args) -> int:
+    """Independent stdlib-only recheck of exported certificates."""
+    from . import recheck as rc
+
+    return rc.main([args.certificates])
+
+
+def cmd_package(args) -> int:
+    """Self-contained reviewer bundle: family, frozen Lean, certificates JSON,
+    the standalone rechecker, and REVIEWING.md with the independent checks."""
+    import shutil
+
+    from .interchange import write_certificates
+    from .provenance import family_hash
+    from .lean import LeanProfile as _LP
+
+    fam, mod = _load(args.family)
+    profile = mod.profile() if hasattr(mod, "profile") else _LP()
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    fam_path = Path(args.family.partition(":")[0]).resolve()
+    shutil.copy(fam_path, out / fam_path.name)
+    if args.frozen:
+        shutil.copytree(args.frozen, out / "frozen", dirs_exist_ok=True)
+    cf = certify(fam)
+    ihash = family_hash(fam, profile)
+    write_certificates(cf, ihash, out / "certificates.json")
+    shutil.copy(Path(__file__).parent / "recheck.py", out / "recheck.py")
+    (out / "REVIEWING.md").write_text(f"""# Reviewing {fam.name}
+
+Input hash `{ihash[:16]}` — appears in the Lean file headers, the certificate
+JSON, and any generated LaTeX; matching hashes = same mathematics.
+
+Three INDEPENDENT one-command checks (each suffices to catch a false claim;
+together they leave no single trusted component except the Lean kernel):
+
+1. `python3 recheck.py certificates.json` — stdlib-only rational arithmetic:
+   coefficient signs + factor positivity + identity spot-checks (no sympy).
+2. Regenerate and diff: `telperion diff {fam_path.name}:<factory> --frozen frozen/`
+   (requires telperion + sympy; detects any drift byte-for-byte).
+3. `lake build` in the consuming Lean project — the kernel re-proves
+   every theorem from first principles.
+""")
+    print(f"bundle at {out} ({len(cf.instances)} instance(s), hash {ihash[:16]})")
+    return 0
+
+
 def cmd_probe(args) -> int:
     """Quick answer to: does this expression have a Polya certificate?"""
     import sympy as sp
@@ -257,6 +339,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("certify", help="run the symbolic self-checks for a family")
     p.add_argument("family", help="path/to/family.py:factory")
     p.add_argument("-v", "--verbose", action="store_true", help="per-instance progress")
+    p.add_argument("--workers", type=int, default=1, help="parallel certification (fork)")
     p.set_defaults(fn=cmd_certify)
 
     p = sub.add_parser("init", help="scaffold a new Telperion proof project")
@@ -302,6 +385,28 @@ def main(argv=None) -> int:
     p.add_argument("expression")
     p.add_argument("--symbols", default="u")
     p.set_defaults(fn=cmd_ties)
+
+    p = sub.add_parser("latex", help="paper appendix in sync with the Lean (same input hash)")
+    p.add_argument("family")
+    p.add_argument("--profile")
+    p.add_argument("-o", "--out")
+    p.add_argument("--blueprint", action="store_true", help="leanblueprint node mode")
+    p.set_defaults(fn=cmd_latex)
+
+    p = sub.add_parser("export-certs", help="CAS-neutral certificate JSON")
+    p.add_argument("family")
+    p.add_argument("-o", "--out", required=True)
+    p.set_defaults(fn=cmd_export_certs)
+
+    p = sub.add_parser("recheck", help="stdlib-only independent recheck of exported certificates")
+    p.add_argument("certificates")
+    p.set_defaults(fn=cmd_recheck)
+
+    p = sub.add_parser("package", help="self-contained reviewer bundle")
+    p.add_argument("family")
+    p.add_argument("-o", "--out", required=True)
+    p.add_argument("--frozen")
+    p.set_defaults(fn=cmd_package)
 
     p = sub.add_parser("probe", help="check one expression for a Polya certificate")
     p.add_argument("expression")

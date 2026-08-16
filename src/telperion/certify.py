@@ -232,11 +232,92 @@ def _certify_box(family, pt, name, qa, ra, checks_box, depth, force_depth):
     return [inst], {"name": name, "point": dict(pt), "q_axis": qa, "r_axis": ra}, checks
 
 
-def certify(family: InequalityFamily, progress=None, force_subdivide: int = 0) -> CertifiedFamily:
+_FORK_STATE: dict = {}
+
+
+def _certify_point(args):
+    """Per-point worker (fork-inherited family via _FORK_STATE in parallel mode)."""
+    pt, force_subdivide = args
+    family = _FORK_STATE["family"]
+    name = family.lean_name(pt)
+    try:
+        if family.kind == "direct":
+            cert = polya_certify(
+                family.target(pt), family.symbols, lift_max=family.auto_lift
+            )
+            atoms = tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
+            inst = CertifiedInstance(
+                point=dict(pt), lean_name=name, corners=(cert,),
+                decomposition=None, den_atoms=atoms,
+            )
+            return ("ok", [inst], None, 1)
+        qa, ra = family.box(pt)
+        sub_inst, tree, box_checks = _certify_box(
+            family, pt, name, qa, ra, 0, family.auto_subdivide, force_subdivide
+        )
+        return ("ok", sub_inst, tree if "children" in tree else None, box_checks)
+    except (ValueError, sp.PolynomialError) as e:
+        return ("fail", dict(pt), str(e), 0)
+
+
+def certify(
+    family: InequalityFamily,
+    progress=None,
+    force_subdivide: int = 0,
+    workers: int = 1,
+) -> CertifiedFamily:
     """Run every self-check for every grid point; return the emission witness.
 
     progress: optional callable (i, total, point) invoked before each instance
-    — long certifications (the R47 table runs ~6 min) should not be silent."""
+    — long certifications (the R47 table runs ~6 min) should not be silent.
+
+    workers > 1 certifies grid points in parallel via fork-context
+    multiprocessing (fork inherits the family's closures; unavailable on
+    platforms without fork — falls back to serial)."""
+    if workers > 1:
+        import multiprocessing as mp
+
+        try:
+            ctx = mp.get_context("fork")
+        except ValueError:
+            ctx = None
+        if ctx is not None:
+            pts = list(family.grid.points())
+            names = [family.lean_name(pt) for pt in pts]
+            dupes = {n for n in names if names.count(n) > 1}
+            if dupes:
+                raise CertificationError(
+                    [({}, f"duplicate lean_name {n!r}") for n in sorted(dupes)]
+                )
+            _FORK_STATE["family"] = family
+            try:
+                with ctx.Pool(workers) as pool:
+                    results = pool.map(
+                        _certify_point, [(pt, force_subdivide) for pt in pts]
+                    )
+            finally:
+                _FORK_STATE.pop("family", None)
+            instances, failures, trees, checks = [], [], [], 0
+            for status, a, b, c in results:
+                if status == "ok":
+                    instances.extend(a)
+                    if b is not None:
+                        trees.append(b)
+                    checks += c
+                else:
+                    failures.append((a, b))
+            if failures:
+                raise CertificationError(failures)
+            _construction_guard.open = True
+            try:
+                return CertifiedFamily(
+                    family=family,
+                    instances=tuple(instances),
+                    checks_passed=checks,
+                    subdivisions=tuple(trees),
+                )
+            finally:
+                _construction_guard.open = False
     instances: list[CertifiedInstance] = []
     failures: list[tuple[dict, str]] = []
     subdivision_trees: list[dict] = []
