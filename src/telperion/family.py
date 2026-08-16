@@ -94,6 +94,8 @@ class InequalityFamily:
     after: Callable[[GridPoint], sp.Expr] | None = None
     box: Callable[[GridPoint], tuple[BoxAxis, BoxAxis]] | None = None
     den_atoms: Callable[[GridPoint], Sequence[sp.Expr]] | None = None
+    auto_lift: int = 0        # max Polya-lift exponent tried on numerator refusals
+    auto_subdivide: int = 0   # max box-bisection depth on corner refusals
 
     def __post_init__(self):
         direct = self.target is not None

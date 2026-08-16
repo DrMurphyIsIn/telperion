@@ -34,6 +34,7 @@ def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
     feed("tool", __version__)
     feed("name", family.name)
     feed("kind", family.kind)
+    feed("auto", f"{family.auto_lift},{family.auto_subdivide}")
     feed("symbols", ",".join(str(s) for s in family.symbols))
     feed("grid", json.dumps([[n, list(v)] for n, v in family.grid.axes]))
     feed(

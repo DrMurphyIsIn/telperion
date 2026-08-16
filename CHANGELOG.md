@@ -24,6 +24,16 @@ lean-verify workflow); `certify(progress=)` + `certify -v` for long runs;
 path-hashed module loading (family.py can't shadow installed modules);
 `CustomAssemblyEmitter` escape hatch for hand-designed assemblies.
 
+**The Pólya engine**: `polya_lift` (multiply through by `(1+Σxᵢ)^N` — Pólya's
+theorem as an algorithm; certifies strict positivity, provably cannot converge
+at equality cases) integrated as `family.auto_lift` / `polya_certify(lift_max)`;
+recursive box subdivision (`auto_subdivide` on corner refusals,
+`force_subdivide` to isolate tie regions) producing leaf cells plus
+`SubdivisionGlueEmitter`'s `le_total` case-split glue reconstructing the
+original cell theorem; diagnose now reports the exact lift exponent when one
+exists, and names the tie obstruction when none does.  Toy example gains
+ToyLift and ToySplit — both new shapes compile against pinned Mathlib in CI.
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);

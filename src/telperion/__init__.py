@@ -19,6 +19,7 @@ from .emit import BilinearBoxEmitter, DirectPolyaEmitter  # noqa: F401
 from .emit_adapters import (  # noqa: F401
     CaseDispatchAssemblyEmitter,
     CustomAssemblyEmitter,
+    SubdivisionGlueEmitter,
     Reparam,
     ReparamAdapterEmitter,
 )

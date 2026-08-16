@@ -75,7 +75,21 @@ def find_counterexample(
 
 
 def _remedy_hints(expr: sp.Expr, syms, num: sp.Expr) -> tuple[str, ...]:
+    from .lift import polya_lift
+
     hints: list[str] = []
+    lifted = polya_lift(sp.expand(sp.fraction(sp.together(expr))[0]), syms, 8)
+    if lifted is not None and lifted[0] > 0:
+        hints.append(
+            f"certifiable via Pólya lift N={lifted[0]} — set auto_lift={lifted[0]} "
+            "on the family (or pass lift_max to polya_certify)"
+        )
+    elif lifted is None:
+        hints.append(
+            "Pólya lifting does not converge by N=8 — the claim likely touches an "
+            "equality case (a tie); lifting certifies strict positivity only. "
+            "Subdivide to isolate the tie region (auto_subdivide / force_subdivide)"
+        )
     pn = sp.Poly(sp.expand(num), *syms)
     bad = [(m, c) for m, c in zip(pn.monoms(), pn.coeffs()) if c < 0]
     if bad:

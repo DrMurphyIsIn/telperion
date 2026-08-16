@@ -211,3 +211,95 @@ class CustomAssemblyEmitter(Emitter):
         top = dict(self.fills(fam)) if self.fills is not None else {}
         top["branches"] = branches.rstrip() + "\n"
         return render(self.statement_template, top), self.theorems
+
+
+GLUE_SKELETON = """theorem «name»_cell «binders»
+    (hQ0 : «hyp_q0») (hQ1 : «q» ≤ «q_hi»)
+    (hS0 : «hyp_r0») (hS1 : «r» ≤ «r_hi») :
+    «before» ≤ «after» := by
+  rcases le_total «split_var» («mid») with h | h
+  · exact «left»_cell «call_args» «left_hyps»
+  · exact «right»_cell «call_args» «right_hyps»
+"""
+
+
+@dataclass
+class SubdivisionGlueEmitter(Emitter):
+    """Reconstructs the ORIGINAL cell theorem of every subdivided box from its
+    leaf cells, one `le_total` case split per internal node (deepest first, so
+    every referenced child theorem is already defined).  Pair with
+    BilinearBoxEmitter, which emits the leaves."""
+
+    def __post_init__(self):
+        self.kind = "subdivision_glue"
+
+    def emit_units(self, fam: CertifiedFamily, profile: LeanProfile) -> list[tuple[str, int]]:
+        return [self.emit_body(fam, profile)]
+
+    def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
+        from .expr import expr_lean_factored
+
+        family = fam.family
+        syms = family.symbols
+        args = " ".join(str(s) for s in syms)
+        skeleton = profile.skeletons.get("subdivision_glue", GLUE_SKELETON)
+        out: list[str] = []
+        n = 0
+
+        def emit_node(node) -> None:
+            nonlocal n
+            if "children" not in node:
+                return
+            for child in node["children"]:
+                emit_node(child)
+            qa, ra = node["q_axis"], node["r_axis"]
+            q, r = qa.symbol, ra.symbol
+            pt = node["point"]
+            hyps = " ".join(f"h{s}" for s in syms)
+            call_args = f"{args} {q} {r} {hyps}".strip()
+            if node["axis"] == "q":
+                split_var, left_hyps, right_hyps = str(q), "hQ0 h hS0 hS1", "h hQ1 hS0 hS1"
+            else:
+                split_var, left_hyps, right_hyps = str(r), "hQ0 hQ1 hS0 h", "hQ0 hQ1 h hS1"
+            out.append(
+                render(
+                    skeleton,
+                    {
+                        "name": node["name"],
+                        "binders": f"({args} {q} {r} : ℝ) "
+                        + " ".join(f"(h{s} : 0 ≤ {s})" for s in syms),
+                        "hyp_q0": (
+                            f"({expr_lean_factored(qa.lo, syms)}) ≤ {q}"
+                            if qa.lo_is_floor
+                            else f"0 ≤ {q}"
+                        ),
+                        "hyp_r0": (
+                            f"({expr_lean_factored(ra.lo, syms)}) ≤ {r}"
+                            if ra.lo_is_floor
+                            else f"0 ≤ {r}"
+                        ),
+                        "q": str(q),
+                        "r": str(r),
+                        "q_hi": f"({expr_lean_factored(qa.hi, syms)})",
+                        "r_hi": f"({expr_lean_factored(ra.hi, syms)})",
+                        "before": expr_lean_factored(
+                            family.before(pt), tuple(syms) + (q, r)
+                        ),
+                        "after": expr_lean_factored(
+                            family.after(pt), tuple(syms) + (q, r)
+                        ),
+                        "split_var": split_var,
+                        "mid": expr_lean_factored(node["mid"], syms),
+                        "left": node["children"][0]["name"],
+                        "right": node["children"][1]["name"],
+                        "call_args": call_args,
+                        "left_hyps": left_hyps,
+                        "right_hyps": right_hyps,
+                    },
+                )
+            )
+            n += 1
+
+        for tree in fam.subdivisions:
+            emit_node(tree)
+        return "\n".join(out), n
