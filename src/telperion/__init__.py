@@ -18,9 +18,11 @@ from .certify import (  # noqa: F401
 from .emit import BilinearBoxEmitter, DirectPolyaEmitter  # noqa: F401
 from .emit_adapters import (  # noqa: F401
     CaseDispatchAssemblyEmitter,
+    CustomAssemblyEmitter,
     Reparam,
     ReparamAdapterEmitter,
 )
+from .parsing import UnsafeExpressionError, safe_parse_expr  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401

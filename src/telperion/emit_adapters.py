@@ -176,3 +176,38 @@ class CaseDispatchAssemblyEmitter(Emitter):
             },
         )
         return text, 1
+
+
+@dataclass
+class CustomAssemblyEmitter(Emitter):
+    """The escape hatch: a single hand-designed assembled theorem, rendered
+    from user templates with per-instance branch fills.
+
+    When the built-in assembly shape doesn't fit (bilinear-family assemblies
+    with domain-specific branch glue — the origin's head_merge_le class), the
+    Lean design is yours; the tool still contributes batching, exhaustive hole
+    checking, provenance stamping, and the lint gate.  The statement template
+    gets a «branches» hole plus whatever fills(fam) returns; each branch is
+    branch_template rendered with branch_fills(instance).
+    """
+
+    statement_template: str = ""
+    branch_template: str = ""
+    fills: Callable[[CertifiedFamily], Mapping[str, str]] = None
+    branch_fills: Callable[[CertifiedInstance], Mapping[str, str]] = None
+    theorems: int = 1
+
+    def __post_init__(self):
+        self.kind = "custom_assembly"
+
+    def emit_units(self, fam: CertifiedFamily, profile: LeanProfile) -> list[tuple[str, int]]:
+        return [self.emit_body(fam, profile)]
+
+    def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
+        branches = "".join(
+            render(self.branch_template, dict(self.branch_fills(inst)))
+            for inst in fam.instances
+        )
+        top = dict(self.fills(fam)) if self.fills is not None else {}
+        top["branches"] = branches.rstrip() + "\n"
+        return render(self.statement_template, top), self.theorems

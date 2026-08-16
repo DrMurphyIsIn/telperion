@@ -23,12 +23,18 @@ from .workflow import ValidationReport, emit
 
 
 def _load(spec: str):
-    """Load ``path.py:attr`` and return the attribute (called if callable)."""
+    """Load ``path.py:attr`` and return the attribute (called if callable).
+
+    The module is registered under a path-hashed name so a family file called
+    family.py can never shadow (or be shadowed by) an installed module."""
+    import hashlib as _hl
+
     path, _, attr = spec.partition(":")
     if not attr:
         raise SystemExit(f"expected path.py:attr, got {spec!r}")
     p = Path(path).resolve()
-    modspec = importlib.util.spec_from_file_location(p.stem, p)
+    modname = f"_telperion_family_{_hl.sha256(str(p).encode()).hexdigest()[:12]}"
+    modspec = importlib.util.spec_from_file_location(modname, p)
     mod = importlib.util.module_from_spec(modspec)
     sys.path.insert(0, str(p.parent))
     try:
@@ -43,10 +49,24 @@ def _default_emitters(fam):
     return [DirectPolyaEmitter()] if fam.kind == "direct" else [BilinearBoxEmitter()]
 
 
+def cmd_init(args) -> int:
+    from .scaffold import init_project
+
+    created = init_project(Path(args.directory), args.namespace)
+    for f in created:
+        print(f"created {f}")
+    print("next: edit family.py, then `telperion certify family.py:family -v`")
+    return 0
+
+
 def cmd_certify(args) -> int:
     fam, _ = _load(args.family)
+    progress = None
+    if args.verbose:
+        def progress(i, total, pt):
+            print(f"  [{i}/{total}] {pt}", flush=True)
     try:
-        cf = certify(fam)
+        cf = certify(fam, progress=progress)
     except CertificationError as e:
         print(f"REFUSED: {e}")
         return 1
@@ -158,7 +178,9 @@ def cmd_diagnose(args) -> int:
             print(d.render())
         return 1
     syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
-    expr = sp.parse_expr(args.target, local_dict={str(s): s for s in syms})
+    from .parsing import safe_parse_expr
+
+    expr = safe_parse_expr(args.target, syms)
     d = diagnose_expr(expr, syms, trials=args.trials)
     print(d.render())
     return 0 if d.verdict == "CERTIFIABLE" else 1
@@ -171,7 +193,9 @@ def cmd_probe(args) -> int:
     from .certify import polya_certify
 
     syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
-    expr = sp.parse_expr(args.expression, local_dict={str(s): s for s in syms})
+    from .parsing import safe_parse_expr
+
+    expr = safe_parse_expr(args.expression, syms)
     try:
         cert = polya_certify(expr, syms)
     except ValueError as e:
@@ -187,7 +211,13 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("certify", help="run the symbolic self-checks for a family")
     p.add_argument("family", help="path/to/family.py:factory")
+    p.add_argument("-v", "--verbose", action="store_true", help="per-instance progress")
     p.set_defaults(fn=cmd_certify)
+
+    p = sub.add_parser("init", help="scaffold a new Telperion proof project")
+    p.add_argument("directory")
+    p.add_argument("--namespace", default="MyProof")
+    p.set_defaults(fn=cmd_init)
 
     for name, fn, extra in (
         ("emit", cmd_emit, True),

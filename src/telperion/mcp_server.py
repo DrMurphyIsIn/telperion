@@ -127,6 +127,16 @@ def diff_family(
 
 
 @mcp.tool()
+def init_project(directory: str, namespace: str = "MyProof") -> str:
+    """Scaffold a new Telperion proof project in an empty directory: family
+    template with the validation discipline built in, generate script, drift
+    manifest, pinned Lean/Mathlib project shell, and a lean-verify GitHub
+    workflow. namespace must be an UpperCamel Lean module name."""
+    code, out = _cli(["init", directory, "--namespace", namespace])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
 def verify_project(manifest: str = "telperion.toml", group: str = "all") -> str:
     """Run every check in the project manifest (regeneration diffs for all
     frozen families; fails on unlisted generate scripts). group: quick |

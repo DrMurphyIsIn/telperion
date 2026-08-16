@@ -89,9 +89,14 @@ matrix enforces.
 
 Three surfaces, layered on the same enforced workflow:
 
-- **CLI** — `telperion certify|emit|diff|probe` (families addressed as
-  `path/to/family.py:factory`). `probe` answers "is this single inequality
-  Polya-certifiable?" in one call; `emit` refuses without validation.
+- **CLI** — `telperion init|certify|emit|diff|verify|probe|diagnose`
+  (families addressed as `path/to/family.py:factory`). `init` scaffolds a
+  complete new proof project (family template, pinned Lean shell, drift
+  manifest, CI workflow); `diagnose` triages any refusal into FALSE (exact
+  rational counterexample), NOT_POLYA (remedy hints), or CERTIFIABLE;
+  `verify` is the project drift net; `emit` refuses without validation. All
+  string-taking surfaces parse through a token whitelist — sympy's evaluating
+  parser never sees raw input.
 - **MCP server** — `pip install "telperion[mcp]"`, then register in Claude
   Code with `claude mcp add telperion -- telperion-mcp`. Tools: `polya_probe`,
   `certify_family`, `emit_family`, `diff_family`, `read_manifest`; resources:

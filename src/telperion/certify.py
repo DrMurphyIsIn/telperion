@@ -135,14 +135,20 @@ def restrict_instances(cf: CertifiedFamily, indices) -> CertifiedFamily:
         _construction_guard.open = False
 
 
-def certify(family: InequalityFamily) -> CertifiedFamily:
-    """Run every self-check for every grid point; return the emission witness."""
+def certify(family: InequalityFamily, progress=None) -> CertifiedFamily:
+    """Run every self-check for every grid point; return the emission witness.
+
+    progress: optional callable (i, total, point) invoked before each instance
+    — long certifications (the R47 table runs ~6 min) should not be silent."""
     instances: list[CertifiedInstance] = []
     failures: list[tuple[dict, str]] = []
     checks = 0
     seen_names: set[str] = set()
+    total = family.grid.size()
 
-    for pt in family.grid.points():
+    for i, pt in enumerate(family.grid.points(), 1):
+        if progress is not None:
+            progress(i, total, dict(pt))
         name = family.lean_name(pt)
         if name in seen_names:
             failures.append((dict(pt), f"duplicate lean_name {name!r}"))
