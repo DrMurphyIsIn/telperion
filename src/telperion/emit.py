@@ -123,6 +123,7 @@ class BilinearBoxEmitter(Emitter):
 
     def __post_init__(self):
         self.kind = "bilinear_box"
+        self.requires_prelude = (self.combinator,)
 
     def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
         syms = fam.family.symbols

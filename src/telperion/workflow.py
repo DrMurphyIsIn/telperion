@@ -72,6 +72,12 @@ class Emitter:
     """Base emitter interface; concrete emitters live in emit.py / emit_adapters.py."""
 
     kind: str = field(default="", init=False)
+    # Names of prelude lemmas this emitter's Lean CALLS but does not itself
+    # define — the profile must supply them (via prelude/imports).  emit()
+    # checks this and raises locally, turning the "shipped Lean references an
+    # unknown identifier" class from a CI-only failure into a build-time one
+    # (the missing-bilinear_corner_nonneg H-floor incident, 2026-08-16).
+    requires_prelude: tuple[str, ...] = field(default=(), init=False)
 
     def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
         """Return (Lean body text, number of theorems)."""
@@ -99,7 +105,9 @@ class Emitter:
         covered by the freeze/diff byte comparison instead."""
         parts = [self.kind]
         for k, v in sorted(vars(self).items()):
-            if k != "kind" and not callable(v):
+            # `requires_prelude` is a validation declaration, not output config
+            # — excluded so it does not perturb every family's input hash.
+            if k not in ("kind", "requires_prelude") and not callable(v):
                 parts.append(f"{k}={v!r}")
         return "|".join(parts)
 
@@ -136,6 +144,23 @@ def emit(
     def _phase(msg: str) -> None:
         print(f"[telperion] emit {fam.family.name}: {msg}",
               file=sys.stderr, flush=True)
+
+    # Prelude-dependency contract: a lemma an emitter CALLS but does not define
+    # must be reachable — defined in the prelude, or supplied by a project
+    # import.  We can verify the prelude textually; a custom import (anything
+    # beyond "Mathlib") MIGHT supply it, so we trust it and let the compile
+    # gate be the backstop.  The refusal fires only when neither is possible:
+    # no prelude definition and no import that could carry it (the H-floor
+    # self-contained-file incident, 2026-08-16).
+    custom_imports = [i for i in profile.imports if i != "Mathlib"]
+    for em in emitters:
+        missing = [name for name in getattr(em, "requires_prelude", ())
+                   if name not in profile.prelude and not custom_imports]
+        if missing:
+            raise WorkflowError(
+                f"emit() refused: {em.kind} emits calls to {missing} but the "
+                f"profile neither defines them in its prelude nor imports a "
+                f"module that could (add to LeanProfile.prelude or .imports)")
 
     _phase(f"input hash over {fam.family.grid.size()} cells...")
     t_hash = time.time()

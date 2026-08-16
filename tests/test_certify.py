@@ -124,6 +124,32 @@ def test_emit_refuses_non_witness():
              ValidationReport(checks=(("x", True),)))
 
 
+def test_emit_refuses_missing_prelude_dependency():
+    # The bilinear assembly calls `bilinear_corner_nonneg`; a profile that does
+    # not define it (bare LeanProfile) must be refused LOCALLY, not shipped to
+    # fail in `lake build` (the H-floor missing-prelude incident, 2026-08-16).
+    from telperion import BilinearBoxEmitter
+
+    fam = InequalityFamily(
+        name="mp",
+        symbols=(u,),
+        grid=GridSpec([("a", [1])]),
+        lean_name=lambda pt: "mp_1",
+        before=lambda pt: sp.Integer(0),
+        after=lambda pt: q + r,
+        box=lambda pt: (BoxAxis(q, sp.Integer(0), sp.Integer(1)),
+                        BoxAxis(r, sp.Integer(0), sp.Integer(1))),
+    )
+    cf = certify(fam)
+    good = ValidationReport(checks=(("x", True),))
+    with pytest.raises(WorkflowError, match="bilinear_corner_nonneg"):
+        emit(cf, LeanProfile(), [BilinearBoxEmitter()], good)
+    # and PASSES once the profile provides it
+    ok = emit(cf, LeanProfile(prelude="theorem bilinear_corner_nonneg := trivial"),
+              [BilinearBoxEmitter()], good)
+    assert ok.n_theorems >= 1
+
+
 def test_validation_from_asserts_raises_and_records():
     def bad():
         raise AssertionError("boom")

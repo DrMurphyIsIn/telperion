@@ -90,7 +90,8 @@ def test_profile_shapes_output():
 
 def test_bilinear_emits_all_pieces():
     cf = certify(small_box())
-    res = emit(cf, LeanProfile(), [BilinearBoxEmitter()], GREEN)
+    prof = LeanProfile(prelude="theorem bilinear_corner_nonneg := trivial")
+    res = emit(cf, prof, [BilinearBoxEmitter()], GREEN)
     text = next(iter(res.files.values()))
     for piece in (
         "goldbox_a1c1", "goldbox_a1c4", "goldbox_a1_bilinear",
