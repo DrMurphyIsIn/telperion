@@ -188,3 +188,57 @@ def margin_report(
             )
     reports.sort(key=lambda r: (not r.is_tight, r.empirical_min))
     return reports
+
+
+@dataclass(frozen=True)
+class BracketAdequacy:
+    lean_name: str
+    worst_corner_margin: sp.Rational
+    bracket_width: sp.Rational
+    slack_ratio: sp.Rational      # margin / width — < 1 means a width-sized
+                                  # bracket shift could kill the certificate
+
+    def render(self) -> str:
+        flag = "FRAGILE" if self.slack_ratio < 1 else "robust"
+        return (
+            f"{self.lean_name}: margin {self.worst_corner_margin} vs bracket "
+            f"width {self.bracket_width} (ratio ~{float(self.slack_ratio):.2f}) — {flag}"
+        )
+
+
+def bracket_adequacy(cf: CertifiedFamily) -> list[BracketAdequacy]:
+    """The MR69 DELTA_CHARGE fragility class as a report: for interval-style
+    (bilinear) instances, the worst-corner margin measured against the bracket
+    width.  A certificate surviving on a margin smaller than its bracket width
+    is one bracket revision from collapse — reviewers should see those first."""
+    out = []
+    for inst in cf.instances:
+        if inst.decomposition is None:
+            continue
+        d = inst.decomposition
+        widths = []
+        for ax in (d.q_axis, d.r_axis):
+            w = ax.hi - ax.lo
+            if w.is_number and not w.free_symbols:
+                widths.append(sp.Rational(w))
+        if not widths:
+            continue
+        margins_ = []
+        for cert in inst.corners:
+            val = cert.numerator / cert.denominator   # exact Rational already
+            if val.is_number and not val.free_symbols:
+                margins_.append(sp.Rational(val))
+        if not margins_:
+            continue
+        margin = min(margins_)
+        width = min(widths)
+        out.append(
+            BracketAdequacy(
+                lean_name=inst.lean_name,
+                worst_corner_margin=margin,
+                bracket_width=width,
+                slack_ratio=margin / width if width else sp.oo,
+            )
+        )
+    out.sort(key=lambda r: r.slack_ratio)
+    return out

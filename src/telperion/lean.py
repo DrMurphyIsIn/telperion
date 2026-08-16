@@ -22,8 +22,34 @@ class TemplateError(ValueError):
     pass
 
 
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_'.]*$")
+_EMPTY_BINDER = re.compile(r"\(\s*:")
+
+
+def _validate_fill(hole: str, value: str) -> None:
+    """Typed hole contracts (REVIEW_20260816_TELPERION_G1: the empty binder
+    `( : ℝ)` must be UNCONSTRUCTIBLE, not merely lintable).  Types are
+    inferred from the hole name: *name* holes must be Lean identifiers;
+    *binder* holes must be empty or well-formed (never `( :`); every fill must
+    be hole-marker-free."""
+    if "«" in value or "»" in value:
+        raise TemplateError(f"hole {hole!r}: fill contains hole markers")
+    if hole.endswith("name") or hole == "base":
+        if not _IDENT.match(value):
+            raise TemplateError(f"hole {hole!r}: {value!r} is not a Lean identifier")
+    if "binder" in hole:
+        if _EMPTY_BINDER.search(value):
+            raise TemplateError(
+                f"hole {hole!r}: EMPTY BINDER in {value!r} — the symbol list "
+                "is empty; omit the binder entirely"
+            )
+        if value and value.count("(") != value.count(")"):
+            raise TemplateError(f"hole {hole!r}: unbalanced binder {value!r}")
+
+
 def render(template: str, fills: Mapping[str, str]) -> str:
-    """Fill every «hole»; error on unfilled holes and on unused fillers."""
+    """Fill every «hole» (typed contracts applied per hole name); error on
+    unfilled holes and on unused fillers."""
     holes = set(_HOLE.findall(template))
     missing = holes - set(fills)
     unused = set(fills) - holes
@@ -31,6 +57,8 @@ def render(template: str, fills: Mapping[str, str]) -> str:
         raise TemplateError(f"unfilled holes: {sorted(missing)}")
     if unused:
         raise TemplateError(f"unknown fillers: {sorted(unused)}")
+    for hole, value in fills.items():
+        _validate_fill(hole, value)
     return _HOLE.sub(lambda m: fills[m.group(1)], template)
 
 

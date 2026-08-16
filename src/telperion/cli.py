@@ -72,7 +72,8 @@ def cmd_certify(args) -> int:
         def progress(i, total, pt):
             print(f"  [{i}/{total}] {pt}", flush=True)
     try:
-        cf = certify(fam, progress=progress, workers=args.workers)
+        cf = certify(fam, progress=progress, workers=args.workers,
+                     profile=args.profile, budget_seconds=args.budget)
     except CertificationError as e:
         print(f"REFUSED: {e}")
         return 1
@@ -80,6 +81,10 @@ def cmd_certify(args) -> int:
         f"certified: {fam.name} — {len(cf.instances)} instance(s), "
         f"{cf.checks_passed} self-checks green"
     )
+    if args.profile:
+        from .certify import profile_report
+
+        print(profile_report(cf))
     return 0
 
 
@@ -227,6 +232,16 @@ def cmd_margins(args) -> int:
 
     fam, _ = _load(args.family)
     cf = certify(fam, force_subdivide=0)
+    if args.adequacy:
+        from .margins import bracket_adequacy
+
+        rows = bracket_adequacy(cf)
+        fragile = [r for r in rows if r.slack_ratio < 1]
+        print(f"{fam.name}: {len(rows)} interval certificate(s), "
+              f"{len(fragile)} FRAGILE (margin < bracket width)")
+        for r in rows[: max(len(fragile), 10)]:
+            print("  " + r.render())
+        return 0
     reports = margin_report(cf, samples=args.samples)
     tight = [r for r in reports if r.is_tight]
     print(f"{fam.name}: {len(reports)} certificates, {len(tight)} tight/marginal")
@@ -495,6 +510,9 @@ def main(argv=None) -> int:
     p.add_argument("family", help="path/to/family.py:factory")
     p.add_argument("-v", "--verbose", action="store_true", help="per-instance progress")
     p.add_argument("--workers", type=int, default=1, help="parallel certification (fork)")
+    p.add_argument("--profile", action="store_true", help="per-instance cost ledger")
+    p.add_argument("--budget", type=float, default=None,
+                   help="abort (with the hot-cell report) past this many seconds")
     p.set_defaults(fn=cmd_certify)
 
     p = sub.add_parser("init", help="scaffold a new Telperion proof project")
@@ -537,6 +555,8 @@ def main(argv=None) -> int:
     p.add_argument("family")
     p.add_argument("--samples", type=int, default=60)
     p.add_argument("--all", action="store_true")
+    p.add_argument("--adequacy", action="store_true",
+                   help="bracket-slack fragility report (interval families)")
     p.set_defaults(fn=cmd_margins)
 
     p = sub.add_parser("ties", help="exact tie points/faces of one expression")

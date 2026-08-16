@@ -126,6 +126,11 @@ class BilinearBoxEmitter(Emitter):
     def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
         syms = fam.family.symbols
         args = " ".join(str(s) for s in syms)
+        # empty-symbol families (all content in the box variables): defs take
+        # no binders and are referenced with no arguments — `def c1 ( : ℝ)` is
+        # not Lean (review finding REVIEW_20260816_TELPERION_G1)
+        def_binder = f" ({args} : ℝ)" if syms else ""
+        call = f" {args}" if syms else ""
         out: list[str] = []
         n_theorems = 0
         for inst in fam.instances:
@@ -141,16 +146,17 @@ class BilinearBoxEmitter(Emitter):
                 cname = f"{name}c{i}"
                 unfold_names.append(cname)
                 out.append(
-                    f"noncomputable def {cname} ({args} : ℝ) : ℝ :=\n"
+                    f"noncomputable def {cname}{def_binder} : ℝ :=\n"
                     f"  {expr_lean_factored(ci, syms)}\n"
                 )
 
             before_l = expr_lean_factored(fam.family.before(inst.point), tuple(syms) + (q, r))
             after_l = expr_lean_factored(fam.family.after(inst.point), tuple(syms) + (q, r))
+            var_list = f"{args} {q} {r}" if syms else f"{q} {r}"
             all_binders = (
-                f"({args} {q} {r} : ℝ) "
+                f"({var_list} : ℝ) "
                 + " ".join(f"(h{s} : 0 ≤ {s})" for s in syms)
-            )
+            ).rstrip()
             hyps = _hyp_lines(_den_factor_hyps(inst, syms))
             out.append(
                 render(
@@ -160,7 +166,7 @@ class BilinearBoxEmitter(Emitter):
                         "binders": all_binders,
                         "after": after_l,
                         "before": before_l,
-                        "args": args,
+                        "args": args if syms else "",
                         "q": str(q),
                         "r": str(r),
                         "hyp_lines": hyps,
@@ -186,8 +192,8 @@ class BilinearBoxEmitter(Emitter):
                 qv_l = f"({expr_lean_factored(qv, syms)})"
                 rv_l = f"({expr_lean_factored(rv, syms)})"
                 body = (
-                    f"{name}c1 {args} + {name}c2 {args} * {qv_l} + {name}c3 {args} * {rv_l}\n"
-                    f"        + {name}c4 {args} * ({qv_l} * {rv_l})"
+                    f"{name}c1{call} + {name}c2{call} * {qv_l} + {name}c3{call} * {rv_l}\n"
+                    f"        + {name}c4{call} * ({qv_l} * {rv_l})"
                 )
                 from .expr import rat_lean
 
@@ -210,9 +216,9 @@ class BilinearBoxEmitter(Emitter):
                         },
                     )
                 )
-                corner_refs.append(
-                    f"({cn} {args} " + " ".join(f"h{s}" for s in syms) + ")"
-                )
+                hyp_args = " ".join(f"h{s}" for s in syms)
+                ref_args = f"{call}{' ' + hyp_args if hyp_args else ''}"
+                corner_refs.append(f"({cn}{ref_args})")
                 n_theorems += 1
 
             # assembled box theorem
@@ -242,8 +248,9 @@ class BilinearBoxEmitter(Emitter):
                         "hyp_r0": hyp_r0,
                         "before": before_l,
                         "after": after_l,
-                        "binder_names": f"{args} {q} {r} "
-                        + " ".join(f"h{s}" for s in syms),
+                        "binder_names": (
+                            f"{var_list} " + " ".join(f"h{s}" for s in syms)
+                        ).rstrip(),
                         "combinator": self.combinator,
                         "c00": corner_refs[0],
                         "c01": corner_refs[1],

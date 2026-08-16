@@ -6,7 +6,7 @@ trusted component.  A defective certificate manifests as a compile failure,
 never a false theorem.  See docs/METHODOLOGY.md.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .certify import (  # noqa: F401
     CertificationError,
@@ -30,6 +30,9 @@ from .cache import DiskCache, memoize  # noqa: F401
 from .cone import ConeCombination, FarkasDual, cone_combination, cone_decide  # noqa: F401
 from .unimodal import UnimodalityCertificate, unimodal_certificate  # noqa: F401
 from .interval import interval_family  # noqa: F401
+from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
+from .dichotomy import DichotomyGlueEmitter  # noqa: F401
+from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401

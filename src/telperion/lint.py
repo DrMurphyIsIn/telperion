@@ -28,6 +28,14 @@ def lint_text(fname: str, text: str) -> list[str]:
         problems.append(f"{fname}:{line}: unfilled template hole marker")
     if not text.startswith("/- telperion"):
         problems.append(f"{fname}: missing provenance header")
+    for i, ln in enumerate(text.splitlines(), 1):
+        if re.search(r"\(\s+:\s*[^)]*\)", ln) and not ln.lstrip().startswith("--"):
+            problems.append(
+                f"{fname}:{i}: EMPTY BINDER `( : ...)` — not Lean; the "
+                "empty-symbol emission path is broken "
+                "(REVIEW_20260816_TELPERION_G1 class)"
+            )
+            break
     # delimiter balance, ignoring comments and strings coarsely
     stack: list[tuple[str, int]] = []
     for i, ln in enumerate(text.splitlines(), 1):

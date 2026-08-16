@@ -73,6 +73,7 @@ class CertifiedFamily:
     instances: tuple[CertifiedInstance, ...]
     checks_passed: int
     subdivisions: tuple = ()   # subdivision trees (see certify's bilinear path)
+    timings: tuple = ()        # (lean_name, seconds) when profiled
 
     def __post_init__(self):
         if not getattr(_construction_guard, "open", False):
@@ -233,6 +234,20 @@ def _pin_checks(family, pt, cert) -> int:
                 )
             checks += 1
     return checks
+
+
+def profile_report(cf: CertifiedFamily, top: int = 10) -> str:
+    """The cost ledger: total, mean, and the hottest cells."""
+    if not cf.timings:
+        return "no timings recorded (certify with profile=True)"
+    total = sum(dt for _, dt in cf.timings)
+    hot = sorted(cf.timings, key=lambda x: -x[1])[:top]
+    lines = [
+        f"certified {len(cf.timings)} instance(s) in {total:.1f}s "
+        f"(mean {total / len(cf.timings):.2f}s); hottest:"
+    ]
+    lines += [f"  {n}: {dt:.2f}s" for n, dt in hot]
+    return "\n".join(lines)
 
 
 def restrict_instances(cf: CertifiedFamily, indices) -> CertifiedFamily:
@@ -398,6 +413,8 @@ def certify(
     force_subdivide: int = 0,
     workers: int = 1,
     cache_dir=None,
+    profile: bool = False,
+    budget_seconds: float | None = None,
 ) -> CertifiedFamily:
     """Run every self-check for every grid point; return the emission witness.
 
@@ -409,7 +426,12 @@ def certify(
     platforms without fork — falls back to serial).
 
     cache_dir enables the persistent certification cache (a performance
-    layer only — the drift net and the kernel remain the arbiters)."""
+    layer only — the drift net and the kernel remain the arbiters).
+
+    profile records per-instance wall time on the result (`timings`; see
+    profile_report).  budget_seconds aborts a serial run that exceeds the
+    budget, reporting progress and the hottest cells so far — the R7 972-cell
+    lesson: never grind blind."""
     global _ACTIVE_CACHE
     if cache_dir is not None:
         from .cache import DiskCache
@@ -466,9 +488,21 @@ def certify(
     seen_names: set[str] = set()
     total = family.grid.size()
 
+    import time as _time
+
+    timings: list = []
+    t_start = _time.monotonic()
     for i, pt in enumerate(family.grid.points(), 1):
         if progress is not None:
             progress(i, total, dict(pt))
+        if budget_seconds is not None and _time.monotonic() - t_start > budget_seconds:
+            hot = sorted(timings, key=lambda x: -x[1])[:5]
+            raise CertificationError(
+                [({}, f"BUDGET EXCEEDED after {i - 1}/{total} instances "
+                      f"({_time.monotonic() - t_start:.0f}s); hottest: "
+                      + ", ".join(f"{n}={dt:.1f}s" for n, dt in hot))]
+            )
+        _t0 = _time.monotonic() if profile else 0.0
         name = family.lean_name(pt)
         if name in seen_names:
             failures.append((dict(pt), f"duplicate lean_name {name!r}"))
@@ -549,6 +583,8 @@ def certify(
                     subdivision_trees.append(tree)
         except (ValueError, sp.PolynomialError) as e:
             failures.append((dict(pt), str(e)))
+        if profile:
+            timings.append((name, _time.monotonic() - _t0))
 
     if failures:
         raise CertificationError(failures)
@@ -560,6 +596,7 @@ def certify(
             instances=tuple(instances),
             checks_passed=checks,
             subdivisions=tuple(subdivision_trees),
+            timings=tuple(timings),
         )
     finally:
         _construction_guard.open = False

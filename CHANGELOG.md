@@ -144,6 +144,31 @@ forced-negative weights; 'change the basis, not the search'); declared-
 complete witness spaces (`witnesses_complete=True` — exhaustion becomes
 PROVEN IMPOSSIBLE, ledger-ready).
 
+## 0.1.1 (2026-08-16) — the review cycle, absorbed
+
+**The G1 review response** (REVIEW_20260816_TELPERION_G1: PASS math/honesty,
+FAIL shipped Lean): the empty-symbol emission bug (`def c1 ( : ℝ)` — the
+"empty-syms guard" had fixed a crash, not the emission) repaired; a lint rule
+for the class; `telperion-production.yml` — the COMPILE GATE over frozen
+production artifacts (regen-diffs check bytes, tests check mathematics, only
+`lake build` checks that shipped Lean is Lean); version discipline learned
+(emission changes must bump — the input hash covers inputs, not the emitter's
+code; every family refrozen under 0.1.1).
+
+**Fourth-brainstorm batch (N, O, P, Q, R, S)**: typed hole contracts in
+`render()` (empty binders now UNCONSTRUCTIBLE — caught at fill time, before
+lint, before freeze); the cost ledger (`certify(profile=, budget_seconds=)` +
+`profile_report` — the R7 45-minute blind grind, never again); variable-map
+adapters (`MapSpec`/`VarMapAdapterEmitter` — the campaign's most-used
+maneuver generalized: substitution glue in original variables, subsuming the
+reparam shape); dichotomy glue (`DichotomyGlueEmitter` — le_total case
+splits over declared thresholds, the classification-not-surgery pattern);
+gate negative-controls (every known-bad artifact class PROVEN red in its
+gate — silence from a gate is indistinguishable from safety); bracket
+adequacy (`margins --adequacy` — the MR69 ΔCHARGE fragility class as a
+report; FIRST RUN on G1 found exactly one FRAGILE cell in 514: a (2,0,1)
+tax-window leaf at 0.59 of its bracket width).
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
