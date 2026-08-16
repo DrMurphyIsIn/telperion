@@ -34,6 +34,7 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .lattice_box import LatticeBoxCertificate  # noqa: F401
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
