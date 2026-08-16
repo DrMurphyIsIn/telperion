@@ -77,6 +77,18 @@ NOT_POLYA. Deliberately not ported from Arda: Rust kernels (audit surface),
 island/climate machinery (overkill). Named future step: pluggable hunt
 domains (the origin hunted over TREES via Prufer sequences).
 
+**Route ledger + executable status** (the collaboration layer from the
+history review): `--ledger` on diagnose/relax/hunt appends refused routes and
+exact disproofs to a deduplicated, fingerprint-keyed JSON ledger
+(`telperion ledger` renders ROUTES.md) — the origin's `*_nogo*` convention as
+infrastructure, so nobody re-attempts a dead route blind.  `telperion status`
+generates STATUS.md by EXECUTING every manifest check (theorem counts and
+input hashes read from frozen manifests; verdicts never asserted), with the
+origin's reminder that green certificates do not by themselves prove a
+surrounding conjecture.  `telperion review-brief` fills the adversarial
+review checklist with the family's actual facts — and nags when ties or
+anchors are undeclared.
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
