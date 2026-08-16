@@ -34,6 +34,17 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .bellman import (  # noqa: F401
+    concave_hull,
+    cramer_rate,
+    fenchel_transform,
+    sub_hull_gap,
+    value_function,
+)
+from .rigidity import (  # noqa: F401
+    ArithmeticRigidityCertificate,
+    near_star_R,
+)
 from .lorentzian import (  # noqa: F401
     HodgeRiemannCertificate,
     is_lorentzian_form,
