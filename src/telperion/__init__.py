@@ -34,6 +34,14 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
+from .entropy import (  # noqa: F401
+    BregmanCertificate, bregman_bound, permanent01, shearer_holds,
+)
+from .ehrhart import is_quasi_polynomial, minimal_period  # noqa: F401
+from .graphlimit import (  # noqa: F401
+    free_energy_density, matching_polynomial, near_star_limit_density,
+)
 from .mconvex import (  # noqa: F401
     MConvexityCertificate,
     is_m_concave,
