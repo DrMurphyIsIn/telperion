@@ -36,6 +36,14 @@ from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
 from .uniform_tail import ArmDominanceCertificate, UniformArmDominanceCertificate, arm_dominance_uniform, uniform_arm_dominance  # noqa: F401
 from .lattice_box import LatticeBoxCertificate  # noqa: F401
+from .gauge_lift import (  # noqa: F401
+    ARM, ARM2, CHERRY, LEAF, TIE,
+    ChildType, GaugeLiftCertificate, per_step_multiplier_limit,
+)
+from .benchmark_factor import (  # noqa: F401
+    BenchmarkFactorCertificate, benchmark, phi11, rho,
+)
+from .telescope_product import TelescopeCertificate, q as telescope_q  # noqa: F401
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
