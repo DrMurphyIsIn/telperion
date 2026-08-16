@@ -15,10 +15,12 @@ dependencies = ["sympy>=1.12"]
 
 [project.optional-dependencies]
 flint = ["python-flint>=0.6"]
+mcp = ["mcp>=1.2"]
 dev = ["pytest>=8"]
 
 [project.scripts]
 telperion = "telperion.cli:main"
+telperion-mcp = "telperion.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telperion"]

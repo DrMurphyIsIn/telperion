@@ -90,7 +90,9 @@ def polya_certify(expr: sp.Expr, syms: Sequence[sp.Symbol]) -> PolyaCertificate:
     Raises ValueError (with a reason) if the expression has no such form —
     that is a refusal, not a soundness event.
     """
-    num, den = sp.fraction(sp.together(sp.simplify(expr)))
+    # exactly the origin generator's normal form: together -> fraction -> expand
+    # (no simplify() — it can re-split the fraction and wreck the sign structure)
+    num, den = sp.fraction(sp.together(expr))
     num, den = sp.expand(num), sp.expand(den)
     if syms:
         pd = sp.Poly(den, *syms)

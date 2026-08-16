@@ -85,6 +85,26 @@ distinct factor. Term order is owned by the tool (graded-lex), not by sympy's
 print order — emitted text is byte-stable across sympy versions, which the CI
 matrix enforces.
 
+## Using Telperion from LLM agents
+
+Three surfaces, layered on the same enforced workflow:
+
+- **CLI** — `telperion certify|emit|diff|probe` (families addressed as
+  `path/to/family.py:factory`). `probe` answers "is this single inequality
+  Polya-certifiable?" in one call; `emit` refuses without validation.
+- **MCP server** — `pip install "telperion[mcp]"`, then register in Claude
+  Code with `claude mcp add telperion -- telperion-mcp`. Tools: `polya_probe`,
+  `certify_family`, `emit_family`, `diff_family`, `read_manifest`; resources:
+  `telperion://tactic-contract`, `telperion://methodology`. The tool set
+  mirrors the workflow — there is no path to emitted Lean that skips
+  certification or validation. The server imports the family modules you name:
+  point it only at trusted project files.
+- **Claude Code plugin / skill** — [`claude-plugin/`](claude-plugin/) bundles
+  the MCP server registration with a skill that teaches an agent the
+  discipline (probe first, never hand-edit emitted files, never skip
+  validation, compile in CI, diff on every change). To use the skill alone,
+  copy `claude-plugin/skills/telperion/` into `~/.claude/skills/`.
+
 ## Install
 
 ```bash
