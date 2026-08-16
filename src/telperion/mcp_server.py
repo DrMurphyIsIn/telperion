@@ -146,6 +146,26 @@ def verify_project(manifest: str = "telperion.toml", group: str = "all") -> str:
 
 
 @mcp.tool()
+def margins(family: str, samples: int = 60) -> str:
+    """Tightness analysis of a certified family: for every certificate, the
+    exact tie variety (coordinate faces where the inequality degenerates),
+    the numerator's constant-term floor, and an exact-rational sample minimum
+    with its argmin. Tight/marginal instances listed first — this is where
+    the extremal structure of the mathematics lives."""
+    code, out = _cli(["margins", family, "--samples", str(samples), "--all"])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def ties(expression: str, symbols: str = "u") -> str:
+    """Exact equality cases of a single 0 <= expression claim on the orthant:
+    combinatorial tie faces for nonneg-coefficient numerators, exact real
+    roots for univariate mixed-sign numerators."""
+    code, out = _cli(["ties", expression, "--symbols", symbols])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
 def read_manifest(frozen_dir: str) -> str:
     """Read a frozen directory's provenance manifest (family, input hash,
     tool version, files, theorem count)."""

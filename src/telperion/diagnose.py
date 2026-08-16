@@ -85,10 +85,20 @@ def _remedy_hints(expr: sp.Expr, syms, num: sp.Expr) -> tuple[str, ...]:
             "on the family (or pass lift_max to polya_certify)"
         )
     elif lifted is None:
+        from .margins import tie_points
+
+        located = tie_points(sp.expand(sp.fraction(sp.together(expr))[0]), syms)
+        where = (
+            "; ties at " + " | ".join(
+                ", ".join(f"{k} = {v}" for k, v in p.items()) for p in located[:4]
+            )
+            if located
+            else ""
+        )
         hints.append(
-            "Pólya lifting does not converge by N=8 — the claim likely touches an "
-            "equality case (a tie); lifting certifies strict positivity only. "
-            "Subdivide to isolate the tie region (auto_subdivide / force_subdivide)"
+            "Pólya lifting does not converge by N=8 — the claim touches an "
+            f"equality case{where}. Lifting certifies strict positivity only; "
+            "subdivide to isolate the tie region (auto_subdivide / force_subdivide)"
         )
     pn = sp.Poly(sp.expand(num), *syms)
     bad = [(m, c) for m, c in zip(pn.monoms(), pn.coeffs()) if c < 0]

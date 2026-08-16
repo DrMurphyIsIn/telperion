@@ -34,6 +34,15 @@ original cell theorem; diagnose now reports the exact lift exponent when one
 exists, and names the tie obstruction when none does.  Toy example gains
 ToyLift and ToySplit — both new shapes compile against pinned Mathlib in CI.
 
+**Tie-variety extraction + margins** (`margins.py`, CLI `margins`/`ties`, MCP
+tools): the exact equality cases of every certificate — combinatorial tie
+faces via minimal hitting sets for certified (nonneg-coefficient) numerators
+(with the structural corollary: certified instances have no interior ties,
+which is exactly why interior-tie claims need the arithmetic treatment),
+exact real roots for refused univariate claims; per-certificate margin reports
+(constant-term floor + exact-rational sample minimum with argmin), tight
+instances first.  diagnose now names the tie points when lifting fails.
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);

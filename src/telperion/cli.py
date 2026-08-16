@@ -186,6 +186,51 @@ def cmd_diagnose(args) -> int:
     return 0 if d.verdict == "CERTIFIABLE" else 1
 
 
+def cmd_margins(args) -> int:
+    """Tightness analysis: where is the family tight, by how much elsewhere."""
+    from .margins import margin_report
+
+    fam, _ = _load(args.family)
+    cf = certify(fam, force_subdivide=0)
+    reports = margin_report(cf, samples=args.samples)
+    tight = [r for r in reports if r.is_tight]
+    print(f"{fam.name}: {len(reports)} certificates, {len(tight)} tight/marginal")
+    shown = reports if args.all else reports[: max(len(tight), 10)]
+    for r in shown:
+        print("  " + r.render())
+    if not args.all and len(shown) < len(reports):
+        print(f"  ... {len(reports) - len(shown)} more (use --all)")
+    return 0
+
+
+def cmd_ties(args) -> int:
+    """Exact tie points/faces of a single 0 <= expr claim."""
+    import sympy as sp
+
+    from .margins import tie_faces, tie_points
+    from .parsing import safe_parse_expr
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
+    expr = safe_parse_expr(args.expression, syms)
+    num = sp.expand(sp.fraction(sp.together(expr))[0])
+    try:
+        faces = tie_faces(num, syms)
+        if not faces:
+            print("no ties on the orthant (positive constant term)")
+        else:
+            for face in faces:
+                print("tie face: {" + ", ".join(f"{s} = 0" for s in face) + "}")
+        return 0
+    except ValueError:
+        pts = tie_points(num, syms)
+        if not pts:
+            print("no exact ties found (mixed-sign numerator; absence NOT proven)")
+            return 0
+        for p in pts:
+            print("tie point: " + ", ".join(f"{k} = {v}" for k, v in p.items()))
+        return 0
+
+
 def cmd_probe(args) -> int:
     """Quick answer to: does this expression have a Polya certificate?"""
     import sympy as sp
@@ -246,6 +291,17 @@ def main(argv=None) -> int:
     p.add_argument("--symbols", default="u", help="symbols when target is an expression")
     p.add_argument("--trials", type=int, default=400)
     p.set_defaults(fn=cmd_diagnose)
+
+    p = sub.add_parser("margins", help="tightness analysis: ties + margins per certificate")
+    p.add_argument("family")
+    p.add_argument("--samples", type=int, default=60)
+    p.add_argument("--all", action="store_true")
+    p.set_defaults(fn=cmd_margins)
+
+    p = sub.add_parser("ties", help="exact tie points/faces of one expression")
+    p.add_argument("expression")
+    p.add_argument("--symbols", default="u")
+    p.set_defaults(fn=cmd_ties)
 
     p = sub.add_parser("probe", help="check one expression for a Polya certificate")
     p.add_argument("expression")
