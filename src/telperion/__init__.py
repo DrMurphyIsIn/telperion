@@ -34,6 +34,12 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .mconvex import (  # noqa: F401
+    MConvexityCertificate,
+    is_m_concave,
+    is_m_convex,
+    separable_concave_on_base,
+)
 from .bellman import (  # noqa: F401
     concave_hull,
     cramer_rate,
