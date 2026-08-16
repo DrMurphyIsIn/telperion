@@ -47,6 +47,9 @@ from .telescope_product import TelescopeCertificate, q as telescope_q  # noqa: F
 from .perm_dominance import (  # noqa: F401
     PermanentalDominanceCertificate, char_involution, dim as irrep_dim,
 )
+from .scope import (  # noqa: F401
+    TermwiseScopeCertificate, is_forest, shortest_cycle,
+)
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
