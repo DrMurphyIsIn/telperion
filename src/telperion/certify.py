@@ -95,6 +95,9 @@ class _Guard:
 _construction_guard = _Guard()
 
 
+_ACTIVE_CACHE = None
+
+
 def polya_certify(
     expr: sp.Expr, syms: Sequence[sp.Symbol], lift_max: int = 0
 ) -> PolyaCertificate:
@@ -108,6 +111,20 @@ def polya_certify(
     Raises ValueError (with a reason) if the expression has no such form —
     that is a refusal, not a soundness event.
     """
+    if _ACTIVE_CACHE is not None:
+        from .cache import cert_key
+
+        key = cert_key(expr, lift_max)
+        got = _ACTIVE_CACHE.get(key)
+        if got is not None:
+            if not got.get("ok"):
+                raise ValueError(got["reason"])
+            return PolyaCertificate(
+                expr=expr,
+                numerator=sp.sympify(got["num"]),
+                denominator=sp.sympify(got["den"]),
+                lift_n=got["lift_n"],
+            )
     # exactly the origin generator's normal form: together -> fraction -> expand
     # (no simplify() — it can re-split the fraction and wreck the sign structure)
     num, den = sp.fraction(sp.together(expr))
@@ -133,7 +150,12 @@ def polya_certify(
                 den = sp.expand(den * lifter)
                 bad = []
         if bad:
-            raise ValueError(f"numerator not all-nonneg-integer: {bad[:3]}")
+            reason = f"numerator not all-nonneg-integer: {bad[:3]}"
+            if _ACTIVE_CACHE is not None:
+                from .cache import cert_key
+
+                _ACTIVE_CACHE.put(cert_key(expr, lift_max), {"ok": False, "reason": reason})
+            raise ValueError(reason)
         const, factors = sp.factor_list(den)
         if const <= 0:
             raise ValueError(f"denominator constant {const} <= 0")
@@ -147,7 +169,39 @@ def polya_certify(
             num, den = -num, -den
         if num < 0:
             raise ValueError(f"negative constant {num}/{den}")
+    if _ACTIVE_CACHE is not None:
+        from .cache import cert_key
+
+        _ACTIVE_CACHE.put(
+            cert_key(expr, lift_max),
+            {"ok": True, "num": sp.srepr(num), "den": sp.srepr(den), "lift_n": lift_n},
+        )
     return PolyaCertificate(expr=expr, numerator=num, denominator=den, lift_n=lift_n)
+
+
+def _dual_engine_check(family, pt, trials: int = 3) -> int:
+    """Cross-check the sympy target against the family's independent
+    (pure-Fraction) implementation at seeded exact points."""
+    import random
+    from fractions import Fraction
+
+    if family.independent_target is None or family.target is None:
+        return 0
+    rng = random.Random(hash(str(sorted(pt.items()))) & 0xFFFF)
+    target = family.target(pt)
+    for _ in range(trials):
+        point = {
+            str(s): Fraction(rng.randint(0, 60), rng.randint(1, 6))
+            for s in family.symbols
+        }
+        sym_val = target.subs({s: sp.Rational(point[str(s)]) for s in family.symbols})
+        ind_val = family.independent_target(pt, point)
+        if sym_val != sp.Rational(ind_val):
+            raise ValueError(
+                f"DUAL-ENGINE DISAGREEMENT at {point}: sympy={sym_val}, "
+                f"independent={ind_val} — one implementation is wrong"
+            )
+    return trials
 
 
 def _pin_checks(family, pt, cert) -> int:
@@ -316,7 +370,7 @@ def _certify_point(args):
             cert = polya_certify(
                 family.target(pt), family.symbols, lift_max=family.auto_lift
             )
-            n_pin = _pin_checks(family, pt, cert)
+            n_pin = _pin_checks(family, pt, cert) + _dual_engine_check(family, pt)
             atoms = tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
             inst = CertifiedInstance(
                 point=dict(pt), lean_name=name, corners=(cert,),
@@ -337,6 +391,7 @@ def certify(
     progress=None,
     force_subdivide: int = 0,
     workers: int = 1,
+    cache_dir=None,
 ) -> CertifiedFamily:
     """Run every self-check for every grid point; return the emission witness.
 
@@ -345,7 +400,15 @@ def certify(
 
     workers > 1 certifies grid points in parallel via fork-context
     multiprocessing (fork inherits the family's closures; unavailable on
-    platforms without fork — falls back to serial)."""
+    platforms without fork — falls back to serial).
+
+    cache_dir enables the persistent certification cache (a performance
+    layer only — the drift net and the kernel remain the arbiters)."""
+    global _ACTIVE_CACHE
+    if cache_dir is not None:
+        from .cache import DiskCache
+
+        _ACTIVE_CACHE = DiskCache(cache_dir)
     if workers > 1:
         import multiprocessing as mp
 
@@ -452,7 +515,7 @@ def certify(
                 cert = polya_certify(
                     family.target(pt), family.symbols, lift_max=family.auto_lift
                 )
-                checks += 1 + _pin_checks(family, pt, cert)
+                checks += 1 + _pin_checks(family, pt, cert) + _dual_engine_check(family, pt)
                 atoms = (
                     tuple(family.den_atoms(pt)) if family.den_atoms is not None else ()
                 )

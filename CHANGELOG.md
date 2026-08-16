@@ -118,6 +118,20 @@ membership (`cone_combination` — target = Σ λᵢ·basisᵢ with λ ≥ 0 dec
 exact rational arithmetic; the LP cutting-plane maneuver's solvable core,
 float-guided LP for the underdetermined case named-open).
 
+**Third-brainstorm batch (L, M, K)**: dual-engine validation as API
+(`family.independent_target` — a pure-Fraction second implementation
+cross-checked exactly at certification; the pi(T(3,3,3)) pattern, which had
+already caught the nsimplify bug when hand-rolled); the persistent
+certification cache (`certify(cache_dir=)` + `DiskCache`/`memoize` — content-
+hash-keyed Polya results incl. cached refusals; performance layer only, the
+drift net and kernel stay the arbiters; justified by the 972-cell run's
+redundant-search profile); interval symbols (`interval_family` — bracket-
+quantified claims `∀ ρ ∈ [lo,hi]`, multilinear per bracket, LOWERED onto the
+bilinear-box machinery with floors: zero new emitters, the emitted _cell
+theorem IS the quantified statement; composes with ExactFact bracket lemmas —
+demonstrated on a miniature G1 floor claim over the campaign's real
+log-bracket constants).  The G1 floor stratum is now expressible end to end.
+
 **Named open items** (deliberately not shipped as stubs): `python-flint` fast
 path (sympy expand/together dominates the profile, so a flint coefficient pass
 would be decorative until the conversion layer is done properly);
@@ -126,6 +140,8 @@ multi-axis grids; the SOS Lean-emitter path (certificates found by sos.py are
 surfaced in diagnose but not yet emitted — needs a squares-aware skeleton);
 incremental per-instance certification caching; bilinear tails; retrofitting
 the R7 star-of-hubs family onto the witness API (it hand-rolls the search);
-float-guided LP for underdetermined cone membership; generic induction
+float-guided LP for underdetermined cone membership; Farkas dual witnesses
+on cone/witness refusals (brainstorm item I); unimodality certificates
+(item J — the relax-verdict's prescribed arithmetic tool); generic induction
 emission for telescoping potentials (the v2 headline); hunt over pluggable
 combinatorial domains.

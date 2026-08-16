@@ -111,6 +111,12 @@ class InequalityFamily:
     # pairs pinning the pipeline to known evaluations.
     ties: Callable[[GridPoint], Sequence[Mapping]] | None = None
     anchors: Callable[[GridPoint], Sequence[tuple[Mapping, sp.Rational]]] | None = None
+    # The dual-engine discipline (the pi(T(3,3,3)) = 19683/256 pattern): an
+    # INDEPENDENT, non-sympy implementation of the target —
+    # independent_target(pt, point) with point a {symbol name: Fraction} dict,
+    # returning a Fraction.  Certification cross-checks it exactly at seeded
+    # rational points; a disagreement between the two engines is a refusal.
+    independent_target: Callable[..., object] | None = None
 
     def __post_init__(self):
         modes = [
