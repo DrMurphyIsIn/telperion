@@ -1,0 +1,9 @@
+{
+  "family": "PadicValuation",
+  "input_hash": "b80b1fde6f094d5817023659e517c14c3879a4aafee8ef71ebb1a7ce49fbf13f",
+  "tool_version": "0.1.3",
+  "files": [
+    "PadicValuation.lean"
+  ],
+  "n_theorems": 4
+}

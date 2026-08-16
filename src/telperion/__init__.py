@@ -34,6 +34,16 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .padic import (  # noqa: F401
+    ADELIC_NOTE,
+    SPLIT_LEMMA,
+    TELESCOPE_LEMMA,
+    ValuationFact,
+    padic_decompose,
+    padic_val,
+    padic_val_frac,
+    valuation_facts_lean,
+)
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
