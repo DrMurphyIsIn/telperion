@@ -13,7 +13,8 @@ from dataclasses import dataclass
 import sympy as sp
 
 from .certify import CertifiedFamily, CertifiedInstance
-from .expr import _poly_any_lean, den_lean, expr_lean_factored, poly_lean
+from .expr import (_poly_any_lean, den_lean, expr_lean_factored,
+                   expr_lean_from_parts, poly_lean)
 from .lean import LeanProfile, render
 from .workflow import Emitter
 
@@ -80,7 +81,7 @@ class DirectPolyaEmitter(Emitter):
         out: list[str] = []
         for inst in fam.instances:
             cert = inst.corners[0]
-            body = expr_lean_factored(cert.expr, syms)
+            body = expr_lean_from_parts(cert.numerator, cert.denominator, syms)
             num = poly_lean(sp.Poly(cert.numerator, *syms), syms) if syms else str(
                 cert.numerator
             )

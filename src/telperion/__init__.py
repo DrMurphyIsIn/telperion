@@ -6,7 +6,7 @@ trusted component.  A defective certificate manifests as a compile failure,
 never a false theorem.  See docs/METHODOLOGY.md.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 from .certify import (  # noqa: F401
     CertificationError,

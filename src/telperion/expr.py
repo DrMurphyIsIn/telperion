@@ -151,6 +151,18 @@ def expr_lean_factored(e: sp.Expr, syms: Sequence[sp.Symbol]) -> str:
     so every denominator the tactic sees must be spelled as that product.
     """
     num, den = sp.fraction(sp.together(sp.expand(e)))
+    return expr_lean_from_parts(num, den, syms)
+
+
+def expr_lean_from_parts(num: sp.Expr, den: sp.Expr,
+                         syms: Sequence[sp.Symbol]) -> str:
+    """expr_lean_factored's rendering from an ALREADY-NORMALIZED
+    (numerator, denominator) pair — the fast path when certification has
+    stored the pair on the certificate.  Re-deriving it from the raw claim
+    expression re-expands the original product tree, which stalled the R7
+    render at ~8 s/instance x 972; the stored pair skips straight to
+    rendering.  Output must be byte-identical to the slow path — the
+    freeze/diff harness is the regression test for that equality."""
     num_s = _poly_any_lean(sp.expand(num), syms)
     if sp.simplify(den - 1) == 0:
         return num_s
