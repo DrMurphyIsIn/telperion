@@ -57,13 +57,23 @@ class ValidationReport:
 
 @dataclass
 class Emitter:
-    """Base emitter interface; concrete emitters live in emit.py."""
+    """Base emitter interface; concrete emitters live in emit.py / emit_adapters.py."""
 
     kind: str = field(default="", init=False)
 
     def emit_body(self, fam: CertifiedFamily, profile: LeanProfile) -> tuple[str, int]:
         """Return (Lean body text, number of theorems)."""
         raise NotImplementedError
+
+    def config_fingerprint(self) -> str:
+        """Stable serialization of this emitter's configuration for the input
+        hash.  Callable fields cannot be hashed semantically; their effect is
+        covered by the freeze/diff byte comparison instead."""
+        parts = [self.kind]
+        for k, v in sorted(vars(self).items()):
+            if k != "kind" and not callable(v):
+                parts.append(f"{k}={v!r}")
+        return "|".join(parts)
 
 
 def emit(
@@ -86,7 +96,14 @@ def emit(
             f"emit() refused: validation not green "
             f"({[n for n, ok in validation.checks if not ok]})"
         )
+    import hashlib
+
     ihash = family_hash(fam.family, profile)
+    h = hashlib.sha256(ihash.encode())
+    for em in emitters:
+        h.update(em.config_fingerprint().encode())
+        h.update(b"\x00")
+    ihash = h.hexdigest()
     bodies: list[str] = []
     n_theorems = 0
     for em in emitters:

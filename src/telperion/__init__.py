@@ -16,6 +16,11 @@ from .certify import (  # noqa: F401
     polya_certify,
 )
 from .emit import BilinearBoxEmitter, DirectPolyaEmitter  # noqa: F401
+from .emit_adapters import (  # noqa: F401
+    CaseDispatchAssemblyEmitter,
+    Reparam,
+    ReparamAdapterEmitter,
+)
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
