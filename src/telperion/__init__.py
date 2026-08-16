@@ -34,6 +34,13 @@ from .varmap import MapSpec, VarMapAdapterEmitter  # noqa: F401
 from .dichotomy import DichotomyGlueEmitter  # noqa: F401
 from .certify import profile_report, restrict_instances  # noqa: F401
 from .potential import fixed_points, per_node_family  # noqa: F401
+from .interlacing import (  # noqa: F401
+    InterlacingCertificate,
+    interlaces,
+    is_real_rooted,
+    sos_decompose,
+    wronskian,
+)
 from .padic import (  # noqa: F401
     ADELIC_NOTE,
     SPLIT_LEMMA,
