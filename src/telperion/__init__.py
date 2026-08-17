@@ -87,7 +87,7 @@ from .fractal_eigenvalue import (  # noqa: F401
     arm_transfer_factor, density_at, near_star_edges,
 )
 from .bosonic import (  # noqa: F401
-    BosonicReadingCertificate, arm_condensate, bosonic_permanent,
+    BoseEinsteinStatisticsCertificate, BosonicReadingCertificate, arm_condensate, bosonic_permanent,
     condensate_density, fermion_vacuum_det, gross_pitaevskii_bethe,
 )
 from .near_star_tail import (  # noqa: F401
