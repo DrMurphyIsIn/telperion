@@ -96,6 +96,10 @@ from .bosonic import (  # noqa: F401
     condensate_density, fermion_vacuum_det, gross_pitaevskii_bethe, hafnian,
     per_from_hafnian, van_der_waerden_bound,
 )
+from .gibbs_free_energy import (  # noqa: F401
+    GibbsFreeEnergyCertificate, matching_counts, monomer_dimer_free_energy,
+    matching_measure, monomer_dimer_Z, unimodular_free_energy_limit,
+)
 from .collective_cancellation import (  # noqa: F401
     CollectiveCancellationNote, arm_factor, hub_factor,
     near_star_balance, per_vertex_factor,
