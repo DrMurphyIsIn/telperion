@@ -40,6 +40,10 @@ from .gauge_lift import (  # noqa: F401
     ARM, ARM2, CHERRY, LEAF, TIE,
     ChildType, GaugeLiftCertificate, per_step_multiplier_limit,
 )
+from .amplitude import (  # noqa: F401
+    amplitude_gap, amplitude_product11, bg_amplitude_holds,
+    cavity_potential_residual, vertex_amplitudes,
+)
 from .benchmark_factor import (  # noqa: F401
     BenchmarkFactorCertificate, benchmark, phi11, rho,
 )
