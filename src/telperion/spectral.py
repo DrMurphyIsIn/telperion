@@ -131,7 +131,7 @@ def friedel_phase_shift(n, edges, root):
     return cmath.phase(1 + g[root])
 
 
-def free_energy_density(n, edges):
+def orbital_free_energy_density(n, edges):
     """The free-fermion free energy per orbital/site: rho^(1/n) = (PROD_{lambda>0}(1+lambda^2))^(1/n).
     For a growing tree family this approaches a LIMIT (the thermodynamic limit / limiting density of
     states -- "successive orbitals approach a limiting amplitude").  The near-star's limit is
