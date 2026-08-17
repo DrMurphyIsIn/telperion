@@ -96,6 +96,10 @@ from .bosonic import (  # noqa: F401
     condensate_density, fermion_vacuum_det, gross_pitaevskii_bethe, hafnian,
     per_from_hafnian, van_der_waerden_bound,
 )
+from .collective_cancellation import (  # noqa: F401
+    CollectiveCancellationNote, arm_factor, hub_factor,
+    near_star_balance, per_vertex_factor,
+)
 from .sporadic_tie import (  # noqa: F401
     IntegralityStrictnessCertificate, SporadicTieConstraintCertificate,
     amp_product, deficit_lower_bound, tie_forces_divisibility,
