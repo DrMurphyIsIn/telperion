@@ -275,3 +275,10 @@ from .dirac_index import (  # noqa: F401
     bipartition,
     dirac_chiral_index,
 )
+from .gate_strictness import (  # noqa: F401
+    GateStrictnessCertificate,
+    deficit_23_valuation,
+    deficit_integer,
+    rho_b_power_is_rational,
+    strictness_bound,
+)
