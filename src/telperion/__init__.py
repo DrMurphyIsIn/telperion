@@ -40,6 +40,9 @@ from .gauge_lift import (  # noqa: F401
     ARM, ARM2, CHERRY, LEAF, TIE,
     ChildType, GaugeLiftCertificate, per_step_multiplier_limit,
 )
+from .permanent_tie import (  # noqa: F401
+    QuantizedPermanentTieCertificate, near_star_permanent, near_star_prod_deg,
+)
 from .quantization import QuantizationCertificate, continuous_overshoot, continuous_phi11  # noqa: F401
 from .fermion_dof import (  # noqa: F401
     FermionDOFCertificate, degrees, fermion_dof_count, laplacian_ratio_as_fermion_sum,
