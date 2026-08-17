@@ -71,7 +71,7 @@ from .matching_free_energy import (  # noqa: F401
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
 from .counterexample_hunt import (  # noqa: F401
-    CounterexampleHunt, probe_monotonicity,
+    CounterexampleHunt, near_star_seeds, probe_monotonicity, scaled_hunt,
 )
 from .rectification import (  # noqa: F401
     RectificationCertificate, canonical_form, is_canonical,
