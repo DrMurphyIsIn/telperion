@@ -70,6 +70,10 @@ from .matching_free_energy import (  # noqa: F401
     CompetitorExtremalityCertificate, near_star_edges, rho as matching_rho,
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
+from .fractal_eigenvalue import (  # noqa: F401
+    FractalEigenvalueCertificate, arm_transfer_eigenvalue_closed_form,
+    arm_transfer_factor, density_at, near_star_edges,
+)
 from .transfer_tail import (  # noqa: F401
     TransferTailBound, default_families, density_limit, phi_density,
 )
