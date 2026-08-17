@@ -54,6 +54,9 @@ from .matching_free_energy import (  # noqa: F401
     CompetitorExtremalityCertificate, near_star_edges, rho as matching_rho,
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
+from .parallel_map import (  # noqa: F401
+    IslandModel, max_rho_for_n, parallel_sweep,
+)
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
