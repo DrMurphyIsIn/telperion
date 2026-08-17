@@ -99,6 +99,9 @@ from .bosonic import (  # noqa: F401
 from .branching_unimodality import (  # noqa: F401
     BranchingUnimodalityCertificate, boost as gstep_boost,
 )
+from .multihub_submultiplicative import (  # noqa: F401
+    MultiHubSubmultiplicativeCertificate, cut_components,
+)
 from .r2_submultiplicative import (  # noqa: F401
     R2SubmultiplicativeCertificate, a_bigroot, a_hub as dn_a_hub, double_near_star,
 )
