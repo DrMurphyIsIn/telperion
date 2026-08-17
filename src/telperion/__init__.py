@@ -86,6 +86,10 @@ from .fractal_eigenvalue import (  # noqa: F401
     FractalEigenvalueCertificate, arm_transfer_eigenvalue_closed_form,
     arm_transfer_factor, density_at, near_star_edges,
 )
+from .girardeau import (  # noqa: F401
+    GirardeauDualityCertificate, free_fermion_product,
+    functional_determinant, hard_core_boson_partition,
+)
 from .bosonic import (  # noqa: F401
     BoseEinsteinStatisticsCertificate, BosonicReadingCertificate, BosonicToolkitCertificate,
     arm_condensate, bose_einstein_occupation, bosonic_permanent, coherent_state_occupation,
