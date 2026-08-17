@@ -85,8 +85,14 @@ def _all_trees(n):
 
 @dataclass(frozen=True)
 class CompetitorExtremalityCertificate:
-    """For n = 2s+1: verifies the near-star N(0,s) maximizes rho over all trees on n vertices, and
-    emits the binding inequality against the runner-up (competitor extremality for fixed n)."""
+    """WRONG QUANTITY FOR BG (kept for the monomer-dimer problem).  This maximizes RAW rho=per(L)/prod
+    deg, which is the monomer-dimer partition function -- MAXIMIZED BY BALANCED CATERPILLARS, not the
+    near-star, for large n (e.g. (3,4,3) beats N(0,11) at n=23).  Brualdi-Goldwasser is about the ROOTED
+    branch Phi (rooted_phi.bg_phi11); use BGExtremalityCertificate for BG.  See
+    docs/geography_past_11th_root.md.  This class certifies the raw-rho (bosonic monomer-dimer) extremal,
+    which holds only for n <= ~21.
+
+    For n = 2s+1: verifies the near-star N(0,s) maximizes rho over all trees on n vertices."""
 
     s: int
 

@@ -57,6 +57,9 @@ from .tree_search import TreeLandscapeSearch  # noqa: F401
 from .parallel_map import (  # noqa: F401
     IslandModel, max_rho_for_n, parallel_sweep,
 )
+from .rooted_phi import (  # noqa: F401
+    BGExtremalityCertificate, bg_phi11, bg_phi11_argmax_root, phi11_rooted,
+)
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
