@@ -88,3 +88,44 @@ def resonant_impurity_site(n, edges):
         if best is None or v > best[0]:
             best = (v, r)
     return best
+
+
+# ---- Friedel impurity toolkit ----------------------------------------------
+# By the matrix-determinant lemma, a +1 on-site impurity at r multiplies the host determinant by
+# (1 + G_rr), G_rr = [(D+iA)^{-1}]_rr the HOST local Green's function.  So the root-dependence of Phi^11
+# collapses onto the local Friedel RESPONSE  R(r) = (1 + G_rr) * deg_r/(deg_r+1):
+#     Phi^11(rooted at r) = [root-independent const] * R(r)^11        (when the host is non-singular).
+# For the near-star, G_hub = 3/(4s) and R = (4s+3)/(4(s+1)); at the tie s=5, R = 23/24 -- the exceptional
+# prime 23 is the numerator of the resonance condition (the arithmetic tie in scattering language).
+# CAVEAT: the factorization degenerates when the host D+iA is singular (a zero mode = itself a resonance);
+# the exact Phi always lives in rooted_phi.
+
+def host_green_diagonal(n, edges):
+    """Diagonal of the host Green's function G_vv = [(D+iA)^{-1}]_vv (complex), or None if singular."""
+    G = _graph(n, edges)
+    A = nx.to_numpy_array(G, nodelist=range(n))
+    H0 = np.diag([G.degree(v) for v in range(n)]).astype(complex) + 1j * A
+    if abs(np.linalg.det(H0)) < 1e-12:
+        return None
+    return np.diag(np.linalg.inv(H0))
+
+
+def friedel_response(n, edges, root):
+    """The Friedel impurity response R(root) = (1 + G_rr) * deg_r/(deg_r+1) -- the sole carrier of the
+    root-dependence of Phi^11.  Returns None if the host is singular."""
+    g = host_green_diagonal(n, edges)
+    if g is None:
+        return None
+    G = _graph(n, edges)
+    d = G.degree(root)
+    return (1 + g[root]) * d / (d + 1)
+
+
+def friedel_phase_shift(n, edges, root):
+    """The impurity phase shift delta = arg(1 + G_rr) (Friedel).  Real host Green's function (as at a
+    symmetric hub) => delta = 0 = an on-resonance non-scattering response.  None if host singular."""
+    g = host_green_diagonal(n, edges)
+    if g is None:
+        return None
+    import cmath
+    return cmath.phase(1 + g[root])
