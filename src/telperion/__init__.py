@@ -43,7 +43,7 @@ from .gauge_lift import (  # noqa: F401
 from .quantization import QuantizationCertificate, continuous_overshoot, continuous_phi11  # noqa: F401
 from .fermion_dof import (  # noqa: F401
     FermionDOFCertificate, degrees, fermion_dof_count, laplacian_ratio_as_fermion_sum,
-    matchings, pauli_exclusion_holds, perfect_matching_count,
+    matchings, pauli_decompose, pauli_exclusion_holds, perfect_matching_count,
 )
 from .immanant import (  # noqa: F401
     determinant, immanant, normalized_immanant, parastatistics_spectrum,
