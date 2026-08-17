@@ -324,3 +324,9 @@ from .multi_hub_extremality import (  # noqa: F401
     is_near_star,
     phi_maximizer,
 )
+from .double_near_star import (  # noqa: F401
+    DoubleNearStarCertificate,
+    double_near_star_edges,
+    dns_phi11,
+    multi_hub_peak,
+)
