@@ -308,3 +308,8 @@ from .residual_foc import (  # noqa: F401
     foc_threshold,
     foc_upper_bound,
 )
+from .arm_maximal import (  # noqa: F401
+    ArmMaximalCertificate,
+    master_upper_bound,
+    satisfies_master,
+)
