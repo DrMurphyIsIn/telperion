@@ -246,3 +246,8 @@ from .sibling_coupling import (  # noqa: F401
     amplitude_product,
     parent_amplitude,
 )
+from .gaussian_invariant import (  # noqa: F401
+    GaussianInvariantCertificate,
+    continuum_minimum,
+    near_star_energy,
+)
