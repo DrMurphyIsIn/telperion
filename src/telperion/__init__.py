@@ -70,6 +70,11 @@ from .matching_free_energy import (  # noqa: F401
     CompetitorExtremalityCertificate, near_star_edges, rho as matching_rho,
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
+from .density_decay import (  # noqa: F401
+    classify_decay_regime, density_decay_fit, is_linear_in_inverse_s,
+    near_star_family, path_family, power_law_fit, spider_family,
+    stretched_exponential_fit,
+)
 from .counterexample_hunt import (  # noqa: F401
     CounterexampleHunt, near_star_seeds, probe_monotonicity, scaled_hunt,
 )
