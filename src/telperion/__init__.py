@@ -96,6 +96,9 @@ from .bosonic import (  # noqa: F401
     condensate_density, fermion_vacuum_det, gross_pitaevskii_bethe, hafnian,
     per_from_hafnian, van_der_waerden_bound,
 )
+from .r2_submultiplicative import (  # noqa: F401
+    R2SubmultiplicativeCertificate, a_bigroot, a_hub as dn_a_hub, double_near_star,
+)
 from .gibbs_free_energy import (  # noqa: F401
     GibbsFreeEnergyCertificate, matching_counts, monomer_dimer_free_energy,
     matching_measure, monomer_dimer_Z, unimodular_free_energy_limit,
