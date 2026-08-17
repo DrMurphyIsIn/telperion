@@ -240,3 +240,9 @@ from .envelope import (  # noqa: F401
     EnvelopeCertificate,
     empirical_envelope,
 )
+from .sibling_coupling import (  # noqa: F401
+    RHO_B_11,
+    SiblingCouplingCertificate,
+    amplitude_product,
+    parent_amplitude,
+)
