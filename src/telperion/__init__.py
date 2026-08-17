@@ -97,7 +97,8 @@ from .bosonic import (  # noqa: F401
     per_from_hafnian, van_der_waerden_bound,
 )
 from .sporadic_tie import (  # noqa: F401
-    SporadicTieConstraintCertificate, amp_product, tie_forces_divisibility,
+    IntegralityStrictnessCertificate, SporadicTieConstraintCertificate,
+    amp_product, deficit_lower_bound, tie_forces_divisibility,
 )
 from .near_star_tail import (  # noqa: F401
     NearStarTailCertificate, a_hub, phi11, ratio,
