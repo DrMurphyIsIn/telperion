@@ -61,6 +61,10 @@ from .rooted_phi import (  # noqa: F401
     BGExtremalityCertificate, all_roots_phi11, bg_phi11, bg_phi11_argmax_root,
     bg_phi11_fast, phi11_rooted,
 )
+from .spectral import (  # noqa: F401
+    free_fermion_modes, impurity_determinant_phi11, normalized_adjacency_spectrum,
+    resonant_impurity_site, spectral_rho,
+)
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
 from .zerofree import ZeroFreeDiskCertificate, dominant_term_margin  # noqa: F401
 from .entropy import (  # noqa: F401
