@@ -313,3 +313,14 @@ from .arm_maximal import (  # noqa: F401
     master_upper_bound,
     satisfies_master,
 )
+from .arm_monotone import (  # noqa: F401
+    ArmMonotoneCertificate,
+    chain_link_factor,
+    path_F,
+    rooted_path,
+)
+from .multi_hub_extremality import (  # noqa: F401
+    MultiHubExtremalityCertificate,
+    is_near_star,
+    phi_maximizer,
+)
