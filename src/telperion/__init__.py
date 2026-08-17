@@ -301,3 +301,10 @@ from .interior_max import (  # noqa: F401
     log_concave_in_k,
     single_copy_value,
 )
+from .residual_foc import (  # noqa: F401
+    ResidualFOCCertificate,
+    family_argmax,
+    family_phi_closed,
+    foc_threshold,
+    foc_upper_bound,
+)
