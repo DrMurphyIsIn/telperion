@@ -251,3 +251,10 @@ from .gaussian_invariant import (  # noqa: F401
     continuum_minimum,
     near_star_energy,
 )
+from .matching_lorentzian import (  # noqa: F401
+    MatchingLorentzianProbe,
+    bivariate_matching_is_lorentzian,
+    matching_support_vectors,
+    matchings,
+    support_is_m_convex,
+)
