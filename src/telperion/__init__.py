@@ -86,6 +86,9 @@ from .fractal_eigenvalue import (  # noqa: F401
     FractalEigenvalueCertificate, arm_transfer_eigenvalue_closed_form,
     arm_transfer_factor, density_at, near_star_edges,
 )
+from .near_star_tail import (  # noqa: F401
+    NearStarTailCertificate, a_hub, phi11, ratio,
+)
 from .transfer_tail import (  # noqa: F401
     TransferTailBound, default_families, density_limit, phi_density,
 )
