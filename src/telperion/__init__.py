@@ -201,3 +201,9 @@ from .ehrhart_bg import (  # noqa: F401
     matching_polytope_ehrhart,
     matching_polytope_ehrhart_bruteforce,
 )
+from .resonance_carrier import (  # noqa: F401
+    ResonanceCarrierCertificate,
+    adelic_product,
+    phi11_23adic_size,
+    phi11_23adic_valuation,
+)
