@@ -282,3 +282,9 @@ from .gate_strictness import (  # noqa: F401
     rho_b_power_is_rational,
     strictness_bound,
 )
+from .irrationality_ceiling import (  # noqa: F401
+    IrrationalityCeilingCertificate,
+    le_half_holds,
+    liouville_lower_bound,
+    rho_b_power_11,
+)
