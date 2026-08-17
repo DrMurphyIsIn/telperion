@@ -96,6 +96,9 @@ from .bosonic import (  # noqa: F401
     condensate_density, fermion_vacuum_det, gross_pitaevskii_bethe, hafnian,
     per_from_hafnian, van_der_waerden_bound,
 )
+from .branching_unimodality import (  # noqa: F401
+    BranchingUnimodalityCertificate, boost as gstep_boost,
+)
 from .r2_submultiplicative import (  # noqa: F401
     R2SubmultiplicativeCertificate, a_bigroot, a_hub as dn_a_hub, double_near_star,
 )
