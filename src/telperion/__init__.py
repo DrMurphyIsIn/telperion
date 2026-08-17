@@ -196,3 +196,8 @@ from .mahler import (  # noqa: F401
     matching_poly,
     matching_poly_from_counts,
 )
+from .ehrhart_bg import (  # noqa: F401
+    EhrhartBGProbe,
+    matching_polytope_ehrhart,
+    matching_polytope_ehrhart_bruteforce,
+)
