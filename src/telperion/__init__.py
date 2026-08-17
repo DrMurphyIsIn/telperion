@@ -207,3 +207,9 @@ from .resonance_carrier import (  # noqa: F401
     phi11_23adic_size,
     phi11_23adic_valuation,
 )
+from .frustration_free import (  # noqa: F401
+    FrustrationFreeGapProbe,
+    monomer_dimer_partition,
+    tie_recursive_edges,
+    transfer_density,
+)
