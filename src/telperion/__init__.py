@@ -187,3 +187,12 @@ from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
 from .workflow import ValidationReport, WorkflowError, emit  # noqa: F401
+from .mahler import (  # noqa: F401
+    LEHMER_CONSTANT,
+    MahlerLehmerProbe,
+    dpa_charpoly,
+    is_cyclotomic_product,
+    mahler_measure,
+    matching_poly,
+    matching_poly_from_counts,
+)
