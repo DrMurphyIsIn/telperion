@@ -258,3 +258,20 @@ from .matching_lorentzian import (  # noqa: F401
     matchings,
     support_is_m_convex,
 )
+from .susy_index import (  # noqa: F401
+    SusyIndexProbe,
+    adjacency_nullity,
+    signed_matching_index,
+    signed_perfect_matchings,
+)
+from .determinantal_kernel import (  # noqa: F401
+    DeterminantalKernelProbe,
+    girardeau_determinant,
+    near_star_determinant_closed_form,
+    normalized_spectrum_multiplicities,
+)
+from .dirac_index import (  # noqa: F401
+    DiracIndexProbe,
+    bipartition,
+    dirac_chiral_index,
+)
