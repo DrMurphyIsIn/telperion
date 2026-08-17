@@ -70,6 +70,9 @@ from .matching_free_energy import (  # noqa: F401
     CompetitorExtremalityCertificate, near_star_edges, rho as matching_rho,
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
+from .transfer_tail import (  # noqa: F401
+    TransferTailBound, default_families, density_limit, phi_density,
+)
 from .parallel_map import (  # noqa: F401
     IslandModel, max_rho_for_n, parallel_sweep,
 )
