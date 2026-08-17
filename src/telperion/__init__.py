@@ -341,6 +341,8 @@ from .arm_lean_certificates import (  # noqa: F401
 from .gstep_reduction import (  # noqa: F401
     GStepReductionCertificate,
     MU_STAR,
+    boost_le_four_thirds_when_small,
+    descent_engine_holds,
     f_sym,
     g_bound,
     leaf_W_four_thirds_lt_gamma,
