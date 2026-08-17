@@ -70,6 +70,9 @@ from .matching_free_energy import (  # noqa: F401
     CompetitorExtremalityCertificate, near_star_edges, rho as matching_rho,
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
+from .counterexample_hunt import (  # noqa: F401
+    CounterexampleHunt, probe_monotonicity,
+)
 from .rectification import (  # noqa: F401
     RectificationCertificate, canonical_form, is_canonical,
     rectify_moves, spider_edges, spider_phi11,
