@@ -40,6 +40,11 @@ from .gauge_lift import (  # noqa: F401
     ARM, ARM2, CHERRY, LEAF, TIE,
     ChildType, GaugeLiftCertificate, per_step_multiplier_limit,
 )
+from .quantization import QuantizationCertificate, continuous_overshoot, continuous_phi11  # noqa: F401
+from .immanant import (  # noqa: F401
+    determinant, immanant, normalized_immanant, parastatistics_spectrum,
+    permanent, permanental_dominance_holds,
+)
 from .amplitude import (  # noqa: F401
     amplitude_gap, amplitude_product11, bg_amplitude_holds,
     cavity_potential_residual, vertex_amplitudes,
