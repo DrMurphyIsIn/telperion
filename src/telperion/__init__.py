@@ -80,7 +80,7 @@ from .rooted_phi import (  # noqa: F401
 from .levinson import LevinsonAnalysis, tree_levinson  # noqa: F401
 from .spectral import (  # noqa: F401
     free_fermion_modes, friedel_phase_shift, friedel_response, host_green_diagonal,
-    impurity_determinant_phi11, normalized_adjacency_spectrum, resonant_impurity_site,
+    impurity_determinant_phi11, normalized_adjacency_spectrum, free_energy_density, resonant_impurity_site,
     spectral_rho,
 )
 from .bridge import NearStarBridgeCertificate, near_star_R, near_star_tail_poly  # noqa: F401
