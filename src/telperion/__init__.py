@@ -144,6 +144,7 @@ from .rigidity import (  # noqa: F401
 from .lorentzian import (  # noqa: F401
     HodgeRiemannCertificate,
     is_lorentzian_form,
+    real_sign,
     signature,
 )
 from .heights import (  # noqa: F401
