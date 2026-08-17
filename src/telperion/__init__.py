@@ -71,7 +71,7 @@ from .matching_free_energy import (  # noqa: F401
 )
 from .tree_search import TreeLandscapeSearch  # noqa: F401
 from .density_decay import (  # noqa: F401
-    classify_decay_regime, default_family_zoo, density_decay_fit, is_linear_in_inverse_s,
+    classify_decay_regime, default_family_zoo, laplace_surface_tension, density_decay_fit, is_linear_in_inverse_s,
     near_star_family, path_family, power_law_fit, spider_family,
     scout_disorder, stretched_exponential_fit,
 )
