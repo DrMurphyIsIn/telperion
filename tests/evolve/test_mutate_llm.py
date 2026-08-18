@@ -30,3 +30,14 @@ def test_llm_mutator_returns_input_on_none():
     m = LLMMutator(_StubClient(None))
     g = UnimodalGenome(NEAR_STAR_Q, 5, 4)
     assert m.mutate(g, {}, random.Random(0)) == g
+
+
+class _RaisingClient:
+    def chat(self, system, user, temperature, seed, timeout=60.0):
+        raise RuntimeError("Client connection failed")
+
+
+def test_llm_mutator_returns_input_on_client_raises():
+    m = LLMMutator(_RaisingClient())
+    g = UnimodalGenome(NEAR_STAR_Q, 5, 4)
+    assert m.mutate(g, {}, random.Random(0)) == g
