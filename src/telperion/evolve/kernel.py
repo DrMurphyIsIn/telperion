@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import subprocess
 from pathlib import Path
@@ -25,7 +26,12 @@ def kernel_check_family(family, lean_project: str, namespace=("ProbeEvolve",)):
         res = emit(cert, LeanProfile(namespace=tuple(namespace)),
                    [DirectPolyaEmitter()], ValidationReport(checks=(("spot", True),)))
     src = next(iter(res.files.values()))
-    out = Path(lean_project) / "ProbeEvolve.lean"
+    # Unique per-candidate filename (content-hashed): concurrent Tier-3 checks
+    # into the same lean_project must not clobber each other's file, and two
+    # identical candidates deterministically map to the same name (harmless).
+    # `lake env lean <file>` checks a standalone file, so the basename need not
+    # match the namespace.
+    out = Path(lean_project) / f"ProbeEvolve_{hashlib.sha1(src.encode()).hexdigest()[:12]}.lean"
     out.write_text(src)
     try:
         proc = subprocess.run(["lake", "env", "lean", str(out)], cwd=lean_project,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import sympy as sp
 
-from .. import unimodal_certificate, UnimodalityCertificate
+from .. import safe_parse_expr, unimodal_certificate, UnimodalityCertificate
 
 SYMBOL = sp.Symbol("s", nonnegative=True)
 
@@ -23,8 +23,13 @@ class UnimodalGenome:
 
 
 def _parse_ratio(src: str):
-    """Restricted parse: only the symbol s is in scope, no builtins."""
-    return sp.sympify(src, locals={"s": SYMBOL}, evaluate=True)
+    """Parse a ratio over the single symbol s through Telperion's token
+    whitelist — the LLM-proposed `ratio_src` is untrusted string input, and the
+    project's rule is that sympy's evaluating parser never sees raw text
+    (`safe_parse_expr` rejects any non-number/non-`s`/non-operator token before
+    parsing).  Raises `UnsafeExpressionError` on a disallowed token; both call
+    sites treat that as a miss (artifact / `None`), never a crash."""
+    return safe_parse_expr(src, [SYMBOL])
 
 
 def to_certificate(g: UnimodalGenome) -> tuple[UnimodalityCertificate | None, dict]:
