@@ -99,16 +99,60 @@ class Emitter:
             heartbeat(f"render {fam.family.name} [{self.kind}]", i + 1, n, t0)
         return units
 
+    def code_fingerprint(self) -> str:
+        """Version-stable hash of this emitter's own source — its class and every
+        telperion base up the MRO.
+
+        Folded into the input hash so a change to EMISSION LOGIC moves the hash
+        even when the config fields are unchanged.  This closes the gap that let
+        the G1 empty-binder regression ship under a stale hash: previously only
+        config fields and the manual ``__version__`` string were covered, so an
+        emitter-body edit that produced different Lean left every frozen hash
+        untouched (REVIEW_20260816_TELPERION_G1).
+
+        Hashes the RAW source text (``inspect.getsource``), newline-normalized —
+        NOT ``ast.dump``, whose serialization format changes across Python
+        versions and would make the input hash version-dependent, breaking the
+        cross-version byte-stability the CI matrix (3.11–3.13) enforces. Raw
+        source is identical under every interpreter. The trade-off is
+        deliberate: ANY edit to the emitter source — including comments and
+        formatting — moves the fingerprint, which for a drift net is the
+        conservative behavior (any emitter change → refreeze → review). When
+        source is unavailable (an emitter defined in a REPL) that class's
+        contribution is the empty-source hash and the config-field serialization
+        remains the residual signal. KNOWN RESIDUAL: module-level helper
+        functions the emitter *calls* are not captured — only the class bodies —
+        so a change confined to a shared helper still relies on the compile/diff
+        gates as backstop.
+        """
+        import hashlib
+        import inspect
+
+        parts: list[str] = []
+        for cls in type(self).__mro__:
+            mod = getattr(cls, "__module__", "") or ""
+            if not mod.startswith("telperion"):
+                continue  # skip `object` and any non-telperion mixin
+            try:
+                src = "\n".join(inspect.getsource(cls).splitlines())
+            except (OSError, TypeError):
+                src = ""
+            parts.append(f"{cls.__qualname__}={hashlib.sha256(src.encode()).hexdigest()[:16]}")
+        return "|".join(parts)
+
     def config_fingerprint(self) -> str:
-        """Stable serialization of this emitter's configuration for the input
-        hash.  Callable fields cannot be hashed semantically; their effect is
-        covered by the freeze/diff byte comparison instead."""
+        """Stable serialization of this emitter's configuration AND code for the
+        input hash.  Callable fields cannot be hashed semantically; their effect
+        is covered by the freeze/diff byte comparison instead.  The emitter's
+        code identity (``code_fingerprint``) is appended so emission-logic
+        changes move the hash — not just config-field changes."""
         parts = [self.kind]
         for k, v in sorted(vars(self).items()):
             # `requires_prelude` is a validation declaration, not output config
             # — excluded so it does not perturb every family's input hash.
             if k not in ("kind", "requires_prelude") and not callable(v):
                 parts.append(f"{k}={v!r}")
+        parts.append("code:" + self.code_fingerprint())
         return "|".join(parts)
 
 
@@ -139,6 +183,7 @@ def emit(
 
     from dataclasses import replace as _dc_replace
 
+    from .lean_lint import check_lean_text
     from .lint import lint_files
 
     def _phase(msg: str) -> None:
@@ -175,6 +220,10 @@ def emit(
         h.update(f"shard:{shard.max_theorems}:{shard.module_base}".encode())
     ihash = h.hexdigest()
 
+    # Generated-body text per file, for the soundness gate (kept separate from
+    # the assembled file so the gate lints the tool's OWN output, not the
+    # trusted profile prelude/header).
+    _gen_bodies: list[tuple[str, str]] = []
     if shard is None:
         bodies: list[str] = []
         n_theorems = 0
@@ -183,9 +232,11 @@ def emit(
             bodies.append(body)
             n_theorems += n
         hdr = header(fam.family, ihash, n_theorems, fam.checks_passed)
-        text = profile.file_shell(hdr, "\n".join(bodies))
+        gen = "\n".join(bodies)
+        text = profile.file_shell(hdr, gen)
         fname = file_name or f"{fam.family.name}.lean"
         files = {fname: text}
+        _gen_bodies.append((fname, gen))
     else:
         units: list[tuple[str, int]] = []
         for em in emitters:
@@ -214,11 +265,23 @@ def emit(
                 )
                 prof_i = _dc_replace(profile, prelude="", imports=profile.imports + earlier)
                 fname = f"{base}{i}.lean"
-            files[fname] = prof_i.file_shell(hdr, "\n".join(pack))
+            pack_text = "\n".join(pack)
+            files[fname] = prof_i.file_shell(hdr, pack_text)
+            _gen_bodies.append((fname, pack_text))
 
     _phase(f"rendered {n_theorems} theorems in {len(files)} file(s) "
            f"({time.time() - t_render:.1f}s); linting...")
     lint_files(files)
+    # Soundness gate (complements the structural lint above): refuse to freeze
+    # Lean that would pass CI while proving nothing — a `sorry`/`admit`, a
+    # smuggled `axiom`, an empty `:= by`, or a theorem with no type ascription.
+    # Scoped to the tool's GENERATED bodies, not the user-supplied profile
+    # prelude/header (trusted profile content — a full-file check is available
+    # via `telperion lint-lean`).  Error-severity only (a legitimate `:= rfl` is
+    # a WARN and does not block); validated to fire on none of the frozen
+    # production families.
+    for fname, gen in _gen_bodies:
+        check_lean_text(gen, path=fname)
     return EmitResult(
         family_name=fam.family.name,
         input_hash=ihash,

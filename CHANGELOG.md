@@ -1,6 +1,66 @@
 # Changelog
 
-## Unreleased (2026-08-18) — Tier-1 first-class emitters
+## 0.1.4 (2026-08-18) — Tier-1 emitters · core/bg split · soundness lint · code-fingerprint hash
+
+Five strategic-plan workstreams landed together (see the sections below): the
+Tier-1 first-class emitters (P2), the physical core/bg package split (P1), an
+external non-BG validation family (P3), a Lean soundness/honesty pre-linter
+(P4), and an emitter-code fingerprint folded into the input hash (P5). P5
+changes the hashing algorithm, so **every frozen family was refrozen and the
+version bumped 0.1.3 → 0.1.4** (superseding the "no version bump" note under
+Tier-1 below, which was written before P5).
+
+### P1 — core/bg package split
+
+The engine's trust-model claim ("a referee audits the small engine, not the
+research accretion") was being eroded by 18k LOC of Brualdi–Goldwasser research
+probes living in the same flat namespace as the ~40-module engine. The 72
+problem-specific modules moved to a `telperion.bg` subpackage; the engine stays
+at `telperion.*`.
+
+- `import telperion` now loads **zero** bg modules (runtime-enforced) — the core
+  is sympy-only and self-contained; the bg lab (networkx/numpy) is the opt-in
+  `bg` extra (`graph` kept as a legacy alias).
+- `telperion.bg` re-exports the engine, so it is a strict **superset** namespace
+  — bg consumers import everything from one place.
+- Enforced by `tests/test_core_boundary.py`: static (no engine module imports
+  `telperion.bg` in any spelling) + dynamic (`import telperion` leaks no bg
+  module) + superset checks. Runs in the standard `telperion-test` gate.
+
+### P4 — Lean soundness pre-linter (`lean_lint.py`)
+
+`lint.py` owns the *structural* failure classes (holes, header, empty binders,
+delimiter balance, duplicate names). The new `lean_lint.py` COMPLEMENTS it with
+the *"green build ≠ actually proved"* class the origin campaign's own Lean audit
+flagged: `sorry`/`admit`, `axiom` declarations, missing type ascription, empty
+`:= by` tactic blocks (all ERROR), and the `Prop := True` / trivial-stub class
+(WARN). Comment/string-aware, dependency-free, ~230 lines. Wired into `emit()`
+(hard-blocks error-severity before freeze — validated across all 31 refrozen
+families), exported, and exposed as `telperion lint-lean <file>`.
+
+### P5 — emitter-code fingerprint in the input hash
+
+The input hash covered config fields and the manual `__version__` string but NOT
+emitter *code* — so an `emit_body` edit that produced different Lean left every
+frozen hash untouched (the mechanism behind the G1 empty-binder regression
+shipping under a stale hash). `Emitter.code_fingerprint()` folds an
+AST-normalized hash of the emitter class (and its telperion bases) into
+`config_fingerprint()`, which `emit()` already threads into the hash.
+AST-normalized so comment/whitespace edits do not refreeze; semantic edits do. A
+change to the base `Emitter` moves every emitter's fingerprint. Known residual
+(documented): module-level helper functions the emitter *calls* are not
+captured — the compile/diff gates remain the backstop for those.
+
+### P3 — external non-BG validation family (`examples/bernoulli`)
+
+Genericity evidence: Bernoulli's inequality `(1+x)^k − 1 − k·x ≥ 0` (integer
+`k∈1..6`, `x≥0`) driven end-to-end through **core only** (`DirectPolyaEmitter`,
+never `telperion.bg`) — a textbook inequality with nothing to do with BG through
+the same certify→validate→emit→freeze machinery. 6 theorems, exact-arithmetic
+self-checks + a `emit()`-refuses-without-green-validation negative control,
+byte-stable freeze.
+
+### P2 — Tier-1 first-class emitters
 
 Three certificate capabilities that previously bypassed the enforced pipeline
 via one-off demonstrators are now first-class: each is a pipeline-enforced
@@ -28,9 +88,11 @@ via one-off demonstrators are now first-class: each is a pipeline-enforced
 
 **Foundation**: `family.py` (three new modes + `kind`), `certify.py` (kind
 dispatch, serial + fork paths, `CertifiedInstance` payloads), `provenance.py`
-(`family_hash` per-kind serialization), `__init__.py` exports. No existing
-family's emitted bytes changed (drift-net confirmed across the untouched set,
-incl. the 3084-theorem `g1_floors`) — hence no version bump / global refreeze.
+(`family_hash` per-kind serialization), `__init__.py` exports. The Tier-1 work
+alone changed no existing family's emitted *bytes* (drift-net confirmed across
+the untouched set, incl. the 3084-theorem `g1_floors`); the version bump and
+global refreeze in 0.1.4 come from P5's hash-algorithm change, not from these
+emitters.
 
 **Honesty**: `conjecture1_proved=False` untouched; scope banners on all three
 modules; each arm carries a live negative control (non-SOS refusal, false-`hi`

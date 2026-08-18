@@ -81,7 +81,11 @@ def test_custom_assembly_renders_with_hole_checking():
         statement_template=(
             "theorem my_assembly : True := by\n«branches»"
         ),
-        branch_template="  -- branch for «name»\n",
+        # A real tactic per branch (not a bare comment): a `:= by` block with
+        # only comments is an empty tactic block, which the emit() soundness gate
+        # rightly refuses.  `trivial` keeps the fixture valid while still
+        # exercising the hole-filling machinery this test targets.
+        branch_template="  trivial  -- branch for «name»\n",
         fills=lambda cf: {},
         branch_fills=lambda inst: {"name": inst.lean_name},
     )

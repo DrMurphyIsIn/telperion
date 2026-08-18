@@ -18,6 +18,18 @@ round-trip, not to establish truth. Corollary: the generator stays small,
 readable, and dependency-light (sympy only) — a referee can audit ~1,500 lines
 of Python instead of trusting them.
 
+## Engine vs. research lab (`telperion` vs `telperion.bg`)
+
+That "small auditable engine" claim only holds if the engine *stays* small. The
+general certificate engine is `telperion.*` (sympy-only, ~40 modules); the 72
+Brualdi–Goldwasser research modules — problem-specific probes, most of them
+reasoned dead ends — live under `telperion.bg.*`. `import telperion` loads
+**zero** bg modules (statically and dynamically enforced by
+[`tests/test_core_boundary.py`](tests/test_core_boundary.py)), so a referee
+audits the engine, not the accretion. `telperion.bg` re-exports the engine, so
+it is a strict *superset* namespace for lab work; the lab's graph dependencies
+(networkx/numpy) are the opt-in `bg` extra.
+
 ## The workflow (enforced, not advisory)
 
 ```
@@ -61,7 +73,7 @@ compiled against pinned Mathlib in this repo's CI — is
 spot-check validation, generation script with `--check` drift mode, and the
 Lean project shell.
 
-## Certificate shapes (v0.1.3)
+## Certificate shapes (v0.1.4)
 
 Every shape that produced a theorem in the origin campaign now ships as an
 emitter. All lower onto the same certify→validate→emit→freeze workflow.
@@ -116,6 +128,12 @@ compiled against pinned Mathlib by the `telperion-production` gate:
 | `examples/g34_twohub` | two-hub, 4656 theorems | `telperion-audit` |
 | shed / legs / interp / h_floors | 55 / 48 / 215 / 382 theorems | `telperion-production` |
 
+Beside the BG families, [`examples/bernoulli`](examples/bernoulli/) is the
+**non-BG genericity witness** (2026-08-18): Bernoulli's inequality
+`(1+x)^k − 1 − k·x ≥ 0` driven through the *core engine only*
+(`DirectPolyaEmitter`, no `telperion.bg`) — evidence the abstractions are not
+secretly BG-shaped.
+
 ## The spelling rule that matters
 
 `field_simp` matches `≠ 0` hypotheses syntactically. The tool therefore renders
@@ -139,9 +157,12 @@ Three surfaces, layered on the same enforced workflow:
   artifacts (the project drift net, run by group: `quick`/`heavy`/`audit`).
   Analysis: `margins`, `ties`, `hunt`, `relax`, `sharpen`. Reporting:
   `latex`, `ledger`, `status`, `cilog`, `review-brief`, `package`,
-  `export-certs`; cross-check with the stdlib `recheck`. All string-taking
-  surfaces parse through a token whitelist — sympy's evaluating parser never
-  sees raw input.
+  `export-certs`; cross-check with the stdlib `recheck`. Soundness pre-check:
+  `lint-lean <file>` runs the static "green build ≠ proved" gate (`sorry`,
+  `axiom`, empty tactic block, missing type ascription, `Prop := True`
+  trivial-stub) locally, before a CI round-trip. All string-taking surfaces
+  parse through a token whitelist — sympy's evaluating parser never sees raw
+  input.
 - **MCP server** — `pip install "telperion[mcp]"`, then register in Claude
   Code with `claude mcp add telperion -- telperion-mcp`. Tools: `polya_probe`,
   `certify_family`, `emit_family`, `diff_family`, `read_manifest`; resources:
@@ -158,11 +179,14 @@ Three surfaces, layered on the same enforced workflow:
 ## Install
 
 ```bash
-pip install -e "telperion[dev]"   # from this repo; pulls sympy + pytest + networkx
+pip install -e "telperion"        # the engine: sympy only
+pip install -e "telperion[bg]"    # + the Brualdi–Goldwasser research lab (networkx, numpy)
+pip install -e "telperion[dev]"   # + pytest & the lab deps, to run the tests
 ```
 
 `sympy` is the only **core** dependency — `import telperion` and the whole
-certify→emit pipeline need nothing else. The Brualdi–Goldwasser graph-certificate
-modules additionally use `networkx` (imported lazily, so they never burden the
-core); install the `graph` extra for those, or `dev` (which includes it) to run
-the tests. `mcp` and `flint` are further optional extras.
+certify→emit pipeline need nothing else, and load none of the research lab. The
+`telperion.bg` modules use `networkx` + `numpy`; install the `bg` extra for the
+lab (`graph` is a legacy alias), or `dev` (which includes it) to run the tests.
+`mcp`, `sdp` (cvxpy, for the SOS emitter), and `flint` are further optional
+extras.

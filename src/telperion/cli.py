@@ -323,6 +323,25 @@ def cmd_recheck(args) -> int:
     return rc.main([args.certificates])
 
 
+def cmd_lint_lean(args) -> int:
+    """Static soundness pre-check of an emitted Lean file — the "green build !=
+    proved" classes (sorry/admit, axiom, empty `:= by` block, missing type
+    ascription, `Prop := True` trivial stub) that the kernel would accept or
+    that CI would pass while nothing was proved.  Complements `verify` (the
+    structural drift net) and the in-`emit()` gate; use it on any hand-touched
+    or externally supplied .lean before trusting a green build."""
+    from .lean_lint import lint_lean_file
+
+    issues = lint_lean_file(args.file)
+    if not issues:
+        print(f"lint-lean {args.file}: OK (no soundness issues)")
+        return 0
+    for i in issues:
+        print(f"{args.file}:{i.line}: [{i.code}/{i.severity}] {i.message}")
+    fatal = any(i.severity == "error" for i in issues) or (args.strict and issues)
+    return 1 if fatal else 0
+
+
 def cmd_package(args) -> int:
     """Self-contained reviewer bundle: family, frozen Lean, certificates JSON,
     the standalone rechecker, and REVIEWING.md with the independent checks."""
@@ -635,6 +654,14 @@ def main(argv=None) -> int:
     p.add_argument("expression")
     p.add_argument("--symbols", default="u", help="comma-separated nonneg symbols")
     p.set_defaults(fn=cmd_probe)
+
+    p = sub.add_parser("lint-lean",
+                       help="static soundness pre-check of an emitted Lean file "
+                            "(sorry/axiom/empty-tactic/missing-ascription/stub)")
+    p.add_argument("file")
+    p.add_argument("--strict", action="store_true",
+                   help="also fail on warn-level issues (trivial/Prop:=True stubs)")
+    p.set_defaults(fn=cmd_lint_lean)
 
     args = ap.parse_args(argv)
     return args.fn(args)
