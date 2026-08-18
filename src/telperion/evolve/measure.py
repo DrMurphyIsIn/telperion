@@ -1,7 +1,8 @@
 """Measurement harness: compare() runs evolve() trials times and returns aggregate metrics.
 
 Metrics returned:
-    kernel_green_rate  -- fraction of trials where champion scored >= 990 (certifying).
+    certify_rate       -- fraction of trials whose champion certifies (exact-arithmetic
+                          certify tier, score >= 990); NOT a lake build / Lean kernel run.
     median_evals       -- median evaluation count across trials (int).
     median_wall_s      -- median wall-clock seconds per trial (float, rounded to 3dp).
     found_novel_ratio  -- True if any champion's ratio_src is not in the ratio_pool.
@@ -48,7 +49,7 @@ def compare(
 
     Returns:
         dict with:
-            kernel_green_rate (float 0..1),
+            certify_rate (float 0..1) -- exact-arithmetic certify tier, NOT Lean kernel,
             median_evals (int),
             median_wall_s (float),
             found_novel_ratio (bool).
@@ -83,7 +84,7 @@ def compare(
             found_novel = True
 
     return {
-        "kernel_green_rate": greens / max(1, trials),
+        "certify_rate": greens / max(1, trials),
         "median_evals": int(statistics.median(evals_list)),
         "median_wall_s": round(statistics.median(walls_list), 3),
         "found_novel_ratio": found_novel,
