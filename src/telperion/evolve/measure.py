@@ -16,7 +16,8 @@ import time
 
 from .genome import NEAR_STAR_Q, UnimodalGenome
 from .loop import evolve
-from .mutate import StructuredMutator
+from .mutate import HybridMutator, LLMMutator, StructuredMutator
+from .ollama import OllamaClient
 
 # Default candidate pool for the no-LLM arm.
 _DEFAULT_POOL = [NEAR_STAR_Q, "(2*s+1)/(2*s+3)", "(s+2)/(s+1)"]
@@ -55,7 +56,18 @@ def compare(
             found_novel_ratio (bool).
     """
     pool = ratio_pool if ratio_pool is not None else _DEFAULT_POOL
-    mutator = StructuredMutator()
+    # Honour cfg.use_llm: the no-LLM arm is StructuredMutator (so
+    # found_novel_ratio is structurally False); the LLM arm wires a fail-soft
+    # HybridMutator (falls back to structured if Ollama is unreachable), so the
+    # harness can actually measure LLM-driven novelty rather than always
+    # reporting the structured arm.
+    structured = StructuredMutator()
+    if cfg.use_llm:
+        client = OllamaClient(model=cfg.model_tag)
+        llm = LLMMutator(client) if client.available() else None
+        mutator = HybridMutator(llm=llm, structured=structured)
+    else:
+        mutator = structured
 
     evals_list: list = []
     walls_list: list = []
