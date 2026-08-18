@@ -43,6 +43,17 @@ from .padic import (  # noqa: F401
     padic_val_frac,
     valuation_facts_lean,
 )
+from .verdict import (  # noqa: F401
+    FloatAtDecisionPoint, ProbeVerdict, Verdict, decide, null, obstructed,
+    probe, re_derivation, require_exact, validated,
+)
+from .faithfulness import faithfulness_check, seeded_rational_points  # noqa: F401
+from .circularity import circularity_check  # noqa: F401
+from .upgradability import UNBOUNDED, upgradability_check, upgradability_of_family  # noqa: F401
+from .limit_probe import limit_probe  # noqa: F401
+from .super_solution import super_solution_check  # noqa: F401
+from .discharging import discharging_check  # noqa: F401
+from .bench import ScalingResult, scaling_probe, time_op  # noqa: F401
 from .emit_sos import SOSEmitter, sos_family  # noqa: F401
 from .emit_bracket import BracketSpec, IntervalBracketEmitter, bracket_family  # noqa: F401
 from .emit_padic import PadicValuationEmitter, valuation_family  # noqa: F401
