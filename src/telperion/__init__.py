@@ -6,7 +6,7 @@ trusted component.  A defective certificate manifests as a compile failure,
 never a false theorem.  See docs/METHODOLOGY.md.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 from .certify import (  # noqa: F401
     CertificationError,
@@ -192,6 +192,9 @@ from .padic import (  # noqa: F401
     padic_val_frac,
     valuation_facts_lean,
 )
+from .emit_sos import SOSEmitter, sos_family  # noqa: F401
+from .emit_bracket import BracketSpec, IntervalBracketEmitter, bracket_family  # noqa: F401
+from .emit_padic import PadicValuationEmitter, valuation_family  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
