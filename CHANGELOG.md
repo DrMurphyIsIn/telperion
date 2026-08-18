@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased (2026-08-18) — honesty patterns (methodology port)
+
+Eight reusable meta-skill patterns from the Brualdi–Goldwasser crux campaign
+(20+ probes, zero false positives), ported as checkable modules — each returns a
+`ProbeVerdict` decided in exact rationals.  No emitter / frozen-artifact change,
+so no version bump.  See `docs/HONESTY_PATTERNS.md`.
+
+- **`verdict.py`** (#8, load-bearing): the `VALIDATED / OBSTRUCTED_AND_LOCATED /
+  NULL / RE_DERIVATION` taxonomy with structural invariants, and `require_exact`
+  / `decide` — **no floats at decision points**, refused the same way a non-Polya
+  numerator is refused at certification.
+- **`circularity.py`** (#6): refuses a lemma that implies the goal (needs a
+  separating witness) — the spectral-gap-mis-framing catch.
+- **`faithfulness.py`** (#1): independent-implementation cross-check at seeded
+  exact points; generalizes `certify._dual_engine_check`.
+- **`limit_probe.py`** (#2): the anti-size-bounded-trap — locates the size where
+  a claim breaks or a margin degrading toward the boundary.
+- **`upgradability.py`** (#7): mechanical (finite complete cover) vs conceptual
+  seam (unbounded axis).
+- **`super_solution.py`** (#4): exact `P ≥ T P` with the branching /
+  value-iteration-divergence caveat that blocks a silent global overclaim.
+- **`discharging.py`** (#5): exact charge-conservation + per-node target (the
+  invariant the origin's machine-checked G1Discharge/G1ConsTree rests on).
+- #3 (exact ratio-unimodality) already lived in `unimodal.py` /
+  `branching_unimodality.py`.
+
+`conjecture1_proved=False` throughout.
+
 ## 0.1.4 (2026-08-18) — Tier-1 first-class emitters
 
 Three certificate capabilities that previously bypassed the enforced pipeline
