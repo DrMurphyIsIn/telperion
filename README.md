@@ -61,20 +61,48 @@ compiled against pinned Mathlib in this repo's CI — is
 spot-check validation, generation script with `--check` drift mode, and the
 Lean project shell.
 
-## Certificate shapes (v0.1)
+## Certificate shapes (v0.1.3)
+
+Every shape that produced a theorem in the origin campaign now ships as an
+emitter. All lower onto the same certify→validate→emit→freeze workflow.
 
 | Emitter | Proves | Lean shape |
 |---|---|---|
 | `DirectPolyaEmitter` | `0 ≤ f(x̄)` for a rational function with an all-nonneg-numerator / positive-factored-denominator form | `hkey : f = num/den` by `field_simp`+`ring`, then `positivity` |
-| `BilinearBoxEmitter` | `before ≤ after` on a box in two bound variables | bilinear decomposition theorem + 4 Polya corner certificates + assembly via a user-supplied corner combinator |
+| `BilinearBoxEmitter` | `before ≤ after` on a box in two bound variables | bilinear decomposition theorem + 4 Pólya corner certificates + assembly via a user-supplied corner combinator |
+| `ExactFactEmitter` / `IdentityEmitter` | exact integer/rational identities and powers (`fact_pow`) — the arithmetic cores (tie, asymptote, gate) | `norm_num` / `ring` |
+| `ReparamAdapterEmitter` | ℕ-reparameterization — recast a real-variable certificate over `Nat.cast_sub` casts | cast-rewrite adapter over a Pólya body |
+| `CaseDispatchAssemblyEmitter` | finite case dispatch — assemble per-cell certificates into one theorem | `interval_cases` fan-out |
+| `SubdivisionGlueEmitter` | reconstruct a subdivided cell theorem from its leaf cells | `le_total` case-split glue |
+| `VarMapAdapterEmitter` | substitution glue expressed in the original variables (the campaign's most-used maneuver) | `MapSpec`-driven rewrite |
+| `DichotomyGlueEmitter` | classification (not surgery) over declared thresholds | `le_total` splits |
+| `TailNatEmitter` | symbolic tails — a finite table plus one `∀ K ≥ K₀` certificate | ℕ-quantified induction-free tail |
+| `CustomAssemblyEmitter` | escape hatch for hand-designed assemblies | user-supplied skeleton |
 
-Planned (the remaining shapes from the origin campaign): ℕ-reparameterization
-adapters (`Nat.cast_sub` casts) and finite case-dispatch assemblies
-(`interval_cases` fan-out).
+Still open (tracked in [`CHANGELOG.md`](CHANGELOG.md), deliberately not shipped
+as stubs): a squares-aware Lean emitter for the SOS certificates `sos.py`
+already finds (surfaced in `diagnose`); Kind-3 multi-axis grids; a generic Lean
+lemma for unimodal integer maxima; generic induction emission for telescoping
+potentials.
 
 The exact Mathlib tactics the default templates assume are documented in
 [`docs/TACTIC_CONTRACT.md`](docs/TACTIC_CONTRACT.md); the discipline and its
 rationale in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+
+## Proven in anger: the production families
+
+Telperion is not a toy — it carries the Brualdi–Goldwasser campaign's Lean.
+Frozen families, re-certified and byte-diffed in CI, with the largest also
+compiled against pinned Mathlib by the `telperion-production` gate:
+
+| Family | Scale | Gate |
+|---|---|---|
+| `examples/toy_box` | 4-cell worked example (+ lift, split variants) | `telperion-lean-e2e` (regen → `lake build`) |
+| `examples/r47_cells` | R47 36-cell table, 216 theorems | `telperion-casestudy` (re-cert + diff) |
+| `examples/g1_floors` | 3084 bracket-quantified floor theorems (514 bisection leaves) | `telperion-production` (`lake build`) |
+| `examples/r7_starofhubs` | R7 star-of-hubs, 972 witness-searched certs | `telperion-audit` |
+| `examples/g34_twohub` | two-hub, 4656 theorems | `telperion-audit` |
+| shed / legs / interp / h_floors | 55 / 48 / 215 / 382 theorems | `telperion-production` |
 
 ## The spelling rule that matters
 
@@ -89,14 +117,19 @@ matrix enforces.
 
 Three surfaces, layered on the same enforced workflow:
 
-- **CLI** — `telperion init|certify|emit|diff|verify|probe|diagnose`
-  (families addressed as `path/to/family.py:factory`). `init` scaffolds a
-  complete new proof project (family template, pinned Lean shell, drift
-  manifest, CI workflow); `diagnose` triages any refusal into FALSE (exact
-  rational counterexample), NOT_POLYA (remedy hints), or CERTIFIABLE;
-  `verify` is the project drift net; `emit` refuses without validation. All
-  string-taking surfaces parse through a token whitelist — sympy's evaluating
-  parser never sees raw input.
+- **CLI** — `telperion <verb>` (families addressed as
+  `path/to/family.py:factory`). Scaffolding: `init` builds a complete new proof
+  project (family template, pinned Lean shell, drift manifest, CI workflow).
+  Pipeline: `certify`, `probe`, `diagnose` (triages any refusal into FALSE with
+  an exact rational counterexample / NOT_POLYA with remedy hints / CERTIFIABLE).
+  Emission is guarded by the `emit()` API and per-project generate scripts, never
+  a validation-skipping CLI path; `verify` regenerates and byte-diffs the frozen
+  artifacts (the project drift net, run by group: `quick`/`heavy`/`audit`).
+  Analysis: `margins`, `ties`, `hunt`, `relax`, `sharpen`. Reporting:
+  `latex`, `ledger`, `status`, `cilog`, `review-brief`, `package`,
+  `export-certs`; cross-check with the stdlib `recheck`. All string-taking
+  surfaces parse through a token whitelist — sympy's evaluating parser never
+  sees raw input.
 - **MCP server** — `pip install "telperion[mcp]"`, then register in Claude
   Code with `claude mcp add telperion -- telperion-mcp`. Tools: `polya_probe`,
   `certify_family`, `emit_family`, `diff_family`, `read_manifest`; resources:
@@ -113,5 +146,11 @@ Three surfaces, layered on the same enforced workflow:
 ## Install
 
 ```bash
-pip install -e "telperion[dev]"   # from this repo; sympy is the only core dep
+pip install -e "telperion[dev]"   # from this repo; pulls sympy + pytest + networkx
 ```
+
+`sympy` is the only **core** dependency — `import telperion` and the whole
+certify→emit pipeline need nothing else. The Brualdi–Goldwasser graph-certificate
+modules additionally use `networkx` (imported lazily, so they never burden the
+core); install the `graph` extra for those, or `dev` (which includes it) to run
+the tests. `mcp` and `flint` are further optional extras.

@@ -4,19 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "telperion"
-version = "0.1.0"
+version = "0.1.3"
 description = "Certify families of rational-function inequalities in sympy, validate them in exact arithmetic, and batch-emit kernel-checked Lean 4."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Peter W. Murphy" }]
 keywords = ["lean4", "mathlib", "polya", "positivity", "certificates", "sympy", "formal-verification"]
+# Core pipeline is sympy-only. The BG graph-certificate modules import networkx
+# lazily (in-function), so `import telperion` and the emit pipeline never need
+# it; install the `graph` extra to exercise those modules and their tests.
 dependencies = ["sympy>=1.12"]
 
 [project.optional-dependencies]
 flint = ["python-flint>=0.6"]
 mcp = ["mcp>=1.2"]
-dev = ["pytest>=8"]
+graph = ["networkx>=3"]
+dev = ["pytest>=8", "networkx>=3"]
 
 [project.scripts]
 telperion = "telperion.cli:main"

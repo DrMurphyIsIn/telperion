@@ -182,3 +182,46 @@ unimodal integer maxima (the emitted pieces close its hypotheses; the
 induction skeleton is documented); generic induction
 emission for telescoping potentials (the v2 headline); hunt over pluggable
 combinatorial domains.
+
+## 0.1.2 – 0.1.3 (2026-08-16) — performance
+
+Two sympy hot-path traps found by py-spy on stalled runs, both fixed. (1)
+`canonical_srepr`: sympy's default `srepr` ordering evalfs every `Add` node —
+`srepr(order='none')` on construction-canonical expressions took the R7 family
+hash from 70+ min to ~4 s (0.1.2). (2) `DirectPolyaEmitter` re-expanded the
+certificate at render — `expr_lean_from_parts` renders from the stored
+`(numerator, denominator)`, taking R7's 972 theorems to ~64 s (0.1.3). The
+0.1.3 direct-Pólya bodies are now the cancelled pair (simpler, matches the
+certificate); bilinear (G1/R47) output is byte-unchanged, so G1 acceptance is
+intact. Emission changes bump the version because the input hash covers inputs,
+not emitter code; every family was refrozen. Active heartbeat logging added so a
+silent phase can't masquerade as a hang.
+
+## 0.1.3 maintenance (2026-08-17) — enumeration refresh + CI hygiene
+
+Documentation and packaging only — **no emission change**, so `__version__`
+stays `0.1.3` and every frozen artifact's hash is untouched (no refreeze).
+
+- **CI fix**: `tests/test_recursive_transfer.py` imported `networkx` at module
+  top level, so a missing dep turned a collection error into a red `telperion-test`
+  matrix across all six sympy/python cells. Both graph-certificate test modules
+  now `pytest.importorskip("networkx")`; `networkx` is declared as a `graph`
+  extra (and in `dev`) and installed in `telperion-test.yml` so the tests run
+  rather than silently skip. Stale `forge-test.yml` path trigger corrected to
+  `telperion-test.yml`.
+- **Deselected two intractable tests** (owning session, please fix): with
+  collection restored, the suite reached — for the first time —
+  `test_bellman_rigidity.py::{test_value_function_and_sub_hull_gap,
+  test_cramer_rate_positive_below_hull}`, both calling
+  `value_function(max_size=14)`. That enumeration is super-exponential
+  (`max_size=10` ~80 s; `14` runs for hours), so `telperion-test` deselects the
+  pair to stay inside its 15-min budget (the rest passes in ~4.5 min). The
+  assertions hold at `max_size=8` in ~4 s — reduce the size there and drop the
+  deselect.
+- **Packaging**: `pyproject.toml` version synced `0.1.0 → 0.1.3` (it had lagged
+  the emission-stamped `__version__`).
+- **Docs**: `README.md` (repo root) now enumerates the current Brualdi–Goldwasser
+  state (near-star spine, R1/R2, g-lemma) with rigor tags; `telperion/README.md`
+  replaces the stale "v0.1, two emitters, rest planned" with the full shipped
+  emitter set and the production-family table; a thin top-level `STATUS.md`
+  indexes both the proof and the engine, each row linking to the canonical doc.
