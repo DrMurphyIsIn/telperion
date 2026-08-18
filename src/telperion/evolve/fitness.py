@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 from dataclasses import dataclass
 
 from .. import CertificationError, certify
@@ -17,7 +18,7 @@ class FitnessResult:
     artifacts: dict
 
 
-def hunt_is_true(family, symbols, seed: int = 1):
+def hunt_is_true(family, symbols, seed: int = 1) -> tuple[bool, dict]:
     for pt in family.grid.points():
         r = hunt_minimum(family.target(pt), list(symbols), iters=120, restarts=4, seed=seed)
         if r.is_disproof:
@@ -29,14 +30,16 @@ def hunt_is_true(family, symbols, seed: int = 1):
     return True, {}
 
 
-def certify_score(family):
+def certify_score(family) -> tuple[bool, int, dict]:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         try:
             certify(family)
             return True, 0, {}
         except CertificationError as e:
             msg = str(e)
-            n = max(1, msg.count("{'") or msg.count("failed certification"))
+            # Message format: "N instance(s) failed certification: ..."
+            m = re.search(r"(\d+)\s+instance", msg)
+            n = int(m.group(1)) if m else 1
             return False, n, {"reason": msg[:600]}
         except Exception as e:  # noqa: BLE001 - untrusted generator; a miss is not a crash
             return False, 3, {"reason": f"{type(e).__name__}: {str(e)[:300]}"}
