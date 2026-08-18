@@ -120,25 +120,47 @@ class InequalityFamily:
     # rational points; a disagreement between the two engines is a refusal.
     independent_target: Callable[..., object] | None = None
 
+    # Tier-1 first-class-emitter modes (2026-08-18).  Each promotes a former
+    # one-off demonstrator to a pipeline-enforced kind; certify() dispatches to
+    # the arm's certify_*_point and family_hash serializes its defining data.
+    #   sos_half_deg: an SOS/SDP family reuses `target` (the polynomial p, claim
+    #     0 <= p) but is certified via a rational PSD Gram (not Polya) — set to
+    #     the monomial half-degree to select kind="sos".
+    #   bracket(pt) -> a BracketSpec (rigorous rational enclosure of exp/log at a
+    #     rational point); selects kind="bracket".
+    #   valuation_facts(pt) -> a sequence of ValuationFact (p-adic valuation
+    #     facts, emitted as decidable divisibility); selects kind="valuation".
+    sos_half_deg: int | None = None
+    bracket: Callable[[GridPoint], object] | None = None
+    valuation_facts: Callable[[GridPoint], Sequence[object]] | None = None
+
     def __post_init__(self):
         modes = [
             self.target is not None,
             self.before is not None and self.after is not None,
             self.equation is not None,
             self.witnesses is not None,
+            self.bracket is not None,
+            self.valuation_facts is not None,
         ]
         if sum(modes) != 1:
             raise ValueError(
                 "supply exactly one of `target`, (`before`, `after`), "
-                "`equation`, or `witnesses`"
+                "`equation`, `witnesses`, `bracket`, or `valuation_facts`"
             )
         if modes[1] and self.box is None:
             raise ValueError("bilinear families require `box`")
+        if self.sos_half_deg is not None and self.target is None:
+            raise ValueError("sos_half_deg requires `target` (the polynomial p)")
 
     @property
     def kind(self) -> str:
+        if self.bracket is not None:
+            return "bracket"
+        if self.valuation_facts is not None:
+            return "valuation"
         if self.target is not None:
-            return "direct"
+            return "sos" if self.sos_half_deg is not None else "direct"
         if self.equation is not None:
             return "equation"
         if self.witnesses is not None:

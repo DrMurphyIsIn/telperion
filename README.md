@@ -78,12 +78,24 @@ emitter. All lower onto the same certify→validate→emit→freeze workflow.
 | `DichotomyGlueEmitter` | classification (not surgery) over declared thresholds | `le_total` splits |
 | `TailNatEmitter` | symbolic tails — a finite table plus one `∀ K ≥ K₀` certificate | ℕ-quantified induction-free tail |
 | `CustomAssemblyEmitter` | escape hatch for hand-designed assemblies | user-supplied skeleton |
+| `SOSEmitter` | `0 ≤ p` for a polynomial via an exact rational PSD-Gram SOS — reaches INTERIOR ties Pólya lifting cannot, and reads the tight variety off the SDP dual | `hsos : p = Σ dᵢ·(ℓᵢ)² := by ring`, then `positivity` |
+| `IntervalBracketEmitter` | rigorous rational two-sided enclosure `lo ≤ exp(-θ) ≤ hi` at a rational point θ | Taylor lower bound (`Real.sum_le_exp_of_nonneg`) + convexity companion (`Real.add_one_le_exp`) |
+| `PadicValuationEmitter` | p-adic valuation facts `v_p(n)=k` as decidable divisibility | `(p^k ∣ n) ∧ ¬(p^{k+1} ∣ n)` by `norm_num` |
+
+The last three are the Tier-1 first-class emitters (2026-08-18): each promotes a
+former one-off demonstrator to a pipeline-enforced `family.kind` + emitter +
+convenience constructor, with honesty pins (the SOS emitter cross-checks declared
+interior ties against the SDP dual's tight variety). Honest scope: `SOSEmitter`
+is the certificate LAYER for the occupancy / SOS-for-trees method — aiming its
+dual at the recursive matching functional's integer tie is the named research
+program, not shipped; `IntervalBracketEmitter` enclosures do not close the g1
+`Real.log` bridge; `PadicValuationEmitter` ships the 23-adic primitives, not the
+crux. `conjecture1_proved=False`.
 
 Still open (tracked in [`CHANGELOG.md`](CHANGELOG.md), deliberately not shipped
-as stubs): a squares-aware Lean emitter for the SOS certificates `sos.py`
-already finds (surfaced in `diagnose`); Kind-3 multi-axis grids; a generic Lean
-lemma for unimodal integer maxima; generic induction emission for telescoping
-potentials.
+as stubs): `func="log"` interval brackets (no CI-verified Mathlib chain yet);
+Kind-3 multi-axis grids; a generic Lean lemma for unimodal integer maxima;
+generic induction emission for telescoping potentials.
 
 The exact Mathlib tactics the default templates assume are documented in
 [`docs/TACTIC_CONTRACT.md`](docs/TACTIC_CONTRACT.md); the discipline and its

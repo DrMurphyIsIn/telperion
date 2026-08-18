@@ -1,5 +1,5 @@
-/- telperion 0.1.3 | family PadicValuation | input-hash b80b1fde6f094d58
-   4 theorems, 1 generation-time self-checks passed.
+/- telperion 0.1.3 | family PadicValuation | input-hash acc54ca7e255cda3
+   5 theorems, 5 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
 
@@ -29,9 +29,10 @@ theorem padicValRat_mul3 {p : ℕ} [Fact p.Prime] {a b c : ℚ}
       = padicValRat p a + padicValRat p b + padicValRat p c := by
   rw [padicValRat.mul (mul_ne_zero ha hb) hc, padicValRat.mul ha hb]
 
-theorem v23_621 : (23 ∣ 621) ∧ ¬ (529 ∣ 621) := by norm_num
-theorem v23_64 : (1 ∣ 64) ∧ ¬ (23 ∣ 64) := by norm_num
-theorem v23_hub_injection : (952809757913927 ∣ 952809757913927) ∧ ¬ (21914624432020321 ∣ 952809757913927) := by norm_num
+theorem v23_root_num : (1 ∣ 64) ∧ ¬ (23 ∣ 64) := by norm_num
+theorem v23_root_den : (23 ∣ 621) ∧ ¬ (529 ∣ 621) := by norm_num
+theorem v23_child_num : (1 ∣ 86959512306484890624) ∧ ¬ (23 ∣ 86959512306484890624) := by norm_num
+theorem v23_child_den : (1801152661463 ∣ 87946907297998046875) ∧ ¬ (41426511213649 ∣ 87946907297998046875) := by norm_num
 theorem v23_tree_denominator : (74615470927590710561908487 ∣ 177897145575501228718539445400238037109375) ∧ ¬ (1716155831334586342923895201 ∣ 177897145575501228718539445400238037109375) := by norm_num
 
 end Padic

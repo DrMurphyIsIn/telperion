@@ -63,6 +63,12 @@ class CertifiedInstance:
     den_atoms: tuple[sp.Expr, ...] = ()
     equation: tuple[sp.Expr, sp.Expr] | None = None   # identity claims: (lhs, rhs)
     witness: str | None = None                        # winning candidate label
+    # Tier-1 first-class-emitter payloads (2026-08-18).  Typed as object to keep
+    # certify.py free of arm-module import cycles; the arm's emitter reads them.
+    sos: object | None = None            # SOSCertificate (kind="sos")
+    tight: tuple = ()                    # tight-variety square bases (SDP dual)
+    bracket: object | None = None        # BracketSpec + certified rational heart
+    valuation: object | None = None      # tuple[ValuationFact, ...] (kind="valuation")
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,27 @@ _construction_guard = _Guard()
 
 
 _ACTIVE_CACHE = None
+
+
+# Tier-1 first-class-emitter kinds (2026-08-18): certify() delegates each grid
+# point to the arm module's certify_*_point, which returns (CertifiedInstance,
+# n_checks) or raises ValueError (a refusal — the negative control).  Local
+# imports keep certify.py free of arm-module import cycles.
+_SPECIAL_KINDS = ("sos", "bracket", "valuation")
+
+
+def _certify_special_point(family, pt, name):
+    """Dispatch a first-class-emitter kind to its arm; (instance, checks)."""
+    kind = family.kind
+    if kind == "sos":
+        from .emit_sos import certify_sos_point as _cp
+    elif kind == "bracket":
+        from .emit_bracket import certify_bracket_point as _cp
+    elif kind == "valuation":
+        from .emit_padic import certify_valuation_point as _cp
+    else:  # pragma: no cover — guarded by caller
+        raise ValueError(f"not a first-class-emitter kind: {kind}")
+    return _cp(family, pt, name)
 
 
 def polya_certify(
@@ -350,6 +377,9 @@ def _certify_point(args):
     family = _FORK_STATE["family"]
     name = family.lean_name(pt)
     try:
+        if family.kind in _SPECIAL_KINDS:
+            inst, n = _certify_special_point(family, pt, name)
+            return ("ok", [inst], None, n)
         if family.kind == "equation":
             lhs, rhs = family.equation(pt)
             if sp.simplify(sp.together(lhs - rhs)) != 0:
@@ -509,7 +539,11 @@ def certify(
             continue
         seen_names.add(name)
         try:
-            if family.kind == "equation":
+            if family.kind in _SPECIAL_KINDS:
+                inst, n = _certify_special_point(family, pt, name)
+                instances.append(inst)
+                checks += n
+            elif family.kind == "equation":
                 lhs, rhs = family.equation(pt)
                 if sp.simplify(sp.together(lhs - rhs)) != 0:
                     raise ValueError("identity self-check failed: lhs - rhs != 0")

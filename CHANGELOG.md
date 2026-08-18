@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased (2026-08-18) — Tier-1 first-class emitters
+
+Three certificate capabilities that previously bypassed the enforced pipeline
+via one-off demonstrators are now first-class: each is a pipeline-enforced
+`family.kind` + `Emitter` + convenience constructor flowing through the single
+`certify() → emit() → freeze()` API and its honesty machinery.
+
+- **`SOSEmitter` / `sos_family`** (`emit_sos.py`, `kind="sos"`): promotes
+  `sos_sdp.py`'s standalone `lean_certificate()` to a first-class emitter with
+  canonical graded-lex rendering (not `sstr`) and an honesty pin — declared
+  interior ties are cross-checked against the SDP dual's tight variety (an
+  over-claiming certificate is refused). `examples/sos_sdp` grown 1 → 3
+  theorems (interior-tie pencil); `sdp` manifest group (cvxpy, off the
+  cvxpy-free CI path; the frozen Lean is the compile evidence).
+- **`IntervalBracketEmitter` / `bracket_family` / `BracketSpec`**
+  (`emit_bracket.py`, `kind="bracket"`): reusable rigorous rational enclosures
+  `lo ≤ exp(-θ) ≤ hi` via the CI-green Taylor + convexity scaffold; the rational
+  heart is Pólya-certified, the gate verifies `hi·taylor_floor ≥ 1` (exactly
+  what the emitted `1/tf ≤ hi` step needs). `examples/exp_bracket` grown 2 → 6
+  theorems (multi-θ). `func="log"` deferred (no CI-verified Mathlib chain).
+- **`PadicValuationEmitter` / `valuation_family`** (`emit_padic.py`,
+  `kind="valuation"`): a grid family of `ValuationFact`s as decidable
+  divisibility (`(p^k ∣ n) ∧ ¬(p^{k+1} ∣ n)` by `norm_num`).
+  `examples/padic_valuation` reframed to a node-by-node K-accounting (5
+  theorems + telescope/split prelude).
+
+**Foundation**: `family.py` (three new modes + `kind`), `certify.py` (kind
+dispatch, serial + fork paths, `CertifiedInstance` payloads), `provenance.py`
+(`family_hash` per-kind serialization), `__init__.py` exports. No existing
+family's emitted bytes changed (drift-net confirmed across the untouched set,
+incl. the 3084-theorem `g1_floors`) — hence no version bump / global refreeze.
+
+**Honesty**: `conjecture1_proved=False` untouched; scope banners on all three
+modules; each arm carries a live negative control (non-SOS refusal, false-`hi`
+refusal, wrong-`k` refusal). Lean kernel verdict is CI-side (`lake build`), not
+verified locally.
+
 ## 0.1.0 (2026-08-15/16) — extraction + hardening
 
 Born from the Brualdi–Goldwasser campaign (`../proof/`), where the pattern

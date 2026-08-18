@@ -64,6 +64,23 @@ def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
         feed("lean_name", family.lean_name(pt))
         if family.kind == "direct":
             feed("target", canonical_srepr(family.target(pt)))
+        elif family.kind == "sos":
+            # SOS reuses target (the polynomial p); the certificate is a function
+            # of p and the monomial half-degree — both determine the output.
+            feed("sos_target", canonical_srepr(family.target(pt)))
+            feed("sos_half_deg", str(family.sos_half_deg))
+        elif family.kind == "bracket":
+            # A BracketSpec (frozen dataclass) fully determines the enclosure.
+            from dataclasses import asdict
+
+            feed("bracket", json.dumps(asdict(family.bracket(pt)),
+                                       default=str, sort_keys=True))
+        elif family.kind == "valuation":
+            from dataclasses import asdict
+
+            for fact in family.valuation_facts(pt):
+                feed("valuation_fact", json.dumps(asdict(fact),
+                                                  default=str, sort_keys=True))
         elif family.kind == "witness":
             for label, cand in family.witnesses(pt):
                 feed("witness_cand", label + "|" + canonical_srepr(cand))
