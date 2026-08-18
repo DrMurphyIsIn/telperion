@@ -502,6 +502,20 @@ def cmd_probe(args) -> int:
     return 0
 
 
+def cmd_evolve(args) -> int:
+    """Island MAP-Elites evolution toward a certifying unimodal genome."""
+    from .evolve.cli import run_evolve
+
+    argv = []
+    argv += ["--islands", str(args.islands)]
+    argv += ["--gens", str(args.gens)]
+    argv += ["--seed", str(args.seed)]
+    argv += ["--model", args.model]
+    if args.no_llm:
+        argv.append("--no-llm")
+    return run_evolve(argv)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -635,6 +649,14 @@ def main(argv=None) -> int:
     p.add_argument("expression")
     p.add_argument("--symbols", default="u", help="comma-separated nonneg symbols")
     p.set_defaults(fn=cmd_probe)
+
+    p = sub.add_parser("evolve", help="island MAP-Elites evolution toward a certifying unimodal genome")
+    p.add_argument("--islands", type=int, default=4)
+    p.add_argument("--gens", type=int, default=20)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--model", default="qwen2.5-coder:7b")
+    p.add_argument("--no-llm", action="store_true")
+    p.set_defaults(fn=cmd_evolve)
 
     args = ap.parse_args(argv)
     return args.fn(args)
