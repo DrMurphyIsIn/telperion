@@ -12,15 +12,17 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Peter W. Murphy" }]
 keywords = ["lean4", "mathlib", "polya", "positivity", "certificates", "sympy", "formal-verification"]
 # Core pipeline is sympy-only. The BG graph-certificate modules import networkx
-# lazily (in-function), so `import telperion` and the emit pipeline never need
-# it; install the `graph` extra to exercise those modules and their tests.
+# and numpy lazily (in-function), so `import telperion` and the emit pipeline
+# never need them; install the `graph` extra to exercise those modules and their
+# tests. (sos_sdp additionally needs cvxpy; its test importorskips it.)
 dependencies = ["sympy>=1.12"]
 
 [project.optional-dependencies]
 flint = ["python-flint>=0.6"]
 mcp = ["mcp>=1.2"]
-graph = ["networkx>=3"]
-dev = ["pytest>=8", "networkx>=3"]
+graph = ["networkx>=3", "numpy>=1.24"]
+sdp = ["cvxpy>=1.4"]
+dev = ["pytest>=8", "networkx>=3", "numpy>=1.24"]
 
 [project.scripts]
 telperion = "telperion.cli:main"
