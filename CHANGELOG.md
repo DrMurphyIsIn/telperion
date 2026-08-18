@@ -26,6 +26,14 @@ so no version bump.  See `docs/HONESTY_PATTERNS.md`.
 - #3 (exact ratio-unimodality) already lived in `unimodal.py` /
   `branching_unimodality.py`.
 
+Optimization pass: **`bench.py`** — a scaling-ratio perf-regression gate
+(`scaling_probe`) that institutionalizes catching the O(n^2) render/hash traps
+the campaign found only by py-spy on hung runs; `tests/test_perf_budget.py`
+asserts certify+emit stays sub-quadratic (measured growth ~1.09 = linear).
+Deliberately NOT a ProbeVerdict — wall-clock is empirical, not an exact-rational
+decision. Profiling confirmed no regression from the Tier-1 / pattern work; the
+hot path (`polya_certify`'s `together`) is inherent, linear, and cache-backed.
+
 `conjecture1_proved=False` throughout.
 
 ## 0.1.4 (2026-08-18) — Tier-1 first-class emitters
