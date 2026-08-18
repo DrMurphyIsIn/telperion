@@ -1,4 +1,4 @@
-"""StructuredMutator: deterministic programmatic mutation operators."""
+"""Mutation operators: StructuredMutator, LLMMutator, and HybridMutator for genome evolution."""
 from __future__ import annotations
 
 import random
@@ -65,10 +65,51 @@ class LLMMutator:
             "Last evaluation feedback:\n" + str(artifacts or {"note": "no feedback"}) + "\n\n"
             "Return an improved genome as JSON only."
         )
-        reply = self.client.chat(
-            _SYSTEM, user, temperature=self.temperature, seed=rng.randint(0, 2 ** 31 - 1)
-        )
+        try:
+            reply = self.client.chat(
+                _SYSTEM, user, temperature=self.temperature, seed=rng.randint(0, 2 ** 31 - 1)
+            )
+        except Exception:  # noqa: BLE001
+            return g
         if reply is None:
             return g
         cand = from_llm_text(reply)
         return cand if cand is not None else g
+
+
+class HybridMutator:
+    """Hybrid mutator: LLM proposes, structured refines/repairs; fallback if llm is None."""
+
+    def __init__(self, llm, structured, llm_prob: float = 0.5):
+        """Initialize with optional LLM and required StructuredMutator.
+
+        Args:
+            llm: LLMMutator or None. If None, falls back to structured-only.
+            structured: StructuredMutator for refinement/repair.
+            llm_prob: Probability (0..1) of invoking LLM when it is available.
+        """
+        self.llm = llm
+        self.structured = structured
+        self.llm_prob = llm_prob
+
+    def mutate(self, g: UnimodalGenome, artifacts: dict, rng: random.Random) -> UnimodalGenome:
+        """Mutate: propose via LLM (if available and triggered), then refine via structured.
+
+        With probability llm_prob (and if llm is not None), calls llm.mutate to propose.
+        Always passes the proposal through structured.mutate to refine/repair.
+        If the LLM proposal equals the input (miss), falls back to structured on the original.
+        Never raises.
+
+        Args:
+            g: UnimodalGenome to mutate.
+            artifacts: dict carrying fitness feedback.
+            rng: random.Random for deterministic control.
+
+        Returns:
+            Mutated UnimodalGenome (never None, never raises).
+        """
+        proposal = g
+        if self.llm is not None and rng.random() < self.llm_prob:
+            proposal = self.llm.mutate(g, artifacts, rng)
+        # Always refine/repair through the deterministic structured operators.
+        return self.structured.mutate(proposal, artifacts, rng)
