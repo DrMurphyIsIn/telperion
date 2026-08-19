@@ -1,7 +1,7 @@
 # Methodology: untrusted generator, trusted kernel
 
-*(v0.1 — the core argument; expands with the reparameterization/assembly
-emitters in the next milestone.)*
+The discipline behind Telperion. It is general — it governs how the tool proves
+*any* certifiable family, not just the campaign it came from.
 
 ## 1. The trust model
 
@@ -28,19 +28,27 @@ failure was a *spelling* problem, not a *truth* problem.
 
 ## 3. Certificate shapes
 
-- **Polya nonnegativity**: `0 ≤ f` shown by exhibiting `f = num/den` with `num`
+Each provable class is an *emitter* — a small, single-purpose translator from a
+certified instance to Lean. The two foundational ones:
+
+- **Pólya nonnegativity**: `0 ≤ f` shown by exhibiting `f = num/den` with `num`
   an all-nonnegative-integer-coefficient polynomial and `den` a product of
   positive-coefficient factors. `positivity` closes both.
 - **Bilinear box**: `before ≤ after` on a rectangle, reduced to the four
   corners (a bilinear form's extrema on a box are at corners); each corner is a
-  Polya certificate; a ~20-line combinator lemma assembles them.
-- *(next milestone)* ℕ-reparameterization adapters and finite case-dispatch
-  assemblies.
+  Pólya certificate; a ~20-line combinator lemma assembles them.
 
-What the shapes cannot express is named, not absorbed: transcendental bounds
-(log/exp interval brackets) stay on the Python validation side; genuinely
-non-Polya inequalities (negative numerator coefficients that no clearing
-removes) are refused at certification.
+The current set (sum-of-squares, p-adic valuation, transcendental interval
+brackets, `interval_cases` dispatch, subdivision glue, `∀K≥K₀` tails,
+reparameterization and substitution adapters, custom assemblies) is tabulated in
+the [README](../README.md#certificate-shapes-v014); adding a new class is
+writing one more `Emitter`.
+
+What the shapes cannot express is **named, not absorbed**: a target outside them
+is *refused* at certification (with an exact counterexample or a remedy hint via
+`diagnose`), never emitted as a plausible-but-wrong proof. This is the same
+honesty rule that keeps `conjecture1_proved = False` where a proof is not yet
+complete — the tool states what it cannot do rather than paper over it.
 
 ## 4. Provenance and the reviewer's protocol
 
@@ -54,10 +62,14 @@ independent one-command checks:
 2. the family's exact-numeric validation harness — every claim an assert;
 3. `lake build` — the actual verification.
 
-## 5. Origin
+## 5. Origin, and why it is now general
 
-Extracted from the Brualdi–Goldwasser (1984) Laplacian-ratio campaign
+Extracted clean-room from the Brualdi–Goldwasser (1984) Laplacian-ratio campaign
 (`../proof/` in this repository), where the pattern produced 200+ CI-green
-Mathlib theorems across five certificate families. The proof repo ships its
-original problem-specific generator frozen for provenance; this tool is the
-clean-room generalization, with the toy example as its compiled-in-CI witness.
+Mathlib theorems across five certificate families. That campaign hardened the
+tool but did not shape it: nothing in the engine is problem-specific (the BG
+research modules are quarantined in the opt-in `telperion.bg` subpackage, which
+the engine never imports), and `examples/bernoulli` proves an unrelated textbook
+inequality through the identical pipeline. Telperion is a general-purpose
+certificate compiler; the BG campaign is simply its largest, permanently
+CI-checked witness.
