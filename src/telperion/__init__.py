@@ -6,7 +6,7 @@ trusted component.  A defective certificate manifests as a compile failure,
 never a false theorem.  See docs/METHODOLOGY.md.
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 from .certify import (  # noqa: F401
     CertificationError,
@@ -58,6 +58,18 @@ from .bench import ScalingResult, scaling_probe, time_op  # noqa: F401
 from .emit_sos import SOSEmitter, sos_family  # noqa: F401
 from .emit_bracket import BracketSpec, IntervalBracketEmitter, bracket_family  # noqa: F401
 from .emit_padic import PadicValuationEmitter, valuation_family  # noqa: F401
+# BG-derived first-class emitters (2026-08-19).
+from .emit_cone import ConeFarkasEmitter, cone_family  # noqa: F401
+from .emit_unimodal import (  # noqa: F401
+    UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
+)
+from .emit_telescope import (  # noqa: F401
+    TELESCOPE_PRELUDE, TelescopingPotentialEmitter, telescope_family,
+)
+from .emit_lattice_box import LatticeBoxEmitter, lattice_box_family  # noqa: F401
+from .emit_logconcave import LogConcaveSinglePointEmitter, logconcave_family  # noqa: F401
+from .emit_monotone_tail import MonotoneRatioTailEmitter, monotone_tail_family  # noqa: F401
+from .emit_interlacing import InterlacingEmitter, interlacing_family  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401

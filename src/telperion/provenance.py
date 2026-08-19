@@ -38,6 +38,21 @@ def heartbeat(phase: str, done: int, total: int, t0: float,
           f"eta {eta:.0f}s)", file=sys.stderr, flush=True)
 
 
+def _canon_special(obj) -> str:
+    """Canonical, byte-stable serialization of a `family.special` spec output —
+    sympy expressions via canonical_srepr, containers recursed, scalars
+    stringified.  Order-preserving (tuples/lists keep order; dict keys sorted)."""
+    if isinstance(obj, sp.Basic):
+        return "E(" + canonical_srepr(obj) + ")"
+    if isinstance(obj, (list, tuple)):
+        return "[" + ",".join(_canon_special(x) for x in obj) + "]"
+    if isinstance(obj, dict):
+        return "{" + ",".join(
+            f"{k}:{_canon_special(v)}" for k, v in sorted(obj.items())
+        ) + "}"
+    return f"S({obj!r})"
+
+
 def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
     h = hashlib.sha256()
     t0, total, done = time.time(), family.grid.size(), 0
@@ -88,6 +103,13 @@ def family_hash(family: InequalityFamily, profile: LeanProfile) -> str:
             lhs, rhs = family.equation(pt)
             feed("eq_lhs", canonical_srepr(lhs))
             feed("eq_rhs", canonical_srepr(rhs))
+        elif family.special is not None:
+            # Generic first-class-emitter kind (BG-derived): the spec callable's
+            # output fully determines the certificate.  Serialize it canonically
+            # (sympy expressions via canonical_srepr; everything else stringified).
+            kind_name, spec = family.special
+            feed("special_kind", kind_name)
+            feed("special_spec", _canon_special(spec(pt)))
         else:
             feed("before", canonical_srepr(family.before(pt)))
             feed("after", canonical_srepr(family.after(pt)))

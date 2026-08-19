@@ -133,6 +133,14 @@ class InequalityFamily:
     sos_half_deg: int | None = None
     bracket: Callable[[GridPoint], object] | None = None
     valuation_facts: Callable[[GridPoint], Sequence[object]] | None = None
+    #   special: the generic first-class-emitter hook (BG-derived shapes, 2026-08-19).
+    #     A pair (kind_name, spec) where `spec(pt)` returns the kind-specific
+    #     problem data (e.g. (ratio, s0) for unimodal-max, (target, basis) for a
+    #     cone/Farkas combination).  certify() dispatches `kind_name` to the
+    #     emitter module's certify_<kind>_point; provenance serializes spec(pt)
+    #     canonically.  One field for the whole BG-derived emitter family instead
+    #     of one bespoke field per shape.
+    special: tuple[str, Callable[[GridPoint], object]] | None = None
 
     def __post_init__(self):
         modes = [
@@ -142,19 +150,27 @@ class InequalityFamily:
             self.witnesses is not None,
             self.bracket is not None,
             self.valuation_facts is not None,
+            self.special is not None,
         ]
         if sum(modes) != 1:
             raise ValueError(
                 "supply exactly one of `target`, (`before`, `after`), "
-                "`equation`, `witnesses`, `bracket`, or `valuation_facts`"
+                "`equation`, `witnesses`, `bracket`, `valuation_facts`, or `special`"
             )
         if modes[1] and self.box is None:
             raise ValueError("bilinear families require `box`")
         if self.sos_half_deg is not None and self.target is None:
             raise ValueError("sos_half_deg requires `target` (the polynomial p)")
+        if self.special is not None and (
+            not isinstance(self.special, tuple) or len(self.special) != 2
+            or not isinstance(self.special[0], str) or not callable(self.special[1])
+        ):
+            raise ValueError("`special` must be a (kind_name: str, spec: callable) pair")
 
     @property
     def kind(self) -> str:
+        if self.special is not None:
+            return self.special[0]
         if self.bracket is not None:
             return "bracket"
         if self.valuation_facts is not None:

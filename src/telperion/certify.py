@@ -69,6 +69,8 @@ class CertifiedInstance:
     tight: tuple = ()                    # tight-variety square bases (SDP dual)
     bracket: object | None = None        # BracketSpec + certified rational heart
     valuation: object | None = None      # tuple[ValuationFact, ...] (kind="valuation")
+    payload: object | None = None        # generic first-class-emitter certificate
+                                         # (BG-derived shapes via family.special)
 
 
 @dataclass(frozen=True)
@@ -109,11 +111,29 @@ _ACTIVE_CACHE = None
 # point to the arm module's certify_*_point, which returns (CertifiedInstance,
 # n_checks) or raises ValueError (a refusal — the negative control).  Local
 # imports keep certify.py free of arm-module import cycles.
-_SPECIAL_KINDS = ("sos", "bracket", "valuation")
+_SPECIAL_KINDS = (
+    "sos", "bracket", "valuation",
+    # BG-derived first-class emitters (2026-08-19), dispatched via family.special.
+    "cone", "unimodal", "lattice_box", "logconcave", "telescope",
+    "monotone_tail", "interlacing",
+)
+
+# kind -> "module:certify_point_fn" for the generic (family.special) emitters.
+_SPECIAL_DISPATCH = {
+    "cone": ("emit_cone", "certify_cone_point"),
+    "unimodal": ("emit_unimodal", "certify_unimodal_point"),
+    "lattice_box": ("emit_lattice_box", "certify_lattice_box_point"),
+    "logconcave": ("emit_logconcave", "certify_logconcave_point"),
+    "telescope": ("emit_telescope", "certify_telescope_point"),
+    "monotone_tail": ("emit_monotone_tail", "certify_monotone_tail_point"),
+    "interlacing": ("emit_interlacing", "certify_interlacing_point"),
+}
 
 
 def _certify_special_point(family, pt, name):
     """Dispatch a first-class-emitter kind to its arm; (instance, checks)."""
+    import importlib
+
     kind = family.kind
     if kind == "sos":
         from .emit_sos import certify_sos_point as _cp
@@ -121,6 +141,9 @@ def _certify_special_point(family, pt, name):
         from .emit_bracket import certify_bracket_point as _cp
     elif kind == "valuation":
         from .emit_padic import certify_valuation_point as _cp
+    elif kind in _SPECIAL_DISPATCH:
+        mod_name, fn_name = _SPECIAL_DISPATCH[kind]
+        _cp = getattr(importlib.import_module(f".{mod_name}", __package__), fn_name)
     else:  # pragma: no cover — guarded by caller
         raise ValueError(f"not a first-class-emitter kind: {kind}")
     return _cp(family, pt, name)

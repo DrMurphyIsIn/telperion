@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.1.5 (2026-08-19) — seven BG-derived certificate shapes
+
+Seven reusable certificate shapes that surfaced in the Brualdi–Goldwasser
+campaign are promoted to first-class emitters, flowing through the single
+enforced `certify → validate → emit → freeze` API with a working negative
+control each (an out-of-class target is refused at certification; no Lean is
+produced for a non-member).  Added via **one generic hook** — `family.special =
+(kind, spec)` + `CertifiedInstance.payload` — so the shared core grew by one
+field, not seven.
+
+- **`ConeFarkasEmitter`** (`cone`) — `0 ≤ target` as an exact nonnegative
+  combination `target = Σ λᵢ·bᵢ` of a positivity-provable basis (`ring` +
+  `positivity`); refusal carries the Farkas dual (impossibility over the basis).
+- **`UnimodalMaxEmitter`** (`unimodal`) — the README-open "generic Lean lemma
+  for unimodal integer maxima": ships the reusable `Telperion.unimodal_peak`
+  lemma (proven once — descend via `Nat.le_induction`, climb via gap induction)
+  + the per-instance monotone-ratio (`positivity`) and crossing (`norm_num`)
+  facts that locate the peak `s*`.
+- **`TelescopingPotentialEmitter`** (`telescope`) — the README-open "generic
+  induction emission for telescoping potentials": ships the reusable rose-tree
+  `Telperion.RTree.telescope` lemma + the per-node super-solution margins
+  (`positivity`).  (Finding a closed-form potential is the hard part — for the
+  BG crux, provably impossible for finite-basis `P`, see `R1_WIRING_SCOPING`;
+  the *assembly* is what this ships.)
+- **`LatticeBoxEmitter`** (`lattice_box`) — the d-dimensional integer
+  Positivstellensatz: `f(x) ≤ B ∀ x ∈ ℤ^d_{≥0}` via a finite base box
+  (`norm_num`) + per-axis monotone tail witnesses (`ring`/`positivity`).
+- **`LogConcaveSinglePointEmitter`** (`logconcave`) — reduce `max_{k∈ℕ} F(k) ≤
+  B` to a single point `k*` by log-concavity (`F(k+1)F(k-1) ≤ F(k)²`); emits the
+  exact single-point + per-step + neighbour-domination facts (`norm_num`).
+- **`MonotoneRatioTailEmitter`** (`monotone_tail`) — `b(s) ≤ B ∀ s ≥ s₀` via a
+  Pólya-certified nonincreasing tail (`positivity`) + base (`norm_num`) + a
+  `Nat.le_induction` assembly.
+- **`InterlacingEmitter`** (`interlacing`) — Newton's inequalities (coefficient
+  log-concavity) of a real-rooted polynomial (`norm_num` on exact rationals).
+
+Two shapes ship a reusable **generic Lean lemma** as a prelude
+(`UNIMODAL_PRELUDE`, `TELESCOPE_PRELUDE`) — proven once, applied per family;
+these close the two shapes the README long tracked as open.  All seven emitters
+are core (sympy-only) and import no `telperion.bg` module (boundary enforced;
+`is_real_rooted` and the lattice/telescope certifiers were inlined engine-local).
+
+HONEST SCOPE: the certifiers and every emitted per-instance fact are exact-
+arithmetic validated here; the Lean KERNEL verdict is CI-only (this repo cannot
+run `lake` locally).  Where a shape's global assembly is a family-specific
+one-line application of a shipped prelude lemma, that is documented, not faked —
+no `sorry`, no stub (the soundness lint enforces it).  `conjecture1_proved` is
+untouched.
+
 ## 0.1.4 (2026-08-18) — Tier-1 emitters · core/bg split · soundness lint · code-fingerprint hash · honesty patterns · perf gate
 
 The strategic-plan workstreams and the parallel crux-campaign methodology port

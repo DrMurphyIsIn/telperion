@@ -46,7 +46,7 @@ of them — Telperion will certify it in exact arithmetic and emit the Lean. If 
 needs a new shape, you add an emitter (see [Extending it](#extending-it)); the
 trust model and the whole pipeline come for free.
 
-### Certificate shapes (v0.1.4)
+### Certificate shapes (v0.1.5)
 
 Each shape is an *emitter*; all flow through the same `certify → validate →
 emit → freeze` workflow.
@@ -65,6 +65,13 @@ emit → freeze` workflow.
 | `ReparamAdapterEmitter` | recast a real-variable certificate over `Nat.cast_sub` casts | cast-rewrite adapter |
 | `VarMapAdapterEmitter` | substitution glue expressed in the original variables | `MapSpec`-driven rewrite |
 | `DichotomyGlueEmitter` | classification over declared thresholds | `le_total` splits |
+| `ConeFarkasEmitter` | `0 ≤ target` as an exact nonnegative combination `Σ λᵢ·bᵢ` of a positivity-provable basis (a Farkas / linear-Positivstellensatz certificate) | `target = Σ λᵢ·bᵢ := by ring`, then `positivity` |
+| `UnimodalMaxEmitter` | the integer maximum of a unimodal sequence is at the ratio's crossing `s*` | monotone-ratio (`positivity`) + crossing (`norm_num`) facts + the reusable `unimodal_peak` lemma |
+| `TelescopingPotentialEmitter` | a recursive/tree bound `Σ local(v) ≤ P(root)` from a per-node super-solution | per-node margins (`positivity`) + the reusable rose-tree `RTree.telescope` lemma |
+| `LatticeBoxEmitter` | `f(x) ≤ B` for all `x ∈ ℤ^d_{≥0}` (d-dim integer Positivstellensatz) | finite base box (`norm_num`) + per-axis monotone tail (`ring`/`positivity`) |
+| `LogConcaveSinglePointEmitter` | `max_{k∈ℕ} F(k) ≤ B` reduced to a single point `k*` by log-concavity | single-point + per-step + neighbour facts (`norm_num`) |
+| `MonotoneRatioTailEmitter` | `b(s) ≤ B` for all `s ≥ s₀` via a nonincreasing tail | tail step (`positivity`) + base (`norm_num`) + `Nat.le_induction` |
+| `InterlacingEmitter` | Newton's inequalities (coefficient log-concavity) of a real-rooted polynomial | `norm_num` on exact rationals |
 | `CustomAssemblyEmitter` | escape hatch for a hand-designed assembly | your skeleton |
 
 The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;
