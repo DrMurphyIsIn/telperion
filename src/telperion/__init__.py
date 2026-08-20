@@ -107,6 +107,14 @@ from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
 from .workflow import ValidationReport, WorkflowError, emit  # noqa: F401
+from .prove import ProofResult, prove_goal  # noqa: F401
+from .backend_lift import (  # noqa: F401
+    LiftOutcome, LiftProblem, LiftReport, lift_report, run_backend,
+)
+from .benchmark import (  # noqa: F401
+    BenchmarkEntry, BenchmarkReport, EntryResult,
+    certifiable_seed_corpus, run_benchmark,
+)
 from .lean_lint import (  # noqa: F401
     LeanLintError,
     LeanLintIssue,

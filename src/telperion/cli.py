@@ -521,6 +521,39 @@ def cmd_probe(args) -> int:
     return 0
 
 
+def cmd_prove(args) -> int:
+    """Single-goal backend: emit Lean for 0 <= <expr>, or triage the refusal.
+
+    Lean goes to stdout on success; the triage goes to stderr.  Exit code:
+    0 = proved, 2 = FALSE (rational counterexample), 3 = NOT_POLYA (hints),
+    4 = CERTIFIABLE-but-unemitted (coverage gap).
+    """
+    import sympy as sp
+
+    from .parsing import safe_parse_expr
+    from .prove import prove_goal
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
+    expr = safe_parse_expr(args.expression, syms)
+    res = prove_goal(expr, syms, name=args.name,
+                     namespace=tuple(args.namespace.split(".")) if args.namespace else None,
+                     trials=args.trials)
+    if res.proved:
+        print(res.lean)
+        return 0
+    print(res.render(), file=sys.stderr)
+    return {"FALSE": 2, "NOT_POLYA_IN_THIS_FORM": 3}.get(res.verdict, 4)
+
+
+def cmd_benchmark(args) -> int:
+    """Run the certifiable-fragment benchmark; print the deterministic table."""
+    from .benchmark import certifiable_seed_corpus, run_benchmark
+
+    report = run_benchmark(certifiable_seed_corpus())
+    print(report.render())
+    return 0
+
+
 def cmd_evolve(args) -> int:
     """Island MAP-Elites evolution toward a certifying unimodal genome."""
     from .evolve.cli import run_evolve
@@ -669,6 +702,16 @@ def main(argv=None) -> int:
     p.add_argument("--symbols", default="u", help="comma-separated nonneg symbols")
     p.set_defaults(fn=cmd_probe)
 
+    p = sub.add_parser("prove",
+                       help="single-goal backend: emit Lean for 0 <= <expr>, or triage")
+    p.add_argument("expression")
+    p.add_argument("--symbols", default="u", help="comma-separated nonneg symbols")
+    p.add_argument("--name", default="Goal", help="theorem/namespace base name")
+    p.add_argument("--namespace", default="", help="dotted Lean namespace (default: --name)")
+    p.add_argument("--trials", type=int, default=400,
+                   help="counterexample search budget on refusal")
+    p.set_defaults(fn=cmd_prove)
+
     p = sub.add_parser("lint-lean",
                        help="static soundness pre-check of an emitted Lean file "
                             "(sorry/axiom/empty-tactic/missing-ascription/stub)")
@@ -676,6 +719,10 @@ def main(argv=None) -> int:
     p.add_argument("--strict", action="store_true",
                    help="also fail on warn-level issues (trivial/Prop:=True stubs)")
     p.set_defaults(fn=cmd_lint_lean)
+
+    p = sub.add_parser("benchmark",
+                       help="run the certifiable-fragment benchmark (deterministic solve rate + timing)")
+    p.set_defaults(fn=cmd_benchmark)
 
     p = sub.add_parser("evolve", help="island MAP-Elites evolution toward a certifying unimodal genome")
     p.add_argument("--islands", type=int, default=4)

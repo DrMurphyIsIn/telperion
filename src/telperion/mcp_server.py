@@ -79,6 +79,28 @@ def diagnose(target: str, symbols: str = "u", trials: int = 400) -> str:
 
 
 @mcp.tool()
+def prove_goal(expression: str, symbols: str = "u", name: str = "Goal") -> str:
+    """Single-goal backend socket: certify 0 <= <expression> (nonnegative
+    symbols) and return a complete, kernel-checkable Lean theorem — or, on
+    refusal, the triage (FALSE with an exact rational counterexample /
+    NOT_POLYA_IN_THIS_FORM with remedy hints / CERTIFIABLE). This is the
+    primitive an LLM prover loop calls to discharge a certificate-shaped
+    subgoal: sound by construction, deterministic, no sampling. expression:
+    sympy syntax; symbols: comma-separated, e.g. 'u,v'."""
+    import sympy as sp
+
+    from .parsing import safe_parse_expr
+    from .prove import prove_goal as _prove_goal
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in symbols.split(","))
+    expr = safe_parse_expr(expression, syms)
+    res = _prove_goal(expr, syms, name=name)
+    if res.proved:
+        return res.lean
+    return res.render()
+
+
+@mcp.tool()
 def certify_family(family: str) -> str:
     """Run every symbolic self-check for a family. family: 'path/to/family.py:factory'
     where factory() returns an InequalityFamily. Returns the green summary or
