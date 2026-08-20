@@ -1,0 +1,9 @@
+{
+  "family": "RationalSOS",
+  "input_hash": "f250aa242d69845d1ee6794ac8df74e9175c4abec1034ee8efbfdcdeab8e2886",
+  "tool_version": "0.1.6",
+  "files": [
+    "RationalSOS.lean"
+  ],
+  "n_theorems": 1
+}

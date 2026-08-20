@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased — facial positivity (Pólya-with-zeros) + real-Nullstellensatz finder
+## Unreleased — facial positivity (Pólya-with-zeros) + sympy-only real-Nullstellensatz finder
 
 The emitter candidate named by `docs/HANDELMAN_DEGREE_BOUNDS_LIT_2026-08-20.md`
-(Castle–Powers–Reznick 2011, "Pólya's theorem with zeros"), plus the last
-checker-mode emitter gaining a finder.
+(Castle–Powers–Reznick 2011, "Pólya's theorem with zeros"), plus a cvxpy-free
+finder for the real-Nullstellensatz emitter that composes with the SDP finder
+landed the same day (see the Bernstein/Real-Nullstellensatz entry below).
 
 - **`PolyaZerosEmitter`** (`polya_zeros`) — `0 ≤ p` on `{xᵢ ≥ 0, Σxᵢ > 0}` from
   the HOMOGENEOUS Pólya certificate `(Σxᵢ)^N·p = Q` with every Q-coefficient a
@@ -24,20 +25,62 @@ checker-mode emitter gaining a finder.
   `xy(x²−xy+y²)` at N = 1, and the CPR near-tie `x² − (7/4)xy + y²`; negative
   controls: the tie refused WITH its obstruction named, an insufficient N
   refused).
-- **`find_real_nullstellensatz_certificate`** — the last checker-mode emitter
-  (`real_nullstellensatz`) gains its searcher: for m ≤ max_m the Gröbner normal
-  form `s = NF(−p^{2m})` is the canonical SOS candidate (any valid `s` is
-  congruent to it mod the ideal); `sos_decompose` attempts an exact rational
-  SOS, and a hit is re-verified against the certifier's own plain-division
-  gate, so the finder never returns a certificate the certifier would refuse.
-  Exact, sympy-only, deterministic, untrusted-by-verification (miss = refusal).
-  Finder mode: spec returns `(p, None, None, gens)`; multiplicity escalation
-  works (`x` on `V(x³)`: m = 2, s = 0).  Example gains two finder cases + a
-  finder-mode negative control (non-vanishing `x + 1` refused).
+- **`find_real_nullstellensatz_certificate`** — a second, cvxpy-free finder for
+  the `real_nullstellensatz` emitter, composed with the SDP finder that landed
+  the same day (`sdp_finder.find_real_nullstellensatz`): the finder branch now
+  tries the exact sympy-only search FIRST (for m ≤ max_m the Gröbner normal form
+  `s = NF(−p^{2m})` is the canonical SOS candidate; `sos_decompose` attempts an
+  exact rational SOS), and falls back to the SDP for cases outside
+  `sos_decompose`'s v1 class.  Trying the cheap finder first keeps the `quick`
+  CI path cvxpy-free; both return the same `(m, s_terms)` interface and are
+  re-verified against the certifier's own plain-division gate (miss = refusal).
+  Multiplicity escalation works (`x` on `V(x³)`: m = 2, s = 0).  The
+  `real_nullstellensatz` example gains two finder cases + a finder-mode negative
+  control (non-vanishing `x + 1` refused).
 - **Compile-gate repair**: `examples/cg_round/frozen/CGRound.lean` (PR #17) was
   in no lake gate — the "silenced gate" class.  Added to audit-compiles staging,
   `Audit.lean`, and the workflow trigger paths alongside the new `polya_zeros`
   example.
+
+## Unreleased — rational-SOS (Artin denominator): reaching nonneg-but-not-SOS
+
+- **`RationalSOSEmitter`** (`rational_sos`) — proves `0 ≤ p` for a polynomial that
+  is nonnegative but NOT a sum of squares (the class Hilbert showed the plain SOS
+  emitter cannot reach; the Motzkin polynomial `x⁴y² + x²y⁴ − 3x²y² + 1` is the
+  minimal example).  Artin's theorem: a strictly-positive multiplier `q` makes
+  `q·p` a sum of squares.  Telperion FINDS the certificate — a ladder of
+  `positivity`-provable strictly-positive multipliers `q` (products of `1 + xᵢ²`)
+  until `q·p` has an EXACT rational SOS (shared SDP + robust rationalization) —
+  then emits `positivity` (`0 < q`, and the SOS after a `ring` rewrite) + a
+  `by_contra`/`nlinarith` that divides out `q`.  For Motzkin it finds
+  `q = (1+x²)(1+y²)` and `q·M = (1−x²y²)² + (x−x³y²)² + (y−x²y³)² + (x³y−xy³)²`.
+  Untrusted-by-verification: the identity `q·p = Σ dᵢℓᵢ²` is re-checked exactly.
+  (This is the robust, kernel-checkable route to the SONC / nonneg-circuit class —
+  it covers the same nonnegativity gap without the `rpow` AM-GM machinery.)
+
+Content-neutral for existing families (no refreeze).
+
+## Unreleased — Bernstein positivity + Real-Nullstellensatz finder + better SDP rationalization
+
+- **`BernsteinEmitter`** (`bernstein`) — `0 ≤ p(x)` on a closed interval `[a,b]`
+  via nonnegative Bernstein coefficients, the univariate interval specialization
+  of Handelman positivity.  Telperion FINDS the certificate: it extracts the
+  Bernstein coefficients by exact linear solve, ELEVATING the degree until all are
+  nonnegative (the enclosure sharpens with degree; a strictly-positive polynomial
+  succeeds at some finite degree, one touching zero interior is refused).  Robust
+  Lean — a `mul_nonneg`/`pow_nonneg` fold over `0 ≤ x−a`, `0 ≤ b−x` + `ring` +
+  `linarith`.
+- **`find_real_nullstellensatz`** (`sdp_finder.py`) — `RealNullstellensatzEmitter`
+  now SEARCHES the multiplicity `m` and the SOS `s` with `p^{2m} + s ∈ ⟨gₖ⟩` when a
+  family returns `m=None, sos=None`: `x = 0` and `y = 0` on the real variety of
+  `x²+y²` are found automatically (SDP over an SOS block + free ideal cofactors).
+- **better SDP rationalization** — the shared SDP solver now tries continued-
+  fraction rounding (`Fraction.limit_denominator`) alongside the fixed-denominator
+  ladder, snapping an entry like `0.333…` to `1/3` without needing `3` on the
+  ladder — raising the finders' exact-rationalization hit rate.  Untrusted-by-
+  verification throughout: every found certificate is re-verified exactly.
+
+Content-neutral for existing families (no refreeze).
 
 ## Unreleased — integer arithmetic (Chvátal–Gomory rounding, VIPR-style)
 

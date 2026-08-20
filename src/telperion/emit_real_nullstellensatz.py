@@ -93,22 +93,40 @@ def certify_real_nullstellensatz_point(family, pt, name):
     nonnegative.  Refuses otherwise — `p` is not certified to vanish on the real
     variety by this `(m, s)`.
 
-    FINDER mode: ``sos = None`` (with ``m = None``) searches m ≤ max_m
-    (constant ``real_nullstellensatz_max_m``, default 2) for `(m, s)` via
-    `find_real_nullstellensatz_certificate`; a miss is a refusal."""
+    FINDER mode: ``m = None`` (or ``sos = None``) searches for `(m, s)` — first
+    the exact sympy-only `find_real_nullstellensatz_certificate` (no cvxpy, for
+    the quick CI path), then the SDP `sdp_finder.find_real_nullstellensatz` as a
+    fallback for cases outside `sos_decompose`'s v1 SOS class.  A miss by both is
+    a refusal."""
     p, m, sos, gens = family.special[1](pt)
     p = sp.expand(sp.sympify(p))
     gens = [sp.expand(sp.sympify(g)) for g in gens]
     syms = tuple(family.symbols)
-    if sos is None:
+    if m is None or sos is None:
+        # FINDER mode: SEARCH for (m, s).  Two finders, tried in order of cost:
+        #   1. the exact, sympy-only Gröbner-NF + `sos_decompose` finder — no
+        #      cvxpy, so it runs on the cvxpy-free `quick` CI path;
+        #   2. the SDP finder (`sdp_finder.find_real_nullstellensatz`) as a
+        #      fallback for cases outside `sos_decompose`'s v1 SOS class.
+        # Both return the same (m, s_terms) interface and are untrusted — the
+        # certifier below re-reduces regardless — so trying the cheap one first
+        # never changes correctness, only which certificate is emitted.
         max_m = int(family.constants.get("real_nullstellensatz_max_m", 2))
         found = find_real_nullstellensatz_certificate(p, gens, syms, max_m=max_m)
         if found is None:
+            from .sdp_finder import find_real_nullstellensatz
+            m_max = int(family.constants.get("real_nss_m_max", 3))
+            half_deg = int(family.constants.get("real_nss_half_deg", 1))
+            found = find_real_nullstellensatz(p, gens, syms, m_max=m_max,
+                                              half_deg=half_deg)
+        if found is None:
             raise ValueError(
-                f"real_nullstellensatz '{name}' REFUSED: no (m ≤ {max_m}, SOS s) "
-                "certificate found — p may not vanish on the real variety, or "
-                "the exact SOS search missed (a refusal, not a disproof)")
+                f"real_nullstellensatz '{name}' REFUSED: no Real-Nullstellensatz "
+                f"certificate (p^2m + s ∈ ⟨gₖ⟩, s SOS) found — p may not vanish "
+                "on the real variety, or the search missed (a refusal, not a "
+                "disproof)")
         m, sos = found
+
     m = int(m)
     if m < 1:
         raise ValueError(f"real_nullstellensatz '{name}' REFUSED: m must be ≥ 1")
