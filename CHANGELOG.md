@@ -13,9 +13,24 @@ supply the problem, Telperion finds the certificate."
   products, so it enumerates column subsets and solves `A c = b` exactly, keeping
   the first nonnegative solution.  Deterministic (byte-stable frozen output), and
   untrusted-by-design — every found certificate is re-verified exactly by the
-  certifier, so a search miss is a refusal, never a wrong theorem.  (The
-  Putinar / SOS-refutation SOS finders are the SDP analogue — planned, via the
-  `sos_sdp` cvxpy path.)
+  certifier, so a search miss is a refusal, never a wrong theorem.
+
+- **`find_putinar_certificate`** — the `ConstrainedSOSEmitter` (Putinar) now
+  SEARCHES for the constrained-SOS certificate when a family returns
+  `sigma0 = None`: given `p` and the constraint set `{gᵢ ≥ 0}`, it finds SOS
+  multipliers with `p = σ₀ + Σ σᵢ·gᵢ`.  ROUTE A (the SDP analogue the Handelman
+  note flagged as planned): a numeric SDP over the Gram matrices of `σ₀` and each
+  `σᵢ` (cvxpy + SCS — no `csdp` binary needed), then EXACT rational rounding on a
+  denominator ladder, a robust rank-deficiency-tolerant LDLᵀ (the exact-arithmetic
+  analogue of leanprover/sos's facial reduction), and an exact reconstruction
+  check over ℚ.  Mirrors leanprover/sos's round-and-check pipeline inside
+  Telperion's own stack while emitting plain-Mathlib `ring`/`positivity`/`linarith`
+  Lean (no external lake dependency — see `sos_sdp.py`'s `sos_witness` bridge note).
+  The relaxation order defaults to `⌈deg p / 2⌉`, overridable via
+  `constants['putinar_half_deg']`.  Deterministic (pinned solver + symmetrized,
+  ladder-rounded Gram), and untrusted-by-design — every found certificate is
+  re-verified exactly by `certify_putinar_point`, so a search miss is a refusal,
+  never a wrong theorem.
 
 ## Unreleased — the beyond-positivity pass (equational reasoning + real refutations)
 

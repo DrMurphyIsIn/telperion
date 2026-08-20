@@ -72,6 +72,7 @@ from .emit_monotone_tail import MonotoneRatioTailEmitter, monotone_tail_family  
 from .emit_interlacing import InterlacingEmitter, interlacing_family  # noqa: F401
 # Tier-2 literature-derived first-class emitters (2026-08-19).
 from .emit_constrained_sos import ConstrainedSOSEmitter, putinar_family  # noqa: F401
+from .sos_sdp import find_putinar_certificate  # noqa: F401
 from .emit_wz import WZ_PRELUDE, WZEmitter, wz_family  # noqa: F401
 # Tier-3 literature-derived first-class emitters (2026-08-20).
 from .emit_handelman import (  # noqa: F401
