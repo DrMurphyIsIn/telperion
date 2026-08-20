@@ -97,6 +97,8 @@ from .emit_real_nullstellensatz import (  # noqa: F401
 from .emit_cg_round import (  # noqa: F401
     CGRoundEmitter, certify_cg_round_point, cg_round_family,
 )
+# SOS-refutation SDP finder (Putinar finder lives in sos_sdp; 2026-08-20).
+from .sdp_finder import find_sos_refutation  # noqa: F401
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
     NonVacuityError, assert_certificate_sensitive, check_nonvacuous,
