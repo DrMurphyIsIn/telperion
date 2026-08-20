@@ -74,6 +74,23 @@ reals — the deduction the reals cannot make.
   `∀ s : Int, 4 ≤ s → s ≤ 6 → phi11num s ≤ phi11den s` kernel-checks with axioms
   `[propext, Classical.choice, Quot.sound]`.  `conjecture1_proved = False` — this
   is the integer-window fragment only, not BG.
+## Unreleased — SDP refutation finder + compile-gated SOS-finder examples
+
+Completes the checker→searcher upgrade for the remaining SOS emitters, on top of
+the Putinar finder (`sos_sdp.find_putinar_certificate`).
+
+- **`find_sos_refutation`** (`sdp_finder.py`) — `SOSRefutationEmitter` now
+  SEARCHES the refutation `−1 = σ₀ + Σ σᵢ·gᵢ + Σ λⱼ·hⱼ` (SOS σ, free λ) when a
+  family returns `sigma0=None`, AUTOMATICALLY closing the real-only gap (finds
+  `σ₀ = x²`, `λ = −1` for `x² + 1 = 0`).  A shared multi-Gram SDP (cvxpy) with a
+  trace-minimizing objective, multi-denominator rationalization, exact
+  verification, and a PSD-singular-safe rational LDLᵀ.  Untrusted-by-verification.
+- **compile-gated finder examples** — `examples/putinar_find` and
+  `examples/sos_refutation_find` (the `sdp` verify group; cvxpy at freeze-time,
+  regeneration off the cvxpy-free CI path) freeze the SDP-FOUND certificates so
+  their auto-discovered Lean is kernel-verified in `audit-compiles`.
+
+Content-neutral for existing families (no refreeze).
 
 ## Unreleased — certificate FINDERS (checker → searcher)
 

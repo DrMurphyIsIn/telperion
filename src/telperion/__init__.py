@@ -98,6 +98,8 @@ from .emit_real_nullstellensatz import (  # noqa: F401
 from .emit_cg_round import (  # noqa: F401
     CGRoundEmitter, certify_cg_round_point, cg_round_family,
 )
+# SOS-refutation SDP finder (Putinar finder lives in sos_sdp; 2026-08-20).
+from .sdp_finder import find_sos_refutation  # noqa: F401
 # Facial-positivity emitter (2026-08-20): Castle-Powers-Reznick Polya-with-zeros
 # — the tie-safe homogeneous lift (zeros allowed on faces; cf. lift.py's
 # strict-only inhomogeneous lift).
