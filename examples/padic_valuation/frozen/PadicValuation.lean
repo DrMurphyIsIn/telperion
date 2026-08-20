@@ -1,4 +1,4 @@
-/- telperion 0.1.5 | family PadicValuation | input-hash 495163a30c751b58
+/- telperion 0.1.6 | family PadicValuation | input-hash a692fba3e594527a
    5 theorems, 5 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

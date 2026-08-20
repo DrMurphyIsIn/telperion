@@ -1,0 +1,9 @@
+{
+  "family": "WZ",
+  "input_hash": "32248143b76885dd3a4c49d7ff0468c79f586fd651bb6494a19b2e80032b67d1",
+  "tool_version": "0.1.6",
+  "files": [
+    "WZ.lean"
+  ],
+  "n_theorems": 1
+}

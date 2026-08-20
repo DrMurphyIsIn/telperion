@@ -46,7 +46,7 @@ of them — Telperion will certify it in exact arithmetic and emit the Lean. If 
 needs a new shape, you add an emitter (see [Extending it](#extending-it)); the
 trust model and the whole pipeline come for free.
 
-### Certificate shapes (v0.1.5)
+### Certificate shapes (v0.1.6)
 
 Each shape is an *emitter*; all flow through the same `certify → validate →
 emit → freeze` workflow.
@@ -72,6 +72,8 @@ emit → freeze` workflow.
 | `LogConcaveSinglePointEmitter` | `max_{k∈ℕ} F(k) ≤ B` reduced to a single point `k*` by log-concavity | single-point + per-step + neighbour facts (`norm_num`) |
 | `MonotoneRatioTailEmitter` | `b(s) ≤ B` for all `s ≥ s₀` via a nonincreasing tail | tail step (`positivity`) + base (`norm_num`) + `Nat.le_induction` |
 | `InterlacingEmitter` | Newton's inequalities (coefficient log-concavity) of a real-rooted polynomial | `norm_num` on exact rationals |
+| `ConstrainedSOSEmitter` | `0 ≤ p` on a semialgebraic set `{gᵢ ≥ 0}` via a Putinar certificate `p = σ₀ + Σ σᵢ·gᵢ` (SOS multipliers) | `p = σ₀ + Σ σᵢ·gᵢ := by ring`; each `σⱼ` by `positivity`, paired with `gᵢ ≥ 0` by `mul_nonneg`, summed by `linarith` |
+| `WZEmitter` | hypergeometric / binomial sum identities `Σ_k F(n,k) = rhs(n)` via a Wilf–Zeilberger mate `R(n,k)` | denominator-cleared WZ equation as an exact `ring` polynomial identity + the reusable `wz_row_invariant` telescoping-closure lemma |
 | `CustomAssemblyEmitter` | escape hatch for a hand-designed assembly | your skeleton |
 
 The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;

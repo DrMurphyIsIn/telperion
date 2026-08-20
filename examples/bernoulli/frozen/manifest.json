@@ -1,7 +1,7 @@
 {
   "family": "Bernoulli",
-  "input_hash": "7c64922f224ea61127c4e32f23d49cf9482aee6261e4aa5e5d0550cdb216eaad",
-  "tool_version": "0.1.5",
+  "input_hash": "a71af9f9d7a546749af6aa6bb1cbe9adbaa53318a57869990fffb20085d00e31",
+  "tool_version": "0.1.6",
   "files": [
     "Bernoulli.lean"
   ],

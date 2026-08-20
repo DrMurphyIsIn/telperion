@@ -116,6 +116,8 @@ _SPECIAL_KINDS = (
     # BG-derived first-class emitters (2026-08-19), dispatched via family.special.
     "cone", "unimodal", "lattice_box", "logconcave", "telescope",
     "monotone_tail", "interlacing",
+    # Tier-2 literature-derived emitters (2026-08-19).
+    "putinar", "wz",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -127,6 +129,8 @@ _SPECIAL_DISPATCH = {
     "telescope": ("emit_telescope", "certify_telescope_point"),
     "monotone_tail": ("emit_monotone_tail", "certify_monotone_tail_point"),
     "interlacing": ("emit_interlacing", "certify_interlacing_point"),
+    "putinar": ("emit_constrained_sos", "certify_putinar_point"),
+    "wz": ("emit_wz", "certify_wz_point"),
 }
 
 

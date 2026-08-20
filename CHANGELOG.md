@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.6 (2026-08-19) — two literature-derived certificate families
+
+A deep literature review (beyond the Brualdi–Goldwasser campaign) identified the
+highest-value certificate families not yet covered.  The top two are promoted to
+first-class emitters, again via the generic `family.special = (kind, spec)` hook
+(no shared-core churn), each with a working negative control:
+
+- **`ConstrainedSOSEmitter`** (`putinar`) — the constrained arm of real-algebraic
+  positivity the unconstrained `SOSEmitter` could not reach.  Proves `0 ≤ p` on a
+  basic closed semialgebraic set `{g₁ ≥ 0, …, g_m ≥ 0}` from a **Putinar /
+  Positivstellensatz** certificate `p = σ₀ + Σ σᵢ·gᵢ` with each `σⱼ` a sum of
+  squares.  Telperion is the CHECKER: it verifies the identity exactly in
+  rational arithmetic and that every square coefficient is nonnegative — a
+  decomposition that fails to reconstruct `p`, or smuggles in a negative
+  coefficient, is refused.  Emits robust Lean — `ring` for the identity,
+  `positivity` for each multiplier, `mul_nonneg` to pair it with the constraint
+  hypothesis, `linarith` to sum the nonnegative pieces.
+- **`WZEmitter`** (`wz`) — the combinatorial-identity family (**Wilf–Zeilberger
+  creative telescoping**) previously untouched.  Certifies a hypergeometric /
+  binomial sum identity `Σ_k F(n,k) = rhs(n)` from its WZ mate `R(n,k)`: the
+  summand ratios are checked rational (proper hypergeometric), the WZ equation is
+  verified as an exact rational identity, and the **denominator-cleared** WZ
+  equation is emitted as a **non-vacuous** `ring` polynomial identity (kept as
+  distinct products so a wrong mate makes it a false identity that `ring`
+  rejects).  Ships the reusable `Telperion.wz_row_invariant` telescoping-closure
+  lemma (proven by finite-sum telescoping); the final identity is a base-row
+  evaluation fed to it.  Deriving the mate (Zeilberger's algorithm) is upstream.
+
+Version bump forces a global refreeze (the tool version is part of every family's
+provenance hash).
+
 ## 0.1.5 (2026-08-19) — seven BG-derived certificate shapes
 
 Seven reusable certificate shapes that surfaced in the Brualdi–Goldwasser

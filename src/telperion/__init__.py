@@ -6,7 +6,7 @@ trusted component.  A defective certificate manifests as a compile failure,
 never a false theorem.  See docs/METHODOLOGY.md.
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from .certify import (  # noqa: F401
     CertificationError,
@@ -70,6 +70,9 @@ from .emit_lattice_box import LatticeBoxEmitter, lattice_box_family  # noqa: F40
 from .emit_logconcave import LogConcaveSinglePointEmitter, logconcave_family  # noqa: F401
 from .emit_monotone_tail import MonotoneRatioTailEmitter, monotone_tail_family  # noqa: F401
 from .emit_interlacing import InterlacingEmitter, interlacing_family  # noqa: F401
+# Tier-2 literature-derived first-class emitters (2026-08-19).
+from .emit_constrained_sos import ConstrainedSOSEmitter, putinar_family  # noqa: F401
+from .emit_wz import WZ_PRELUDE, WZEmitter, wz_family  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401

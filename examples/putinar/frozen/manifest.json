@@ -1,0 +1,9 @@
+{
+  "family": "Putinar",
+  "input_hash": "0fcb54a29adfc8b3485f429dbe666b92e0809e352a1c02e7467741e26d587da2",
+  "tool_version": "0.1.6",
+  "files": [
+    "Putinar.lean"
+  ],
+  "n_theorems": 2
+}
