@@ -123,7 +123,7 @@ _SPECIAL_KINDS = (
     # Tier-4 refutation emitter (2026-08-20).
     "infeasible",
     # Tier-7 runway emitters (2026-08-20).
-    "bernstein", "rational_sos",
+    "bernstein", "rational_sos", "sturm_positive",
     # Tier-5 beyond-positivity emitters (2026-08-20).
     "consequence", "sos_refutation", "real_nullstellensatz",
     # Tier-6 integer-arithmetic emitter (2026-08-20): VIPR-style Chvatal-Gomory.
@@ -148,6 +148,7 @@ _SPECIAL_DISPATCH = {
     "infeasible": ("emit_infeasible", "certify_infeasible_point"),
     "bernstein": ("emit_bernstein", "certify_bernstein_point"),
     "rational_sos": ("emit_rational_sos", "certify_rational_sos_point"),
+    "sturm_positive": ("emit_sturm_positive", "certify_sturm_positive_point"),
     "consequence": ("emit_consequence", "certify_consequence_point"),
     "sos_refutation": ("emit_sos_refutation", "certify_sos_refutation_point"),
     "real_nullstellensatz": ("emit_real_nullstellensatz", "certify_real_nullstellensatz_point"),

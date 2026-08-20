@@ -41,6 +41,20 @@ landed the same day (see the Bernstein/Real-Nullstellensatz entry below).
   in no lake gate — the "silenced gate" class.  Added to audit-compiles staging,
   `Audit.lean`, and the workflow trigger paths alongside the new `polya_zeros`
   example.
+## Unreleased — Sturm strict-interval positivity (root exclusion)
+
+- **`SturmPositiveEmitter`** (`sturm_positive`) — `0 < p(x)` (STRICT) for all
+  `x ∈ [a,b]`, the robustly kernel-checkable half of Sturm: root EXCLUSION.  A
+  Sturm sequence (exact, in sympy) is the decision oracle — it certifies `p` has
+  no root in `[a,b]` (a polynomial with a root there, or negative there, is
+  refused) — and the Lean proof combines a Bernstein certificate for `p − γ ≥ 0`
+  (γ a rational floor `0 < γ ≤ min p`) with `0 < γ` via `linarith`.  Goes beyond
+  `BernsteinEmitter` (non-strict `0 ≤ p`) by delivering strict positivity.  The
+  other half of Sturm — an EXACT real-root COUNT emitted as a theorem — needs
+  Sturm's theorem in Mathlib (not yet available) and remains out of scope; the
+  Sturm sequence is used only as the exact oracle and negative-control gate.
+
+Content-neutral for existing families (no refreeze).
 
 ## Unreleased — rational-SOS (Artin denominator): reaching nonneg-but-not-SOS
 

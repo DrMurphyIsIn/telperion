@@ -1,0 +1,9 @@
+{
+  "family": "SturmPositive",
+  "input_hash": "bae20970da47d4131dae5ab61c9a05fe1bcbdf78180955879978848b9c9fe2bd",
+  "tool_version": "0.1.6",
+  "files": [
+    "SturmPositive.lean"
+  ],
+  "n_theorems": 3
+}

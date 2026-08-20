@@ -115,6 +115,9 @@ from .emit_polya_zeros import (  # noqa: F401
     PolyaZerosEmitter, find_polya_zeros_certificate, polya_zeros_family,
     polya_zeros_obstruction,
 )
+from .emit_sturm_positive import (  # noqa: F401
+    SturmPositiveEmitter, sturm_positive_family,
+)
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
     NonVacuityError, assert_certificate_sensitive, check_nonvacuous,
