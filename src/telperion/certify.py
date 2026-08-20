@@ -120,6 +120,8 @@ _SPECIAL_KINDS = (
     "putinar", "wz",
     # Tier-3 literature-derived emitters (2026-08-20).
     "handelman", "nullstellensatz",
+    # Tier-4 refutation emitter (2026-08-20).
+    "infeasible",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -135,6 +137,7 @@ _SPECIAL_DISPATCH = {
     "wz": ("emit_wz", "certify_wz_point"),
     "handelman": ("emit_handelman", "certify_handelman_point"),
     "nullstellensatz": ("emit_nullstellensatz", "certify_nullstellensatz_point"),
+    "infeasible": ("emit_infeasible", "certify_infeasible_point"),
 }
 
 

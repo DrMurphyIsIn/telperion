@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — infeasibility / refutation (proving NO solution exists)
+
+- **`InfeasibilityEmitter`** (`infeasible`) — the logical DUAL of the
+  Nullstellensatz emitter, and a new capability class: a certificate of
+  NON-existence.  Proves a polynomial system `{g_1 = 0, …, g_m = 0}` has no
+  common solution via a **Nullstellensatz refutation** `1 = Σ λⱼ·gⱼ` (the system
+  is unsatisfiable iff `1` lies in the ideal).  Telperion COMPUTES the cofactors
+  `λⱼ` by undetermined coefficients (a linear solve at increasing degree); a
+  satisfiable system — or one infeasible only over ℝ by positivity (e.g.
+  `x² + 1 = 0`, which needs the SOS Positivstellensatz) — is refused.  Emits a
+  direct contradiction: `linear_combination` turns the certificate into `1 = 0`,
+  then `absurd … norm_num` closes `False`.  This is the bedrock verification
+  shape — "no counterexample / bad state exists."  Content-neutral (no refreeze).
+
 ## Unreleased — two more literature-derived certificate families
 
 - **`HandelmanEmitter`** (`handelman`) — the polytope specialization of
