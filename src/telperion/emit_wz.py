@@ -46,6 +46,7 @@ from .certify import CertifiedInstance
 from .expr import expr_lean
 from .family import GridSpec, InequalityFamily
 from .lean import LeanProfile
+from .nonvacuity import assert_certificate_sensitive
 from .workflow import Emitter
 
 # Reusable telescoping-closure lemma, proved once by finite-sum telescoping.
@@ -129,23 +130,30 @@ def certify_wz_point(family, pt, name):
     # that `ring` discharges hypothesis-free.  The four terms are kept as
     # DISTINCT products (never combined) so the emitted goal is non-vacuous — a
     # wrong mate makes it a false polynomial identity and `ring` fails.
-    na, da = sp.fraction(sp.together(a))
+    na, da = sp.fraction(sp.together(a))   # R-INDEPENDENT summand-ratio parts
     nb, db = sp.fraction(sp.together(b))
-    nR, dR = sp.fraction(sp.together(R))
-    nR1, dR1 = sp.fraction(sp.together(R.subs(k, k + 1)))
-    termA = (na, dR1, db, dR)      #  a·D
-    termB = (da, dR1, db, dR)      #  1·D
-    termC = (nR1, nb, da, dR)      #  R(n,k+1)·b·D
-    termD = (nR, da, dR1, db)      #  R·D
-    cleared = (sp.prod(termA) - sp.prod(termB)
-               - sp.prod(termC) + sp.prod(termD))
-    if sp.expand(cleared) != 0:                            # emission self-check
-        raise ValueError(
-            f"wz instance '{name}' REFUSED: denominator-cleared WZ identity is "
-            f"not polynomial-exact (got {sp.expand(cleared)}) — ratios not "
-            "fully rational")
+
+    def _terms(Rx):
+        """The four cleared-identity products as a function of the mate Rx."""
+        nRx, dRx = sp.fraction(sp.together(Rx))
+        nR1x, dR1x = sp.fraction(sp.together(Rx.subs(k, k + 1)))
+        return ((na, dR1x, db, dRx),      #  a·D
+                (da, dR1x, db, dRx),      #  1·D
+                (nR1x, nb, da, dRx),      #  R(n,k+1)·b·D
+                (nRx, da, dR1x, db))      #  R·D
+
+    def _cleared(Rx):
+        tA, tB, tC, tD = _terms(Rx)
+        return sp.prod(tA) - sp.prod(tB) - sp.prod(tC) + sp.prod(tD)
+
+    # Non-vacuity / load-bearing check (Telperion at its own output): the emitted
+    # identity must vanish for the true mate AND be broken by a corruption — so a
+    # wrong mate cannot compile, and the claim cannot collapse to a tautology.
+    assert_certificate_sensitive(
+        _cleared, R, [lambda r: r + 1, lambda r: r + 2], label=f"wz '{name}'")
     checks += 1
 
+    termA, termB, termC, termD = _terms(R)
     inst = CertifiedInstance(
         point=dict(pt), lean_name=name, corners=(),
         payload=(n, k, termA, termB, termC, termD),

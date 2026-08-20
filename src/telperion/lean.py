@@ -72,6 +72,11 @@ class LeanProfile:
     unfold_lemmas: tuple[str, ...] = ()    # the `simp only [...]` list for identities
     options: tuple[str, ...] = ()          # e.g. ("set_option maxHeartbeats 1000000",)
     skeletons: Mapping[str, str] = field(default_factory=dict)  # per-kind overrides
+    # Lint policy (not content — not part of the provenance hash, like the
+    # sorry/axiom lint): by default `emit()` refuses a reflexive/trivial theorem
+    # (`X = X`, `0 ≤ 0`) as VACUOUS.  A family that INTENTIONALLY emits reference
+    # identities or degenerate boundary cases opts out here, declaring that intent.
+    allow_reflexive: bool = False
 
     def skeleton(self, kind: str) -> str:
         return self.skeletons.get(kind, DEFAULT_SKELETONS[kind])

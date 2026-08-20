@@ -90,6 +90,16 @@ round-trip, not to establish truth. The design corollary is that the generator
 stays small, readable, and dependency-light (sympy only) — a referee can audit
 the engine (~a few thousand lines) instead of trusting it.
 
+**The one thing the kernel can't catch — vacuity.** The kernel rejects a *false*
+theorem, but a *true-but-vacuous* one (`X = X`, `0 ≤ 0`) compiles green while
+proving nothing about the certificate — the defect lives in the statement, not
+the proof. `nonvacuity.py` is Telperion pointed at its own output: `emit()`
+refuses a reflexive emitted statement (`check_nonvacuous`), and the identity
+emitters additionally require the certificate to be *load-bearing* — a corrupted
+certificate must break the claim (`assert_certificate_sensitive`). A family that
+deliberately emits reference identities opts out with
+`LeanProfile(allow_reflexive=True)`.
+
 ## The workflow (enforced, not advisory)
 
 ```

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — non-vacuity gate (Telperion pointed at its own output)
+
+The Lean kernel guarantees no FALSE theorem; it cannot catch a TRUE-but-vacuous
+one (`X = X`, `0 ≤ 0`) — the defect lives in the statement, not the proof.  New
+`nonvacuity.py` closes that gap in two layers:
+
+- **Structural** — `check_nonvacuous`, wired into `emit()` beside the
+  sorry/axiom lint: refuses a WHOLLY VACUOUS body (every theorem conclusion
+  reflexive, `t ⋈ t`).  This is precisely the class that let a WZ emitter ship a
+  vacuous single-theorem `X = X` body (kernel green, Python silently the real
+  checker) through hand review.  A mixed body with a tight-but-genuine ingredient
+  (e.g. a monotone-tail base `b(s₀) ≤ B` that is `1 ≤ 1` at a tie) is NOT
+  flagged — per-instance rigor is the semantic gate's job.  A family that
+  intentionally emits an all-trivial body opts out via
+  `LeanProfile(allow_reflexive=True)`.
+- **Semantic** — `assert_certificate_sensitive`, wired into the WZ certifier:
+  rebuilds the claim from a CORRUPTED certificate and requires the corruption to
+  break it (claim `0` for the true certificate, non-`0` for a perturbation), so
+  the certificate is provably load-bearing — and correctly passes a tight-but-
+  certificate-dependent claim.
+
+Content-neutral (no emitted Lean changes, no refreeze).  A drift-net test pins
+that no frozen example is a wholly-vacuous emission.
+
 ## 0.1.6 (2026-08-19) — two literature-derived certificate families
 
 A deep literature review (beyond the Brualdi–Goldwasser campaign) identified the

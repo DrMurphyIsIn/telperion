@@ -282,6 +282,15 @@ def emit(
     # production families.
     for fname, gen in _gen_bodies:
         check_lean_text(gen, path=fname)
+    # Non-vacuity gate (Telperion pointed at its own output): refuse a reflexive
+    # tautology (`X = X`, `0 ≤ 0`) that compiles green while verifying nothing —
+    # the one soundness-adjacent defect the kernel cannot catch (it lives in the
+    # STATEMENT, not the proof).  A family that intentionally emits reference /
+    # degenerate-boundary identities opts out via `LeanProfile(allow_reflexive=True)`.
+    if not profile.allow_reflexive:
+        from .nonvacuity import check_nonvacuous
+        for fname, gen in _gen_bodies:
+            check_nonvacuous(gen, path=fname)
     return EmitResult(
         family_name=fam.family.name,
         input_hash=ihash,
