@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — two more literature-derived certificate families
+
+- **`HandelmanEmitter`** (`handelman`) — the polytope specialization of
+  positivity.  Proves `0 ≤ p` on `{ℓ₁ ≥ 0, …, ℓ_m ≥ 0}` from a Handelman
+  certificate `p = Σ c_α ∏ ℓᵢ^{αᵢ}` — a nonnegative combination of PRODUCTS of
+  the linear constraints (LP-feasible, no SDP; where Putinar uses SOS multipliers,
+  Handelman uses nonnegative constants times constraint-monomials).  Telperion
+  verifies the identity exactly with all coefficients nonnegative; emits a
+  `mul_nonneg`/`pow_nonneg` fold over the constraint hypotheses + `ring` +
+  `linarith`.
+- **`NullstellensatzEmitter`** (`nullstellensatz`) — a NEW capability class: an
+  EQUALITY on an algebraic variety, not an inequality.  Proves
+  `∀x, (⋀ gᵢ = 0) → p = 0` from ideal-membership cofactors `p = Σ hᵢ·gᵢ`, which
+  Telperion COMPUTES by Gröbner reduction (`sympy.reduced`) — a `p` that does not
+  reduce to zero is refused.  Emits a single, maximally-robust Mathlib
+  `linear_combination Σ hᵢ·(hyp_i)` (exactly the ideal-membership checker).
+
+Both ship compile-gated frozen examples (`examples/handelman`,
+`examples/nullstellensatz`) in the `audit-compiles` kernel gate.  Content-neutral
+for existing families (no refreeze).
+
 ## Unreleased — non-vacuity gate (Telperion pointed at its own output)
 
 The Lean kernel guarantees no FALSE theorem; it cannot catch a TRUE-but-vacuous

@@ -118,6 +118,8 @@ _SPECIAL_KINDS = (
     "monotone_tail", "interlacing",
     # Tier-2 literature-derived emitters (2026-08-19).
     "putinar", "wz",
+    # Tier-3 literature-derived emitters (2026-08-20).
+    "handelman", "nullstellensatz",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -131,6 +133,8 @@ _SPECIAL_DISPATCH = {
     "interlacing": ("emit_interlacing", "certify_interlacing_point"),
     "putinar": ("emit_constrained_sos", "certify_putinar_point"),
     "wz": ("emit_wz", "certify_wz_point"),
+    "handelman": ("emit_handelman", "certify_handelman_point"),
+    "nullstellensatz": ("emit_nullstellensatz", "certify_nullstellensatz_point"),
 }
 
 

@@ -73,6 +73,11 @@ from .emit_interlacing import InterlacingEmitter, interlacing_family  # noqa: F4
 # Tier-2 literature-derived first-class emitters (2026-08-19).
 from .emit_constrained_sos import ConstrainedSOSEmitter, putinar_family  # noqa: F401
 from .emit_wz import WZ_PRELUDE, WZEmitter, wz_family  # noqa: F401
+# Tier-3 literature-derived first-class emitters (2026-08-20).
+from .emit_handelman import HandelmanEmitter, handelman_family  # noqa: F401
+from .emit_nullstellensatz import (  # noqa: F401
+    NullstellensatzEmitter, nullstellensatz_family,
+)
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
     NonVacuityError, assert_certificate_sensitive, check_nonvacuous,

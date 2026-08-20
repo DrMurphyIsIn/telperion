@@ -74,6 +74,8 @@ emit → freeze` workflow.
 | `InterlacingEmitter` | Newton's inequalities (coefficient log-concavity) of a real-rooted polynomial | `norm_num` on exact rationals |
 | `ConstrainedSOSEmitter` | `0 ≤ p` on a semialgebraic set `{gᵢ ≥ 0}` via a Putinar certificate `p = σ₀ + Σ σᵢ·gᵢ` (SOS multipliers) | `p = σ₀ + Σ σᵢ·gᵢ := by ring`; each `σⱼ` by `positivity`, paired with `gᵢ ≥ 0` by `mul_nonneg`, summed by `linarith` |
 | `WZEmitter` | hypergeometric / binomial sum identities `Σ_k F(n,k) = rhs(n)` via a Wilf–Zeilberger mate `R(n,k)` | denominator-cleared WZ equation as an exact `ring` polynomial identity + the reusable `wz_row_invariant` telescoping-closure lemma |
+| `HandelmanEmitter` | `0 ≤ p` on a polytope `{ℓᵢ ≥ 0}` via a nonnegative combination of PRODUCTS of the constraints `p = Σ c_α ∏ ℓᵢ^{αᵢ}` | `mul_nonneg`/`pow_nonneg` fold over the constraint hypotheses + `ring` + `linarith` |
+| `NullstellensatzEmitter` | `p = 0` on a variety `V(g₁,…,gₘ)` via ideal-membership cofactors `p = Σ hᵢ·gᵢ` (an EQUALITY, computed by Gröbner reduction) | a single `linear_combination Σ hᵢ·(hyp_i)` |
 | `CustomAssemblyEmitter` | escape hatch for a hand-designed assembly | your skeleton |
 
 The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;
