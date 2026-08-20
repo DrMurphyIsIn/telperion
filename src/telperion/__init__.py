@@ -82,6 +82,14 @@ from .emit_nullstellensatz import (  # noqa: F401
 from .emit_infeasible import (  # noqa: F401
     InfeasibilityEmitter, find_refutation, infeasible_family,
 )
+# Tier-5 beyond-positivity emitters (2026-08-20).
+from .emit_consequence import ConsequenceEmitter, consequence_family  # noqa: F401
+from .emit_sos_refutation import (  # noqa: F401
+    SOSRefutationEmitter, sos_refutation_family,
+)
+from .emit_real_nullstellensatz import (  # noqa: F401
+    RealNullstellensatzEmitter, real_nullstellensatz_family,
+)
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
     NonVacuityError, assert_certificate_sensitive, check_nonvacuous,

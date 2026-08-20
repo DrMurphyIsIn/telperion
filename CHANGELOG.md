@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — the beyond-positivity pass (equational reasoning + real refutations)
+
+Three emitters completing the "beyond `0 ≤ p`" arc — algebraic reasoning about
+equalities, real-unsatisfiability, and real-variety vanishing:
+
+- **`ConsequenceEmitter`** (`consequence`) — an equation FOLLOWS from polynomial
+  equation hypotheses: `{aᵢ = bᵢ} ⟹ lhs = rhs`, when `lhs − rhs` lies in the
+  ideal of the hypothesis differences.  Telperion computes the cofactors (Gröbner
+  reduction); emits a single `linear_combination`.  (Generalizes Nullstellensatz.)
+- **`SOSRefutationEmitter`** (`sos_refutation`) — closes the ℝ-only gap the
+  ideal-theoretic `InfeasibilityEmitter` leaves open: a semialgebraic system
+  `{gᵢ ≥ 0, hⱼ = 0}` is unsatisfiable OVER ℝ via a Positivstellensatz certificate
+  `−1 = σ₀ + Σσᵢgᵢ + Σλⱼhⱼ` (SOS `σ`).  Reaches positivity-only infeasibility
+  such as `x² + 1 = 0` (`σ₀ = x²`, `λ = −1`).  Emits `positivity`/`mul_nonneg`
+  + `linear_combination` + `linarith` ⟹ `False`.
+- **`RealNullstellensatzEmitter`** (`real_nullstellensatz`) — `p = 0` on the REAL
+  variety, which ordinary ideal membership misses (e.g. `x` on the real variety of
+  `x² + y²`).  Certificate `p^{2m} + s ∈ ⟨gₖ⟩` with `s` a sum of squares; Telperion
+  computes the ideal cofactors.  Emits `p^{2m} ≥ 0` ∧ `p^{2m} = −s ≤ 0` ⟹
+  `p^{2m} = 0` ⟹ `p = 0` (`pow_eq_zero_iff`).
+
+Content-neutral for existing families (no refreeze); each ships a compile-gated
+frozen example in the `audit-compiles` kernel gate.
+
 ## Unreleased — infeasibility / refutation (proving NO solution exists)
 
 - **`InfeasibilityEmitter`** (`infeasible`) — the logical DUAL of the

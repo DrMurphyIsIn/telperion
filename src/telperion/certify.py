@@ -122,6 +122,8 @@ _SPECIAL_KINDS = (
     "handelman", "nullstellensatz",
     # Tier-4 refutation emitter (2026-08-20).
     "infeasible",
+    # Tier-5 beyond-positivity emitters (2026-08-20).
+    "consequence", "sos_refutation", "real_nullstellensatz",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -138,6 +140,9 @@ _SPECIAL_DISPATCH = {
     "handelman": ("emit_handelman", "certify_handelman_point"),
     "nullstellensatz": ("emit_nullstellensatz", "certify_nullstellensatz_point"),
     "infeasible": ("emit_infeasible", "certify_infeasible_point"),
+    "consequence": ("emit_consequence", "certify_consequence_point"),
+    "sos_refutation": ("emit_sos_refutation", "certify_sos_refutation_point"),
+    "real_nullstellensatz": ("emit_real_nullstellensatz", "certify_real_nullstellensatz_point"),
 }
 
 

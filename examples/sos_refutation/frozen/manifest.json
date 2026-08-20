@@ -1,0 +1,9 @@
+{
+  "family": "SOSRef",
+  "input_hash": "c4c423b0e702f9b371904dd78256126c81de0f8134368f33075ed033303a2bec",
+  "tool_version": "0.1.6",
+  "files": [
+    "SOSRefutation.lean"
+  ],
+  "n_theorems": 2
+}

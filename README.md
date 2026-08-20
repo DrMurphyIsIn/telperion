@@ -77,6 +77,9 @@ emit → freeze` workflow.
 | `HandelmanEmitter` | `0 ≤ p` on a polytope `{ℓᵢ ≥ 0}` via a nonnegative combination of PRODUCTS of the constraints `p = Σ c_α ∏ ℓᵢ^{αᵢ}` | `mul_nonneg`/`pow_nonneg` fold over the constraint hypotheses + `ring` + `linarith` |
 | `NullstellensatzEmitter` | `p = 0` on a variety `V(g₁,…,gₘ)` via ideal-membership cofactors `p = Σ hᵢ·gᵢ` (an EQUALITY, computed by Gröbner reduction) | a single `linear_combination Σ hᵢ·(hyp_i)` |
 | `InfeasibilityEmitter` | a system `{gⱼ = 0}` has NO solution (a certificate of NON-existence) via a computed Nullstellensatz refutation `1 = Σ λⱼ·gⱼ` | `linear_combination` ⟹ `1 = 0`, then `absurd … norm_num` ⟹ `False` |
+| `ConsequenceEmitter` | an equation `lhs = rhs` FOLLOWS from hypotheses `{aᵢ = bᵢ}` (`lhs−rhs ∈ ⟨aᵢ−bᵢ⟩`, cofactors computed) | a single `linear_combination Σ cᵢ·(hyp_i)` |
+| `SOSRefutationEmitter` | a semialgebraic system `{gᵢ ≥ 0, hⱼ = 0}` is unsatisfiable OVER ℝ via `−1 = σ₀ + Σσᵢgᵢ + Σλⱼhⱼ` (reaches positivity-only infeasibility like `x²+1=0`) | `positivity`/`mul_nonneg` + `linear_combination` + `linarith` ⟹ `False` |
+| `RealNullstellensatzEmitter` | `p = 0` on the REAL variety of `⟨gₖ⟩` via `p^{2m} + s ∈ ⟨gₖ⟩` (`s` a sum of squares, cofactors computed) | `positivity` + `linear_combination` + `linarith` + `pow_eq_zero_iff` |
 | `CustomAssemblyEmitter` | escape hatch for a hand-designed assembly | your skeleton |
 
 The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;
