@@ -545,6 +545,15 @@ def cmd_prove(args) -> int:
     return {"FALSE": 2, "NOT_POLYA_IN_THIS_FORM": 3}.get(res.verdict, 4)
 
 
+def cmd_audit(args) -> int:
+    """Audit external Lean for sorry/axiom/stub/vacuity. Exit 1 if any error finding."""
+    from .audit import audit_lean_file
+
+    report = audit_lean_file(args.file)
+    print(report.render())
+    return 0 if report.ok else 1
+
+
 def cmd_benchmark(args) -> int:
     """Run the certifiable-fragment benchmark; print the deterministic table."""
     from .benchmark import certifiable_seed_corpus, run_benchmark
@@ -719,6 +728,11 @@ def main(argv=None) -> int:
     p.add_argument("--strict", action="store_true",
                    help="also fail on warn-level issues (trivial/Prop:=True stubs)")
     p.set_defaults(fn=cmd_lint_lean)
+
+    p = sub.add_parser("audit",
+                       help="audit external Lean for sorry/axiom/stub/vacuity (the referee role)")
+    p.add_argument("file")
+    p.set_defaults(fn=cmd_audit)
 
     p = sub.add_parser("benchmark",
                        help="run the certifiable-fragment benchmark (deterministic solve rate + timing)")

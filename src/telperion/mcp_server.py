@@ -101,6 +101,20 @@ def prove_goal(expression: str, symbols: str = "u", name: str = "Goal") -> str:
 
 
 @mcp.tool()
+def audit_lean(lean_text: str) -> str:
+    """Referee any Lean source (e.g. an LLM prover's output) for the
+    'green build != proved' defects: sorry/admit, smuggled axiom, empty tactic
+    block, missing type ascription, Prop:=True stub, and per-theorem vacuity
+    (a reflexive `X = X` / `0 <= 0` tautology that compiles while asserting
+    nothing). Returns 'clean' or an itemized, line-cited findings list. A clean
+    audit is necessary not sufficient — the kernel remains the arbiter of
+    truth; a dirty audit is a concrete cited defect."""
+    from .audit import audit_lean_text
+
+    return audit_lean_text(lean_text).render()
+
+
+@mcp.tool()
 def certify_family(family: str) -> str:
     """Run every symbolic self-check for a family. family: 'path/to/family.py:factory'
     where factory() returns an InequalityFamily. Returns the green summary or

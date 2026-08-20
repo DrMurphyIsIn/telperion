@@ -115,6 +115,12 @@ from .benchmark import (  # noqa: F401
     BenchmarkEntry, BenchmarkReport, EntryResult,
     certifiable_seed_corpus, run_benchmark,
 )
+from .audit import (  # noqa: F401
+    AuditFinding, AuditReport, audit_lean_file, audit_lean_text,
+)
+from .formalize import (  # noqa: F401
+    FormalizeResult, Proposer, formalize, ollama_proposer,
+)
 from .lean_lint import (  # noqa: F401
     LeanLintError,
     LeanLintIssue,
