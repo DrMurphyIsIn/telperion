@@ -33,6 +33,7 @@ discharges the identity, and `linarith` sums the nonnegative pieces:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations, combinations_with_replacement
 from typing import Callable, Sequence
 
 import sympy as sp
@@ -52,6 +53,66 @@ def _term_expr(coef, exps, constraints) -> sp.Expr:
     return acc
 
 
+def find_handelman_certificate(p, constraint_exprs, syms, max_deg: int = 2):
+    """SEARCH for a Handelman certificate: nonnegative `c_α` and exponent vectors
+    `α` (total degree ≤ `max_deg`) with `p = Σ c_α ∏ ℓ_i^{α_i}`.  Returns a
+    ``terms`` list of ``(coef, exps)`` or ``None``.
+
+    Exact and sympy-only (no SDP/LP dependency): the products up to degree
+    `max_deg` span a cone, and a nonnegative representation — if one exists — has
+    a BASIC-FEASIBLE form supported on ≤ rank(A) products.  So enumerate column
+    subsets, solve `A c = b` exactly, and keep the first nonnegative solution.
+    The result is exactly verified before return; a wrong search never yields a
+    certificate (the certifier re-verifies regardless — the finder is untrusted).
+    """
+    p = sp.expand(sp.sympify(p))
+    gens = [sp.expand(sp.sympify(g)) for g in constraint_exprs]
+    m = len(gens)
+    syms = tuple(syms)
+
+    products, seen = [], set()          # (alpha, product-expr), α total-deg ≤ D
+    for total in range(0, max_deg + 1):
+        for combo in combinations_with_replacement(range(m), total):
+            alpha = [0] * m
+            for i in combo:
+                alpha[i] += 1
+            alpha = tuple(alpha)
+            if alpha in seen:
+                continue
+            seen.add(alpha)
+            expr = sp.Integer(1)
+            for i, a in enumerate(alpha):
+                expr *= gens[i] ** a
+            products.append((alpha, sp.expand(expr)))
+
+    def cdict(e):
+        return sp.Poly(e, *syms).as_dict() if sp.expand(e) != 0 else {}
+
+    monos = set(cdict(p))
+    for _a, e in products:
+        monos |= set(cdict(e))
+    monos = sorted(monos)
+    A = sp.Matrix([[cdict(e).get(mono, 0) for _a, e in products] for mono in monos])
+    b = sp.Matrix([cdict(p).get(mono, 0) for mono in monos])
+    n = len(products)
+    xs = sp.symbols(f"_hlm0:{n}")
+    for k in range(1, min(n, len(monos)) + 1):
+        for S in combinations(range(n), k):
+            sol = sp.linsolve((A[:, list(S)], b), [xs[j] for j in S])
+            if not sol:
+                continue
+            vals = list(sol)[0]
+            if any(not v.is_number for v in vals) or any(v < 0 for v in vals):
+                continue
+            terms = [(sp.Rational(v), products[j][0])
+                     for j, v in zip(S, vals) if v != 0]
+            recon = sum((sp.Rational(c) * sp.prod([gens[i] ** a
+                        for i, a in enumerate(al)]) for c, al in terms), sp.Integer(0))
+            if sp.expand(p - recon) == 0:
+                return terms
+    return None
+
+
 def certify_handelman_point(family, pt, name):
     """Certify one Handelman instance: (CertifiedInstance, n_checks).
 
@@ -64,6 +125,17 @@ def certify_handelman_point(family, pt, name):
     p, constraints, terms = family.special[1](pt)
     p = sp.expand(sp.sympify(p))
     syms = tuple(family.symbols)
+    if terms is None:
+        # FINDER mode: search for the certificate instead of checking a supplied one.
+        max_deg = int(family.constants.get("handelman_max_deg", 2))
+        terms = find_handelman_certificate(
+            p, [g for g, _h in constraints], syms, max_deg=max_deg)
+        if terms is None:
+            raise ValueError(
+                f"handelman instance '{name}' REFUSED: no Handelman certificate "
+                f"(nonneg combination of constraint products up to degree "
+                f"{max_deg}) found — p may not be positive on the polytope, or "
+                "needs a higher degree")
     if not terms:
         raise ValueError(f"handelman instance '{name}' REFUSED: empty certificate")
 
@@ -162,6 +234,7 @@ def handelman_family(
     grid: GridSpec,
     lean_name: Callable,
     spec: Callable,
+    max_deg: int = 2,
     constants: dict | None = None,
 ) -> InequalityFamily:
     """Build a Handelman family (kind='handelman').
@@ -170,16 +243,22 @@ def handelman_family(
     ``(ℓ_i, hyp_name)`` linear constraints (``ℓ_i ≥ 0`` defines the polytope) and
     ``terms`` a list of ``(coef, exps)`` — a nonnegative coefficient and an
     exponent vector over the constraints, giving ``coef · ∏ ℓ_i^{exps_i}``.
-    ``certify_handelman_point`` verifies ``p = Σ`` exactly with all coefficients
-    nonnegative, and refuses otherwise.
+
+    FINDER mode: return ``terms = None`` and Telperion SEARCHES for the
+    certificate itself (`find_handelman_certificate`, exact, up to ``max_deg``) —
+    upgrading the emitter from "you supply the products" to "you supply the
+    polytope."  Either way ``certify_handelman_point`` verifies ``p = Σ`` exactly
+    with all coefficients nonnegative, and refuses otherwise.
     """
     if not tuple(symbols):
         raise ValueError("Handelman families require at least one symbol")
+    consts = dict(constants or {})
+    consts.setdefault("handelman_max_deg", max_deg)
     return InequalityFamily(
         name=name,
         symbols=tuple(symbols),
         grid=grid,
         lean_name=lean_name,
         special=("handelman", spec),
-        constants=dict(constants or {}),
+        constants=consts,
     )

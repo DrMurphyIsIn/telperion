@@ -37,12 +37,18 @@ CASES = {
         [(1 - x, "h1"), (1 + x, "h2")], [(1, (1, 1))]),
     1: ("handelman_xy", x * y,
         [(x, "hx"), (y, "hy")], [(1, (1, 1))]),
+    # FINDER mode (terms = None): supply only the polytope, Telperion SEARCHES
+    # for the certificate products.
+    2: ("handelman_found_1mx2", 1 - x ** 2,
+        [(1 - x, "h1"), (1 + x, "h2")], None),
+    3: ("handelman_found_box", 2 - x ** 2 - y ** 2,
+        [(1 - x, "ha"), (1 + x, "hb"), (1 - y, "hc"), (1 + y, "hd")], None),
 }
 
 
 def _family():
     return handelman_family(
-        "Handelman", (x, y), GridSpec([("i", [0, 1])]),
+        "Handelman", (x, y), GridSpec([("i", [0, 1, 2, 3])]),
         lambda pt: CASES[pt["i"]][0],
         lambda pt: (CASES[pt["i"]][1], CASES[pt["i"]][2], CASES[pt["i"]][3]))
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — certificate FINDERS (checker → searcher)
+
+Upgrading the checker-mode emitters from "you supply the certificate" to "you
+supply the problem, Telperion finds the certificate."
+
+- **`find_handelman_certificate`** — the `HandelmanEmitter` now SEARCHES for the
+  polytope certificate when a family returns `terms = None`: given `p` and the
+  constraints `{ℓᵢ ≥ 0}`, it finds nonnegative `c_α` and exponent vectors with
+  `p = Σ c_α ∏ ℓᵢ^{αᵢ}`.  Exact and sympy-only (no SDP/LP dependency): a
+  nonnegative representation has a basic-feasible form supported on ≤ rank
+  products, so it enumerates column subsets and solves `A c = b` exactly, keeping
+  the first nonnegative solution.  Deterministic (byte-stable frozen output), and
+  untrusted-by-design — every found certificate is re-verified exactly by the
+  certifier, so a search miss is a refusal, never a wrong theorem.  (The
+  Putinar / SOS-refutation SOS finders are the SDP analogue — planned, via the
+  `sos_sdp` cvxpy path.)
+
 ## Unreleased — the beyond-positivity pass (equational reasoning + real refutations)
 
 Three emitters completing the "beyond `0 ≤ p`" arc — algebraic reasoning about
