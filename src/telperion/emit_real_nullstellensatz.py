@@ -114,11 +114,18 @@ def certify_real_nullstellensatz_point(family, pt, name):
         max_m = int(family.constants.get("real_nullstellensatz_max_m", 2))
         found = find_real_nullstellensatz_certificate(p, gens, syms, max_m=max_m)
         if found is None:
+            # SDP fallback for cases outside `sos_decompose`'s v1 class.  cvxpy
+            # is imported lazily inside the SDP solver; on the cvxpy-free CI path
+            # that ImportError means the fallback is simply unavailable, so the
+            # sympy miss stands as the refusal — never a leaked ImportError.
             from .sdp_finder import find_real_nullstellensatz
             m_max = int(family.constants.get("real_nss_m_max", 3))
             half_deg = int(family.constants.get("real_nss_half_deg", 1))
-            found = find_real_nullstellensatz(p, gens, syms, m_max=m_max,
-                                              half_deg=half_deg)
+            try:
+                found = find_real_nullstellensatz(p, gens, syms, m_max=m_max,
+                                                  half_deg=half_deg)
+            except ImportError:
+                found = None
         if found is None:
             raise ValueError(
                 f"real_nullstellensatz '{name}' REFUSED: no Real-Nullstellensatz "

@@ -73,3 +73,17 @@ def test_finder_mode_certifies_and_emits():
 def test_finder_mode_refuses_when_no_certificate():
     with pytest.raises(CertificationError):
         certify(_family(x + 1, [x ** 2 + y ** 2], None))
+
+
+def test_sdp_fallback_gracefully_skipped_without_cvxpy(monkeypatch):
+    # The SDP fallback imports cvxpy lazily; on the cvxpy-free CI path that
+    # raises ModuleNotFoundError.  A sympy-unfindable finder case must then
+    # REFUSE cleanly (CertificationError), never leak the ImportError.
+    import telperion.sdp_finder as sdp
+
+    def _boom(*a, **k):
+        raise ModuleNotFoundError("No module named 'cvxpy'")
+
+    monkeypatch.setattr(sdp, "find_real_nullstellensatz", _boom)
+    with pytest.raises(CertificationError):
+        certify(_family(x + 1, [x ** 2 + y ** 2], None))
