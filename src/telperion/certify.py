@@ -124,6 +124,8 @@ _SPECIAL_KINDS = (
     "infeasible",
     # Tier-5 beyond-positivity emitters (2026-08-20).
     "consequence", "sos_refutation", "real_nullstellensatz",
+    # Tier-6 integer-arithmetic emitter (2026-08-20): VIPR-style Chvatal-Gomory.
+    "cg_round",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -143,6 +145,7 @@ _SPECIAL_DISPATCH = {
     "consequence": ("emit_consequence", "certify_consequence_point"),
     "sos_refutation": ("emit_sos_refutation", "certify_sos_refutation_point"),
     "real_nullstellensatz": ("emit_real_nullstellensatz", "certify_real_nullstellensatz_point"),
+    "cg_round": ("emit_cg_round", "certify_cg_round_point"),
 }
 
 

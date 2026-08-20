@@ -92,6 +92,10 @@ from .emit_sos_refutation import (  # noqa: F401
 from .emit_real_nullstellensatz import (  # noqa: F401
     RealNullstellensatzEmitter, real_nullstellensatz_family,
 )
+# Tier-6 integer-arithmetic emitter (2026-08-20): VIPR-style Chvatal-Gomory.
+from .emit_cg_round import (  # noqa: F401
+    CGRoundEmitter, certify_cg_round_point, cg_round_family,
+)
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
     NonVacuityError, assert_certificate_sensitive, check_nonvacuous,

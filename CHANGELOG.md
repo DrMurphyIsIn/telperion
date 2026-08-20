@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased — integer arithmetic (Chvátal–Gomory rounding, VIPR-style)
+
+The first emitter that lives in INTEGER linear arithmetic rather than over the
+reals — the deduction the reals cannot make.
+
+- **`CGRoundEmitter`** (`cg_round`) — a linear goal over declared INTEGER
+  variables from a Chvátal–Gomory derivation, in the style of the VIPR MILP
+  certificate format (Cheung–Gleixner–Steffy, arXiv:1611.08832).  A certificate
+  is a list of linear FACTS `Σ cⱼxⱼ ≥ v` plus an ordered derivation of two rules:
+  `lincomb` (a NONNEGATIVE rational combination of prior facts + rational slack)
+  and `cg_round` (from a fact whose coefficients are ALL integers — so the
+  integer-valued LHS is an integer — round the bound up, `Σ cⱼxⱼ ≥ ⌈v⌉`).  Every
+  step is verified exactly; the emitter REFUSES a non-integer rounding
+  coefficient, a VACUOUS round (`v` already integer, `⌈v⌉ = v`), a NEGATIVE
+  lincomb multiplier (it would flip the inequality), and an undominated goal.  A
+  ROUNDING-SENSITIVITY self-check additionally requires the cut to be
+  load-bearing: replaying the derivation with every round DISARMED (`⌈v⌉` reverted
+  to `v`) must fail to dominate the goal, else the reals already gave it and the
+  certificate is refused as vacuous.  Emitted Lean states the goal over `(x :
+  Int)` with integer-cleared hypotheses and discharges the chain with `omega`
+  (Mathlib's linear-integer decision procedure, which performs the CG rounding
+  internally).  Kernel-checked clean: the frozen `3x ≥ 2 ⟹ x ≥ 1` and
+  `x ≥ 1, y ≥ 1 ⟹ x + y ≥ 2` compile with axioms `[propext, Quot.sound]`.
+- **near-star window composition probe** (`examples/cg_round/NearStarWindow.lean`)
+  — the concrete W1 payload: the continuous near-star envelope
+  `phi11(s) = (64/621)^{2s+1}·((4s+3)/(3(s+1)))^{11}·(3/2)^{11s}` OVERSHOOTS 1
+  between integers (interior max ≈ 1.000459 at s ≈ 4.822), witnessed exactly by
+  the consecutive ratio `Q(4) = phi11(5)/phi11(4) = 87946907297998046875 /
+  86959512306484890624 > 1` (phi11 strictly increases into the tie phi11(5) = 1),
+  so no continuous nonnegative certificate bounds it on `[4,6]`.  The
+  Chvátal–Gomory move — `s` integer, `4 ≤ s ≤ 6` rounds `s` into `{4,5,6}` —
+  reduces the window to three closed exact rational facts.  The single theorem
+  `∀ s : Int, 4 ≤ s → s ≤ 6 → phi11num s ≤ phi11den s` kernel-checks with axioms
+  `[propext, Classical.choice, Quot.sound]`.  `conjecture1_proved = False` — this
+  is the integer-window fragment only, not BG.
+
 ## Unreleased — certificate FINDERS (checker → searcher)
 
 Upgrading the checker-mode emitters from "you supply the certificate" to "you
