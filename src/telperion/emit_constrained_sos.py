@@ -93,6 +93,25 @@ def certify_putinar_point(family, pt, name):
             "unconstrained claim belongs to the SOS emitter, not Putinar"
         )
 
+    # FINDER mode: when σ_0 is None (and the constraints carry no supplied
+    # multipliers), SEARCH for the Putinar certificate via the SDP finder, then
+    # fall through to the SAME exact verification below.  The finder is
+    # untrusted — a bad search cannot pass the reconstruction check.
+    if sigma0 is None or all(sigma_i is None for _g, sigma_i, _h in constraints):
+        from .sos_sdp import find_putinar_certificate
+        half_deg = family.constants.get("putinar_half_deg")
+        gens = [(g, hyp) for g, _sigma_i, hyp in constraints]
+        found = find_putinar_certificate(
+            p, gens, syms,
+            half_deg=int(half_deg) if half_deg is not None else None)
+        if found is None:
+            raise ValueError(
+                f"putinar instance '{name}' REFUSED: no Putinar certificate "
+                f"(SOS multipliers σ_0, σ_i with p = σ_0 + Σ σ_i·g_i) found by "
+                "the SDP finder — p may not be nonnegative on the set, or needs "
+                "a higher relaxation order (raise 'putinar_half_deg')")
+        sigma0, constraints = found
+
     checks = _check_nonneg_coeffs(sigma0, "σ_0", name)
     recon = _sos_expr(sigma0, syms)
     for g, sigma_i, _hyp in constraints:
@@ -198,6 +217,14 @@ def putinar_family(
         name.  ``certify_putinar_point`` verifies ``p = σ_0 + Σ σ_i g_i`` exactly
         with all coefficients nonnegative, and refuses otherwise — no Lean is
         emitted for a certificate that fails to reconstruct the target.
+
+        FINDER mode: return ``sigma0 = None`` (with each constraint's ``sigma_i``
+        also ``None``) and Telperion SEARCHES for the SOS multipliers itself
+        (`find_putinar_certificate`, a numeric SDP rounded to EXACT rationals) —
+        upgrading the emitter from "you supply the multipliers" to "you supply
+        the constraint set."  The relaxation order is taken from
+        ``constants['putinar_half_deg']`` when set (default: ⌈deg p / 2⌉).
+        Either way ``certify_putinar_point`` re-verifies the identity exactly.
     """
     if not tuple(symbols):
         raise ValueError("Putinar families require at least one symbol")

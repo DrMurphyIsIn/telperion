@@ -23,6 +23,37 @@ HONEST SCOPE: this is the certificate LAYER the occupancy / SOS-for-trees method
 runs on.  Applying it to the ∏deg-normalized matching functional's recursive tree
 profile -- so the dual lands on the integer tie s=5 -- is the named research
 program (unbounded degree + arithmetic tie), not a one-shot emission.
+
+FINDER ROUTE DECISION (2026-08-20).  `find_putinar_certificate` upgrades the
+Putinar/constrained-SOS emitter from CHECKER to SEARCHER.  We took ROUTE A (numeric
+SDP -> exact rational rounding), which the local toolchain supports: cvxpy 1.7.5 is
+installed with the CLARABEL and SCS solvers (no `csdp` binary on PATH, but cvxpy's
+own interior-point solvers stand in for it), and sympy 1.14 gives exact rational
+LDLᵀ / identity checking.  This mirrors leanprover/sos's own pipeline -- reify ->
+SDP -> round the float Gram matrix to rationals (a denominator ladder) -> LDLᵀ
+decomposition -> a certificate re-checked INDEPENDENTLY of the solver -- but entirely
+inside Telperion's own exact-rational stack (`certify_putinar_point` is the kernel-
+independent gate, exactly as `Certificate.checks` is on the Lean side).  Route B
+(a DSOS/diagonally-dominant LP fallback, fully exact and numerics-free) was NOT
+needed since Route A is runnable today; it remains the honest degradation path if
+the SDP stack ever disappears.  As with `find_handelman_certificate`, the finder is
+UNTRUSTED: every certificate it returns is re-verified EXACTLY by the existing
+`certify_putinar_point` before any Lean is emitted, and a search miss is a REFUSAL,
+never a wrong theorem.
+
+sos_witness BRIDGE ASSESSMENT.  leanprover/sos exposes a `by sos?` mode that reports
+its witness as a frozen `sos_witness` invocation; emitting `sos_witness`-compatible
+goals would mean taking leanprover/sos as a `lake` dependency (Mathlib4 + hex-mv-poly
++ csdp-ffi + a system BLAS/LAPACK runtime) and letting THEIR tactic close the goal at
+audit-compile time.  That imports a native-FFI toolchain (the `csdp-ffi` linking work
+their `investigations/native-linking-repro/` tree documents) into our audit-compiles
+gate, which currently needs only Mathlib -- a real portability and reproducibility
+cost.  The self-contained path built here avoids that entirely: we emit ordinary
+`ring`/`positivity`/`linarith` Lean that any plain-Mathlib checkout compiles, and keep
+the SDP strictly on the (untrusted, Python-side) FINDER, never in the trusted checker.
+Recommendation: stay self-contained; revisit the `sos_witness` bridge only if a target
+goal is out of reach of our exact rounding but within leanprover/sos's rank-deficient
+facial-reduction path.
 """
 from __future__ import annotations
 
@@ -140,3 +171,199 @@ def lean_certificate(name: str, p: sp.Expr, syms, half_deg: int = 1) -> str | No
         f"  have hsos : ({_l(sp.expand(p))} : ℝ) = {sos} := by ring\n"
         f"  rw [hsos]; positivity\n"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Putinar (constrained-SOS) FINDER: numeric SDP -> exact rational rounding.    #
+# --------------------------------------------------------------------------- #
+
+# Denominator ladder for rounding float Gram entries to Q.  Highly composite
+# denominators (products of small primes) so that a Gram matrix whose true
+# entries are simple rationals rounds EXACTLY at some rung; we walk it low->high
+# and accept the first rung whose rounded Grams reproduce `p` exactly.
+_DENOM_LADDER = (1, 2, 3, 4, 6, 12, 24, 60, 120, 360, 720, 5040, 55440, 720720)
+
+
+def _round_matrix(M, denom: int):
+    """Round a float numpy matrix to an exact rational sympy Matrix on 1/denom."""
+    n = M.shape[0]
+    return sp.Matrix(n, n, lambda i, j: sp.Rational(round(M[i, j] * denom), denom))
+
+
+def _robust_ldlt(Q):
+    """Exact rational LDLᵀ for a symmetric PSD matrix, tolerant of ZERO pivots
+    (rank-deficient Grams — the class sympy's built-in LDL and Cholesky reject).
+
+    Standard outer-product LDLᵀ: at each pivot `d = Q[k,k]`, if `d = 0` the whole
+    remaining k-th row/column must be zero for a PSD matrix (else a 2×2 minor is
+    indefinite) — we verify that and skip.  If `d < 0` the matrix is not PSD.
+    Returns ``(L, D)`` (both sympy Matrices, L unit-lower-triangular) or ``None``
+    if not PSD.  This mirrors, in exact arithmetic, the rank-deficiency handling
+    leanprover/sos does with facial reduction."""
+    n = Q.rows
+    A = [[sp.Rational(Q[i, j]) for j in range(n)] for i in range(n)]
+    L = [[sp.Integer(1) if i == j else sp.Integer(0) for j in range(n)] for i in range(n)]
+    D = [sp.Integer(0)] * n
+    for k in range(n):
+        d = A[k][k]
+        if d < 0:
+            return None
+        D[k] = d
+        if d == 0:
+            # PSD => the entire trailing k-column must already be zero.
+            if any(A[i][k] != 0 for i in range(k + 1, n)):
+                return None
+            continue
+        for i in range(k + 1, n):
+            L[i][k] = A[i][k] / d
+        for i in range(k + 1, n):
+            for j in range(k + 1, n):
+                A[i][j] = A[i][j] - L[i][k] * d * L[j][k]
+    return sp.Matrix(L), sp.Matrix(n, n, lambda i, j: D[i] if i == j else 0)
+
+
+def _gram_terms(Q, mons):
+    """Robust LDLᵀ of a PSD rational Gram -> [(coef, base)] sum-of-squares terms
+    in the (coef, base) shape the Putinar certifier consumes, or None if not PSD.
+
+    A rounded Gram need NOT be PSD, and even when PSD it may be rank-deficient;
+    `_robust_ldlt` handles both, and we re-check `Q = L D Lᵀ` EXACTLY so any
+    numerical-rounding artifact is caught rather than trusted."""
+    if Q.rows == 0 or Q == sp.zeros(*Q.shape):
+        return []                                    # σ ≡ 0 is a valid multiplier
+    res = _robust_ldlt(Q)
+    if res is None:
+        return None
+    L, D = res
+    if sp.expand(sp.Matrix(L * D * L.T) - Q) != sp.zeros(*Q.shape):
+        return None                                  # LDL did not reconstruct Q
+    forms = L.T * sp.Matrix(mons)
+    terms = []
+    for i in range(Q.rows):
+        d = sp.Rational(D[i, i])
+        if d < 0:
+            return None
+        if d != 0:
+            terms.append((d, sp.expand(forms[i])))
+    return terms
+
+
+def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
+    """SEARCH for a Putinar certificate `p = σ_0 + Σ_i σ_i·g_i` on `{g_i ≥ 0}`
+    with every `σ_j` a sum of squares (Route A: numeric SDP -> EXACT rational
+    rounding).  ``constraints`` is a list of ``(g_i, hyp_name)`` pairs.  Returns
+    ``(sigma0, out_constraints)`` where ``sigma0`` is a list of ``(coef, base)``
+    SOS terms for σ_0 and ``out_constraints`` a list of ``(g_i, sigma_i, hyp)``
+    with ``sigma_i`` the found SOS multiplier — the exact shape
+    `certify_putinar_point` re-verifies — or ``None`` (a REFUSAL, not a claim of
+    non-existence: the SDP was infeasible, or no ladder rung rounded exactly).
+
+    The float Gram matrices from the SDP are rounded to exact rationals on a
+    denominator ladder; the FIRST rung whose rounded certificate reconstructs
+    `p` exactly over ℚ is accepted, and its LDLᵀ gives the rational squares.
+    The finder is untrusted: the caller re-verifies via `certify_putinar_point`.
+    """
+    import cvxpy as cp
+    import numpy as np
+
+    p = sp.expand(sp.sympify(p))
+    syms = tuple(syms)
+    gens = [sp.expand(sp.sympify(g)) for g, _h in constraints]
+    hyps = [h for _g, h in constraints]
+
+    if half_deg is None:
+        pdeg = sp.Poly(p, *syms).total_degree() if p != 0 else 0
+        half_deg = max(1, -(-pdeg // 2))            # ceil(deg p / 2)
+
+    # σ_0 lives on monomials up to half_deg; σ_i (multiplying g_i) on monomials
+    # up to half_deg - ceil(deg g_i / 2), so σ_i·g_i stays within total degree.
+    def _half_for(g):
+        gd = sp.Poly(g, *syms).total_degree() if g != 0 else 0
+        return max(0, half_deg - -(-gd // 2))
+
+    bases = [(_monomials_upto(syms, half_deg), None)]     # (mons, g) for σ_0
+    for g in gens:
+        bases.append((_monomials_upto(syms, _half_for(g)), g))
+
+    # One symmetric PSD Gram per block; symbolic Gram symbols to read off the
+    # exact affine (coefficient-matching) constraints p = Σ_block g·(mᵀQm).
+    Qvars, sym_forms = [], []
+    for bidx, (mons, g) in enumerate(bases):
+        n = len(mons)
+        Qvars.append(cp.Variable((n, n), symmetric=True))
+        qsym = sp.Matrix(n, n, lambda i, j: sp.Symbol(f"q{bidx}_{min(i,j)}_{max(i,j)}"))
+        mvec = sp.Matrix(mons)
+        form = (mvec.T * qsym * mvec)[0]
+        if g is not None:
+            form = g * form
+        sym_forms.append(sp.expand(form))
+
+    total = sp.expand(sum(sym_forms, sp.Integer(0)))
+    diff = sp.Poly(sp.expand(total - p), *syms)
+
+    def _qsymbol(bidx, i, j):
+        return sp.Symbol(f"q{bidx}_{min(i,j)}_{max(i,j)}")
+
+    allq = {}
+    for bidx, (mons, _g) in enumerate(bases):
+        n = len(mons)
+        for i in range(n):
+            for j in range(i, n):
+                allq[_qsymbol(bidx, i, j)] = 0
+
+    cons = [Q >> 0 for Q in Qvars]
+    for _mono, coef in diff.terms():
+        row = 0.0
+        for bidx, (mons, _g) in enumerate(bases):
+            n = len(mons)
+            for i in range(n):
+                for j in range(i, n):
+                    c = coef.coeff(_qsymbol(bidx, i, j))
+                    if c != 0:
+                        row = row + float(c) * Qvars[bidx][i, j]
+        const = float(coef.subs(allq))
+        cons.append(row + const == 0)
+
+    # Minimize total trace: a small, well-conditioned analytic center that tends
+    # to round cleanly.  Deterministic: fixed solver, no random restarts.
+    prob = cp.Problem(cp.Minimize(sum(cp.trace(Q) for Q in Qvars)), cons)
+    try:
+        # Pin the solver and a tight tolerance so the returned Gram (hence the
+        # rounded certificate) is deterministic and clean enough to round to
+        # simple rationals; SCS is the reliable SDP backend in the cvxpy set.
+        prob.solve(solver=cp.SCS, eps=1e-9, max_iters=200000)
+    except Exception:
+        return None
+    if prob.status not in ("optimal", "optimal_inaccurate"):
+        return None
+    if any(Q.value is None or not np.all(np.isfinite(Q.value)) for Q in Qvars):
+        return None
+
+    # Symmetrize away solver asymmetry noise before rounding (Q is theoretically
+    # symmetric; SCS returns it up to ~1e-5, which would defeat exact rounding).
+    Qsym = [(np.asarray(Q.value) + np.asarray(Q.value).T) / 2 for Q in Qvars]
+
+    # Exact rational rounding on the denominator ladder: accept the first rung
+    # whose rounded Grams (a) LDLᵀ-decompose PSD and (b) reconstruct p exactly.
+    for denom in _DENOM_LADDER:
+        rounded = [_round_matrix(Qv, denom) for Qv in Qsym]
+        term_lists = [_gram_terms(Qr, mons) for Qr, (mons, _g) in zip(rounded, bases)]
+        if any(t is None for t in term_lists):
+            continue
+        # reconstruct σ_0 + Σ σ_i g_i and check the identity EXACTLY over ℚ
+        recon = sp.Integer(0)
+        for (coef, base) in term_lists[0]:
+            recon += coef * base ** 2
+        for k, g in enumerate(gens, start=1):
+            for (coef, base) in term_lists[k]:
+                recon += g * coef * base ** 2
+        if sp.expand(recon - p) != 0:
+            continue
+        sigma0 = [(sp.Rational(c), sp.expand(b)) for c, b in term_lists[0]]
+        out_constraints = [
+            (gens[k - 1], [(sp.Rational(c), sp.expand(b)) for c, b in term_lists[k]],
+             hyps[k - 1])
+            for k in range(1, len(bases))
+        ]
+        return sigma0, out_constraints
+    return None
