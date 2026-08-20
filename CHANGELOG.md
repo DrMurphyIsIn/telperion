@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — rational-SOS (Artin denominator): reaching nonneg-but-not-SOS
+
+- **`RationalSOSEmitter`** (`rational_sos`) — proves `0 ≤ p` for a polynomial that
+  is nonnegative but NOT a sum of squares (the class Hilbert showed the plain SOS
+  emitter cannot reach; the Motzkin polynomial `x⁴y² + x²y⁴ − 3x²y² + 1` is the
+  minimal example).  Artin's theorem: a strictly-positive multiplier `q` makes
+  `q·p` a sum of squares.  Telperion FINDS the certificate — a ladder of
+  `positivity`-provable strictly-positive multipliers `q` (products of `1 + xᵢ²`)
+  until `q·p` has an EXACT rational SOS (shared SDP + robust rationalization) —
+  then emits `positivity` (`0 < q`, and the SOS after a `ring` rewrite) + a
+  `by_contra`/`nlinarith` that divides out `q`.  For Motzkin it finds
+  `q = (1+x²)(1+y²)` and `q·M = (1−x²y²)² + (x−x³y²)² + (y−x²y³)² + (x³y−xy³)²`.
+  Untrusted-by-verification: the identity `q·p = Σ dᵢℓᵢ²` is re-checked exactly.
+  (This is the robust, kernel-checkable route to the SONC / nonneg-circuit class —
+  it covers the same nonnegativity gap without the `rpow` AM-GM machinery.)
+
+Content-neutral for existing families (no refreeze).
+
+## Unreleased — Bernstein positivity + Real-Nullstellensatz finder + better SDP rationalization
+
+- **`BernsteinEmitter`** (`bernstein`) — `0 ≤ p(x)` on a closed interval `[a,b]`
+  via nonnegative Bernstein coefficients, the univariate interval specialization
+  of Handelman positivity.  Telperion FINDS the certificate: it extracts the
+  Bernstein coefficients by exact linear solve, ELEVATING the degree until all are
+  nonnegative (the enclosure sharpens with degree; a strictly-positive polynomial
+  succeeds at some finite degree, one touching zero interior is refused).  Robust
+  Lean — a `mul_nonneg`/`pow_nonneg` fold over `0 ≤ x−a`, `0 ≤ b−x` + `ring` +
+  `linarith`.
+- **`find_real_nullstellensatz`** (`sdp_finder.py`) — `RealNullstellensatzEmitter`
+  now SEARCHES the multiplicity `m` and the SOS `s` with `p^{2m} + s ∈ ⟨gₖ⟩` when a
+  family returns `m=None, sos=None`: `x = 0` and `y = 0` on the real variety of
+  `x²+y²` are found automatically (SDP over an SOS block + free ideal cofactors).
+- **better SDP rationalization** — the shared SDP solver now tries continued-
+  fraction rounding (`Fraction.limit_denominator`) alongside the fixed-denominator
+  ladder, snapping an entry like `0.333…` to `1/3` without needing `3` on the
+  ladder — raising the finders' exact-rationalization hit rate.  Untrusted-by-
+  verification throughout: every found certificate is re-verified exactly.
+
+Content-neutral for existing families (no refreeze).
+
 ## Unreleased — integer arithmetic (Chvátal–Gomory rounding, VIPR-style)
 
 The first emitter that lives in INTEGER linear arithmetic rather than over the

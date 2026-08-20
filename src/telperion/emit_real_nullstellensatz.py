@@ -52,9 +52,23 @@ def certify_real_nullstellensatz_point(family, pt, name):
     variety by this `(m, s)`."""
     p, m, sos, gens = family.special[1](pt)
     p = sp.expand(sp.sympify(p))
-    m = int(m)
     gens = [sp.expand(sp.sympify(g)) for g in gens]
     syms = tuple(family.symbols)
+
+    if m is None or sos is None:
+        # FINDER mode: SEARCH the multiplicity m and the SOS s via the SDP.
+        from .sdp_finder import find_real_nullstellensatz
+        m_max = int(family.constants.get("real_nss_m_max", 3))
+        half_deg = int(family.constants.get("real_nss_half_deg", 1))
+        found = find_real_nullstellensatz(p, gens, syms, m_max=m_max, half_deg=half_deg)
+        if found is None:
+            raise ValueError(
+                f"real_nullstellensatz '{name}' REFUSED: no Real-Nullstellensatz "
+                f"certificate (p^2m + s ∈ ⟨gₖ⟩, s SOS) found up to multiplicity "
+                f"{m_max} — p may not vanish on the real variety")
+        m, sos = found
+
+    m = int(m)
     if m < 1:
         raise ValueError(f"real_nullstellensatz '{name}' REFUSED: m must be ≥ 1")
     for c, _b in sos:

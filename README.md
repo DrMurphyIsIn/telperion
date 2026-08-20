@@ -56,6 +56,7 @@ emit → freeze` workflow.
 | `DirectPolyaEmitter` | `0 ≤ f(x̄)`, `f` rational with an all-nonneg-numerator / positive-factored-denominator form | `f = num/den` by `field_simp`+`ring`, then `positivity` |
 | `BilinearBoxEmitter` | `before ≤ after` on a box in two bound variables | bilinear decomposition + 4 Pólya corner certificates + assembly |
 | `SOSEmitter` | `0 ≤ p` for a polynomial via an exact rational PSD-Gram sum-of-squares (reaches interior ties) | `p = Σ dᵢ·ℓᵢ² := by ring`, then `positivity` |
+| `RationalSOSEmitter` | `0 ≤ p` for a NONNEGATIVE-but-NOT-SOS polynomial (e.g. Motzkin) via an Artin denominator `q·p = Σ dᵢℓᵢ²`, `q > 0` (Telperion FINDS `q` + SOS) | `positivity` (`0 < q`, and the SOS after `ring`) + `nlinarith`/`mul_pos` to divide out `q` |
 | `ExactFactEmitter` / `IdentityEmitter` | exact integer/rational identities and powers | `norm_num` / `ring` |
 | `PadicValuationEmitter` | p-adic valuation facts `v_p(n)=k` | `(p^k ∣ n) ∧ ¬(p^{k+1} ∣ n)` by `norm_num` |
 | `IntervalBracketEmitter` | rigorous two-sided rational enclosure `lo ≤ exp(−θ) ≤ hi` | Taylor bound + convexity companion |
@@ -71,6 +72,7 @@ emit → freeze` workflow.
 | `LatticeBoxEmitter` | `f(x) ≤ B` for all `x ∈ ℤ^d_{≥0}` (d-dim integer Positivstellensatz) | finite base box (`norm_num`) + per-axis monotone tail (`ring`/`positivity`) |
 | `LogConcaveSinglePointEmitter` | `max_{k∈ℕ} F(k) ≤ B` reduced to a single point `k*` by log-concavity | single-point + per-step + neighbour facts (`norm_num`) |
 | `MonotoneRatioTailEmitter` | `b(s) ≤ B` for all `s ≥ s₀` via a nonincreasing tail | tail step (`positivity`) + base (`norm_num`) + `Nat.le_induction` |
+| `BernsteinEmitter` | `0 ≤ p(x)` on a closed interval `[a,b]` via nonnegative Bernstein coefficients (Telperion FINDS them, elevating the degree; the univariate interval specialization of Handelman) | `mul_nonneg`/`pow_nonneg` fold over `0 ≤ x−a`, `0 ≤ b−x` + `ring` + `linarith` |
 | `InterlacingEmitter` | Newton's inequalities (coefficient log-concavity) of a real-rooted polynomial | `norm_num` on exact rationals |
 | `ConstrainedSOSEmitter` | `0 ≤ p` on a semialgebraic set `{gᵢ ≥ 0}` via a Putinar certificate `p = σ₀ + Σ σᵢ·gᵢ` (SOS multipliers) — supply the multipliers, or return `sigma0=None` and Telperion FINDS them (`find_putinar_certificate`, numeric SDP rounded to exact rationals) | `p = σ₀ + Σ σᵢ·gᵢ := by ring`; each `σⱼ` by `positivity`, paired with `gᵢ ≥ 0` by `mul_nonneg`, summed by `linarith` |
 | `WZEmitter` | hypergeometric / binomial sum identities `Σ_k F(n,k) = rhs(n)` via a Wilf–Zeilberger mate `R(n,k)` | denominator-cleared WZ equation as an exact `ring` polynomial identity + the reusable `wz_row_invariant` telescoping-closure lemma |
