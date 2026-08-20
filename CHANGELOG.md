@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased — facial positivity (Pólya-with-zeros) + real-Nullstellensatz finder
+
+The emitter candidate named by `docs/HANDELMAN_DEGREE_BOUNDS_LIT_2026-08-20.md`
+(Castle–Powers–Reznick 2011, "Pólya's theorem with zeros"), plus the last
+checker-mode emitter gaining a finder.
+
+- **`PolyaZerosEmitter`** (`polya_zeros`) — `0 ≤ p` on `{xᵢ ≥ 0, Σxᵢ > 0}` from
+  the HOMOGENEOUS Pólya certificate `(Σxᵢ)^N·p = Q` with every Q-coefficient a
+  nonnegative rational, verified exactly.  This is the tie-safe lift: `lift.py`'s
+  inhomogeneous `(1 + Σxᵢ)^N` certifies STRICT positivity only (a zero on the
+  closed orthant means no finite N), while the homogeneous form tolerates zeros
+  ON FACES — the CPR class, degree-bounded by residual facial margins that do
+  not vanish at the tie.  FINDER mode (`N = None`) searches N ≤ max_n; on a
+  miss, `polya_zeros_obstruction` (all-ones sampling of every face) upgrades
+  "gave up" to a STRUCTURAL refusal when the zero set leaves the face lattice
+  (`(x−y)²`: "no Pólya exponent exists at ANY N", CPR Theorem 2) or a sample is
+  negative.  The obstruction check is a sufficient condition, not a complete
+  Theorem 2 decision — documented as such.  Lean side reuses the proven
+  Handelman shapes (`mul_nonneg`/`pow_nonneg` fold + `ring` identity) plus
+  `pow_pos`/`nlinarith` to divide out the positive factor.  Compile-gated
+  frozen example `examples/polya_zeros` (supplied-N, face-zero finder case
+  `xy(x²−xy+y²)` at N = 1, and the CPR near-tie `x² − (7/4)xy + y²`; negative
+  controls: the tie refused WITH its obstruction named, an insufficient N
+  refused).
+- **`find_real_nullstellensatz_certificate`** — the last checker-mode emitter
+  (`real_nullstellensatz`) gains its searcher: for m ≤ max_m the Gröbner normal
+  form `s = NF(−p^{2m})` is the canonical SOS candidate (any valid `s` is
+  congruent to it mod the ideal); `sos_decompose` attempts an exact rational
+  SOS, and a hit is re-verified against the certifier's own plain-division
+  gate, so the finder never returns a certificate the certifier would refuse.
+  Exact, sympy-only, deterministic, untrusted-by-verification (miss = refusal).
+  Finder mode: spec returns `(p, None, None, gens)`; multiplicity escalation
+  works (`x` on `V(x³)`: m = 2, s = 0).  Example gains two finder cases + a
+  finder-mode negative control (non-vanishing `x + 1` refused).
+- **Compile-gate repair**: `examples/cg_round/frozen/CGRound.lean` (PR #17) was
+  in no lake gate — the "silenced gate" class.  Added to audit-compiles staging,
+  `Audit.lean`, and the workflow trigger paths alongside the new `polya_zeros`
+  example.
+
 ## Unreleased — integer arithmetic (Chvátal–Gomory rounding, VIPR-style)
 
 The first emitter that lives in INTEGER linear arithmetic rather than over the

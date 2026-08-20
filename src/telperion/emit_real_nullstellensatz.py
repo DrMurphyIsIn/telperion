@@ -41,6 +41,48 @@ def _sos_expr(terms) -> sp.Expr:
     return sum((sp.nsimplify(c) * sp.sympify(b) ** 2 for c, b in terms), sp.Integer(0))
 
 
+def find_real_nullstellensatz_certificate(p, gens, syms, max_m: int = 2):
+    """SEARCH for a real-Nullstellensatz certificate: `(m, sos_terms)` with
+    `p^{2m} + s ∈ ⟨gens⟩` and `s = Σ c_i b_i²` an exact sum of squares.
+
+    Exact and sympy-only (no SDP): for m = 1, …, max_m the Gröbner normal form
+    `s = NF(−p^{2m})` is the canonical candidate (any valid `s` is congruent to
+    it mod the ideal), and `sos_decompose` attempts an exact rational SOS of
+    it.  A hit is re-verified against the certifier's own gate — plain
+    `sp.reduced` division by the ORIGINAL generator list — so the finder never
+    returns a certificate the certifier would refuse.  The finder is untrusted
+    (`certify_real_nullstellensatz_point` re-checks everything); a miss is a
+    refusal, never a wrong theorem.  Returns ``(m, terms)`` or ``None``."""
+    from .sos import sos_decompose
+
+    p = sp.expand(sp.sympify(p))
+    gens = [sp.expand(sp.sympify(g)) for g in gens]
+    syms = tuple(syms)
+    try:
+        basis = sp.groebner(gens, *syms)
+    except Exception:
+        return None
+    for m in range(1, max_m + 1):
+        target = sp.expand(-(p ** (2 * m)))
+        try:
+            _, s = basis.reduce(target)
+        except Exception:
+            continue
+        s = sp.expand(s)
+        cert = sos_decompose(s, syms)
+        if cert is None:
+            continue
+        terms = [(sp.Rational(c), sp.sympify(b)) for c, b in cert.terms]
+        try:
+            _, rem = sp.reduced(sp.expand(p ** (2 * m) + _sos_expr(terms)),
+                                gens, *syms)
+        except Exception:
+            continue
+        if sp.expand(rem) == 0:
+            return m, terms
+    return None
+
+
 def certify_real_nullstellensatz_point(family, pt, name):
     """Certify one real-Nullstellensatz instance: (CertifiedInstance, n_checks).
 
@@ -49,12 +91,25 @@ def certify_real_nullstellensatz_point(family, pt, name):
     and the ideal generators `gens`.  Reduces ``p^{2m} + s`` by the generators;
     certifies iff the remainder is zero (membership) and every SOS coefficient is
     nonnegative.  Refuses otherwise — `p` is not certified to vanish on the real
-    variety by this `(m, s)`."""
+    variety by this `(m, s)`.
+
+    FINDER mode: ``sos = None`` (with ``m = None``) searches m ≤ max_m
+    (constant ``real_nullstellensatz_max_m``, default 2) for `(m, s)` via
+    `find_real_nullstellensatz_certificate`; a miss is a refusal."""
     p, m, sos, gens = family.special[1](pt)
     p = sp.expand(sp.sympify(p))
-    m = int(m)
     gens = [sp.expand(sp.sympify(g)) for g in gens]
     syms = tuple(family.symbols)
+    if sos is None:
+        max_m = int(family.constants.get("real_nullstellensatz_max_m", 2))
+        found = find_real_nullstellensatz_certificate(p, gens, syms, max_m=max_m)
+        if found is None:
+            raise ValueError(
+                f"real_nullstellensatz '{name}' REFUSED: no (m ≤ {max_m}, SOS s) "
+                "certificate found — p may not vanish on the real variety, or "
+                "the exact SOS search missed (a refusal, not a disproof)")
+        m, sos = found
+    m = int(m)
     if m < 1:
         raise ValueError(f"real_nullstellensatz '{name}' REFUSED: m must be ≥ 1")
     for c, _b in sos:
@@ -143,6 +198,11 @@ def real_nullstellensatz_family(
     power `2m`), the SOS term list `sos` for `s`, and the ideal generators `gens`.
     ``certify_real_nullstellensatz_point`` reduces ``p^{2m} + s`` by the generators
     and refuses if it is not in the ideal.
+
+    FINDER mode: return ``m = None, sos = None`` and Telperion SEARCHES for the
+    certificate (`find_real_nullstellensatz_certificate`, exact and sympy-only,
+    m ≤ constant ``real_nullstellensatz_max_m``, default 2) — upgrading the
+    emitter from "you supply (m, s)" to "you supply the ideal."
     """
     if not tuple(symbols):
         raise ValueError("real-Nullstellensatz families require at least one symbol")

@@ -1,0 +1,9 @@
+{
+  "family": "PolyaZeros",
+  "input_hash": "7eaf605097792d46e68c2857f4c1406e84fbba00e8fe19a5981123da4fa940df",
+  "tool_version": "0.1.6",
+  "files": [
+    "PolyaZeros.lean"
+  ],
+  "n_theorems": 3
+}
