@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased — proof-complexity-derived emitter shapes (2026-08-20, knapsack_sos arc)
+
+Three shapes crystallized from the P-vs-NP certificate-ladder arc, each with
+example family + negative controls + tests, frozen Lean compile-verified:
+
+- **`RationalIdentityEmitter`** / `rational_identity_family` (kind
+  `rational_identity`): identities of rational functions on a ray `c0 < n`,
+  certified by exact cancellation + denominator-root audit, emitted via a
+  structure-preserving renderer (the nonvacuity gate rejects the
+  canonicalized `X = X` collapse — caught live during development) and a
+  cross-multiplication spine (`div_eq_div_iff` + `mul_ne_zero` chains +
+  `ring`; `field_simp` expands multi-factor denominators into quadratics
+  whose nonvanishing it cannot decompose).  Crystallizes the knapsack
+  Gram-bridge generator.
+- **`FiniteDecideEmitter`** / `finite_decide_family` (kind `finite_decide`):
+  guarded universally-quantified decidable facts over explicit ℕ/ℤ tables
+  (mini-AST: ForallIn/Imp/Cmp + Var/Lit/Xor/Pop/Lookup/Mul), evaluated
+  exactly in Python at certification and re-decided by the Lean kernel.
+  Encodes the kernel-feasibility contract from PetersenCertificate.lean:
+  ℕ/ℤ arithmetic only (ℚ does NOT kernel-reduce — `Rat.normalize` bottoms
+  out in well-founded `Nat.gcd`), fueled popcount (well-founded recursion
+  does not kernel-reduce), short-circuiting guarded Decidable instances,
+  `maxRecDepth` raised.
+- **`FwdTelescopeEmitter`** / `fwd_telescope_family` (kind `fwd_telescope`):
+  the W2 forward-difference telescoping prover.  For
+  `f(q+1) = f(q)·A(q)/(P−q)` the closed form
+  `Δ^[j] f(q) = (−1)^j ∏N · f(q) / ∏(P−q−u)` is certified by ONE polynomial
+  identity (the contiguous relation `A(q) − (P−q−j) + N(j) = 0`,
+  sympy-exact; a wrong `N` is refused) and emitted as the full mathlib
+  `fwdDiff` induction skeleton (pnum/pden, positivity, shift law, closed
+  form) — the SumEqProd.lean knapsack instance is the re-derivation
+  regression baseline.
+- Claude plugin `version` aligned with core `__version__` (0.1.6).
+
+
 ## Unreleased — certificate FINDERS (checker → searcher)
 
 Upgrading the checker-mode emitters from "you supply the certificate" to "you

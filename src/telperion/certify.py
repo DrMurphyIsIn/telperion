@@ -124,6 +124,8 @@ _SPECIAL_KINDS = (
     "infeasible",
     # Tier-5 beyond-positivity emitters (2026-08-20).
     "consequence", "sos_refutation", "real_nullstellensatz",
+    # Proof-complexity-derived emitters (2026-08-20, knapsack_sos arc).
+    "rational_identity", "finite_decide", "fwd_telescope",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -143,6 +145,9 @@ _SPECIAL_DISPATCH = {
     "consequence": ("emit_consequence", "certify_consequence_point"),
     "sos_refutation": ("emit_sos_refutation", "certify_sos_refutation_point"),
     "real_nullstellensatz": ("emit_real_nullstellensatz", "certify_real_nullstellensatz_point"),
+    "rational_identity": ("emit_rational_identity", "certify_rational_identity_point"),
+    "finite_decide": ("emit_finite_decide", "certify_finite_decide_point"),
+    "fwd_telescope": ("emit_fwd_telescope", "certify_fwd_telescope_point"),
 }
 
 

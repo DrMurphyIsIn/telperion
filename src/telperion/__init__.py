@@ -86,6 +86,10 @@ from .emit_infeasible import (  # noqa: F401
 )
 # Tier-5 beyond-positivity emitters (2026-08-20).
 from .emit_consequence import ConsequenceEmitter, consequence_family  # noqa: F401
+from .emit_rational_identity import RationalIdentityEmitter, rational_identity_family  # noqa: F401
+from .emit_finite_decide import (FiniteDecideEmitter, finite_decide_family,  # noqa: F401
+    ForallIn, Imp, Cmp, Var, Lit, Xor, Pop, Lookup, Mul, NatTable, PairTable)
+from .emit_fwd_telescope import FwdTelescopeEmitter, fwd_telescope_family  # noqa: F401
 from .emit_sos_refutation import (  # noqa: F401
     SOSRefutationEmitter, sos_refutation_family,
 )
