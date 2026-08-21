@@ -88,18 +88,41 @@ from .emit_infeasible import (  # noqa: F401
 )
 # Tier-5 beyond-positivity emitters (2026-08-20).
 from .emit_consequence import ConsequenceEmitter, consequence_family  # noqa: F401
+from .emit_rational_identity import RationalIdentityEmitter, rational_identity_family  # noqa: F401
+from .emit_finite_decide import (FiniteDecideEmitter, finite_decide_family,  # noqa: F401
+    ForallIn, Imp, Cmp, Var, Lit, Xor, Pop, Lookup, Mul, NatTable, PairTable)
+from .emit_fwd_telescope import FwdTelescopeEmitter, fwd_telescope_family  # noqa: F401
 from .emit_sos_refutation import (  # noqa: F401
     SOSRefutationEmitter, sos_refutation_family,
 )
 from .emit_real_nullstellensatz import (  # noqa: F401
-    RealNullstellensatzEmitter, real_nullstellensatz_family,
+    RealNullstellensatzEmitter, find_real_nullstellensatz_certificate,
+    real_nullstellensatz_family,
 )
 # Tier-6 integer-arithmetic emitter (2026-08-20): VIPR-style Chvatal-Gomory.
 from .emit_cg_round import (  # noqa: F401
     CGRoundEmitter, certify_cg_round_point, cg_round_family,
 )
-# SOS-refutation SDP finder (Putinar finder lives in sos_sdp; 2026-08-20).
-from .sdp_finder import find_sos_refutation  # noqa: F401
+# SOS-refutation + real-Nullstellensatz SDP finders (Putinar finder lives in
+# sos_sdp; 2026-08-20).
+from .sdp_finder import find_real_nullstellensatz, find_sos_refutation  # noqa: F401
+# Tier-7 runway emitters (2026-08-20).
+from .emit_bernstein import (  # noqa: F401
+    BernsteinEmitter, bernstein_family, find_bernstein_certificate,
+)
+from .emit_rational_sos import (  # noqa: F401
+    RationalSOSEmitter, find_rational_sos, rational_sos_family,
+)
+# Facial-positivity emitter (2026-08-20): Castle-Powers-Reznick Polya-with-zeros
+# — the tie-safe homogeneous lift (zeros allowed on faces; cf. lift.py's
+# strict-only inhomogeneous lift).
+from .emit_polya_zeros import (  # noqa: F401
+    PolyaZerosEmitter, find_polya_zeros_certificate, polya_zeros_family,
+    polya_zeros_obstruction,
+)
+from .emit_sturm_positive import (  # noqa: F401
+    SturmPositiveEmitter, sturm_positive_family,
+)
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
     NonVacuityError, assert_certificate_sensitive, check_nonvacuous,

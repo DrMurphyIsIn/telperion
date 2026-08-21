@@ -114,11 +114,24 @@ def _solve(target, sos_blocks, free_blocks, syms):
     if any(C.value is None or not np.all(np.isfinite(C.value)) for C in Cs):
         return None
 
-    for D in _DENOMS:
-        Qrs = [sp.Matrix(len(m), len(m),
-                         lambda i, j: sp.Rational(round(Q.value[i, j] * D), D))
+    # Rationalization: two strategies per attempt — a fixed-denominator ladder,
+    # and per-entry continued-fraction rounding (`limit_denominator`) which snaps
+    # an entry like 0.333… to 1/3 without needing 3 to be on the ladder.  After
+    # rounding, the reconstruction is verified EXACTLY over ℚ; only an exact match
+    # (and a PSD-exact Gram) is accepted, so a bad rounding is simply skipped.
+    from fractions import Fraction
+
+    def _fixed(D):
+        return (lambda v: sp.Rational(round(v * D), D))
+
+    def _cf(limit):
+        return (lambda v: sp.Rational(Fraction(float(v)).limit_denominator(limit)))
+
+    strategies = [_fixed(D) for D in _DENOMS] + [_cf(L) for L in (12, 60, 360, 5040)]
+    for rnd in strategies:
+        Qrs = [sp.Matrix(len(m), len(m), lambda i, j: rnd(Q.value[i, j]))
                for Q, (_mult, m) in zip(Qs, sos_blocks)]
-        Crs = [[sp.Rational(round(C.value[i] * D), D) for i in range(len(m))]
+        Crs = [[rnd(C.value[i]) for i in range(len(m))]
                for C, (_mult, m) in zip(Cs, free_blocks)]
         tot = sp.Integer(0)
         for Qr, (mult, mons) in zip(Qrs, sos_blocks):
@@ -139,6 +152,32 @@ def _solve(target, sos_blocks, free_blocks, syms):
         free_out = [sp.expand(sum(Cr[i] * mons[i] for i in range(len(mons))))
                     for Cr, (_mult, mons) in zip(Crs, free_blocks)]
         return sos_out, free_out
+    return None
+
+
+def find_real_nullstellensatz(p, gens, syms, m_max: int = 3, half_deg: int = 1):
+    """Search for a Real-Nullstellensatz certificate ``p^{2m} + s ∈ ⟨gₖ⟩`` with
+    `s` a sum of squares — proving `p = 0` on the REAL variety of `⟨gₖ⟩`.
+
+    Reuses the shared SDP: find SOS `s` and free cofactors `cₖ` with
+    ``s = −p^{2m} − Σ cₖ·gₖ`` (so ``p^{2m} + s = −Σ cₖ·gₖ ∈ ⟨gₖ⟩``), raising the
+    multiplicity `m` until a certificate is found.  Returns ``(m, s_terms)`` (the
+    multiplicity and the SOS term list for `s`) or None; the emitter recomputes
+    the ideal cofactors by Gröbner reduction of ``p^{2m} + s``."""
+    p = sp.expand(sp.sympify(p))
+    gens = [sp.expand(sp.sympify(g)) for g in gens]
+    syms = tuple(syms)
+    dp = sp.Poly(p, *syms).total_degree() if p != 0 else 0
+    for m in range(1, m_max + 1):
+        target = sp.expand(-(p ** (2 * m)))
+        s_deg = max(m * dp, 1) + half_deg          # room for the SOS block
+        sos_blocks = [(sp.Integer(1), _monomials_upto(syms, s_deg))]
+        free_blocks = [(g, _monomials_upto(syms, half_deg)) for g in gens]
+        res = _solve(target, sos_blocks, free_blocks, syms)
+        if res is None:
+            continue
+        sos_out, _free = res
+        return m, sos_out[0]
     return None
 
 

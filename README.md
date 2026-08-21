@@ -56,6 +56,7 @@ emit → freeze` workflow.
 | `DirectPolyaEmitter` | `0 ≤ f(x̄)`, `f` rational with an all-nonneg-numerator / positive-factored-denominator form | `f = num/den` by `field_simp`+`ring`, then `positivity` |
 | `BilinearBoxEmitter` | `before ≤ after` on a box in two bound variables | bilinear decomposition + 4 Pólya corner certificates + assembly |
 | `SOSEmitter` | `0 ≤ p` for a polynomial via an exact rational PSD-Gram sum-of-squares (reaches interior ties) | `p = Σ dᵢ·ℓᵢ² := by ring`, then `positivity` |
+| `RationalSOSEmitter` | `0 ≤ p` for a NONNEGATIVE-but-NOT-SOS polynomial (e.g. Motzkin) via an Artin denominator `q·p = Σ dᵢℓᵢ²`, `q > 0` (Telperion FINDS `q` + SOS) | `positivity` (`0 < q`, and the SOS after `ring`) + `nlinarith`/`mul_pos` to divide out `q` |
 | `ExactFactEmitter` / `IdentityEmitter` | exact integer/rational identities and powers | `norm_num` / `ring` |
 | `PadicValuationEmitter` | p-adic valuation facts `v_p(n)=k` | `(p^k ∣ n) ∧ ¬(p^{k+1} ∣ n)` by `norm_num` |
 | `IntervalBracketEmitter` | rigorous two-sided rational enclosure `lo ≤ exp(−θ) ≤ hi` | Taylor bound + convexity companion |
@@ -71,6 +72,8 @@ emit → freeze` workflow.
 | `LatticeBoxEmitter` | `f(x) ≤ B` for all `x ∈ ℤ^d_{≥0}` (d-dim integer Positivstellensatz) | finite base box (`norm_num`) + per-axis monotone tail (`ring`/`positivity`) |
 | `LogConcaveSinglePointEmitter` | `max_{k∈ℕ} F(k) ≤ B` reduced to a single point `k*` by log-concavity | single-point + per-step + neighbour facts (`norm_num`) |
 | `MonotoneRatioTailEmitter` | `b(s) ≤ B` for all `s ≥ s₀` via a nonincreasing tail | tail step (`positivity`) + base (`norm_num`) + `Nat.le_induction` |
+| `SturmPositiveEmitter` | `0 < p(x)` (STRICT) on a closed interval `[a,b]` — root exclusion via a Sturm sequence (the exact decision oracle) + a Bernstein certificate for `p−γ ≥ 0`, `γ>0` | Bernstein fold + `ring` + `linarith` (`0 < γ ≤ p`) |
+| `BernsteinEmitter` | `0 ≤ p(x)` on a closed interval `[a,b]` via nonnegative Bernstein coefficients (Telperion FINDS them, elevating the degree; the univariate interval specialization of Handelman) | `mul_nonneg`/`pow_nonneg` fold over `0 ≤ x−a`, `0 ≤ b−x` + `ring` + `linarith` |
 | `InterlacingEmitter` | Newton's inequalities (coefficient log-concavity) of a real-rooted polynomial | `norm_num` on exact rationals |
 | `ConstrainedSOSEmitter` | `0 ≤ p` on a semialgebraic set `{gᵢ ≥ 0}` via a Putinar certificate `p = σ₀ + Σ σᵢ·gᵢ` (SOS multipliers) — supply the multipliers, or return `sigma0=None` and Telperion FINDS them (`find_putinar_certificate`, numeric SDP rounded to exact rationals) | `p = σ₀ + Σ σᵢ·gᵢ := by ring`; each `σⱼ` by `positivity`, paired with `gᵢ ≥ 0` by `mul_nonneg`, summed by `linarith` |
 | `WZEmitter` | hypergeometric / binomial sum identities `Σ_k F(n,k) = rhs(n)` via a Wilf–Zeilberger mate `R(n,k)` | denominator-cleared WZ equation as an exact `ring` polynomial identity + the reusable `wz_row_invariant` telescoping-closure lemma |
@@ -164,9 +167,10 @@ is the non-BG example, Bernoulli's inequality end-to-end through the core engine
 New kind of statement? Write an emitter. An `Emitter` is a small class that
 turns a certified instance into Lean text; it inherits the entire pipeline —
 enforcement, provenance hashing, drift net, soundness lint, byte-stability, all
-three agent surfaces — for free. The existing thirteen emitters are the working
-examples; `docs/TACTIC_CONTRACT.md` documents the exact Mathlib tactics the
-default templates assume, and `docs/METHODOLOGY.md` the discipline.
+three agent surfaces — for free. The existing emitters (thirty-plus, see the
+table above) are the working examples; `docs/TACTIC_CONTRACT.md` documents the
+exact Mathlib tactics the default templates assume, and `docs/METHODOLOGY.md`
+the discipline.
 
 ## Honest scope — what it is and isn't
 
@@ -191,16 +195,33 @@ refine). The trust model is unchanged — the loop only *proposes*; every surviv
 still passes the identical kernel gate, and nothing is auto-frozen. It runs
 LLM-free out of the box (structured search); the LLM arm is an opt-in extra.
 
+## As a certificate backend for an LLM/RL prover — `telperion prove`
+
+Beyond the family workflow, Telperion exposes a **single-goal front door**:
+hand it one goal string (`0 ≤ <expr>` over given symbols) and it routes the
+goal through a kind-router to the right emitter and returns a kernel-checkable
+aux lemma — deterministic, CPU-cheap, and honest on failure (exact triage:
+FALSE with a rational counterexample, or NOT_POLYA with hints). The
+integration seam is one JSON request/response (`telperion.tactic::discharge`),
+with a sketched Lean `telperion_discharge` tactic frontend and a lift harness +
+certifiable benchmark for measuring what the backend adds — see
+[`examples/backend_integration/`](examples/backend_integration/) and the
+frontier-prover gap analysis in
+`docs/COMPARISON_ALPHAPROOF_DEEPSEEK_PROVER_V2_2026-08-20.md`. A companion
+`audit` verb (the proof-auditor) re-screens any Lean text for the
+"green build ≠ proved" classes.
+
 ## Using it from LLM agents
 
 Three surfaces, all on the same enforced workflow:
 
 - **CLI** — `telperion <verb>`: `init` (scaffold a project), `certify`, `probe`,
-  `diagnose`, `verify` (regenerate + byte-diff the drift net), `lint-lean` (the
-  soundness gate), plus analysis (`margins`, `ties`, `hunt`, `relax`, `sharpen`)
-  and reporting (`latex`, `ledger`, `status`, `package`, `export-certs`,
-  `recheck`). Every string-taking surface parses through a token whitelist —
-  sympy's evaluating parser never sees raw input.
+  `prove` (the single-goal backend), `diagnose`, `verify` (regenerate +
+  byte-diff the drift net), `lint-lean` (the soundness gate), `audit` (the
+  proof-auditor), `benchmark`, plus analysis (`margins`, `ties`, `hunt`,
+  `relax`, `sharpen`) and reporting (`latex`, `ledger`, `status`, `package`,
+  `export-certs`, `recheck`). Every string-taking surface parses through a
+  token whitelist — sympy's evaluating parser never sees raw input.
 - **MCP server** — `pip install "telperion[mcp]"`, then
   `claude mcp add telperion -- telperion-mcp`. Tools mirror the workflow
   (`polya_probe`, `certify_family`, `emit_family`, `diff_family`,
@@ -242,3 +263,15 @@ only if you want the research lab.
 
 The methodology — untrusted generator, trusted kernel, numeric-first discipline,
 provenance-and-drift — is written up in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+
+
+## License
+
+Telperion is source-available under the
+[Business Source License 1.1](LICENSE): free for academic research,
+teaching, and evaluation; commercial production use requires a license
+from the Licensor; each version converts to Apache-2.0 three years after
+release. Emitted Lean certificates are excluded from the Licensed Work —
+your outputs are yours. The mathematical content elsewhere in this
+repository is Apache-2.0/CC-BY-4.0 (see ../LICENSING.md). Engine
+contributions require the [CLA](CLA.md).

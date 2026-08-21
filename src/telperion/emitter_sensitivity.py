@@ -156,6 +156,28 @@ REGISTRY: dict[str, SensitivityStance] = {
                             "surplus is an exact sum of squares (nlinarith over "
                             "sq_nonneg + the sum constraint), no corruptible "
                             "identity certificate"),
+    # --- emitters merged from main (runway + knapsack_sos arc) ---
+    "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
+                              "forward telescoping Σ = Π (SumEqProd); the "
+                              "telescoping mate is the load-bearing identity"),
+    "RationalIdentityEmitter": _S(CERTIFICATE_SENSITIVE,
+                                  "an exact rational identity (Gram-bridge shape); "
+                                  "a corrupted side breaks ring/norm_num"),
+    "RationalSOSEmitter": _S(CERTIFICATE_SENSITIVE,
+                             "Artin: q·p is SOS for nonneg-but-not-SOS p; the "
+                             "denominator q and the SOS of q·p are load-bearing"),
+    "BernsteinEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                           "interval positivity via nonnegative Bernstein "
+                           "coefficients; positivity by structure"),
+    "FiniteDecideEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                              "a finite proposition discharged by the Lean kernel "
+                              "`decide` — decidable, no corruptible certificate"),
+    "PolyaZerosEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                            "Castle–Powers–Reznick Pólya-with-zeros homogeneous "
+                            "lift; positivity (zeros allowed on faces)"),
+    "SturmPositiveEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                               "strict-interval positivity with a Sturm sequence "
+                               "as the exact decision oracle (root exclusion)"),
 }
 
 

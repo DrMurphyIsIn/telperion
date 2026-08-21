@@ -1,5 +1,128 @@
 # Changelog
 
+## Unreleased — cone/Farkas: overcomplete-basis solver + first compile gate
+
+- **`cone_combination` now solves the OVERCOMPLETE (underdetermined) basis** —
+  the former `"undecided over this basis — needs LP; named-open"` refusal.
+  `sp.solve` returns a PARAMETRIC solution when the basis has more elements than
+  the monomial equations pin down, and the old code bailed at the first free
+  variable.  A nonnegative solution of `A λ = b`, if one exists, has a VERTEX
+  form supported on ≤ rank columns, so `_cone_bfs` enumerates basis subsets in a
+  deterministic order and solves each exactly with `linsolve`, returning the
+  first all-nonnegative combination that reproduces the target — the same
+  sympy-only, SDP/LP-free basic-feasible-solution search the Handelman finder
+  uses.  The determined case is unchanged (direct solve first; BFS only on its
+  miss), so every existing certificate is byte-identical.  Genuine
+  non-membership is still refused (and `cone_decide` still supplies the Farkas
+  dual).
+- **`ConeFarkasEmitter` now binds free variables with an explicit `∀`** (and
+  `intro`s them) instead of relying on Lean's `autoImplicit` — so the emitted
+  theorem compiles under `autoImplicit false`, consistent with every other
+  emitter.  Symbol-free (constant-target) families still emit a bare statement.
+  Content change to emitted Lean; no cone family was previously frozen, so no
+  refreeze elsewhere.
+- **first compile gate for the cone emitter** — `examples/cone` (determined +
+  two overcomplete-BFS certificates, with an infeasible-target negative
+  control) added to the `quick` verify group and the `audit-compiles` lake gate.
+  The ConeFarkas emitter (shipped 2026-08-19) had no compile-gated example until
+  now.
+
+## Unreleased — facial positivity (Pólya-with-zeros) + sympy-only real-Nullstellensatz finder
+
+The emitter candidate named by `docs/HANDELMAN_DEGREE_BOUNDS_LIT_2026-08-20.md`
+(Castle–Powers–Reznick 2011, "Pólya's theorem with zeros"), plus a cvxpy-free
+finder for the real-Nullstellensatz emitter that composes with the SDP finder
+landed the same day (see the Bernstein/Real-Nullstellensatz entry below).
+
+- **`PolyaZerosEmitter`** (`polya_zeros`) — `0 ≤ p` on `{xᵢ ≥ 0, Σxᵢ > 0}` from
+  the HOMOGENEOUS Pólya certificate `(Σxᵢ)^N·p = Q` with every Q-coefficient a
+  nonnegative rational, verified exactly.  This is the tie-safe lift: `lift.py`'s
+  inhomogeneous `(1 + Σxᵢ)^N` certifies STRICT positivity only (a zero on the
+  closed orthant means no finite N), while the homogeneous form tolerates zeros
+  ON FACES — the CPR class, degree-bounded by residual facial margins that do
+  not vanish at the tie.  FINDER mode (`N = None`) searches N ≤ max_n; on a
+  miss, `polya_zeros_obstruction` (all-ones sampling of every face) upgrades
+  "gave up" to a STRUCTURAL refusal when the zero set leaves the face lattice
+  (`(x−y)²`: "no Pólya exponent exists at ANY N", CPR Theorem 2) or a sample is
+  negative.  The obstruction check is a sufficient condition, not a complete
+  Theorem 2 decision — documented as such.  Lean side reuses the proven
+  Handelman shapes (`mul_nonneg`/`pow_nonneg` fold + `ring` identity) plus
+  `pow_pos`/`nlinarith` to divide out the positive factor.  Compile-gated
+  frozen example `examples/polya_zeros` (supplied-N, face-zero finder case
+  `xy(x²−xy+y²)` at N = 1, and the CPR near-tie `x² − (7/4)xy + y²`; negative
+  controls: the tie refused WITH its obstruction named, an insufficient N
+  refused).
+- **`find_real_nullstellensatz_certificate`** — a second, cvxpy-free finder for
+  the `real_nullstellensatz` emitter, composed with the SDP finder that landed
+  the same day (`sdp_finder.find_real_nullstellensatz`): the finder branch now
+  tries the exact sympy-only search FIRST (for m ≤ max_m the Gröbner normal form
+  `s = NF(−p^{2m})` is the canonical SOS candidate; `sos_decompose` attempts an
+  exact rational SOS), and falls back to the SDP for cases outside
+  `sos_decompose`'s v1 class.  Trying the cheap finder first keeps the `quick`
+  CI path cvxpy-free; both return the same `(m, s_terms)` interface and are
+  re-verified against the certifier's own plain-division gate (miss = refusal).
+  Multiplicity escalation works (`x` on `V(x³)`: m = 2, s = 0).  The
+  `real_nullstellensatz` example gains two finder cases + a finder-mode negative
+  control (non-vanishing `x + 1` refused).
+- **Compile-gate repair**: `examples/cg_round/frozen/CGRound.lean` (PR #17) was
+  in no lake gate — the "silenced gate" class.  Added to audit-compiles staging,
+  `Audit.lean`, and the workflow trigger paths alongside the new `polya_zeros`
+  example.
+## Unreleased — Sturm strict-interval positivity (root exclusion)
+
+- **`SturmPositiveEmitter`** (`sturm_positive`) — `0 < p(x)` (STRICT) for all
+  `x ∈ [a,b]`, the robustly kernel-checkable half of Sturm: root EXCLUSION.  A
+  Sturm sequence (exact, in sympy) is the decision oracle — it certifies `p` has
+  no root in `[a,b]` (a polynomial with a root there, or negative there, is
+  refused) — and the Lean proof combines a Bernstein certificate for `p − γ ≥ 0`
+  (γ a rational floor `0 < γ ≤ min p`) with `0 < γ` via `linarith`.  Goes beyond
+  `BernsteinEmitter` (non-strict `0 ≤ p`) by delivering strict positivity.  The
+  other half of Sturm — an EXACT real-root COUNT emitted as a theorem — needs
+  Sturm's theorem in Mathlib (not yet available) and remains out of scope; the
+  Sturm sequence is used only as the exact oracle and negative-control gate.
+
+Content-neutral for existing families (no refreeze).
+
+## Unreleased — rational-SOS (Artin denominator): reaching nonneg-but-not-SOS
+
+- **`RationalSOSEmitter`** (`rational_sos`) — proves `0 ≤ p` for a polynomial that
+  is nonnegative but NOT a sum of squares (the class Hilbert showed the plain SOS
+  emitter cannot reach; the Motzkin polynomial `x⁴y² + x²y⁴ − 3x²y² + 1` is the
+  minimal example).  Artin's theorem: a strictly-positive multiplier `q` makes
+  `q·p` a sum of squares.  Telperion FINDS the certificate — a ladder of
+  `positivity`-provable strictly-positive multipliers `q` (products of `1 + xᵢ²`)
+  until `q·p` has an EXACT rational SOS (shared SDP + robust rationalization) —
+  then emits `positivity` (`0 < q`, and the SOS after a `ring` rewrite) + a
+  `by_contra`/`nlinarith` that divides out `q`.  For Motzkin it finds
+  `q = (1+x²)(1+y²)` and `q·M = (1−x²y²)² + (x−x³y²)² + (y−x²y³)² + (x³y−xy³)²`.
+  Untrusted-by-verification: the identity `q·p = Σ dᵢℓᵢ²` is re-checked exactly.
+  (This is the robust, kernel-checkable route to the SONC / nonneg-circuit class —
+  it covers the same nonnegativity gap without the `rpow` AM-GM machinery.)
+
+Content-neutral for existing families (no refreeze).
+
+## Unreleased — Bernstein positivity + Real-Nullstellensatz finder + better SDP rationalization
+
+- **`BernsteinEmitter`** (`bernstein`) — `0 ≤ p(x)` on a closed interval `[a,b]`
+  via nonnegative Bernstein coefficients, the univariate interval specialization
+  of Handelman positivity.  Telperion FINDS the certificate: it extracts the
+  Bernstein coefficients by exact linear solve, ELEVATING the degree until all are
+  nonnegative (the enclosure sharpens with degree; a strictly-positive polynomial
+  succeeds at some finite degree, one touching zero interior is refused).  Robust
+  Lean — a `mul_nonneg`/`pow_nonneg` fold over `0 ≤ x−a`, `0 ≤ b−x` + `ring` +
+  `linarith`.
+- **`find_real_nullstellensatz`** (`sdp_finder.py`) — `RealNullstellensatzEmitter`
+  now SEARCHES the multiplicity `m` and the SOS `s` with `p^{2m} + s ∈ ⟨gₖ⟩` when a
+  family returns `m=None, sos=None`: `x = 0` and `y = 0` on the real variety of
+  `x²+y²` are found automatically (SDP over an SOS block + free ideal cofactors).
+- **better SDP rationalization** — the shared SDP solver now tries continued-
+  fraction rounding (`Fraction.limit_denominator`) alongside the fixed-denominator
+  ladder, snapping an entry like `0.333…` to `1/3` without needing `3` on the
+  ladder — raising the finders' exact-rationalization hit rate.  Untrusted-by-
+  verification throughout: every found certificate is re-verified exactly.
+
+Content-neutral for existing families (no refreeze).
+
 ## Unreleased — integer arithmetic (Chvátal–Gomory rounding, VIPR-style)
 
 The first emitter that lives in INTEGER linear arithmetic rather than over the
@@ -52,6 +175,41 @@ the Putinar finder (`sos_sdp.find_putinar_certificate`).
   their auto-discovered Lean is kernel-verified in `audit-compiles`.
 
 Content-neutral for existing families (no refreeze).
+
+## Unreleased — proof-complexity-derived emitter shapes (2026-08-20, knapsack_sos arc)
+
+Three shapes crystallized from the P-vs-NP certificate-ladder arc, each with
+example family + negative controls + tests, frozen Lean compile-verified:
+
+- **`RationalIdentityEmitter`** / `rational_identity_family` (kind
+  `rational_identity`): identities of rational functions on a ray `c0 < n`,
+  certified by exact cancellation + denominator-root audit, emitted via a
+  structure-preserving renderer (the nonvacuity gate rejects the
+  canonicalized `X = X` collapse — caught live during development) and a
+  cross-multiplication spine (`div_eq_div_iff` + `mul_ne_zero` chains +
+  `ring`; `field_simp` expands multi-factor denominators into quadratics
+  whose nonvanishing it cannot decompose).  Crystallizes the knapsack
+  Gram-bridge generator.
+- **`FiniteDecideEmitter`** / `finite_decide_family` (kind `finite_decide`):
+  guarded universally-quantified decidable facts over explicit ℕ/ℤ tables
+  (mini-AST: ForallIn/Imp/Cmp + Var/Lit/Xor/Pop/Lookup/Mul), evaluated
+  exactly in Python at certification and re-decided by the Lean kernel.
+  Encodes the kernel-feasibility contract from PetersenCertificate.lean:
+  ℕ/ℤ arithmetic only (ℚ does NOT kernel-reduce — `Rat.normalize` bottoms
+  out in well-founded `Nat.gcd`), fueled popcount (well-founded recursion
+  does not kernel-reduce), short-circuiting guarded Decidable instances,
+  `maxRecDepth` raised.
+- **`FwdTelescopeEmitter`** / `fwd_telescope_family` (kind `fwd_telescope`):
+  the W2 forward-difference telescoping prover.  For
+  `f(q+1) = f(q)·A(q)/(P−q)` the closed form
+  `Δ^[j] f(q) = (−1)^j ∏N · f(q) / ∏(P−q−u)` is certified by ONE polynomial
+  identity (the contiguous relation `A(q) − (P−q−j) + N(j) = 0`,
+  sympy-exact; a wrong `N` is refused) and emitted as the full mathlib
+  `fwdDiff` induction skeleton (pnum/pden, positivity, shift law, closed
+  form) — the SumEqProd.lean knapsack instance is the re-derivation
+  regression baseline.
+- Claude plugin `version` aligned with core `__version__` (0.1.6).
+
 
 ## Unreleased — certificate FINDERS (checker → searcher)
 

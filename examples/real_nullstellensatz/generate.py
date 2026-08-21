@@ -5,7 +5,12 @@ of squares) -- reaching real-vanishing that ordinary ideal membership misses.
 
 Demonstrations: on the real variety of `x² + y²` (just the origin), both `x = 0`
 and `y = 0`, via s = y² and s = x² respectively.
-NEGATIVE CONTROL: p^(2m)+s not in the ideal -> refused.
+FINDER mode (sos = None): Telperion SEARCHES for (m, s) itself — Groebner normal
+form of -p^(2m) + exact SOS decomposition (`find_real_nullstellensatz_certificate`,
+sympy-only): re-finds s = y² for `x` on V(x²+y²), and escalates multiplicity to
+m = 2 for `x` on V(x³) (x² ∉ ⟨x³⟩ but x⁴ = x·x³ is, s = 0).
+NEGATIVE CONTROLS: p^(2m)+s not in the ideal -> refused; finder-mode p that does
+NOT vanish on the real variety (x+1 at the origin) -> refused.
 Usage: generate.py [--check]
 """
 from __future__ import annotations
@@ -18,9 +23,12 @@ from telperion import (CertificationError, GridSpec, LeanProfile, RealNullstelle
 HERE = Path(__file__).resolve().parent
 x, y = sp.symbols("x y")
 CASES = {0: ("real_nss_x_zero", x, 1, [(1, y)], [x**2 + y**2]),
-         1: ("real_nss_y_zero", y, 1, [(1, x)], [x**2 + y**2])}
+         1: ("real_nss_y_zero", y, 1, [(1, x)], [x**2 + y**2]),
+         # FINDER mode (m = None, sos = None): Telperion searches for (m, s).
+         2: ("real_nss_found_x_zero", x, None, None, [x**2 + y**2]),
+         3: ("real_nss_found_mult2", x, None, None, [x**3])}
 def _family():
-    return real_nullstellensatz_family("RealNSS", (x, y), GridSpec([("i", [0, 1])]),
+    return real_nullstellensatz_family("RealNSS", (x, y), GridSpec([("i", [0, 1, 2, 3])]),
         lambda pt: CASES[pt["i"]][0],
         lambda pt: (CASES[pt["i"]][1], CASES[pt["i"]][2], CASES[pt["i"]][3], CASES[pt["i"]][4]))
 def build():
@@ -32,7 +40,15 @@ def _validation():
             lambda pt: (x, 1, [], [x**2 + y**2]))  # x^2 not in <x^2+y^2> (needs s=y^2)
         try: certify(bad); raise AssertionError("non-member not refused")
         except CertificationError: pass
-    return ValidationReport.from_asserts([("real_nss_discriminates", d)])
+    def d_finder():
+        # x+1 does NOT vanish at the origin (= the real variety of x^2+y^2):
+        # the finder must come back empty and certification must refuse.
+        bad = real_nullstellensatz_family("BadF", (x, y), GridSpec([("i", [0])]), lambda pt: "badf",
+            lambda pt: (x + 1, None, None, [x**2 + y**2]))
+        try: certify(bad); raise AssertionError("finder-mode non-vanishing p not refused")
+        except CertificationError: pass
+    return ValidationReport.from_asserts([("real_nss_discriminates", d),
+                                          ("real_nss_finder_discriminates", d_finder)])
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--check", action="store_true")
     a = ap.parse_args(); res = build()

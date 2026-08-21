@@ -8,7 +8,7 @@ version = "0.1.6"
 description = "Certify families of rational-function inequalities in sympy, validate them in exact arithmetic, and batch-emit kernel-checked Lean 4."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "BUSL-1.1" }
 authors = [{ name = "Peter W. Murphy" }]
 keywords = ["lean4", "mathlib", "polya", "positivity", "certificates", "sympy", "formal-verification"]
 # Core engine (telperion.*) is sympy-only: `import telperion` and the whole
