@@ -1,9 +1,9 @@
 {
   "family": "RealNSS",
-  "input_hash": "f3a3eb6cb0403a1d09601282d4445a6563ef6be53e377fe94b91f65fd7644412",
+  "input_hash": "c00813faf60241d419df9ae800d1cbb92415a6137639220876ee6a394261af4d",
   "tool_version": "0.1.6",
   "files": [
     "RealNullstellensatz.lean"
   ],
-  "n_theorems": 2
+  "n_theorems": 4
 }

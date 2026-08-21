@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased — facial positivity (Pólya-with-zeros) + sympy-only real-Nullstellensatz finder
+
+The emitter candidate named by `docs/HANDELMAN_DEGREE_BOUNDS_LIT_2026-08-20.md`
+(Castle–Powers–Reznick 2011, "Pólya's theorem with zeros"), plus a cvxpy-free
+finder for the real-Nullstellensatz emitter that composes with the SDP finder
+landed the same day (see the Bernstein/Real-Nullstellensatz entry below).
+
+- **`PolyaZerosEmitter`** (`polya_zeros`) — `0 ≤ p` on `{xᵢ ≥ 0, Σxᵢ > 0}` from
+  the HOMOGENEOUS Pólya certificate `(Σxᵢ)^N·p = Q` with every Q-coefficient a
+  nonnegative rational, verified exactly.  This is the tie-safe lift: `lift.py`'s
+  inhomogeneous `(1 + Σxᵢ)^N` certifies STRICT positivity only (a zero on the
+  closed orthant means no finite N), while the homogeneous form tolerates zeros
+  ON FACES — the CPR class, degree-bounded by residual facial margins that do
+  not vanish at the tie.  FINDER mode (`N = None`) searches N ≤ max_n; on a
+  miss, `polya_zeros_obstruction` (all-ones sampling of every face) upgrades
+  "gave up" to a STRUCTURAL refusal when the zero set leaves the face lattice
+  (`(x−y)²`: "no Pólya exponent exists at ANY N", CPR Theorem 2) or a sample is
+  negative.  The obstruction check is a sufficient condition, not a complete
+  Theorem 2 decision — documented as such.  Lean side reuses the proven
+  Handelman shapes (`mul_nonneg`/`pow_nonneg` fold + `ring` identity) plus
+  `pow_pos`/`nlinarith` to divide out the positive factor.  Compile-gated
+  frozen example `examples/polya_zeros` (supplied-N, face-zero finder case
+  `xy(x²−xy+y²)` at N = 1, and the CPR near-tie `x² − (7/4)xy + y²`; negative
+  controls: the tie refused WITH its obstruction named, an insufficient N
+  refused).
+- **`find_real_nullstellensatz_certificate`** — a second, cvxpy-free finder for
+  the `real_nullstellensatz` emitter, composed with the SDP finder that landed
+  the same day (`sdp_finder.find_real_nullstellensatz`): the finder branch now
+  tries the exact sympy-only search FIRST (for m ≤ max_m the Gröbner normal form
+  `s = NF(−p^{2m})` is the canonical SOS candidate; `sos_decompose` attempts an
+  exact rational SOS), and falls back to the SDP for cases outside
+  `sos_decompose`'s v1 class.  Trying the cheap finder first keeps the `quick`
+  CI path cvxpy-free; both return the same `(m, s_terms)` interface and are
+  re-verified against the certifier's own plain-division gate (miss = refusal).
+  Multiplicity escalation works (`x` on `V(x³)`: m = 2, s = 0).  The
+  `real_nullstellensatz` example gains two finder cases + a finder-mode negative
+  control (non-vanishing `x + 1` refused).
+- **Compile-gate repair**: `examples/cg_round/frozen/CGRound.lean` (PR #17) was
+  in no lake gate — the "silenced gate" class.  Added to audit-compiles staging,
+  `Audit.lean`, and the workflow trigger paths alongside the new `polya_zeros`
+  example.
+
 ## Unreleased — rational-SOS (Artin denominator): reaching nonneg-but-not-SOS
 
 - **`RationalSOSEmitter`** (`rational_sos`) — proves `0 ≤ p` for a polynomial that
