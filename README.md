@@ -166,9 +166,10 @@ is the non-BG example, Bernoulli's inequality end-to-end through the core engine
 New kind of statement? Write an emitter. An `Emitter` is a small class that
 turns a certified instance into Lean text; it inherits the entire pipeline —
 enforcement, provenance hashing, drift net, soundness lint, byte-stability, all
-three agent surfaces — for free. The existing thirteen emitters are the working
-examples; `docs/TACTIC_CONTRACT.md` documents the exact Mathlib tactics the
-default templates assume, and `docs/METHODOLOGY.md` the discipline.
+three agent surfaces — for free. The existing emitters (thirty-plus, see the
+table above) are the working examples; `docs/TACTIC_CONTRACT.md` documents the
+exact Mathlib tactics the default templates assume, and `docs/METHODOLOGY.md`
+the discipline.
 
 ## Honest scope — what it is and isn't
 
@@ -193,16 +194,33 @@ refine). The trust model is unchanged — the loop only *proposes*; every surviv
 still passes the identical kernel gate, and nothing is auto-frozen. It runs
 LLM-free out of the box (structured search); the LLM arm is an opt-in extra.
 
+## As a certificate backend for an LLM/RL prover — `telperion prove`
+
+Beyond the family workflow, Telperion exposes a **single-goal front door**:
+hand it one goal string (`0 ≤ <expr>` over given symbols) and it routes the
+goal through a kind-router to the right emitter and returns a kernel-checkable
+aux lemma — deterministic, CPU-cheap, and honest on failure (exact triage:
+FALSE with a rational counterexample, or NOT_POLYA with hints). The
+integration seam is one JSON request/response (`telperion.tactic::discharge`),
+with a sketched Lean `telperion_discharge` tactic frontend and a lift harness +
+certifiable benchmark for measuring what the backend adds — see
+[`examples/backend_integration/`](examples/backend_integration/) and the
+frontier-prover gap analysis in
+`docs/COMPARISON_ALPHAPROOF_DEEPSEEK_PROVER_V2_2026-08-20.md`. A companion
+`audit` verb (the proof-auditor) re-screens any Lean text for the
+"green build ≠ proved" classes.
+
 ## Using it from LLM agents
 
 Three surfaces, all on the same enforced workflow:
 
 - **CLI** — `telperion <verb>`: `init` (scaffold a project), `certify`, `probe`,
-  `diagnose`, `verify` (regenerate + byte-diff the drift net), `lint-lean` (the
-  soundness gate), plus analysis (`margins`, `ties`, `hunt`, `relax`, `sharpen`)
-  and reporting (`latex`, `ledger`, `status`, `package`, `export-certs`,
-  `recheck`). Every string-taking surface parses through a token whitelist —
-  sympy's evaluating parser never sees raw input.
+  `prove` (the single-goal backend), `diagnose`, `verify` (regenerate +
+  byte-diff the drift net), `lint-lean` (the soundness gate), `audit` (the
+  proof-auditor), `benchmark`, plus analysis (`margins`, `ties`, `hunt`,
+  `relax`, `sharpen`) and reporting (`latex`, `ledger`, `status`, `package`,
+  `export-certs`, `recheck`). Every string-taking surface parses through a
+  token whitelist — sympy's evaluating parser never sees raw input.
 - **MCP server** — `pip install "telperion[mcp]"`, then
   `claude mcp add telperion -- telperion-mcp`. Tools mirror the workflow
   (`polya_probe`, `certify_family`, `emit_family`, `diff_family`,
