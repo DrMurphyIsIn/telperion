@@ -151,16 +151,28 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "hand-designed escape-hatch skeleton; "
                                 "load-bearingness is the author's responsibility "
                                 "and covered by the structural reflexive check"),
+    "TangentSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                            "convex-quadratic tangent-line bound B ≤ Σf(xᵢ); the "
+                            "surplus is an exact sum of squares (nlinarith over "
+                            "sq_nonneg + the sum constraint), no corruptible "
+                            "identity certificate"),
 }
 
 
 def discover_emitters() -> list[type]:
-    """Every concrete Emitter subclass reachable from the base class."""
+    """Every concrete SHIPPED Emitter subclass reachable from the base class.
+
+    Governs only emitters defined in the ``telperion`` package — a test that
+    defines or ``exec``s a throwaway ``Emitter`` subclass (e.g.
+    ``test_provenance_code_fingerprint``'s ``ReplEmitter``, whose ``__module__``
+    is ``builtins``) pollutes ``Emitter.__subclasses__()`` process-globally but is
+    NOT a shippable emitter, so it is excluded from the completeness gate."""
     seen: dict[str, type] = {}
 
     def walk(cls: type) -> None:
         for sub in cls.__subclasses__():
-            seen[sub.__name__] = sub
+            if sub.__module__.startswith("telperion."):
+                seen[sub.__name__] = sub
             walk(sub)
 
     walk(Emitter)
