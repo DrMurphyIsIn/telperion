@@ -42,6 +42,10 @@ def test_prove_goal_triages_false_inequality_with_counterexample():
 def test_prove_goal_routes_polynomial_interior_tie_to_sos():
     # 0 <= (u-1)^2 is TRUE with an interior tie at u=1 — no Pólya certificate,
     # but a perfect square. The kind-router must fall through to the SOS rung.
+    # The SOS certificate path uses the SDP finder (cvxpy, the `sdp` extra); when
+    # it is absent the router degrades to NOT_POLYA — so gate this on cvxpy.
+    import pytest
+    pytest.importorskip("cvxpy")
     res = prove_goal((u - 1) ** 2, symbols=(u,))
 
     assert res.proved is True

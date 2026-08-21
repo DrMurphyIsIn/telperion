@@ -29,7 +29,10 @@ def test_discharge_returns_spliceable_aux_lemma_for_provable_goal():
 
 
 def test_discharge_reports_over_all_reals_for_sos_goal():
-    # a polynomial interior tie routes to SOS, whose lemma is `∀ x : ℝ, ...`
+    # a polynomial interior tie routes to SOS, whose lemma is `∀ x : ℝ, ...`.
+    # SOS certification uses the SDP finder (cvxpy, `sdp` extra); skip if absent.
+    import pytest
+    pytest.importorskip("cvxpy")
     resp = discharge("(u - 1)^2", "u", aux_name="telperion_aux_2")
 
     assert resp["proved"] is True
