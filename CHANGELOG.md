@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — cone/Farkas: overcomplete-basis solver + first compile gate
+
+- **`cone_combination` now solves the OVERCOMPLETE (underdetermined) basis** —
+  the former `"undecided over this basis — needs LP; named-open"` refusal.
+  `sp.solve` returns a PARAMETRIC solution when the basis has more elements than
+  the monomial equations pin down, and the old code bailed at the first free
+  variable.  A nonnegative solution of `A λ = b`, if one exists, has a VERTEX
+  form supported on ≤ rank columns, so `_cone_bfs` enumerates basis subsets in a
+  deterministic order and solves each exactly with `linsolve`, returning the
+  first all-nonnegative combination that reproduces the target — the same
+  sympy-only, SDP/LP-free basic-feasible-solution search the Handelman finder
+  uses.  The determined case is unchanged (direct solve first; BFS only on its
+  miss), so every existing certificate is byte-identical.  Genuine
+  non-membership is still refused (and `cone_decide` still supplies the Farkas
+  dual).
+- **`ConeFarkasEmitter` now binds free variables with an explicit `∀`** (and
+  `intro`s them) instead of relying on Lean's `autoImplicit` — so the emitted
+  theorem compiles under `autoImplicit false`, consistent with every other
+  emitter.  Symbol-free (constant-target) families still emit a bare statement.
+  Content change to emitted Lean; no cone family was previously frozen, so no
+  refreeze elsewhere.
+- **first compile gate for the cone emitter** — `examples/cone` (determined +
+  two overcomplete-BFS certificates, with an infeasible-target negative
+  control) added to the `quick` verify group and the `audit-compiles` lake gate.
+  The ConeFarkas emitter (shipped 2026-08-19) had no compile-gated example until
+  now.
+
 ## Unreleased — facial positivity (Pólya-with-zeros) + sympy-only real-Nullstellensatz finder
 
 The emitter candidate named by `docs/HANDELMAN_DEGREE_BOUNDS_LIT_2026-08-20.md`

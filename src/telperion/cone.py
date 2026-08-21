@@ -9,13 +9,21 @@ expressions, find rational λᵢ ≥ 0 with
 
 by matching monomial coefficients — an exact rational linear system.  A found
 combination IS a certificate (each basis element nonneg, weights nonneg);
-refusal is honest (the determined/overdetermined case is decided exactly; a
-genuinely underdetermined cone-membership needs LP and is a named-open —
-float-guided-then-exact-verified — extension).
+refusal is honest.
+
+The OVERCOMPLETE (underdetermined) case — more basis elements than the monomial
+equations pin down — is handled by exact basic-feasible-solution enumeration:
+a nonnegative representation, if one exists, has a VERTEX form supported on at
+most rank-many basis elements, so enumerating basis subsets and solving each
+exactly finds it (the same sympy-only, SDP-free maneuver the Handelman finder
+uses).  This closes the former "needs LP; named-open" gap without any numeric
+solver — refusal now means genuine non-membership (a Farkas dual witnesses it),
+not an undecided basis.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 
 import sympy as sp
 
@@ -144,8 +152,20 @@ def cone_combination(
     """Solve target = Σ λ b exactly with λ ≥ 0, or refuse (None).
 
     Rational functions allowed: everything is put over the common denominator
-    first; the matching then happens on numerator polynomials."""
+    first; the matching then happens on numerator polynomials.  The determined
+    case is decided directly; an OVERCOMPLETE basis (a parametric direct
+    solution) falls through to exact basic-feasible-solution enumeration."""
     basis = list(basis)
+    cc = _cone_direct(target, basis, syms)
+    if cc is not None:
+        return cc
+    return _cone_bfs(target, basis, syms)
+
+
+def _cone_direct(target, basis, syms) -> ConeCombination | None:
+    """Direct exact solve — returns a certificate only when a UNIQUE
+    nonnegative weight vector is pinned down; None otherwise (no solution, or a
+    parametric/negative one, which the BFS fallback then handles)."""
     lam = sp.symbols(f"_lam0:{len(basis)}", nonnegative=True)
     combo = sp.Add(*[l * b for l, b in zip(lam, basis)])
     diff = sp.together(target - combo)
@@ -166,10 +186,44 @@ def cone_combination(
     for l in lam:
         w = s.get(l, sp.Integer(0))
         if not w.is_number or w < 0:
-            return None   # negative or still-free weight: outside the (decided) cone
+            return None   # negative or still-free weight: try BFS
         weights.append(sp.Rational(w))
     cc = ConeCombination(weights=tuple(weights), basis=tuple(basis))
     # exact self-check
     if sp.simplify(sp.together(target - cc.as_expr())) != 0:
         return None
     return cc
+
+
+def _cone_bfs(target, basis, syms) -> ConeCombination | None:
+    """Exact basic-feasible-solution search for the OVERCOMPLETE case.
+
+    Any nonnegative solution of the (underdetermined) system `A λ = b` has a
+    vertex form supported on ≤ rank columns, so enumerate basis subsets in a
+    deterministic order (ascending size, then lexicographic), solve each exactly
+    with `linsolve`, and return the first all-nonnegative solution that
+    reproduces the target.  Byte-stable; the certifier re-verifies regardless.
+    Returns None when no subset yields a nonnegative combination (genuine
+    non-membership — cone_decide then supplies the Farkas dual)."""
+    n = len(basis)
+    if n == 0:
+        return None
+    monoms, vecs = _coeff_matrix([target, *basis], syms)
+    b = sp.Matrix(vecs[0])
+    A = sp.Matrix.hstack(*[sp.Matrix(v) for v in vecs[1:]])
+    xs = sp.symbols(f"_cbfs0:{n}")
+    for k in range(1, min(n, len(monoms)) + 1):
+        for S in combinations(range(n), k):
+            sol = sp.linsolve((A[:, list(S)], b), [xs[j] for j in range(k)])
+            if not sol:
+                continue
+            vals = list(sol)[0]
+            if any((not v.is_number) or v < 0 for v in vals):
+                continue
+            weights = [sp.Integer(0)] * n
+            for idx, v in zip(S, vals):
+                weights[idx] = sp.Rational(v)
+            cc = ConeCombination(weights=tuple(weights), basis=tuple(basis))
+            if sp.simplify(sp.together(target - cc.as_expr())) == 0:
+                return cc
+    return None
