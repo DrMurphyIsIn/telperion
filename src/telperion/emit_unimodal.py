@@ -51,24 +51,45 @@ theorem unimodal_peak {f : ℕ → ℝ} {s0 sstar : ℕ}
     (hup : ∀ s, s0 ≤ s → s < sstar → f s ≤ f (s + 1))
     (hdn : ∀ s, sstar ≤ s → f (s + 1) ≤ f s) :
     ∀ n, s0 ≤ n → f n ≤ f sstar := by
-  have descend : ∀ n, sstar ≤ n → f n ≤ f sstar := by
-    intro n hn
-    induction n, hn using Nat.le_induction with
-    | base => exact le_refl _
-    | succ k hk ih => exact le_trans (hdn k hk) ih
-  have climb : ∀ d n, n + d = sstar → s0 ≤ n → f n ≤ f sstar := by
-    intro d
-    induction d with
-    | zero => intro n hn _; obtain rfl : n = sstar := by omega; exact le_refl _
-    | succ d ih =>
-      intro n hn hs0
-      have h1 : f n ≤ f (n + 1) := hup n hs0 (by omega)
-      have h2 : f (n + 1) ≤ f sstar := ih (n + 1) (by omega) (by omega)
-      exact le_trans h1 h2
+  have climb : ∀ a b, s0 ≤ a → a ≤ b → b ≤ sstar → f a ≤ f b := by
+    intro a b ha hab hb
+    induction hab with
+    | refl => exact le_refl _
+    | @step k hk ih =>
+      have hks : k < sstar := lt_of_lt_of_le (Nat.lt_succ_self k) hb
+      exact le_trans (ih (le_of_lt hks)) (hup k (le_trans ha hk) hks)
+  have desc : ∀ a b, sstar ≤ a → a ≤ b → f b ≤ f a := by
+    intro a b ha hab
+    induction hab with
+    | refl => exact le_refl _
+    | @step k hk ih => exact le_trans (hdn k (le_trans ha hk)) ih
   intro n hn
-  rcases le_total n sstar with h | h
-  · exact climb (sstar - n) n (by omega) hn
-  · exact descend n h
+  rcases (by omega : n ≤ sstar ∨ sstar < n) with h | h
+  · exact climb n sstar hn h le_rfl
+  · exact desc sstar n le_rfl (le_of_lt h)
+
+/-- Bridge: from a positive sequence whose successor ratio is `≥ 1` below `sstar`
+and `≤ 1` at/above it, derive the pointwise climb/descend hypotheses
+`unimodal_peak` needs. Lets a caller assemble the full `f n ≤ B` theorem from a
+Pólya-certified decreasing ratio plus the two crossing facts. -/
+theorem climb_descend_of_ratio
+    (f : ℕ → ℝ) (s0 sstar : ℕ) (hs0 : s0 ≤ sstar)
+    (hpos : ∀ s, s0 ≤ s → 0 < f s)
+    (hrup : ∀ s, s0 ≤ s → s < sstar → 1 ≤ f (s + 1) / f s)
+    (hrdn : ∀ s, sstar ≤ s → f (s + 1) / f s ≤ 1) :
+    (∀ s, s0 ≤ s → s < sstar → f s ≤ f (s + 1)) ∧
+    (∀ s, sstar ≤ s → f (s + 1) ≤ f s) := by
+  refine ⟨?_, ?_⟩
+  · intro s hs hlt
+    have hp : 0 < f s := hpos s hs
+    have h := hrup s hs hlt
+    rw [le_div_iff₀ hp] at h
+    linarith
+  · intro s hs
+    have hp : 0 < f s := hpos s (le_trans hs0 hs)
+    have h := hrdn s hs
+    rw [div_le_one hp] at h
+    linarith
 
 end Telperion
 """

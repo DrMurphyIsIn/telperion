@@ -68,6 +68,23 @@ def certify_sos_refutation_point(family, pt, name):
     sigma0, ineqs, eqs = family.special[1](pt)
     syms = tuple(family.symbols)
 
+    if sigma0 is None:
+        # FINDER mode: ineqs are (g_i, hyp), eqs are (h_j, hyp); SEARCH the
+        # SOS multipliers σ and free multipliers λ that refute over ℝ.
+        from .sdp_finder import find_sos_refutation
+        half_deg = int(family.constants.get("sos_refutation_half_deg", 1))
+        found = find_sos_refutation(
+            [g for g, _h in ineqs], [h for h, _h in eqs], syms, half_deg=half_deg)
+        if found is None:
+            raise ValueError(
+                f"sos_refutation instance '{name}' REFUSED: no SOS-Positivstellensatz "
+                f"refutation (half-degree {half_deg}) found or rationalized — the "
+                "system may be satisfiable over ℝ, or need a higher degree")
+        f_sigma0, f_ineqs, f_eqs = found
+        sigma0 = f_sigma0
+        ineqs = [(g, sig, hyp) for (g, hyp), (_g2, sig) in zip(ineqs, f_ineqs)]
+        eqs = [(h, lam, hyp) for (h, hyp), (_h2, lam) in zip(eqs, f_eqs)]
+
     checks = _check_sos(sigma0, "σ₀", name)
     recon = _sos_expr(sigma0)
     for g, sig, _h in ineqs:

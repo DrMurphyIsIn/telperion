@@ -72,6 +72,7 @@ from .emit_monotone_tail import MonotoneRatioTailEmitter, monotone_tail_family  
 from .emit_interlacing import InterlacingEmitter, interlacing_family  # noqa: F401
 # Tier-2 literature-derived first-class emitters (2026-08-19).
 from .emit_constrained_sos import ConstrainedSOSEmitter, putinar_family  # noqa: F401
+from .sos_sdp import find_putinar_certificate  # noqa: F401
 from .emit_wz import WZ_PRELUDE, WZEmitter, wz_family  # noqa: F401
 # Tier-3 literature-derived first-class emitters (2026-08-20).
 from .emit_handelman import (  # noqa: F401
@@ -94,7 +95,32 @@ from .emit_sos_refutation import (  # noqa: F401
     SOSRefutationEmitter, sos_refutation_family,
 )
 from .emit_real_nullstellensatz import (  # noqa: F401
-    RealNullstellensatzEmitter, real_nullstellensatz_family,
+    RealNullstellensatzEmitter, find_real_nullstellensatz_certificate,
+    real_nullstellensatz_family,
+)
+# Tier-6 integer-arithmetic emitter (2026-08-20): VIPR-style Chvatal-Gomory.
+from .emit_cg_round import (  # noqa: F401
+    CGRoundEmitter, certify_cg_round_point, cg_round_family,
+)
+# SOS-refutation + real-Nullstellensatz SDP finders (Putinar finder lives in
+# sos_sdp; 2026-08-20).
+from .sdp_finder import find_real_nullstellensatz, find_sos_refutation  # noqa: F401
+# Tier-7 runway emitters (2026-08-20).
+from .emit_bernstein import (  # noqa: F401
+    BernsteinEmitter, bernstein_family, find_bernstein_certificate,
+)
+from .emit_rational_sos import (  # noqa: F401
+    RationalSOSEmitter, find_rational_sos, rational_sos_family,
+)
+# Facial-positivity emitter (2026-08-20): Castle-Powers-Reznick Polya-with-zeros
+# — the tie-safe homogeneous lift (zeros allowed on faces; cf. lift.py's
+# strict-only inhomogeneous lift).
+from .emit_polya_zeros import (  # noqa: F401
+    PolyaZerosEmitter, find_polya_zeros_certificate, polya_zeros_family,
+    polya_zeros_obstruction,
+)
+from .emit_sturm_positive import (  # noqa: F401
+    SturmPositiveEmitter, sturm_positive_family,
 )
 # Non-vacuity gate — Telperion pointed at its own emitted output (2026-08-19).
 from .nonvacuity import (  # noqa: F401
@@ -104,6 +130,21 @@ from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
 from .workflow import ValidationReport, WorkflowError, emit  # noqa: F401
+from .prove import ProofResult, prove_goal  # noqa: F401
+from .backend_lift import (  # noqa: F401
+    LiftOutcome, LiftProblem, LiftReport, lift_report, run_backend,
+)
+from .benchmark import (  # noqa: F401
+    BenchmarkEntry, BenchmarkReport, EntryResult,
+    certifiable_seed_corpus, run_benchmark,
+)
+from .audit import (  # noqa: F401
+    AuditFinding, AuditReport, audit_lean_file, audit_lean_text,
+)
+from .formalize import (  # noqa: F401
+    FormalizeResult, Proposer, formalize, ollama_proposer,
+)
+from .tactic import discharge, discharge_json  # noqa: F401
 from .lean_lint import (  # noqa: F401
     LeanLintError,
     LeanLintIssue,

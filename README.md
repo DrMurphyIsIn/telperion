@@ -56,6 +56,7 @@ emit → freeze` workflow.
 | `DirectPolyaEmitter` | `0 ≤ f(x̄)`, `f` rational with an all-nonneg-numerator / positive-factored-denominator form | `f = num/den` by `field_simp`+`ring`, then `positivity` |
 | `BilinearBoxEmitter` | `before ≤ after` on a box in two bound variables | bilinear decomposition + 4 Pólya corner certificates + assembly |
 | `SOSEmitter` | `0 ≤ p` for a polynomial via an exact rational PSD-Gram sum-of-squares (reaches interior ties) | `p = Σ dᵢ·ℓᵢ² := by ring`, then `positivity` |
+| `RationalSOSEmitter` | `0 ≤ p` for a NONNEGATIVE-but-NOT-SOS polynomial (e.g. Motzkin) via an Artin denominator `q·p = Σ dᵢℓᵢ²`, `q > 0` (Telperion FINDS `q` + SOS) | `positivity` (`0 < q`, and the SOS after `ring`) + `nlinarith`/`mul_pos` to divide out `q` |
 | `ExactFactEmitter` / `IdentityEmitter` | exact integer/rational identities and powers | `norm_num` / `ring` |
 | `PadicValuationEmitter` | p-adic valuation facts `v_p(n)=k` | `(p^k ∣ n) ∧ ¬(p^{k+1} ∣ n)` by `norm_num` |
 | `IntervalBracketEmitter` | rigorous two-sided rational enclosure `lo ≤ exp(−θ) ≤ hi` | Taylor bound + convexity companion |
@@ -71,15 +72,18 @@ emit → freeze` workflow.
 | `LatticeBoxEmitter` | `f(x) ≤ B` for all `x ∈ ℤ^d_{≥0}` (d-dim integer Positivstellensatz) | finite base box (`norm_num`) + per-axis monotone tail (`ring`/`positivity`) |
 | `LogConcaveSinglePointEmitter` | `max_{k∈ℕ} F(k) ≤ B` reduced to a single point `k*` by log-concavity | single-point + per-step + neighbour facts (`norm_num`) |
 | `MonotoneRatioTailEmitter` | `b(s) ≤ B` for all `s ≥ s₀` via a nonincreasing tail | tail step (`positivity`) + base (`norm_num`) + `Nat.le_induction` |
+| `SturmPositiveEmitter` | `0 < p(x)` (STRICT) on a closed interval `[a,b]` — root exclusion via a Sturm sequence (the exact decision oracle) + a Bernstein certificate for `p−γ ≥ 0`, `γ>0` | Bernstein fold + `ring` + `linarith` (`0 < γ ≤ p`) |
+| `BernsteinEmitter` | `0 ≤ p(x)` on a closed interval `[a,b]` via nonnegative Bernstein coefficients (Telperion FINDS them, elevating the degree; the univariate interval specialization of Handelman) | `mul_nonneg`/`pow_nonneg` fold over `0 ≤ x−a`, `0 ≤ b−x` + `ring` + `linarith` |
 | `InterlacingEmitter` | Newton's inequalities (coefficient log-concavity) of a real-rooted polynomial | `norm_num` on exact rationals |
-| `ConstrainedSOSEmitter` | `0 ≤ p` on a semialgebraic set `{gᵢ ≥ 0}` via a Putinar certificate `p = σ₀ + Σ σᵢ·gᵢ` (SOS multipliers) | `p = σ₀ + Σ σᵢ·gᵢ := by ring`; each `σⱼ` by `positivity`, paired with `gᵢ ≥ 0` by `mul_nonneg`, summed by `linarith` |
+| `ConstrainedSOSEmitter` | `0 ≤ p` on a semialgebraic set `{gᵢ ≥ 0}` via a Putinar certificate `p = σ₀ + Σ σᵢ·gᵢ` (SOS multipliers) — supply the multipliers, or return `sigma0=None` and Telperion FINDS them (`find_putinar_certificate`, numeric SDP rounded to exact rationals) | `p = σ₀ + Σ σᵢ·gᵢ := by ring`; each `σⱼ` by `positivity`, paired with `gᵢ ≥ 0` by `mul_nonneg`, summed by `linarith` |
 | `WZEmitter` | hypergeometric / binomial sum identities `Σ_k F(n,k) = rhs(n)` via a Wilf–Zeilberger mate `R(n,k)` | denominator-cleared WZ equation as an exact `ring` polynomial identity + the reusable `wz_row_invariant` telescoping-closure lemma |
 | `HandelmanEmitter` | `0 ≤ p` on a polytope `{ℓᵢ ≥ 0}` via a nonnegative combination of PRODUCTS of the constraints `p = Σ c_α ∏ ℓᵢ^{αᵢ}` — supply the products, or return `terms=None` and Telperion FINDS them (`find_handelman_certificate`, exact) | `mul_nonneg`/`pow_nonneg` fold over the constraint hypotheses + `ring` + `linarith` |
 | `NullstellensatzEmitter` | `p = 0` on a variety `V(g₁,…,gₘ)` via ideal-membership cofactors `p = Σ hᵢ·gᵢ` (an EQUALITY, computed by Gröbner reduction) | a single `linear_combination Σ hᵢ·(hyp_i)` |
 | `InfeasibilityEmitter` | a system `{gⱼ = 0}` has NO solution (a certificate of NON-existence) via a computed Nullstellensatz refutation `1 = Σ λⱼ·gⱼ` | `linear_combination` ⟹ `1 = 0`, then `absurd … norm_num` ⟹ `False` |
 | `ConsequenceEmitter` | an equation `lhs = rhs` FOLLOWS from hypotheses `{aᵢ = bᵢ}` (`lhs−rhs ∈ ⟨aᵢ−bᵢ⟩`, cofactors computed) | a single `linear_combination Σ cᵢ·(hyp_i)` |
-| `SOSRefutationEmitter` | a semialgebraic system `{gᵢ ≥ 0, hⱼ = 0}` is unsatisfiable OVER ℝ via `−1 = σ₀ + Σσᵢgᵢ + Σλⱼhⱼ` (reaches positivity-only infeasibility like `x²+1=0`) | `positivity`/`mul_nonneg` + `linear_combination` + `linarith` ⟹ `False` |
+| `SOSRefutationEmitter` | a semialgebraic system `{gᵢ ≥ 0, hⱼ = 0}` is unsatisfiable OVER ℝ via `−1 = σ₀ + Σσᵢgᵢ + Σλⱼhⱼ` (reaches positivity-only infeasibility like `x²+1=0`) — supply the certificate, or return `sigma0=None` and Telperion FINDS it (`find_sos_refutation`, SDP; auto-closes the ℝ-only gap) | `positivity`/`mul_nonneg` + `linear_combination` + `linarith` ⟹ `False` |
 | `RealNullstellensatzEmitter` | `p = 0` on the REAL variety of `⟨gₖ⟩` via `p^{2m} + s ∈ ⟨gₖ⟩` (`s` a sum of squares, cofactors computed) | `positivity` + `linear_combination` + `linarith` + `pow_eq_zero_iff` |
+| `CGRoundEmitter` | a linear goal over INTEGER variables from a Chvátal–Gomory derivation (VIPR-style): `lincomb` (nonnegative combination of prior facts) + `cg_round` (from an integer-coefficient fact `Σ cⱼxⱼ ≥ v`, the integer LHS rounds the bound up to `Σ cⱼxⱼ ≥ ⌈v⌉`); refuses non-integer or vacuous rounds, negative multipliers, undominated goals, and rounding-INSENSITIVE certificates | integer-cleared hypotheses discharged by `omega` (linear-integer decision procedure, which performs the CG rounding internally) |
 | `CustomAssemblyEmitter` | escape hatch for a hand-designed assembly | your skeleton |
 
 The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;
