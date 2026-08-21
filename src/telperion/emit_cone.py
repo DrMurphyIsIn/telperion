@@ -120,6 +120,12 @@ class ConeFarkasEmitter(Emitter):
             target_s = expr_lean(sp.expand(target_expr), syms)
             terms = []
             for w, b in zip(cc.weights, cc.basis):
+                # Drop zero-weight terms: they contribute nothing to the identity
+                # and a `0 * b` term would force `positivity` to prove `b` nonneg
+                # (which fails for a zero-weighted element that is not itself
+                # positivity-provable, e.g. a cross term `x*y`).
+                if w == 0:
+                    continue
                 # Render the basis element AS WRITTEN (not expanded) so
                 # `positivity` recognizes its nonneg structure (e.g. a square
                 # `(x - y)^2`, which expands to `x^2 - 2*x*y + y^2` that

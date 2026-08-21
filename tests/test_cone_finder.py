@@ -94,6 +94,22 @@ def test_emitted_theorem_binds_symbols_explicitly():
     assert "intro x y" in body
 
 
+def test_zero_weight_terms_are_not_emitted():
+    # BFS yields a vertex with zero weights on some basis elements; those terms
+    # must be DROPPED from the emitted combination.  Otherwise a `0 * b` term
+    # forces `positivity` to prove `b` nonneg — which fails when `b` is a
+    # zero-weighted element that is not itself positivity-provable, and is dead
+    # weight even when it is.
+    fam = cone_family(
+        "Z", (x, y), GridSpec([("i", [0])]), lambda pt: "cone_zeros",
+        lambda pt: (x ** 2 + y ** 2,
+                    [x ** 2, y ** 2, (x - y) ** 2, (x + y) ** 2]))
+    res = emit(certify(fam), LeanProfile(namespace=("T",)), [ConeFarkasEmitter()], GREEN)
+    body = next(iter(res.files.values()))
+    check_lean_text(body)
+    assert "0 *" not in body
+
+
 def test_constant_target_needs_no_binder():
     # A symbol-free family emits a bare statement (no ∀, no intro).
     z = sp.Symbol("z")  # a symbol declared but the family has none
