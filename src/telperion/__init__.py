@@ -60,6 +60,7 @@ from .emit_bracket import BracketSpec, IntervalBracketEmitter, bracket_family  #
 from .emit_padic import PadicValuationEmitter, valuation_family  # noqa: F401
 # BG-derived first-class emitters (2026-08-19).
 from .emit_cone import ConeFarkasEmitter, cone_family  # noqa: F401
+from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_family  # noqa: F401
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
