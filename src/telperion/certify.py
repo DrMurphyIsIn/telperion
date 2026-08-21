@@ -126,6 +126,8 @@ _SPECIAL_KINDS = (
     "consequence", "sos_refutation", "real_nullstellensatz",
     # Tier-6 integer-arithmetic emitter (2026-08-20): VIPR-style Chvatal-Gomory.
     "cg_round",
+    # Tier-7 combinatorial symmetric-inequality emitter (2026-08-21): tangent-line.
+    "tangent",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -146,6 +148,7 @@ _SPECIAL_DISPATCH = {
     "sos_refutation": ("emit_sos_refutation", "certify_sos_refutation_point"),
     "real_nullstellensatz": ("emit_real_nullstellensatz", "certify_real_nullstellensatz_point"),
     "cg_round": ("emit_cg_round", "certify_cg_round_point"),
+    "tangent": ("emit_tangent", "certify_tangent_point"),
 }
 
 

@@ -151,6 +151,11 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "hand-designed escape-hatch skeleton; "
                                 "load-bearingness is the author's responsibility "
                                 "and covered by the structural reflexive check"),
+    "TangentSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                            "convex-quadratic tangent-line bound B ≤ Σf(xᵢ); the "
+                            "surplus is an exact sum of squares (nlinarith over "
+                            "sq_nonneg + the sum constraint), no corruptible "
+                            "identity certificate"),
 }
 
 
