@@ -22,8 +22,13 @@ def test_seed_corpus_surfaces_the_sos_interior_tie_gap():
     report = profile_coverage(certifiable_seed_corpus())
     sos_gaps = [g for g in report.gaps if "SOS" in g.remedy.upper()]
     assert sos_gaps, report.render()
-    # the two interior-tie entries cluster into one gap
-    assert sos_gaps[0].count == 2
+    # the two interior-tie entries always cluster into the SOS gap; exactly how
+    # many entries land there depends on which optional backends (cvxpy/SDP) and
+    # sympy version are present, so assert membership + a floor, not an exact
+    # count (which is environment-dependent).
+    examples = set(sos_gaps[0].examples)
+    assert {"tie_sq1", "tie_sq2"} <= examples, report.render()
+    assert sos_gaps[0].count >= 2
 
 
 def test_gaps_account_for_exactly_the_unsolved_entries():
