@@ -57,10 +57,47 @@ class ProofResult:
         return "\n".join(out)
 
 
-# Emitter ladder for v1: the rational-inequality workhorse.  The full
-# kind-detecting router (SOS / Putinar / Handelman / WZ / CG / ...) is Phase 0.1.
-def _default_ladder() -> list:
-    return [DirectPolyaEmitter()]
+# A rung builds the (family, emitter) pair for one certificate shape, or returns
+# None when the shape does not apply to this target.  The ladder is tried in
+# order; the first rung that certifies AND emits wins.  This is the Phase-0.1
+# kind-router: v1.1 covers the rational-inequality workhorse (Pólya) plus a
+# polynomial-nonnegativity fallback (exact SOS, which reaches the interior ties
+# Pólya cannot).  Putinar / Handelman / WZ / CG rungs slot in here next.
+def _base_family(target: sp.Expr, syms: tuple, name: str) -> InequalityFamily:
+    return InequalityFamily(
+        name=name,
+        symbols=syms,
+        grid=GridSpec([("_", [0])]),
+        lean_name=lambda pt: name.lower(),
+        target=lambda pt: target,
+    )
+
+
+def _direct_polya_rung(target: sp.Expr, syms: tuple, name: str):
+    return _base_family(target, syms, name), DirectPolyaEmitter()
+
+
+def _sos_rung(target: sp.Expr, syms: tuple, name: str):
+    # SOS proves `0 <= p` over ALL reals for a polynomial p (an exact rational
+    # PSD-Gram decomposition) — a strictly stronger claim than the nonneg-orthant
+    # goal, so it soundly discharges it, and it reaches perfect-square interior
+    # ties Pólya refuses.  Non-polynomial targets fall through untouched; a
+    # polynomial that is not globally SOS makes certify refuse, so no false claim.
+    if not target.is_polynomial(*syms):
+        return None
+    from .emit_sos import SOSEmitter, sos_family
+
+    fam = sos_family(
+        name=name,
+        symbols=syms,
+        grid=GridSpec([("_", [0])]),
+        lean_name=lambda pt: name.lower(),
+        target=lambda pt: target,
+    )
+    return fam, SOSEmitter()
+
+
+_DEFAULT_RUNGS = (_direct_polya_rung, _sos_rung)
 
 
 def prove_goal(
@@ -77,27 +114,33 @@ def prove_goal(
     ``symbols`` are the free variables (assumed nonnegative).  On success the
     returned ``lean`` is a complete, stamped, self-contained theorem; on failure
     the caller gets the triage so it can branch (retry lifted, hand off, give up).
+
+    Without ``emitters`` the kind-router ladder is used (Pólya, then SOS).
+    Passing ``emitters`` overrides it with those emitters over the base family
+    (back-compat / explicit control).
     """
     syms = tuple(symbols)
-    ladder = list(emitters) if emitters is not None else _default_ladder()
     profile = LeanProfile(namespace=namespace or (name,))
     green = ValidationReport(checks=(("prove_goal", True),))
 
-    fam = InequalityFamily(
-        name=name,
-        symbols=syms,
-        grid=GridSpec([("_", [0])]),
-        lean_name=lambda pt: name.lower(),
-        target=lambda pt: target,
-    )
+    if emitters is not None:
+        rungs = [
+            (lambda t, s, n, e=e: (_base_family(t, s, n), e)) for e in emitters
+        ]
+    else:
+        rungs = _DEFAULT_RUNGS
 
-    for emitter in ladder:
+    for rung in rungs:
+        built = rung(target, syms, name)
+        if built is None:
+            continue
+        fam, emitter = built
         try:
             certified = certify(fam)
             result = emit(certified, profile, [emitter], green)
         except Exception:
-            # Certification refused or this emitter couldn't render — try the
-            # next rung; if none closes, we fall through to the triage below.
+            # Certification refused or this rung couldn't render — try the next;
+            # if none closes, we fall through to the triage below.
             continue
         lean = next(iter(result.files.values()))
         return ProofResult(

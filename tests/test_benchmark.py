@@ -26,7 +26,7 @@ def test_run_benchmark_reports_solve_rate_timing_and_triage_distribution():
     entries = [
         BenchmarkEntry("provable", (1 + u) / (u + 1) - sp.Rational(1) / (u + 2), (u,), "seed:test"),
         BenchmarkEntry("false_goal", u - 1, (u,), "seed:test"),
-        BenchmarkEntry("interior_tie", (u - 1) ** 2, (u,), "seed:test"),
+        BenchmarkEntry("rational_tie", (u - 1) ** 2 / (u + 1), (u,), "seed:test"),
     ]
 
     report = run_benchmark(entries)

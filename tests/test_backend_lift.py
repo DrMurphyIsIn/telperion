@@ -28,8 +28,9 @@ def _suite():
         LiftProblem("provable", (1 + u) / (u + 1) - sp.Rational(1) / (u + 2), (u,)),
         # false — backend must NOT claim it
         LiftProblem("false_goal", u - 1, (u,)),
-        # true but interior-tie — outside the v1 Polya ladder
-        LiftProblem("interior_tie", (u - 1) ** 2, (u,)),
+        # true but a RATIONAL interior tie — outside both the Pólya and SOS
+        # rungs (SOS is polynomial-only), so still unsolved by the backend
+        LiftProblem("rational_tie", (u - 1) ** 2 / (u + 1), (u,)),
     ]
 
 
@@ -40,7 +41,7 @@ def test_run_backend_solves_only_the_certifiable_goal():
     assert outcomes["provable"].verdict == "PROVED"
     assert outcomes["false_goal"].backend_proved is False
     assert outcomes["false_goal"].verdict == "FALSE"
-    assert outcomes["interior_tie"].backend_proved is False
+    assert outcomes["rational_tie"].backend_proved is False
 
 
 def test_lift_report_counts_problems_the_backend_adds_over_the_prover():

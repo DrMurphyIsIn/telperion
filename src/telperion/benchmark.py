@@ -106,9 +106,11 @@ def run_benchmark(entries: Sequence[BenchmarkEntry]) -> BenchmarkReport:
 def certifiable_seed_corpus() -> list[BenchmarkEntry]:
     """Hand-authored, certificate-shaped inequalities (verified in-shape).
 
-    Eight reduce to Pólya certificates (the v1 ladder clears them); two are
-    true-but-interior-tie (NOT_POLYA until the SOS rung lands) — kept in on
-    purpose so the corpus reports its own coverage boundary honestly.
+    Eight reduce to Pólya certificates; two are polynomial interior ties the SOS
+    rung clears (the kind-router falls through to it); one is a rational interior
+    tie kept in on purpose as an honest coverage boundary (NOT_POLYA — outside
+    both the Pólya and polynomial-only SOS rungs), so the corpus reports what it
+    cannot do, not just what it can.
     """
     u = sp.Symbol("u", nonnegative=True)
     v = sp.Symbol("v", nonnegative=True)
@@ -122,9 +124,13 @@ def certifiable_seed_corpus() -> list[BenchmarkEntry]:
         BenchmarkEntry("u2_over_1pu", u**2 / (1 + u), (u,), "seed:elementary"),
         BenchmarkEntry("twovar_mono", R(1) / (2 + u) - R(1) / (2 + u + v), (u, v), "seed:twovar-monotone"),
         BenchmarkEntry("twovar_prod", (u * v) / ((1 + u) * (1 + v)), (u, v), "seed:twovar-product"),
-        # coverage boundary: true, but interior tie -> needs the SOS rung
+        # polynomial interior ties: no Pólya cert, but perfect squares the SOS
+        # rung clears (the kind-router falls through to it)
         BenchmarkEntry("tie_sq1", (u - 1) ** 2, (u,), "seed:interior-tie-sos"),
         BenchmarkEntry("tie_sq2", (2 * u - 1) ** 2, (u,), "seed:interior-tie-sos"),
+        # honest coverage boundary: a RATIONAL interior tie — outside both the
+        # Pólya and (polynomial-only) SOS rungs, so it triages NOT_POLYA
+        BenchmarkEntry("rational_tie", (u - 1) ** 2 / (u + 1), (u,), "seed:coverage-boundary"),
     ]
 
 

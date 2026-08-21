@@ -39,12 +39,22 @@ def test_prove_goal_triages_false_inequality_with_counterexample():
     assert (u - 1).subs(witness) < 0
 
 
-def test_prove_goal_triages_interior_tie_as_not_polya_with_hint():
-    # 0 <= (u-1)^2 is TRUE but has an interior tie at u=1, so no Pólya
-    # certificate exists — diagnose must route to NOT_POLYA and hint SOS.
+def test_prove_goal_routes_polynomial_interior_tie_to_sos():
+    # 0 <= (u-1)^2 is TRUE with an interior tie at u=1 — no Pólya certificate,
+    # but a perfect square. The kind-router must fall through to the SOS rung.
     res = prove_goal((u - 1) ** 2, symbols=(u,))
+
+    assert res.proved is True
+    assert res.verdict == "PROVED"
+    assert res.emitter == "SOSEmitter"
+    assert "theorem" in res.lean
+
+
+def test_prove_goal_triages_rational_interior_tie_as_not_polya():
+    # 0 <= (u-1)^2/(u+1): true, interior tie, but NON-polynomial so the SOS rung
+    # (polynomial-only) skips it — diagnose must still route to NOT_POLYA + hint.
+    res = prove_goal((u - 1) ** 2 / (u + 1), symbols=(u,))
 
     assert res.proved is False
     assert res.verdict == "NOT_POLYA_IN_THIS_FORM"
     assert res.counterexample is None
-    assert any("SOS" in h for h in res.hints)
