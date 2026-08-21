@@ -115,6 +115,27 @@ def audit_lean(lean_text: str) -> str:
 
 
 @mcp.tool()
+def discharge_goal(target: str, symbols: str = "u", aux_name: str = "telperion_aux") -> str:
+    """Backend-bridge for an LLM prover loop: hand a certificate-shaped subgoal
+    `0 <= target` to Telperion's deterministic backend and get back a
+    JSON contract with a spliceable auxiliary Lean lemma (sound, deterministic,
+    no sampling) — or an exact FALSE/NOT_POLYA/CERTIFIABLE triage. `over_all_reals`
+    tells the caller the lemma's binder shape (SOS `forall x:R` vs Polya with
+    `0<=x` hypotheses) for application. This is the socket a Lean tactic frontend
+    or a prover's tool call hits; the kernel remains the sole arbiter of truth."""
+    import json as _json
+
+    import sympy as sp
+
+    from .parsing import safe_parse_expr
+    from .tactic import discharge
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in symbols.split(","))
+    expr = safe_parse_expr(target, syms)
+    return _json.dumps(discharge(expr, syms, aux_name=aux_name))
+
+
+@mcp.tool()
 def certify_family(family: str) -> str:
     """Run every symbolic self-check for a family. family: 'path/to/family.py:factory'
     where factory() returns an InequalityFamily. Returns the green summary or

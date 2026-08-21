@@ -535,6 +535,18 @@ def cmd_prove(args) -> int:
 
     syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in args.symbols.split(","))
     expr = safe_parse_expr(args.expression, syms)
+
+    if getattr(args, "json", False):
+        # the backend-bridge wire form: the full discharge contract on stdout,
+        # for a Lean tactic frontend / LLM-prover tool call to consume.
+        import json as _json
+
+        from .tactic import discharge
+
+        resp = discharge(expr, syms, aux_name=args.name)
+        print(_json.dumps(resp))
+        return 0 if resp["proved"] else {"FALSE": 2, "NOT_POLYA_IN_THIS_FORM": 3}.get(resp["verdict"], 4)
+
     res = prove_goal(expr, syms, name=args.name,
                      namespace=tuple(args.namespace.split(".")) if args.namespace else None,
                      trials=args.trials)
@@ -719,6 +731,8 @@ def main(argv=None) -> int:
     p.add_argument("--namespace", default="", help="dotted Lean namespace (default: --name)")
     p.add_argument("--trials", type=int, default=400,
                    help="counterexample search budget on refusal")
+    p.add_argument("--json", action="store_true",
+                   help="emit the backend-bridge JSON contract (for a Lean tactic / prover tool call)")
     p.set_defaults(fn=cmd_prove)
 
     p = sub.add_parser("lint-lean",

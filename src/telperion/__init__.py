@@ -121,6 +121,7 @@ from .audit import (  # noqa: F401
 from .formalize import (  # noqa: F401
     FormalizeResult, Proposer, formalize, ollama_proposer,
 )
+from .tactic import discharge, discharge_json  # noqa: F401
 from .lean_lint import (  # noqa: F401
     LeanLintError,
     LeanLintIssue,
