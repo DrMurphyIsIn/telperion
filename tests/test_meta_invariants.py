@@ -43,8 +43,20 @@ def test_nonvacuity_gate_passes_a_substantive_body():
 
 
 def test_core_does_not_drag_in_bg_at_runtime():
-    bg_loaded = [m for m in sys.modules if m == "telperion.bg" or m.startswith("telperion.bg.")]
-    assert bg_loaded == [], f"core import dragged in bg modules: {bg_loaded}"
+    # Must be checked in a FRESH interpreter: sys.modules is process-global, so a
+    # sibling bg test running earlier in the same suite would pollute it. Mirror
+    # test_core_boundary's subprocess approach.
+    import subprocess
+
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    code = (
+        f"import sys; sys.path.insert(0, {src!r}); import telperion; "
+        "print(len([m for m in sys.modules "
+        "if m == 'telperion.bg' or m.startswith('telperion.bg.')]))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "0", f"core import dragged in bg modules: {out.stdout}"
 
 
 def test_cli_exposes_its_stable_verb_surface():
