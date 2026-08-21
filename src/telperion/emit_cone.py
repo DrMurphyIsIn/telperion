@@ -21,9 +21,9 @@ nonneg building blocks the caller supplies (squares, nonneg monomials, products,
 …), not a single num/den form.
 
 NEGATIVE CONTROL: a target NOT in the cone is refused at certification — with a
-FarkasDual (an exact functional proving impossibility over this basis) when one
-exists, else an honest "undecided (needs LP)".  No Lean is ever emitted for a
-non-member.
+FarkasDual (an exact functional proving impossibility over this basis).  An
+overcomplete basis is solved exactly by vertex enumeration, so refusal now
+means genuine non-membership.  No Lean is ever emitted for a non-member.
 """
 from __future__ import annotations
 
@@ -62,8 +62,8 @@ def certify_cone_point(family, pt, name):
     if cc is None:
         decided = cone_decide(target, basis, syms)
         reason = (decided.render() if decided is not None
-                  else "undecided over this basis (genuinely underdetermined — "
-                       "needs LP; named-open)")
+                  else "no nonnegative combination over this basis (vertex "
+                       "enumeration found none)")
         raise ValueError(
             f"cone instance '{name}' REFUSED: target is not a nonnegative "
             f"combination of the basis. {reason}"
@@ -106,6 +106,12 @@ class ConeFarkasEmitter(Emitter):
 
     def emit_body(self, fam, profile: LeanProfile) -> tuple[str, int]:
         syms = tuple(fam.family.symbols)
+        # Bind the free variables with an explicit ∀ (and `intro` them) rather
+        # than lean on autoImplicit — so the theorem compiles under
+        # `autoImplicit false`, consistent with every other emitter.
+        binder = " ".join(str(s) for s in syms)
+        forall = f"∀ {binder} : ℝ, " if syms else ""
+        intro = f"  intro {binder}\n" if syms else ""
         lines: list[str] = []
         n = 0
         for inst in fam.instances:
@@ -122,7 +128,8 @@ class ConeFarkasEmitter(Emitter):
                 terms.append(f"{rat_lean(w)} * ({expr_lean_raw(b, syms)})")
             combo_s = " + ".join(terms) if terms else "0"
             lines.append(
-                f"theorem {inst.lean_name} : (0:ℝ) ≤ {target_s} := by\n"
+                f"theorem {inst.lean_name} : {forall}(0:ℝ) ≤ {target_s} := by\n"
+                f"{intro}"
                 f"  have hid : {target_s} = {combo_s} := by ring\n"
                 f"  rw [hid]; positivity\n"
             )
