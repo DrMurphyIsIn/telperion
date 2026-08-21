@@ -79,6 +79,63 @@ def diagnose(target: str, symbols: str = "u", trials: int = 400) -> str:
 
 
 @mcp.tool()
+def prove_goal(expression: str, symbols: str = "u", name: str = "Goal") -> str:
+    """Single-goal backend socket: certify 0 <= <expression> (nonnegative
+    symbols) and return a complete, kernel-checkable Lean theorem — or, on
+    refusal, the triage (FALSE with an exact rational counterexample /
+    NOT_POLYA_IN_THIS_FORM with remedy hints / CERTIFIABLE). This is the
+    primitive an LLM prover loop calls to discharge a certificate-shaped
+    subgoal: sound by construction, deterministic, no sampling. expression:
+    sympy syntax; symbols: comma-separated, e.g. 'u,v'."""
+    import sympy as sp
+
+    from .parsing import safe_parse_expr
+    from .prove import prove_goal as _prove_goal
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in symbols.split(","))
+    expr = safe_parse_expr(expression, syms)
+    res = _prove_goal(expr, syms, name=name)
+    if res.proved:
+        return res.lean
+    return res.render()
+
+
+@mcp.tool()
+def audit_lean(lean_text: str) -> str:
+    """Referee any Lean source (e.g. an LLM prover's output) for the
+    'green build != proved' defects: sorry/admit, smuggled axiom, empty tactic
+    block, missing type ascription, Prop:=True stub, and per-theorem vacuity
+    (a reflexive `X = X` / `0 <= 0` tautology that compiles while asserting
+    nothing). Returns 'clean' or an itemized, line-cited findings list. A clean
+    audit is necessary not sufficient — the kernel remains the arbiter of
+    truth; a dirty audit is a concrete cited defect."""
+    from .audit import audit_lean_text
+
+    return audit_lean_text(lean_text).render()
+
+
+@mcp.tool()
+def discharge_goal(target: str, symbols: str = "u", aux_name: str = "telperion_aux") -> str:
+    """Backend-bridge for an LLM prover loop: hand a certificate-shaped subgoal
+    `0 <= target` to Telperion's deterministic backend and get back a
+    JSON contract with a spliceable auxiliary Lean lemma (sound, deterministic,
+    no sampling) — or an exact FALSE/NOT_POLYA/CERTIFIABLE triage. `over_all_reals`
+    tells the caller the lemma's binder shape (SOS `forall x:R` vs Polya with
+    `0<=x` hypotheses) for application. This is the socket a Lean tactic frontend
+    or a prover's tool call hits; the kernel remains the sole arbiter of truth."""
+    import json as _json
+
+    import sympy as sp
+
+    from .parsing import safe_parse_expr
+    from .tactic import discharge
+
+    syms = tuple(sp.Symbol(s.strip(), nonnegative=True) for s in symbols.split(","))
+    expr = safe_parse_expr(target, syms)
+    return _json.dumps(discharge(expr, syms, aux_name=aux_name))
+
+
+@mcp.tool()
 def certify_family(family: str) -> str:
     """Run every symbolic self-check for a family. family: 'path/to/family.py:factory'
     where factory() returns an InequalityFamily. Returns the green summary or
