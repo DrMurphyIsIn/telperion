@@ -262,3 +262,15 @@ only if you want the research lab.
 
 The methodology — untrusted generator, trusted kernel, numeric-first discipline,
 provenance-and-drift — is written up in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+
+
+## License
+
+Telperion is source-available under the
+[Business Source License 1.1](LICENSE): free for academic research,
+teaching, and evaluation; commercial production use requires a license
+from the Licensor; each version converts to Apache-2.0 three years after
+release. Emitted Lean certificates are excluded from the Licensed Work —
+your outputs are yours. The mathematical content elsewhere in this
+repository is Apache-2.0/CC-BY-4.0 (see ../LICENSING.md). Engine
+contributions require the [CLA](CLA.md).
