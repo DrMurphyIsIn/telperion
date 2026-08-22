@@ -97,7 +97,33 @@ def _sos_rung(target: sp.Expr, syms: tuple, name: str):
     return fam, SOSEmitter()
 
 
-_DEFAULT_RUNGS = (_direct_polya_rung, _sos_rung)
+def _rational_sos_rung(target: sp.Expr, syms: tuple, name: str):
+    # Artin/Positivstellensatz: `0 <= p` over ALL reals for a polynomial p that
+    # is nonnegative but NOT a sum of squares (e.g. Motzkin), via a strictly
+    # positive multiplier q with `q·p = Σ dᵢℓᵢ²`.  Strictly more general than the
+    # plain SOS rung, so it sits after it.  Needs the SDP finder (cvxpy); absent
+    # it, find_rational_sos returns None and this rung is skipped.
+    if not target.is_polynomial(*syms):
+        return None
+    from .emit_rational_sos import (
+        RationalSOSEmitter, find_rational_sos, rational_sos_family,
+    )
+
+    found = find_rational_sos(target, syms)
+    if found is None:
+        return None
+    q, sos = found
+    fam = rational_sos_family(
+        name=name,
+        symbols=syms,
+        grid=GridSpec([("_", [0])]),
+        lean_name=lambda pt: name.lower(),
+        spec=lambda pt: (target, q, sos),
+    )
+    return fam, RationalSOSEmitter()
+
+
+_DEFAULT_RUNGS = (_direct_polya_rung, _sos_rung, _rational_sos_rung)
 
 
 def prove_goal(

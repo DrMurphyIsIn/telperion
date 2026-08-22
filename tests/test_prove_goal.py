@@ -62,3 +62,20 @@ def test_prove_goal_triages_rational_interior_tie_as_not_polya():
     assert res.proved is False
     assert res.verdict == "NOT_POLYA_IN_THIS_FORM"
     assert res.counterexample is None
+
+
+def test_prove_goal_routes_nonneg_not_sos_polynomial_to_rational_sos():
+    # The Motzkin polynomial is nonnegative but NOT a sum of squares — Pólya and
+    # plain SOS both refuse. The rational-SOS rung (Artin multiplier q·p = Σℓ²,
+    # q > 0) certifies it. Uses the SDP finder (cvxpy, `sdp` extra).
+    import pytest
+    pytest.importorskip("cvxpy")
+    x, y = sp.symbols("x y", nonnegative=True)
+    motzkin = x**4 * y**2 + x**2 * y**4 + 1 - 3 * x**2 * y**2
+
+    res = prove_goal(motzkin, symbols=(x, y))
+
+    assert res.proved is True
+    assert res.verdict == "PROVED"
+    assert res.emitter == "RationalSOSEmitter"
+    assert "theorem" in res.lean
