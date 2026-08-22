@@ -164,6 +164,10 @@ REGISTRY: dict[str, SensitivityStance] = {
                          "0 ≤ xᵀMx for a positive-semidefinite M via the exact "
                          "completing-the-square congruence xᵀMx = Σ cᵢ·baseᵢ² (ring+positivity); "
                          "positivity by structure, no corruptible identity"),
+    "Xor3MomentPSDEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                               "3-XOR moment matrix PSD via GF(2) block-rank-one SOS "
+                               "xᵀMx = Σ_class(Σ σ_S x_S)² (ring+positivity); positivity "
+                               "by structure, no corruptible identity"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "

@@ -63,6 +63,7 @@ from .emit_cone import ConeFarkasEmitter, cone_family  # noqa: F401
 from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_family  # noqa: F401
 from .emit_cs import CauchySchwarzEmitter, cauchy_schwarz_family, cs_certificate  # noqa: F401
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
+from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
