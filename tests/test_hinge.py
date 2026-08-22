@@ -45,3 +45,19 @@ def test_floor_is_exact_at_the_all_equal_point():
     cert = hinge_floor_certificate(c=sp.Rational(2), t0=sp.Rational(23, 100), k=4)
     assert verify_hinge_floor(cert) is True
     assert cert.tight_at_equal is True
+
+
+def test_superadditivity_form_equals_the_jensen_mean_reduction():
+    # The BG G1 slack-ledger dichotomy needs the "min at equal children" step:
+    #   Σᵢ φ(yᵢ) ≥ k·φ(ȳ),  ȳ = (Σyᵢ)/k     (Jensen-at-the-mean, convex hinge).
+    # This certificate's RHS is c·(Σyᵢ − k·t0)₊.  For the hinge these COINCIDE —
+    # k·φ(ȳ) = k·c·(Σyᵢ/k − t0)₊ = c·(Σyᵢ − k·t0)₊ (positive homogeneity) — so the
+    # certified floor IS the profile→equal-children reduction the dichotomy invokes.
+    c, t0 = sp.Rational(22, 100), sp.Rational(2295, 10000)
+    for k in (2, 3, 4, 5):
+        ys = sp.symbols(f"y0:{k}", real=True)
+        vals = {y: sp.Rational(i + 1, 7) for i, y in enumerate(ys)}
+        S = sum(ys)
+        jensen_mean = (k * c * sp.Max(0, S / k - t0)).subs(vals)
+        superadd = (c * sp.Max(0, S - k * t0)).subs(vals)
+        assert sp.simplify(jensen_mean - superadd) == 0
