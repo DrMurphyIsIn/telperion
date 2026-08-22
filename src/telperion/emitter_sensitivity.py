@@ -152,10 +152,10 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "load-bearingness is the author's responsibility "
                                 "and covered by the structural reflexive check"),
     "TangentSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
-                            "convex-quadratic tangent-line bound B ≤ Σf(xᵢ); the "
-                            "surplus is an exact sum of squares (nlinarith over "
-                            "sq_nonneg + the sum constraint), no corruptible "
-                            "identity certificate"),
+                            "convex-polynomial (deg 2/4) tangent-line bound "
+                            "B ≤ Σf(xᵢ); the per-term surplus is an exact rational "
+                            "SOS (ring+positivity) assembled by linarith, no "
+                            "corruptible identity certificate"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "
