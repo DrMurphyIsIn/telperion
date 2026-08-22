@@ -38,7 +38,7 @@ from .parsing import safe_parse_expr
 from .prove import prove_goal
 
 # Emitters whose emitted theorem quantifies over ALL reals (no `0 ≤ x` binder).
-_OVER_ALL_REALS_EMITTERS = {"SOSEmitter"}
+_OVER_ALL_REALS_EMITTERS = {"SOSEmitter", "RationalSOSEmitter"}
 
 
 def discharge(
