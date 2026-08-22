@@ -85,6 +85,7 @@ emit → freeze` workflow.
 | `RealNullstellensatzEmitter` | `p = 0` on the REAL variety of `⟨gₖ⟩` via `p^{2m} + s ∈ ⟨gₖ⟩` (`s` a sum of squares, cofactors computed) | `positivity` + `linear_combination` + `linarith` + `pow_eq_zero_iff` |
 | `CGRoundEmitter` | a linear goal over INTEGER variables from a Chvátal–Gomory derivation (VIPR-style): `lincomb` (nonnegative combination of prior facts) + `cg_round` (from an integer-coefficient fact `Σ cⱼxⱼ ≥ v`, the integer LHS rounds the bound up to `Σ cⱼxⱼ ≥ ⌈v⌉`); refuses non-integer or vacuous rounds, negative multipliers, undominated goals, and rounding-INSENSITIVE certificates | integer-cleared hypotheses discharged by `omega` (linear-integer decision procedure, which performs the CG rounding internally) |
 | `TangentSumEmitter` | a symmetric-sum (combinatorial) inequality `B ≤ Σf(xᵢ)` for a convex polynomial `f` (degree 2 or 4) with `Σxᵢ = S`, via the tangent line at `a = S/n` — the surplus `f−L` is an exact rational SOS (double root at `a`); refuses a non-convex `f` | per-term `have … = Σcⱼ·bⱼ² := by ring; positivity`, assembled by `linarith [h₁,…, hsum]` |
+| `CauchySchwarzEmitter` | the (weighted) Cauchy–Schwarz / QM–AM inequality `(Σwᵢxᵢ)² ≤ (Σwᵢ)(Σwᵢxᵢ²)` (constraint-free) via the pairwise-difference SOS `Σ_{i<j} wᵢwⱼ(xᵢ−xⱼ)²`; refuses a non-positive weight | `have … = Σ wᵢwⱼ(xᵢ−xⱼ)² := by ring; positivity`, then `linarith` |
 | `CustomAssemblyEmitter` | escape hatch for a hand-designed assembly | your skeleton |
 
 The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;

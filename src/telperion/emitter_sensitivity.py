@@ -156,6 +156,10 @@ REGISTRY: dict[str, SensitivityStance] = {
                             "B ≤ Σf(xᵢ); the per-term surplus is an exact rational "
                             "SOS (ring+positivity) assembled by linarith, no "
                             "corruptible identity certificate"),
+    "CauchySchwarzEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                               "(Σwᵢxᵢ)² ≤ (Σwᵢ)(Σwᵢxᵢ²) via the pairwise-difference "
+                               "SOS Σwᵢwⱼ(xᵢ−xⱼ)² (ring+positivity+linarith); "
+                               "positivity by structure, no corruptible identity"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "

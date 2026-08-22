@@ -132,8 +132,9 @@ _SPECIAL_KINDS = (
     "polya_zeros",
     # Proof-complexity-derived emitters (2026-08-20, knapsack_sos arc).
     "rational_identity", "finite_decide", "fwd_telescope",
-    # Tier-7 combinatorial symmetric-inequality emitter (2026-08-21): tangent-line.
-    "tangent",
+    # Tier-7 combinatorial symmetric-inequality emitters (2026-08-21):
+    # tangent-line + Cauchy-Schwarz (pairwise-difference SOS).
+    "tangent", "cauchy_schwarz",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -162,6 +163,7 @@ _SPECIAL_DISPATCH = {
     "finite_decide": ("emit_finite_decide", "certify_finite_decide_point"),
     "fwd_telescope": ("emit_fwd_telescope", "certify_fwd_telescope_point"),
     "tangent": ("emit_tangent", "certify_tangent_point"),
+    "cauchy_schwarz": ("emit_cs", "certify_cs_point"),
 }
 
 
