@@ -157,8 +157,8 @@ REGISTRY: dict[str, SensitivityStance] = {
                             "SOS (ring+positivity) assembled by linarith, no "
                             "corruptible identity certificate"),
     "PSDFormEmitter": _S(STRUCTURALLY_NONVACUOUS,
-                         "0 ≤ xᵀMx for a positive-definite M via the exact LDLᵀ "
-                         "congruence xᵀMx = Σ Dᵢ(Lᵀx)ᵢ² (ring+positivity); "
+                         "0 ≤ xᵀMx for a positive-semidefinite M via the exact "
+                         "completing-the-square congruence xᵀMx = Σ cᵢ·baseᵢ² (ring+positivity); "
                          "positivity by structure, no corruptible identity"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,

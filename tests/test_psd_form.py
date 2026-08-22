@@ -35,6 +35,18 @@ def test_ldlt_sos_identity_holds_for_pd_matrix():
     assert all(w > 0 for w, _ in cert.sos_terms)
 
 
+def test_singular_psd_is_supported():
+    # rank-1 PSD (M = v vᵀ): completing-the-square yields a single square, no LDLᵀ
+    # positive-definite requirement.
+    M = [[1, 1], [1, 1]]
+    cert = psd_certificate(M)
+    assert len(cert.sos_terms) == 1
+    xs = sp.symbols("x1 x2")
+    quad = sum(sp.Integer(M[i][j]) * xs[i] * xs[j] for i in range(2) for j in range(2))
+    assert sp.expand(quad - sum(w * b**2 for w, b in cert.sos_terms)) == 0
+    assert all(w > 0 for w, _ in cert.sos_terms)
+
+
 def test_refuses_non_psd_matrix():
     fam = psd_form_family("BadIndef", GridSpec([("_", [0])]), lambda pt: "bad",
                           spec=_spec([[1, 2], [2, 1]]))

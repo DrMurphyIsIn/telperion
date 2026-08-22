@@ -3,9 +3,9 @@ certificate via exact rational LDLᵀ congruence.
 
 The recurring shape across the SoS / P=NP moment-matrix work and the BG
 Gram-bridges is "this explicit rational symmetric matrix M is positive
-(semi)definite".  For a positive-DEFINITE M the exact LDLᵀ decomposition
-``M = L·D·Lᵀ`` (L unit lower-triangular, D diagonal, all Dᵢ > 0, computed in exact
-rationals — no SDP) gives the congruence
+(semi)definite".  For a positive-semidefinite M the exact symmetric completing-the-square
+congruence (all pivots Dᵢ ≥ 0, computed in exact rationals — no SDP, no
+`LDLdecomposition`) gives
 
     xᵀ M x = Σᵢ Dᵢ · (Lᵀx)ᵢ²   with (Lᵀx)ᵢ = Σⱼ Lⱼᵢ·xⱼ,
 
@@ -17,16 +17,15 @@ so ``0 ≤ xᵀMx`` is the robust, search-free
 
 Distinct from ``SOSEmitter`` (which uses the limited exact path or an SDP solver
 for a general polynomial): this is the DETERMINISTIC exact-LDLᵀ primitive for an
-explicit matrix.  NEGATIVE CONTROL: a non-positive-definite matrix is refused
-(sympy's LDLᵀ has no positive pivot).  A singular positive-semidefinite matrix is
-named-open (needs pivoting / rank reduction — v1 is positive-definite)."""
+explicit matrix.  Handles positive-DEFINITE and singular positive-SEMIdefinite matrices alike.
+NEGATIVE CONTROL: an indefinite matrix (a negative pivot, or a bare cross term)
+is refused; a trivially-zero form (`0 ≤ 0`) is refused as vacuous."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
 import sympy as sp
-from sympy.matrices.exceptions import NonPositiveDefiniteMatrixError
 
 from .certify import CertifiedInstance
 from .expr import expr_lean, rat_lean
@@ -37,11 +36,11 @@ from .workflow import Emitter
 
 @dataclass(frozen=True)
 class PSDCertificate:
-    """A verified positive-definite LDLᵀ → SOS certificate for a matrix."""
+    """A verified positive-semidefinite (completing-the-square) SOS certificate."""
 
     n: int
     matrix: tuple            # the symmetric matrix as a tuple of tuples (rationals)
-    sos_terms: tuple         # ((Dᵢ, baseᵢ), ...): xᵀMx = Σ Dᵢ·baseᵢ², every Dᵢ > 0
+    sos_terms: tuple         # ((cᵢ, baseᵢ), ...): xᵀMx = Σ cᵢ·baseᵢ², every cᵢ > 0
 
 
 def _to_matrix(M) -> sp.Matrix:
@@ -49,35 +48,49 @@ def _to_matrix(M) -> sp.Matrix:
 
 
 def psd_certificate(M) -> PSDCertificate:
-    """Build and EXACTLY self-check a positive-definite LDLᵀ → SOS certificate.
-    Refuses a non-square, non-symmetric, or non-positive-definite matrix."""
+    """Build and EXACTLY self-check a positive-semidefinite SOS certificate via a
+    symmetric completing-the-square (LDLᵀ) congruence — exact rationals, no SDP,
+    version-robust (no `LDLdecomposition`).  Handles positive-DEFINITE and
+    singular positive-SEMIdefinite matrices alike; refuses an indefinite matrix
+    (the negative control) and a trivially-zero form (`0 ≤ 0`, vacuous)."""
     mat = _to_matrix(M)
     n = mat.rows
     if mat.cols != n:
         raise ValueError(f"PSD-form needs a square matrix; got {n}×{mat.cols}")
     if mat != mat.T:
         raise ValueError("PSD-form needs a SYMMETRIC matrix")
-    try:
-        L, D = mat.LDLdecomposition()
-    except NonPositiveDefiniteMatrixError as e:
-        raise ValueError(
-            f"matrix is not positive-definite — refused (negative control). "
-            f"A singular positive-semidefinite matrix is named-open (v1 is "
-            f"positive-definite). [{e}]"
-        ) from e
     xs = sp.symbols(f"x1:{n + 1}")
+    quad = sp.expand((sp.Matrix(xs).T * mat * sp.Matrix(xs))[0])
+    q = quad
     sos = []
     for i in range(n):
-        d = sp.nsimplify(D[i, i])
-        if d <= 0:
-            raise ValueError("non-positive LDLᵀ pivot — matrix not positive-definite")
-        base = sp.expand(sum(L[j, i] * xs[j] for j in range(n)))
-        sos.append((d, base))
-    # exact self-check: xᵀMx − Σ Dᵢ·baseᵢ² == 0
-    x = sp.Matrix(xs)
-    quad = sp.expand((x.T * mat * x)[0])
+        xi = xs[i]
+        c = q.coeff(xi, 2)
+        if c == 0:
+            # a zero pivot is only PSD if xᵢ has vanished entirely; a bare cross
+            # term (xᵢ·xⱼ with no xᵢ²) is an indefinite direction.
+            if q.coeff(xi, 1) != 0:
+                raise ValueError(
+                    f"matrix is INDEFINITE (a bare cross term in x{i + 1} with no "
+                    f"square) — refused (negative control)"
+                )
+            continue
+        if c < 0:
+            raise ValueError(
+                f"matrix is NOT positive-semidefinite (negative pivot {c} at "
+                f"x{i + 1}) — refused (negative control)"
+            )
+        lin = q.coeff(xi, 1)                    # linear-in-others coefficient of xᵢ
+        base = sp.expand(xi + lin / (2 * c))    # complete the square: c·(xᵢ + …)²
+        sos.append((sp.nsimplify(c), base))
+        q = sp.expand(q - c * base**2)          # Schur-complement remainder (no xᵢ)
+    if sp.expand(q) != 0:
+        raise ValueError(f"congruence residual nonzero ({q}) — matrix not PSD, refused")
+    if not sos:
+        raise ValueError("the quadratic form is identically zero (0 ≤ 0 is vacuous) — refused")
+    # exact self-check: xᵀMx − Σ cᵢ·baseᵢ² == 0
     if sp.expand(quad - sum(w * b**2 for w, b in sos)) != 0:
-        raise ValueError("LDLᵀ SOS self-check failed — certificate rejected")
+        raise ValueError("PSD SOS self-check failed — certificate rejected")
     return PSDCertificate(
         n=n,
         matrix=tuple(tuple(sp.nsimplify(v) for v in row) for row in mat.tolist()),
@@ -95,7 +108,7 @@ def certify_psd_point(family, pt, name):
 
 @dataclass
 class PSDFormEmitter(Emitter):
-    """Emit `0 ≤ xᵀMx` for a positive-definite M via the LDLᵀ congruence,
+    """Emit `0 ≤ xᵀMx` for a positive-semidefinite M via the completing-the-square congruence,
     discharged deterministically by `ring` (the identity) + `positivity`."""
 
     def __post_init__(self):
@@ -132,10 +145,10 @@ def psd_form_family(
     spec: Callable,
     constants: dict | None = None,
 ) -> InequalityFamily:
-    """Build a positive-definite quadratic-form family (kind='psd_form').
+    """Build a positive-semidefinite quadratic-form family (kind='psd_form').
 
-    ``spec``: a callable ``pt -> M`` returning a symmetric positive-definite
-    matrix (a sequence of rows of rationals).  Refuses a non-PD matrix."""
+    ``spec``: a callable ``pt -> M`` returning a symmetric positive-semidefinite
+    matrix (a sequence of rows of rationals).  Refuses an indefinite matrix."""
     return InequalityFamily(
         name=name,
         symbols=(),
