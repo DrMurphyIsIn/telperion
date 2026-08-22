@@ -215,7 +215,11 @@ class Xor3MomentPSDEmitter(Emitter):
             # block-rank-one SOS (a ring identity, guaranteed by the self-check).
             quad_s = expr_lean(sp.expand(cert.moment_quad), tuple(xsyms))
             sos_s = " + ".join(f"({expr_lean(f, tuple(xsyms))})^2" for f in cert.sos_terms)
+            # the many-variable `ring` (SOS identity) and `positivity` (one square
+            # per class) need a raised heartbeat budget; scale with problem size.
+            hb = max(400000, 40000 * len(cert.idx))
             lines.append(
+                f"set_option maxHeartbeats {hb} in\n"
                 f"theorem {inst.lean_name} ({binders} : ℝ) :\n"
                 f"    (0:ℝ) ≤ {quad_s} := by\n"
                 f"  have hid : {quad_s} = {sos_s} := by ring\n"
