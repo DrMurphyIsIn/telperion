@@ -148,6 +148,9 @@ from .formalize import (  # noqa: F401
     FormalizeResult, Proposer, formalize, ollama_proposer,
 )
 from .tactic import discharge, discharge_json  # noqa: F401
+from .sonc import (  # noqa: F401
+    SONCCertificate, find_circuit_certificate, verify_circuit_certificate,
+)
 from .psd import (  # noqa: F401
     PSDCertificate, find_psd_certificate, verify_psd_certificate,
 )

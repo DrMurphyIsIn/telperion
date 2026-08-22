@@ -557,6 +557,28 @@ def cmd_prove(args) -> int:
     return {"FALSE": 2, "NOT_POLYA_IN_THIS_FORM": 3}.get(res.verdict, 4)
 
 
+def cmd_sonc(args) -> int:
+    """Find + verify a SONC circuit-polynomial nonnegativity certificate. Exit 1 if none."""
+    import sympy as sp
+
+    from .parsing import safe_parse_expr
+    from .sonc import find_circuit_certificate, verify_circuit_certificate
+
+    syms = tuple(sp.Symbol(s.strip(), real=True) for s in args.symbols.split(","))
+    p = safe_parse_expr(args.expression, syms)
+    cert = find_circuit_certificate(p, syms)
+    if cert is None:
+        print("not a nonnegative circuit polynomial (not a single circuit, or |c_β| > Θ)")
+        return 1
+    if not verify_circuit_certificate(cert):
+        print("certificate FAILED independent verification (bug)")
+        return 2
+    tight = "tight (=)" if cert.lhs_pow == cert.rhs_pow else "strict (<)"
+    print(f"nonnegative circuit: exact AM-GM {cert.lhs_pow} <= {cert.rhs_pow} [{tight}], "
+          f"λ={list(cert.lambdas)}, q={cert.q}")
+    return 0
+
+
 def cmd_psd(args) -> int:
     """Find + verify an exact LDLᵀ PSD certificate for a rational matrix.
 
@@ -799,6 +821,12 @@ def main(argv=None) -> int:
                        help="audit external Lean for sorry/axiom/stub/vacuity (the referee role)")
     p.add_argument("file")
     p.set_defaults(fn=cmd_audit)
+
+    p = sub.add_parser("sonc",
+                       help="find + verify a SONC circuit-polynomial nonnegativity certificate")
+    p.add_argument("expression")
+    p.add_argument("--symbols", default="x,y", help="comma-separated real symbols")
+    p.set_defaults(fn=cmd_sonc)
 
     p = sub.add_parser("psd",
                        help="find + verify an exact LDLᵀ PSD certificate for a rational matrix")
