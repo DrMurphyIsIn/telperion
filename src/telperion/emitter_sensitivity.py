@@ -160,6 +160,10 @@ REGISTRY: dict[str, SensitivityStance] = {
                                "(Σwᵢxᵢ)² ≤ (Σwᵢ)(Σwᵢxᵢ²) via the pairwise-difference "
                                "SOS Σwᵢwⱼ(xᵢ−xⱼ)² (ring+positivity+linarith); "
                                "positivity by structure, no corruptible identity"),
+    "PSDFormEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                         "0 ≤ xᵀMx for a positive-semidefinite M via the exact "
+                         "completing-the-square congruence xᵀMx = Σ cᵢ·baseᵢ² (ring+positivity); "
+                         "positivity by structure, no corruptible identity"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "
