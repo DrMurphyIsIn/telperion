@@ -149,6 +149,9 @@ from .tactic import discharge, discharge_json  # noqa: F401
 from .sonc import (  # noqa: F401
     SONCCertificate, find_circuit_certificate, verify_circuit_certificate,
 )
+from .psd import (  # noqa: F401
+    PSDCertificate, find_psd_certificate, verify_psd_certificate,
+)
 from .pratt import (  # noqa: F401
     PrattCertificate, find_pratt_certificate, verify_pratt_certificate,
 )
