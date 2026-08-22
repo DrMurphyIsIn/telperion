@@ -53,6 +53,29 @@ def test_convex_quartic_is_supported_via_exact_sos():
     assert len(cert.sos_terms) >= 2  # genuinely higher-degree (not a single square)
 
 
+def test_convex_sextic_is_supported_when_surplus_factors():
+    # f = x^6 + 3x^4 + 2x^2, n=2, S=0 -> a=0; surplus = x^2(x^2+1)(x^2+2), a
+    # rational SOS via factorization — no artificial degree cap.
+    f = _x**6 + 3 * _x**4 + 2 * _x**2
+    cert = tangent_certificate(f=f, x=_x, n=2, S=sp.Integer(0))
+    assert cert.degree == 6
+    surplus = sum(c * base**2 for c, base in cert.sos_terms)
+    fL = sp.expand(f - (cert.intercept + cert.slope * _x))
+    assert sp.expand(fL - surplus) == 0
+    assert all(c >= 0 for c, _ in cert.sos_terms)
+
+
+def test_irreducible_high_degree_surplus_is_refused():
+    # f = x^6 : the surplus cofactor is an irreducible quartic over Q, so this
+    # factorization method has no rational SOS — refuse honestly (named-open).
+    try:
+        tangent_certificate(f=_x**6, x=_x, n=2, S=sp.Integer(2))
+        raised = False
+    except Exception:
+        raised = True
+    assert raised, "an irreducible-high-degree surplus must be refused (named-open)"
+
+
 def test_certify_refuses_non_convex_quadratic():
     fam = tangent_sum_family("BadConcave", GridSpec([("_", [0])]), lambda pt: "bad",
                              spec=_spec(-_x**2, 3, sp.Integer(3)))

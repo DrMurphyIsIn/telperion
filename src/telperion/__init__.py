@@ -61,6 +61,8 @@ from .emit_padic import PadicValuationEmitter, valuation_family  # noqa: F401
 # BG-derived first-class emitters (2026-08-19).
 from .emit_cone import ConeFarkasEmitter, cone_family  # noqa: F401
 from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_family  # noqa: F401
+from .emit_cs import CauchySchwarzEmitter, cauchy_schwarz_family, cs_certificate  # noqa: F401
+from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
@@ -146,6 +148,12 @@ from .formalize import (  # noqa: F401
     FormalizeResult, Proposer, formalize, ollama_proposer,
 )
 from .tactic import discharge, discharge_json  # noqa: F401
+from .sonc import (  # noqa: F401
+    SONCCertificate, find_circuit_certificate, verify_circuit_certificate,
+)
+from .psd import (  # noqa: F401
+    PSDCertificate, find_psd_certificate, verify_psd_certificate,
+)
 from .pratt import (  # noqa: F401
     PrattCertificate, find_pratt_certificate, verify_pratt_certificate,
 )
