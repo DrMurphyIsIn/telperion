@@ -1,0 +1,13 @@
+-- A well-formed third-party Lean proof (e.g. an accepted contribution).
+-- Every theorem states something substantive and is proved without holes.
+import Mathlib
+
+namespace ThirdParty
+
+theorem sq_nonneg' (a : ℝ) : 0 ≤ a ^ 2 := sq_nonneg a
+
+theorem amgm_diff (a b : ℝ) : 0 ≤ (a - b) ^ 2 := by positivity
+
+theorem sum_sq_nonneg (a b : ℝ) : 0 ≤ a ^ 2 + b ^ 2 := by positivity
+
+end ThirdParty

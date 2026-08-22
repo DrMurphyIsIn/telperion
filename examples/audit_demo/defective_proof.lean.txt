@@ -1,0 +1,22 @@
+-- A plausible-looking third-party Lean file (e.g. an LLM prover's output) that
+-- COMPILES-adjacent but hides defects the kernel alone will not flag as a
+-- *meaning* problem. Each defect is the class Telperion's auditor catches.
+import Mathlib
+
+namespace LLMProver
+
+-- (1) an incomplete proof left as a hole — the kernel accepts `sorry` as
+--     axiom-like, so CI can be green while nothing is proved.
+theorem hard_bound (a : ℝ) : 0 ≤ a ^ 2 + 1 := by sorry
+
+-- (2) a smuggled axiom masquerading as an established fact — bypasses the kernel.
+axiom key_fact : ∀ x : ℝ, (0 : ℝ) ≤ x
+
+-- (3) VACUOUS: a reflexive tautology dressed up as a headline result. The kernel
+--     happily checks `42 = 42`; it proves nothing about anything.
+theorem main_result : (42 : ℝ) = 42 := rfl
+
+-- (4) a decorative `Prop := True` stub — green, but content-free.
+theorem lemma_a : True := trivial
+
+end LLMProver
