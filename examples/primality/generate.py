@@ -15,11 +15,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from telperion.emit_primality import primality_module  # noqa: E402
 
-# Round 2: the two smallest primes to prove the discharge pattern compiles
-# (round 1 failed on fin_cases-over-primeFactors + decide recursion depth; fixed
-# with an explicit Finset-literal rewrite + maxRecDepth). Scale up (101, 1009,
-# larger) once green.
-PRIMES = [5, 23]
+# The discharge pattern is proven green (PR #57): Nat.divisors + fin_cases +
+# revert hq + decide. This scale-up probes the practical range — kernel `decide`
+# on a^(n-1) in ZMod n unfolds npow (n-1) times, so 4-digit primes are the
+# interesting stress point. 1009-1 = 2^4·3^2·7 (30 divisors), a genuine
+# certificate use (unlike 5/23 which `decide` proves prime directly).
+PRIMES = [5, 23, 101, 1009]
 _OUT = Path(__file__).resolve().parent / "lean" / "Primality.lean"
 
 
