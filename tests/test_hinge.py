@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from telperion.hinge import (  # noqa: E402
     HingeFloorCertificate,
     hinge_floor_certificate,
+    hinge_floor_theorem,
     verify_hinge_floor,
 )
 
@@ -45,6 +46,17 @@ def test_floor_is_exact_at_the_all_equal_point():
     cert = hinge_floor_certificate(c=sp.Rational(2), t0=sp.Rational(23, 100), k=4)
     assert verify_hinge_floor(cert) is True
     assert cert.tight_at_equal is True
+
+
+def test_emits_a_general_hinge_floor_theorem():
+    # The emitted theorem is general in the hinge constants (c t0 binders) and
+    # discharges posPart subadditivity via sup_le / le_posPart.
+    cert = hinge_floor_certificate(c=sp.Rational(1), t0=sp.Rational(1, 4), k=3)
+    lean = hinge_floor_theorem(cert, "hinge_floor_k3")
+
+    assert "theorem hinge_floor_k3 (c t0 y0 y1 y2 : ℝ) (hc : 0 ≤ c)" in lean
+    assert "posPart_def" in lean and "sup_le" in lean and "le_posPart" in lean
+    assert "mul_le_mul_of_nonneg_left" in lean
 
 
 def test_superadditivity_form_equals_the_jensen_mean_reduction():

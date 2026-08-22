@@ -150,8 +150,8 @@ from .formalize import (  # noqa: F401
 )
 from .tactic import discharge, discharge_json  # noqa: F401
 from .hinge import (  # noqa: F401
-    HingeFloorCertificate, hinge_floor_certificate, hinge_floor_theorem,
-    verify_hinge_floor,
+    HingeFloorCertificate, hinge_floor_certificate, hinge_floor_module,
+    hinge_floor_theorem, verify_hinge_floor,
 )
 from .sonc import (  # noqa: F401
     SONCCertificate, find_circuit_certificate, verify_circuit_certificate,
