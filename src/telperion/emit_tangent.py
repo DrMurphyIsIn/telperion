@@ -57,56 +57,76 @@ class TangentCertificate:
     sos_terms: tuple         # ((coeff, base), ...): f − L = Σ coeff·base²
 
 
-def _rational_sos_of_surplus(fL, x, a):
-    """Exact rational SOS of the tangent surplus ``fL = f − L`` (double root at
-    ``a``).  Supports degree 2 (single square) and degree 4 (completing the
-    square on the quadratic cofactor).  Returns ``[(coeff, base), ...]`` with
-    every ``coeff ≥ 0``, or None if no such rational SOS exists (f not convex, or
-    a cofactor of degree > 2)."""
-    fL = sp.expand(fL)
-    if fL == 0:
-        return None  # a vacuous (constant-zero) surplus is not a real bound
-    q, r = sp.div(fL, sp.expand((x - a) ** 2), x)
-    if sp.expand(r) != 0:
-        return None  # no double root at a
-    q = sp.expand(q)
-    pq = sp.Poly(q, x)
-    if pq.degree() == 0:
-        c = pq.coeff_monomial(1)
-        return [(c, x - a)] if c > 0 else None
-    if pq.degree() == 2:
-        c2 = pq.coeff_monomial(x**2)
-        c1 = pq.coeff_monomial(x)
-        c0 = pq.coeff_monomial(1)
-        if c2 <= 0:
-            return None
-        beta = sp.Rational(-c1, 2 * c2)
-        gamma = c0 - c2 * beta**2
-        if gamma < 0:
-            return None  # cofactor not nonnegative → f not convex enough
-        terms = [(c2, sp.expand((x - a) * (x - beta)))]
-        if gamma != 0:
-            terms.append((gamma, x - a))
-        return terms
-    return None  # cofactor degree > 2: named-open
+def _univariate_rational_sos(p, x):
+    """Exact rational SOS of a univariate ``p ≥ 0``: returns ``[(coeff, base),
+    ...]`` with every ``coeff > 0`` rational and ``p = Σ coeff·base²``, or None
+    when no such factorization exists.
+
+    Method (exact, sympy-only, ANY degree): factor ``p`` over ℚ.  A nonnegative
+    ``p`` is a positive constant times even powers of real-linear factors and
+    (any powers of) rational irreducible quadratics.  Each ``ℓ^{2k}`` is the
+    square ``(ℓ^k)²``; each positive irreducible quadratic ``a₂(x−h)²+k``
+    (``a₂,k>0``) is the weighted two-square ``a₂·(x−h)² + k·1²``; a product of
+    weighted sums-of-squares distributes term-by-term (a product of squares is a
+    square).  Refuses an odd-multiplicity real root (``p`` would change sign) or
+    an irreducible factor of degree ≥ 3 (needs a Pourchet-style SOS — named-open)."""
+    p = sp.expand(p)
+    if p == 0:
+        return None  # a constant-zero surplus is not a real bound
+    const, facs = sp.factor_list(p)
+    const = sp.nsimplify(const)
+    if const <= 0:
+        return None
+    sos = [(const, sp.Integer(1))]  # const · 1²
+
+    def _distribute(A, B):
+        return [(sp.nsimplify(ca * cb), sp.expand(sa * sb))
+                for ca, sa in A for cb, sb in B]
+
+    for fac, mult in facs:
+        fp = sp.Poly(fac, x)
+        d = fp.degree()
+        if d == 1:
+            if mult % 2:
+                return None  # odd-multiplicity real root → sign change
+            fsos = [(sp.Integer(1), sp.expand(fac ** (mult // 2)))]
+        elif d == 2:
+            a2 = fp.coeff_monomial(x**2)
+            a1 = fp.coeff_monomial(x)
+            a0 = fp.coeff_monomial(1)
+            if a2 <= 0 or a1**2 - 4 * a2 * a0 >= 0:
+                return None  # not a positive-definite irreducible quadratic
+            h = sp.Rational(-a1, 2 * a2)
+            k = a0 - a2 * h**2
+            base = [(a2, sp.expand(x - h)), (k, sp.Integer(1))]
+            if mult % 2 == 0:
+                fsos = [(sp.Integer(1), sp.expand(fac ** (mult // 2)))]
+            else:
+                carry = sp.expand(fac ** ((mult - 1) // 2))
+                fsos = [(c, sp.expand(s * carry)) for c, s in base]
+        else:
+            return None  # irreducible degree ≥ 3: named-open
+        sos = _distribute(sos, fsos)
+
+    # combine like bases for a compact certificate
+    merged: dict = {}
+    for c, base in sos:
+        merged[base] = merged.get(base, sp.Integer(0)) + c
+    return [(c, base) for base, c in merged.items() if c != 0]
 
 
 def tangent_certificate(*, f, x, n, S) -> TangentCertificate:
     """Build and EXACTLY self-check a tangent-line certificate for a convex
-    polynomial of degree 2 or 4.  Refuses a non-convex f (no nonneg SOS surplus),
-    n < 2, or an unsupported degree."""
+    polynomial of any even degree whose surplus f−L is a rational SOS.  Refuses a
+    non-convex f (surplus lacks a rational SOS) or n < 2."""
     f = sp.expand(sp.sympify(f))
     S = sp.nsimplify(S)
     n = int(n)
     if n < 2:
         raise ValueError("tangent-line trick needs n ≥ 2 terms")
     deg = sp.Poly(f, x).degree()
-    if deg not in (2, 4):
-        raise ValueError(
-            f"tangent emitter supports convex degree 2 or 4; got degree {deg} "
-            "(higher: the same identity extends with a rational SOS of the "
-            "cofactor — named-open)"
-        )
+    if deg < 2:
+        raise ValueError(f"tangent-line trick needs a non-linear f; got degree {deg}")
     a = sp.Rational(S, n)
     fa = f.subs(x, a)
     m = sp.diff(f, x).subs(x, a)
@@ -114,11 +134,12 @@ def tangent_certificate(*, f, x, n, S) -> TangentCertificate:
     slope = sp.nsimplify(m)
     B = sp.nsimplify(n * fa)
     fL = sp.expand(f - (intercept + slope * x))
-    sos = _rational_sos_of_surplus(fL, x, a)
+    sos = _univariate_rational_sos(fL, x)
     if sos is None:
         raise ValueError(
             f"tangent surplus f−L is not a certifiable rational SOS (f is not "
-            f"convex with a double root at a = {a}) — refused (negative control)"
+            f"convex, or its surplus has an irreducible factor of degree ≥ 3 — "
+            f"named-open) — refused (negative control)"
         )
     # exact SOS self-check
     if sp.expand(fL - sum(c * base**2 for c, base in sos)) != 0:
