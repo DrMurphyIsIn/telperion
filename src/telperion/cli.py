@@ -557,6 +557,58 @@ def cmd_prove(args) -> int:
     return {"FALSE": 2, "NOT_POLYA_IN_THIS_FORM": 3}.get(res.verdict, 4)
 
 
+def cmd_psd(args) -> int:
+    """Find + verify an exact LDLᵀ PSD certificate for a rational matrix.
+
+    Matrix is a Python-literal list of rows, e.g. '[[2,1],[1,2]]'. Exit 1 if not
+    PSD (indefinite / needs pivoting).
+    """
+    import ast
+
+    import sympy as sp
+
+    from .psd import find_psd_certificate, verify_psd_certificate
+
+    rows = ast.literal_eval(args.matrix)
+    A = sp.Matrix([[sp.Rational(x) for x in row] for row in rows])
+    cert = find_psd_certificate(A)
+    if cert is None:
+        print("NOT PSD (indefinite, non-symmetric, or needs symmetric pivoting)")
+        return 1
+    if not verify_psd_certificate(cert):
+        print("certificate FAILED independent verification (bug)")
+        return 2
+    kind = "positive definite" if cert.positive_definite else "positive semidefinite (singular)"
+    print(f"{kind}: A = L D Lᵀ with D = diag({[cert.D[i, i] for i in range(A.rows)]})")
+    return 0
+
+
+def cmd_prime(args) -> int:
+    """Find + verify a Pratt/Lucas primality certificate for n. Exit 1 if composite."""
+    from .pratt import find_pratt_certificate, verify_pratt_certificate
+
+    n = args.n
+    cert = find_pratt_certificate(n)
+    if cert is None:
+        print(f"{n}: NOT PRIME (no Pratt certificate)")
+        return 1
+    if not verify_pratt_certificate(cert):
+        print(f"{n}: certificate FAILED independent verification (bug)")
+        return 2
+
+    def _render(c, depth=0):
+        pad = "  " * depth
+        fac = " * ".join(f"{q}^{e}" if e > 1 else f"{q}" for q, e in c.factorization) or "1"
+        print(f"{pad}{c.n}: prime — witness a={c.witness}, {c.n}-1 = {fac}")
+        for q, _e in c.factorization:
+            if q > 2 and q in c.sub_certificates:
+                _render(c.sub_certificates[q], depth + 1)
+
+    print(f"{n}: PRIME (Pratt certificate verified in exact arithmetic)")
+    _render(cert)
+    return 0
+
+
 def cmd_audit(args) -> int:
     """Audit external Lean for sorry/axiom/stub/vacuity. Exit 1 if any error finding."""
     from .audit import audit_lean_file
@@ -747,6 +799,16 @@ def main(argv=None) -> int:
                        help="audit external Lean for sorry/axiom/stub/vacuity (the referee role)")
     p.add_argument("file")
     p.set_defaults(fn=cmd_audit)
+
+    p = sub.add_parser("psd",
+                       help="find + verify an exact LDLᵀ PSD certificate for a rational matrix")
+    p.add_argument("matrix", help="Python-literal rows, e.g. '[[2,1],[1,2]]'")
+    p.set_defaults(fn=cmd_psd)
+
+    p = sub.add_parser("prime",
+                       help="find + verify a Pratt/Lucas primality certificate for n")
+    p.add_argument("n", type=int)
+    p.set_defaults(fn=cmd_prime)
 
     p = sub.add_parser("benchmark",
                        help="run the certifiable-fragment benchmark (deterministic solve rate + timing)")
