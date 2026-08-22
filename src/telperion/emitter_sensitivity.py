@@ -152,7 +152,7 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "load-bearingness is the author's responsibility "
                                 "and covered by the structural reflexive check"),
     "TangentSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
-                            "convex-polynomial (deg 2/4) tangent-line bound "
+                            "convex-polynomial (any even degree) tangent-line bound "
                             "B ≤ Σf(xᵢ); the per-term surplus is an exact rational "
                             "SOS (ring+positivity) assembled by linarith, no "
                             "corruptible identity certificate"),
