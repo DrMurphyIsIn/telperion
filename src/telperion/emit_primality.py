@@ -29,24 +29,30 @@ def primality_theorem(n: int) -> str:
     if not verify_pratt_certificate(cert):
         raise ValueError(f"{n}: certificate failed the exact self-check")
     a = cert.witness
-    # distinct prime divisors of n-1 as an explicit Finset literal — `fin_cases`
-    # cannot enumerate `Nat.primeFactors` symbolically (round-1 CI: "dependent
-    # elimination failed / expected type must not contain free variables"), so we
-    # rewrite it to a literal first.  maxRecDepth is raised because the kernel
-    # `decide` on `a^(n-1)` in `ZMod n` unfolds npow (n-1) times.
-    factors = sorted(q for q, _ in cert.factorization)
-    finset = "{" + ", ".join(str(q) for q in factors) + "}"
+    # ALL divisors of n-1 as an explicit Finset literal.  We enumerate divisors
+    # (not primeFactors): `Nat.divisors` is filter-based and kernel-`decide`-
+    # computable, whereas `Nat.primeFactors` routes through `Nat.factorization`
+    # (a Finsupp) which does NOT reduce under `decide` (round-2 CI: "decide failed"
+    # on the primeFactors set-equality).  `fin_cases` then enumerates the concrete
+    # divisors; `revert hq` discharges the non-prime divisors (1, n-1, …) via their
+    # false `Nat.Prime` premise, and `decide` checks `a^((n-1)/q) ≠ 1` on the real
+    # prime factors.  maxRecDepth is raised because kernel `decide` unfolds npow.
+    divisors = [1]
+    for q, e in cert.factorization:
+        divisors = [d * q**k for d in divisors for k in range(e + 1)]
+    divisors = sorted(set(divisors))
+    finset = "{" + ", ".join(str(d) for d in divisors) + "}"
     return (
         f"set_option maxRecDepth 16000 in\n"
         f"theorem isPrime_{n} : Nat.Prime {n} := by\n"
         f"  refine lucas_primality {n} ({a} : ZMod {n}) ?_ ?_\n"
         f"  · decide\n"
         f"  · intro q hq hqd\n"
-        f"    have hmem : q ∈ Nat.primeFactors ({n} - 1) :=\n"
-        f"      Nat.mem_primeFactors.mpr ⟨hq, hqd, by norm_num⟩\n"
-        f"    have hset : Nat.primeFactors ({n} - 1) = ({finset} : Finset ℕ) := by decide\n"
+        f"    have hmem : q ∈ Nat.divisors ({n} - 1) :=\n"
+        f"      Nat.mem_divisors.mpr ⟨hqd, by norm_num⟩\n"
+        f"    have hset : Nat.divisors ({n} - 1) = ({finset} : Finset ℕ) := by decide\n"
         f"    rw [hset] at hmem\n"
-        f"    fin_cases hmem <;> decide\n"
+        f"    fin_cases hmem <;> revert hq <;> decide\n"
     )
 
 

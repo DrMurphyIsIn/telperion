@@ -11,21 +11,21 @@ theorem isPrime_5 : Nat.Prime 5 := by
   refine lucas_primality 5 (2 : ZMod 5) ?_ ?_
   · decide
   · intro q hq hqd
-    have hmem : q ∈ Nat.primeFactors (5 - 1) :=
-      Nat.mem_primeFactors.mpr ⟨hq, hqd, by norm_num⟩
-    have hset : Nat.primeFactors (5 - 1) = ({2} : Finset ℕ) := by decide
+    have hmem : q ∈ Nat.divisors (5 - 1) :=
+      Nat.mem_divisors.mpr ⟨hqd, by norm_num⟩
+    have hset : Nat.divisors (5 - 1) = ({1, 2, 4} : Finset ℕ) := by decide
     rw [hset] at hmem
-    fin_cases hmem <;> decide
+    fin_cases hmem <;> revert hq <;> decide
 
 set_option maxRecDepth 16000 in
 theorem isPrime_23 : Nat.Prime 23 := by
   refine lucas_primality 23 (5 : ZMod 23) ?_ ?_
   · decide
   · intro q hq hqd
-    have hmem : q ∈ Nat.primeFactors (23 - 1) :=
-      Nat.mem_primeFactors.mpr ⟨hq, hqd, by norm_num⟩
-    have hset : Nat.primeFactors (23 - 1) = ({2, 11} : Finset ℕ) := by decide
+    have hmem : q ∈ Nat.divisors (23 - 1) :=
+      Nat.mem_divisors.mpr ⟨hqd, by norm_num⟩
+    have hset : Nat.divisors (23 - 1) = ({1, 2, 11, 22} : Finset ℕ) := by decide
     rw [hset] at hmem
-    fin_cases hmem <;> decide
+    fin_cases hmem <;> revert hq <;> decide
 
 end Primality

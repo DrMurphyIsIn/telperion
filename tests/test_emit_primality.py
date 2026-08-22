@@ -14,8 +14,8 @@ def test_emits_a_lucas_primality_theorem_for_a_prime():
 
     assert "theorem isPrime_1009 : Nat.Prime 1009" in lean
     assert "lucas_primality 1009 (11 : ZMod 1009)" in lean   # the found witness
-    assert "Nat.primeFactors (1009 - 1)" in lean
-    assert "fin_cases hmem <;> decide" in lean
+    assert "Nat.divisors (1009 - 1)" in lean
+    assert "fin_cases hmem <;> revert hq <;> decide" in lean
 
 
 def test_refuses_a_composite():
