@@ -15,10 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from telperion.emit_primality import primality_module  # noqa: E402
 
-# First CI target: small primes so the kernel `decide` over ZMod p is cheap.
-# Once green, scale up (1009, then larger) in a follow-up to probe where the
-# kernel `decide` on a^(p-1) starts to strain maxHeartbeats.
-PRIMES = [5, 23, 101]
+# Round 2: the two smallest primes to prove the discharge pattern compiles
+# (round 1 failed on fin_cases-over-primeFactors + decide recursion depth; fixed
+# with an explicit Finset-literal rewrite + maxRecDepth). Scale up (101, 1009,
+# larger) once green.
+PRIMES = [5, 23]
 _OUT = Path(__file__).resolve().parent / "lean" / "Primality.lean"
 
 

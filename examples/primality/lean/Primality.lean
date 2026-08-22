@@ -6,28 +6,26 @@ import Mathlib
 
 namespace Primality
 
+set_option maxRecDepth 16000 in
 theorem isPrime_5 : Nat.Prime 5 := by
   refine lucas_primality 5 (2 : ZMod 5) ?_ ?_
   · decide
   · intro q hq hqd
     have hmem : q ∈ Nat.primeFactors (5 - 1) :=
       Nat.mem_primeFactors.mpr ⟨hq, hqd, by norm_num⟩
+    have hset : Nat.primeFactors (5 - 1) = ({2} : Finset ℕ) := by decide
+    rw [hset] at hmem
     fin_cases hmem <;> decide
 
+set_option maxRecDepth 16000 in
 theorem isPrime_23 : Nat.Prime 23 := by
   refine lucas_primality 23 (5 : ZMod 23) ?_ ?_
   · decide
   · intro q hq hqd
     have hmem : q ∈ Nat.primeFactors (23 - 1) :=
       Nat.mem_primeFactors.mpr ⟨hq, hqd, by norm_num⟩
-    fin_cases hmem <;> decide
-
-theorem isPrime_101 : Nat.Prime 101 := by
-  refine lucas_primality 101 (2 : ZMod 101) ?_ ?_
-  · decide
-  · intro q hq hqd
-    have hmem : q ∈ Nat.primeFactors (101 - 1) :=
-      Nat.mem_primeFactors.mpr ⟨hq, hqd, by norm_num⟩
+    have hset : Nat.primeFactors (23 - 1) = ({2, 11} : Finset ℕ) := by decide
+    rw [hset] at hmem
     fin_cases hmem <;> decide
 
 end Primality
