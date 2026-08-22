@@ -28,4 +28,26 @@ theorem isPrime_23 : Nat.Prime 23 := by
     rw [hset] at hmem
     fin_cases hmem <;> revert hq <;> decide
 
+set_option maxRecDepth 16000 in
+theorem isPrime_101 : Nat.Prime 101 := by
+  refine lucas_primality 101 (2 : ZMod 101) ?_ ?_
+  · decide
+  · intro q hq hqd
+    have hmem : q ∈ Nat.divisors (101 - 1) :=
+      Nat.mem_divisors.mpr ⟨hqd, by norm_num⟩
+    have hset : Nat.divisors (101 - 1) = ({1, 2, 4, 5, 10, 20, 25, 50, 100} : Finset ℕ) := by decide
+    rw [hset] at hmem
+    fin_cases hmem <;> revert hq <;> decide
+
+set_option maxRecDepth 16000 in
+theorem isPrime_1009 : Nat.Prime 1009 := by
+  refine lucas_primality 1009 (11 : ZMod 1009) ?_ ?_
+  · decide
+  · intro q hq hqd
+    have hmem : q ∈ Nat.divisors (1009 - 1) :=
+      Nat.mem_divisors.mpr ⟨hqd, by norm_num⟩
+    have hset : Nat.divisors (1009 - 1) = ({1, 2, 3, 4, 6, 7, 8, 9, 12, 14, 16, 18, 21, 24, 28, 36, 42, 48, 56, 63, 72, 84, 112, 126, 144, 168, 252, 336, 504, 1008} : Finset ℕ) := by decide
+    rw [hset] at hmem
+    fin_cases hmem <;> revert hq <;> decide
+
 end Primality
