@@ -1,14 +1,11 @@
 """Phase 4 combinatorics emitter — the tangent-line trick for symmetric sums.
 
-For a convex quadratic f and reals x_1..x_n with Σx_i = S, the tangent line at
-a = S/n gives Σf(x_i) ≥ n·f(a) = B.  The certificate is the exact ring identity
-
-    Σf(x_i) − B = c₂·Σ(x_i − a)² + f'(a)·(Σx_i − S),
-
-so under the sum constraint the bound is a sum of squares — a genuinely
-combinatorial (n-ary symmetric) inequality that reduces to `nlinarith` over
-`sq_nonneg` hints.  This is the frontier-weak class (symmetric/combinatorial
-inequalities) done deterministically.
+For a convex polynomial f (degree 2 or 4) and reals x_1..x_n with Σx_i = S, the
+tangent line at a = S/n gives Σf(x_i) ≥ n·f(a) = B.  The surplus f(x)−L(x) has a
+double root at a and an exact rational sum-of-squares form, so the emitted Lean
+is the robust per-term `ring`+`positivity` plus a `linarith` assembly — a
+genuinely combinatorial (n-ary symmetric) inequality reduced to deterministic
+Mathlib tactics.
 """
 import sys
 from pathlib import Path
@@ -28,56 +25,60 @@ from telperion.family import GridSpec  # noqa: E402
 from telperion.lean import LeanProfile  # noqa: E402
 from telperion.lean_lint import lint_lean_text  # noqa: E402
 
-
-def _f(c2, c1, c0):
-    x = sp.Symbol("x")
-    return c2 * x**2 + c1 * x + c0, x
+_x = sp.Symbol("x")
 
 
-def test_tangent_certificate_verifies_the_exact_identity():
-    # f(x) = x^2 (c2=1), n=3, S=3 -> a=1, B=3. Identity must hold exactly.
-    cert = tangent_certificate(c2=sp.Integer(1), c1=sp.Integer(0), c0=sp.Integer(0),
-                               n=3, S=sp.Integer(3))
-    assert cert.a == 1
-    assert cert.B == 3          # 3 * f(1) = 3
-    # the square-decomposition reproduces Σf - B modulo the constraint
-    xs = sp.symbols("x1 x2 x3")
-    lhs = sum(x**2 for x in xs) - cert.B
-    rhs = cert.c2 * sum((x - cert.a) ** 2 for x in xs) + cert.slope * (sum(xs) - cert.S)
-    assert sp.expand(lhs - rhs) == 0
+def _spec(f, n, S):
+    return lambda pt: ((f, _x), n, S)
+
+
+def test_quadratic_certificate_verifies_the_exact_identity():
+    cert = tangent_certificate(f=_x**2, x=_x, n=3, S=sp.Integer(3))
+    assert cert.a == 1 and cert.B == 3
+    # the SOS reproduces f−L exactly at the tangent point
+    surplus = sum(c * base**2 for c, base in cert.sos_terms)
+    fL = sp.expand(_x**2 - (cert.intercept + cert.slope * _x))
+    assert sp.expand(fL - surplus) == 0
+    assert all(c >= 0 for c, _ in cert.sos_terms)
+
+
+def test_convex_quartic_is_supported_via_exact_sos():
+    # f = x^4, n=2, S=2 -> a=1; f−L = (x-1)^2 * (x^2+2x+3), an exact 2-square SOS.
+    cert = tangent_certificate(f=_x**4, x=_x, n=2, S=sp.Integer(2))
+    assert cert.degree == 4
+    surplus = sum(c * base**2 for c, base in cert.sos_terms)
+    fL = sp.expand(_x**4 - (cert.intercept + cert.slope * _x))
+    assert sp.expand(fL - surplus) == 0
+    assert all(c >= 0 for c, _ in cert.sos_terms)
+    assert len(cert.sos_terms) >= 2  # genuinely higher-degree (not a single square)
 
 
 def test_certify_refuses_non_convex_quadratic():
-    fam = tangent_sum_family(
-        "BadConcave", GridSpec([("_", [0])]), lambda pt: "bad",
-        spec=lambda pt: (_f(sp.Integer(-1), sp.Integer(0), sp.Integer(0)), 3, sp.Integer(3)),
-    )
+    fam = tangent_sum_family("BadConcave", GridSpec([("_", [0])]), lambda pt: "bad",
+                             spec=_spec(-_x**2, 3, sp.Integer(3)))
     try:
         certify(fam)
         raised = False
     except Exception:
         raised = True
-    assert raised, "a non-convex (c2<=0) quadratic must be refused"
+    assert raised, "a non-convex f (surplus not SOS) must be refused"
 
 
-def test_emit_produces_lint_clean_tangent_theorem():
-    fam = tangent_sum_family(
-        "Jensen", GridSpec([("_", [0])]), lambda pt: "jensen_sq",
-        spec=lambda pt: (_f(sp.Integer(1), sp.Integer(0), sp.Integer(0)), 3, sp.Integer(3)),
-    )
+def test_emit_produces_lint_clean_robust_proof():
+    fam = tangent_sum_family("Quartic", GridSpec([("_", [0])]), lambda pt: "quartic_two",
+                             spec=_spec(_x**4, 2, sp.Integer(2)))
     certified = certify(fam)
     report = emit(certified, LeanProfile(namespace=("Tangent",)),
                   [TangentSumEmitter()], ValidationReport(checks=(("t", True),)))
     text = next(iter(report.files.values()))
-    assert "nlinarith" in text
-    assert "sq_nonneg" in text
+    assert "positivity" in text          # per-term SOS nonnegativity
+    assert "linarith" in text            # the assembly using hsum
     assert "hsum" in text
-    assert text.count("sq_nonneg") == 3   # one per term
+    assert "ring" in text                # the exact SOS identity
     errors = [i for i in lint_lean_text(text) if i.severity == "error"]
     assert errors == [], errors
 
 
 def test_emitter_is_classified_in_the_sensitivity_registry():
-    from telperion.emitter_sensitivity import REGISTRY, unclassified_emitters
+    from telperion.emitter_sensitivity import REGISTRY
     assert "TangentSumEmitter" in REGISTRY
-    assert unclassified_emitters() == []

@@ -1,31 +1,27 @@
 """Tangent-line-trick emitter — a symmetric-sum (combinatorial) inequality.
 
 Compete where the frontier is weakest: symmetric / combinatorial inequalities.
-For a CONVEX quadratic ``f(x) = c₂x² + c₁x + c₀`` (``c₂ > 0``) and reals
-``x₁..xₙ`` with ``Σxᵢ = S``, the tangent line at ``a = S/n`` gives the classic
-tangent-line (Jensen) bound
+For a CONVEX polynomial ``f`` (degree 2 or 4) and reals ``x₁..xₙ`` with
+``Σxᵢ = S``, the tangent line ``L`` at ``a = S/n`` gives the tangent-line (Jensen)
+bound
 
     Σf(xᵢ) ≥ n·f(a) = B.
 
-The certificate is the EXACT ring identity
+The surplus ``f(x) − L(x)`` has a double root at ``a`` and an EXACT RATIONAL
+sum-of-squares form (for a quartic, ``f−L = (x−a)²·q`` with ``q`` a nonnegative
+quadratic, split by completing the square).  So each per-term inequality is the
+robust, search-free
 
-    Σf(xᵢ) − B = c₂·Σ(xᵢ − a)² + f'(a)·(Σxᵢ − S),
+    have hᵢ : 0 ≤ f(xᵢ) − L(xᵢ) := by
+      have : f(xᵢ) − L(xᵢ) = Σ cⱼ·bⱼ(xᵢ)² := by ring
+      rw [this]; positivity
 
-so under the sum constraint the surplus is a nonnegative sum of squares.  The
-emitted Lean is hypothesis-light and robust:
+and the whole claim assembles by ``linarith`` over the ``hᵢ`` and the linear
+constraint ``hsum`` (``ΣL(xᵢ) = B`` uses ``Σxᵢ = S``).
 
-    theorem <name> (x₁ … xₙ : ℝ) (hsum : x₁ + … + xₙ = S) :
-        (B : ℝ) ≤ f(x₁) + … + f(xₙ) := by
-      nlinarith [sq_nonneg (x₁ − a), …, sq_nonneg (xₙ − a), hsum]
-
-`nlinarith` discharges it: the goal is `c₂·Σ(xᵢ−a)² ≥ 0` after eliminating the
-constraint, exactly the shape `nlinarith` closes from `sq_nonneg` hints plus the
-linear `hsum`.
-
-NEGATIVE CONTROL: a non-convex (``c₂ ≤ 0``) quadratic — where the tangent lies
-ABOVE, not below — is refused at certification; no Lean is emitted.  (First
-version: convex quadratics.  Higher-degree convex ``f`` extend the same identity
-with a per-term SOS factor of ``(x−a)²`` — a documented follow-up.)
+NEGATIVE CONTROL: a non-convex ``f`` (surplus lacks a nonnegative-SOS form) is
+refused at certification.  Degrees > 4 (nonnegative quartic-or-higher cofactor)
+are named-open — the same identity extends with a rational SOS of the cofactor.
 """
 from __future__ import annotations
 
@@ -47,57 +43,102 @@ from .workflow import Emitter
 
 @dataclass(frozen=True)
 class TangentCertificate:
-    """A verified tangent-line-trick certificate for a convex quadratic."""
+    """A verified tangent-line certificate for a convex polynomial (deg 2 or 4)."""
 
     n: int
-    c2: sp.Rational
-    c1: sp.Rational
-    c0: sp.Rational
+    f: sp.Expr
+    x: sp.Symbol
+    degree: int
     S: sp.Rational
-    a: sp.Rational       # tangent point S/n
-    B: sp.Rational       # bound n·f(a)
-    slope: sp.Rational   # f'(a) = 2·c2·a + c1
+    a: sp.Rational           # tangent point S/n
+    slope: sp.Rational       # f'(a)
+    intercept: sp.Rational   # f(a) − slope·a, so L(x) = intercept + slope·x
+    B: sp.Rational           # n·f(a)
+    sos_terms: tuple         # ((coeff, base), ...): f − L = Σ coeff·base²
 
 
-def tangent_certificate(*, c2, c1, c0, n, S) -> TangentCertificate:
-    """Build and EXACTLY self-check a tangent-line certificate.  Refuses a
-    non-convex quadratic (c2 ≤ 0) or n < 2."""
-    c2, c1, c0, S = (sp.nsimplify(v) for v in (c2, c1, c0, S))
+def _rational_sos_of_surplus(fL, x, a):
+    """Exact rational SOS of the tangent surplus ``fL = f − L`` (double root at
+    ``a``).  Supports degree 2 (single square) and degree 4 (completing the
+    square on the quadratic cofactor).  Returns ``[(coeff, base), ...]`` with
+    every ``coeff ≥ 0``, or None if no such rational SOS exists (f not convex, or
+    a cofactor of degree > 2)."""
+    fL = sp.expand(fL)
+    if fL == 0:
+        return None  # a vacuous (constant-zero) surplus is not a real bound
+    q, r = sp.div(fL, sp.expand((x - a) ** 2), x)
+    if sp.expand(r) != 0:
+        return None  # no double root at a
+    q = sp.expand(q)
+    pq = sp.Poly(q, x)
+    if pq.degree() == 0:
+        c = pq.coeff_monomial(1)
+        return [(c, x - a)] if c > 0 else None
+    if pq.degree() == 2:
+        c2 = pq.coeff_monomial(x**2)
+        c1 = pq.coeff_monomial(x)
+        c0 = pq.coeff_monomial(1)
+        if c2 <= 0:
+            return None
+        beta = sp.Rational(-c1, 2 * c2)
+        gamma = c0 - c2 * beta**2
+        if gamma < 0:
+            return None  # cofactor not nonnegative → f not convex enough
+        terms = [(c2, sp.expand((x - a) * (x - beta)))]
+        if gamma != 0:
+            terms.append((gamma, x - a))
+        return terms
+    return None  # cofactor degree > 2: named-open
+
+
+def tangent_certificate(*, f, x, n, S) -> TangentCertificate:
+    """Build and EXACTLY self-check a tangent-line certificate for a convex
+    polynomial of degree 2 or 4.  Refuses a non-convex f (no nonneg SOS surplus),
+    n < 2, or an unsupported degree."""
+    f = sp.expand(sp.sympify(f))
+    S = sp.nsimplify(S)
     n = int(n)
-    if not c2 > 0:
-        raise ValueError(
-            f"tangent-line trick needs a CONVEX quadratic (c₂ > 0); got c₂ = {c2} "
-            "— a concave/linear f puts the tangent ABOVE the curve (refused)"
-        )
     if n < 2:
         raise ValueError("tangent-line trick needs n ≥ 2 terms")
+    deg = sp.Poly(f, x).degree()
+    if deg not in (2, 4):
+        raise ValueError(
+            f"tangent emitter supports convex degree 2 or 4; got degree {deg} "
+            "(higher: the same identity extends with a rational SOS of the "
+            "cofactor — named-open)"
+        )
     a = sp.Rational(S, n)
-    B = n * (c2 * a**2 + c1 * a + c0)
-    slope = 2 * c2 * a + c1
-    # exact ring-identity self-check (the whole certificate, verified)
+    fa = f.subs(x, a)
+    m = sp.diff(f, x).subs(x, a)
+    intercept = sp.nsimplify(fa - m * a)
+    slope = sp.nsimplify(m)
+    B = sp.nsimplify(n * fa)
+    fL = sp.expand(f - (intercept + slope * x))
+    sos = _rational_sos_of_surplus(fL, x, a)
+    if sos is None:
+        raise ValueError(
+            f"tangent surplus f−L is not a certifiable rational SOS (f is not "
+            f"convex with a double root at a = {a}) — refused (negative control)"
+        )
+    # exact SOS self-check
+    if sp.expand(fL - sum(c * base**2 for c, base in sos)) != 0:
+        raise ValueError("tangent SOS self-check failed — certificate rejected")
+    # exact assembly self-check: Σf − B = Σ(f−L) + slope·(Σx − S)
     xs = sp.symbols(f"x1:{n + 1}")
-    lhs = sum(c2 * x**2 + c1 * x + c0 for x in xs) - B
-    rhs = c2 * sum((x - a) ** 2 for x in xs) + slope * (sum(xs) - S)
+    lhs = sum(f.subs(x, xi) for xi in xs) - B
+    rhs = sum(fL.subs(x, xi) for xi in xs) + slope * (sum(xs) - S)
     if sp.expand(lhs - rhs) != 0:
-        raise ValueError("tangent identity self-check failed — certificate rejected")
-    return TangentCertificate(n=n, c2=c2, c1=c1, c0=c0, S=S, a=a, B=B, slope=slope)
+        raise ValueError("tangent assembly self-check failed — certificate rejected")
+    return TangentCertificate(
+        n=n, f=f, x=x, degree=deg, S=S, a=a, slope=slope,
+        intercept=intercept, B=B, sos_terms=tuple(sos),
+    )
 
 
 def certify_tangent_point(family, pt, name):
-    """Certify one tangent instance from ``family.special[1](pt) -> ((f, x), n, S)``.
-    Refuses (ValueError) a non-quadratic or non-convex f."""
+    """Certify one tangent instance from ``family.special[1](pt) -> ((f, x), n, S)``."""
     (f, x), n, S = family.special[1](pt)
-    f = sp.expand(sp.sympify(f))
-    poly = sp.Poly(f, x)
-    if poly.degree() != 2:
-        raise ValueError(
-            f"tangent instance '{name}': f must be a degree-2 polynomial in {x}; "
-            f"got degree {poly.degree()}"
-        )
-    c2 = poly.coeff_monomial(x**2)
-    c1 = poly.coeff_monomial(x)
-    c0 = poly.coeff_monomial(1)
-    cert = tangent_certificate(c2=c2, c1=c1, c0=c0, n=n, S=S)
+    cert = tangent_certificate(f=f, x=x, n=n, S=S)
     inst = CertifiedInstance(point=dict(pt), lean_name=name, corners=(), payload=cert)
     return inst, cert.n
 
@@ -108,35 +149,54 @@ def certify_tangent_point(family, pt, name):
 
 @dataclass
 class TangentSumEmitter(Emitter):
-    """Emit `B ≤ Σf(xᵢ)` (convex-quadratic tangent-line bound) as one theorem per
-    certified instance, closed by `nlinarith` over `sq_nonneg` hints + `hsum`."""
+    """Emit `B ≤ Σf(xᵢ)` (convex tangent-line bound) — one theorem per instance,
+    per-term surplus by `ring`+`positivity`, assembled by `linarith` + `hsum`."""
 
     def __post_init__(self):
         self.kind = "tangent"
 
     def emit_body(self, fam, profile: LeanProfile) -> tuple[str, int]:
         lines: list[str] = []
-        ntheorems = 0
+        nthm = 0
         for inst in fam.instances:
             cert: TangentCertificate = inst.payload  # type: ignore[assignment]
             n = cert.n
-            xs = [sp.Symbol(f"x{i}") for i in range(1, n + 1)]
+            x = cert.x
+
+            def xi(i):
+                return sp.Symbol(f"x{i}")
+
+            def f_at(i):
+                return expr_lean(cert.f.subs(x, xi(i)), (xi(i),))
+
+            def L_at(i):
+                return f"({rat_lean(cert.intercept)} + {rat_lean(cert.slope)} * x{i})"
+
+            def sos_at(i):
+                return " + ".join(
+                    f"{rat_lean(c)} * ({expr_lean(sp.expand(base.subs(x, xi(i))), (xi(i),))})^2"
+                    for c, base in cert.sos_terms
+                )
+
             binders = " ".join(f"x{i}" for i in range(1, n + 1))
             hsum_lhs = " + ".join(f"x{i}" for i in range(1, n + 1))
-            fterms = " + ".join(
-                f"({expr_lean(cert.c2 * x**2 + cert.c1 * x + cert.c0, (x,))})"
-                for x in xs
+            fterms = " + ".join(f"({f_at(i)})" for i in range(1, n + 1))
+            haves = "".join(
+                f"  have h{i} : (0:ℝ) ≤ ({f_at(i)}) - {L_at(i)} := by\n"
+                f"    have e{i} : ({f_at(i)}) - {L_at(i)} = {sos_at(i)} := by ring\n"
+                f"    rw [e{i}]; positivity\n"
+                for i in range(1, n + 1)
             )
-            a_lit = rat_lean(cert.a)
-            sq_hints = ", ".join(f"sq_nonneg (x{i} - {a_lit})" for i in range(1, n + 1))
+            hint_names = ", ".join(f"h{i}" for i in range(1, n + 1))
             lines.append(
                 f"theorem {inst.lean_name} ({binders} : ℝ) "
                 f"(hsum : {hsum_lhs} = {rat_lean(cert.S)}) :\n"
                 f"    ({rat_lean(cert.B)} : ℝ) ≤ {fterms} := by\n"
-                f"  nlinarith [{sq_hints}, hsum]\n"
+                f"{haves}"
+                f"  linarith [{hint_names}, hsum]\n"
             )
-            ntheorems += 1
-        return "".join(lines), ntheorems
+            nthm += 1
+        return "".join(lines), nthm
 
 
 # ---------------------------------------------------------------------------
@@ -153,10 +213,9 @@ def tangent_sum_family(
     """Build a tangent-line-trick family (kind='tangent').
 
     ``spec``: a callable ``pt -> ((f, x), n, S)`` where ``f`` is a convex
-    quadratic sympy expression in the symbol ``x``, ``n`` the number of terms
-    (≥ 2), and ``S`` the value of the sum constraint ``Σxᵢ = S``.
-    ``certify_tangent_point`` verifies convexity and the exact identity, refusing
-    otherwise (no Lean for a non-member)."""
+    polynomial (degree 2 or 4) in the symbol ``x``, ``n ≥ 2`` the number of
+    terms, and ``S`` the sum-constraint value ``Σxᵢ = S``.  Refuses a non-convex
+    f or unsupported degree (no Lean for a non-member)."""
     return InequalityFamily(
         name=name,
         symbols=(),
