@@ -114,6 +114,71 @@ certificate must break the claim (`assert_certificate_sensitive`). A family that
 deliberately emits reference identities opts out with
 `LeanProfile(allow_reflexive=True)`.
 
+## Independent verification — the Comparator (a second opinion)
+
+The kernel tells you *this is valid Lean*; `nonvacuity.py` tells you *the
+statement isn't hollow*. But both still rest on a single implementation — Lean's
+own kernel and elaborator — and neither can independently confirm that the proof
+Telperion emitted proves the statement you actually *meant*. So Telperion can
+hand its output to a **second opinion**: the
+[Comparator](https://github.com/leanprover/comparator) from OpenAI's
+[ten-proofs](https://github.com/openai/ten-proofs), an independent judge for Lean
+proofs.
+
+You give the Comparator two modules — a **challenge** (the intended statement) and
+a **solution** (Telperion's emitted proof) — and it exports both with
+`lean4export` and checks three things the ordinary build cannot:
+
+- **Statement identity.** The solution must prove *exactly* the challenge
+  statement, not something weaker — a generator-*independent* form of the vacuity
+  guard: the reference statement is authored apart from the certificate, so a
+  drifted or hollowed emission is caught by a type mismatch.
+- **An axiom whitelist.** A per-theorem, machine-checked `#print axioms` — it
+  admits only the axioms you list (the clean `[propext, Quot.sound,
+  Classical.choice]`) and rejects anything else, including `native_decide`'s
+  `ofReduceBool`, not merely `sorryAx`.
+- **A second, non-Lean kernel.** With `enable_nanoda`, the exported proof is
+  replayed through [nanoda](https://github.com/ammkrn/nanoda_lib) — a kernel
+  written from scratch in Rust — *in addition to* Lean's own. A soundness bug
+  would now have to fool two independently-implemented kernels.
+
+`telperion.comparator` is the bridge. It turns an `EmitResult` into a Comparator
+challenge config and scaffolds the challenge module for you:
+
+```python
+from telperion import (challenge_for_result, render_challenge_scaffold,
+                       write_challenge_config)
+
+res = emit(certify(fam), profile, [emitter], validation, file_name="MyFam.lean")
+cfg = challenge_for_result(res, profile, challenge_module="MyFamChallenge")
+write_challenge_config(out / "MyFam.comparator.json", cfg)
+(out / "MyFamChallenge.lean").write_text(
+    render_challenge_scaffold(res, profile, module_name="MyFamChallenge"))
+```
+
+Sharded (multi-file) emits get one config per shard via
+`sharded_challenge_configs(...)`. A full, CI-green worked example — mathlib build,
+both kernels, and all — lives in [`examples/bernoulli/lean`](examples/bernoulli/lean/)
+(workflow `telperion-comparator.yml`).
+
+**It has been pointed at real proofs, not just the examples.** The three anchor
+theorems of the Brualdi–Goldwasser formalization (the `Φ ≤ 1` crux, the g-step /
+master-inequality crux, and the conditional R7′ capstone) are re-verified this
+way in CI: both the Lean kernel *and* nanoda accept each, axiom-clean.
+
+Two honest notes. First, for verifying *your own* output the sandbox isn't the
+point (the kernel replay is), so CI wraps the judge in a shim that sidesteps a
+`--`-stripping quirk in landrun's argument parser; a real
+[bubblewrap](https://github.com/containers/bubblewrap)-backed sandbox is provided
+for the case that actually needs it — judging *untrusted third-party* solutions.
+Second, when a statement genuinely can't be re-stated independently (a capstone
+whose statement is *about* your own structures), the Comparator runs in
+self-check mode — you still get the axiom whitelist and the second kernel, just
+not independent statement authorship.
+
+The full reference — the bridge API, the v4.32.0 pins, the sharded path, and the
+landrun/nanoda operational notes — is [`docs/COMPARATOR.md`](docs/COMPARATOR.md).
+
 ## The workflow (enforced, not advisory)
 
 ```

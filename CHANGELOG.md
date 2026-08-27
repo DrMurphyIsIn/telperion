@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
+
+- **`telperion.comparator` — a bridge to the openai/ten-proofs Comparator**, an
+  independent judge for Lean proofs. It turns an `EmitResult` into a Comparator
+  challenge config (`challenge_for_result`, `challenge_config`), extracts the
+  emitted theorems' fully-qualified names (`emitted_theorem_names`), and scaffolds
+  an independent challenge module that restates the emitted signatures with a
+  proof independent of Telperion's certificate (`render_challenge_scaffold`).
+  Sharded (multi-file) emits get one config per shard
+  (`sharded_challenge_configs`, `render_sharded_challenge_scaffolds`). The
+  Comparator then checks three things beyond `lake build`: **statement identity**
+  (the emitted proof proves *exactly* the challenge statement — a generator-
+  independent nonvacuity), an **axiom whitelist** (per-theorem `#print axioms`,
+  admitting only `[propext, Quot.sound, Classical.choice]` and rejecting e.g.
+  `native_decide`'s `ofReduceBool`), and a **second, non-Lean kernel** —
+  [nanoda](https://github.com/ammkrn/nanoda_lib), replayed alongside Lean's own,
+  so a soundness bug must fool two independently-written kernels.
+- **`examples/bernoulli/lean/`** — a runnable, CI-green end-to-end example
+  (mathlib build + both kernels), driven by `generate.py --comparator [--nanoda]`.
+  Workflow `.github/workflows/telperion-comparator.yml`. `examples/r7_starofhubs`
+  demonstrates the sharded path (9 shards / 972 theorems).
+- **Applied to the Brualdi–Goldwasser proof.** The three AxiomGuard anchors
+  (`R3Cert.phi_le_one`, `…gstep_le_one_achievable`, the conditional capstone
+  `…conjecture1_of_layers`) are independently re-verified in CI
+  (`proof-comparator.yml`): both the Lean kernel and nanoda accept each,
+  axiom-clean.
+- **`.github/comparator/landrun-bwrap.sh`** — a landrun-CLI-compatible sandbox
+  wrapper backed by bubblewrap (real isolation: mount namespace, `--unshare-net`,
+  `--clearenv`) that also preserves the `--` separator real landrun's `urfave/cli`
+  strips. For verifying one's own output the lighter no-sandbox shim is the
+  default (the kernel replay is the guarantee); the bwrap wrapper is for judging
+  untrusted third-party solutions.
+
 ## Unreleased — cone/Farkas: overcomplete-basis solver + first compile gate
 
 - **`cone_combination` now solves the OVERCOMPLETE (underdetermined) basis** —
