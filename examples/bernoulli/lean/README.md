@@ -37,3 +37,15 @@ lake env comparator Bernoulli.comparator.json
 A green run means: the emitted proofs prove *exactly* the challenge statements,
 use only `[propext, Quot.sound, Classical.choice]`, and pass Comparator's kernel
 replay (plus nanoda's, when enabled).
+
+## landrun caveat
+
+Comparator wraps its children (`lake build`, `lean4export`) in
+[landrun](https://github.com/Zouuup/landrun) for sandboxing. Real landrun uses
+`urfave/cli`, whose `Args().Slice()` **strips the `--` separator** — which
+silently breaks lean4export's `<module> -- <constants>` CLI (every constant is
+then parsed as a module import → `unknown module prefix`). Because we verify our
+*own* emitted proofs, the sandbox isn't security-critical (the kernel replay is
+the real guarantee), so the CI points `COMPARATOR_LANDRUN` at a small shim that
+accepts landrun's flags but execs the child un-sandboxed with `--` preserved.
+See `.github/workflows/telperion-comparator.yml`.
