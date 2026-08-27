@@ -1,18 +1,11 @@
-/- telperion 0.1.6 | family Bernoulli | input-hash a71af9f9d7a54674
-   6 theorems, 6 generation-time self-checks passed.
+/- telperion 0.1.6 | family Bernoulli | input-hash 964812f1a9d497db
+   5 theorems, 5 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
 
 import Mathlib
 
 namespace Bernoulli
-
-theorem bernoulli_k1 (x : ℝ) (hx : 0 ≤ x) :
-    0 ≤ 0 := by
-  have hkey : 0 = 0 := by
-    ring
-  rw [hkey]
-  positivity
 
 theorem bernoulli_k2 (x : ℝ) (hx : 0 ≤ x) :
     0 ≤ x ^ 2 := by

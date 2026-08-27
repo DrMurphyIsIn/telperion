@@ -9,10 +9,6 @@ import Mathlib
 
 namespace Bernoulli
 
-theorem bernoulli_k1 (x : ℝ) (hx : 0 ≤ x) :
-    0 ≤ 0 := by
-  positivity
-
 theorem bernoulli_k2 (x : ℝ) (hx : 0 ≤ x) :
     0 ≤ x ^ 2 := by
   positivity

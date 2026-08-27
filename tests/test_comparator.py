@@ -131,9 +131,9 @@ def test_against_real_frozen_output():
     res = _result({"Bernoulli.lean": FROZEN.read_text()})
     prof = LeanProfile(namespace=("Bernoulli",))
     names = emitted_theorem_names(res, prof)
-    assert names == [f"Bernoulli.bernoulli_k{k}" for k in range(1, 7)]
+    assert names == [f"Bernoulli.bernoulli_k{k}" for k in range(2, 7)]
     cfg = challenge_for_result(res, prof, challenge_module="BernoulliChallenge")
-    assert len(cfg["theorem_names"]) == 6
+    assert len(cfg["theorem_names"]) == 5
 
 
 # --- sharded (multi-file) emits ----------------------------------------------

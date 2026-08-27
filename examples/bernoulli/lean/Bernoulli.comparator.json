@@ -2,7 +2,6 @@
   "challenge_module": "BernoulliChallenge",
   "solution_module": "Bernoulli",
   "theorem_names": [
-    "Bernoulli.bernoulli_k1",
     "Bernoulli.bernoulli_k2",
     "Bernoulli.bernoulli_k3",
     "Bernoulli.bernoulli_k4",

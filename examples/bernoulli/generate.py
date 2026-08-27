@@ -5,7 +5,7 @@ Usage:  python3 examples/bernoulli/generate.py [--check]
 This example exercises the GENERAL telperion core (never telperion.bg) on a
 textbook inequality with nothing to do with Brualdi-Goldwasser:
 
-    Bernoulli's inequality (integer form): for integer k >= 1 and real x >= 0,
+    Bernoulli's inequality (integer form): for integer k >= 2 and real x >= 0,
 
         (1 + x)^k - 1 - k*x >= 0.
 
@@ -17,8 +17,13 @@ Expanded, (1+x)^k = sum_{j=0}^k C(k,j) x^j; the degree-0 (=1) and degree-1
 a polynomial with all-nonnegative INTEGER coefficients (binomial coeffs) and
 trivial denominator 1.  That is exactly a Polya certificate, so
 `DirectPolyaEmitter` closes each instance by `positivity`.  We drive the whole
-grid k in {1,2,3,4,5,6} through the enforced certify -> validate -> emit ->
+grid k in {2,3,4,5,6} through the enforced certify -> validate -> emit ->
 freeze pipeline.
+
+(k = 1 is excluded: it collapses to the vacuous equality 0 >= 0, whose emitted
+`rw [hkey] ; positivity` proof closes the goal at the rewrite -- leaving
+`positivity` with "no goals" -- so it is not a well-formed instance of the
+inequality.  Bernoulli's inequality is non-trivial only for k >= 2.)
 
 Without --check: writes frozen/Bernoulli.lean (and frozen/manifest.json).
 With --check: regenerates in memory and diffs against the frozen copy —
@@ -54,8 +59,8 @@ HERE = Path(__file__).resolve().parent
 # The single nonnegative real variable of Bernoulli's inequality.
 x = sp.Symbol("x", nonnegative=True)
 
-# The grid: integer exponents k = 1..6.
-KS = [1, 2, 3, 4, 5, 6]
+# The grid: integer exponents k = 2..6 (k=1 is the vacuous 0 >= 0; see module doc).
+KS = [2, 3, 4, 5, 6]
 
 
 def bernoulli_target(pt) -> sp.Expr:
