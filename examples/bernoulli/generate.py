@@ -41,9 +41,12 @@ from telperion import (  # noqa: E402
     LeanProfile,
     ValidationReport,
     certify,
+    challenge_for_result,
     diff_frozen,
     emit,
     freeze,
+    render_challenge_scaffold,
+    write_challenge_config,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -137,9 +140,45 @@ def build():
     return res
 
 
+def write_comparator(res, lean_dir: Path, *, enable_nanoda: bool = False) -> None:
+    """Materialize the runnable openai/ten-proofs `Comparator` challenge into the
+    lean/ project: the solution module(s), an independent challenge module, and
+    the challenge config JSON.
+
+    `lake env comparator Bernoulli.comparator.json` (run from lean/) then checks
+    that the emitted proof proves EXACTLY these statements, uses only the clean
+    axiom set, and survives an independent kernel replay (Comparator's own; plus
+    nanoda when enabled).  `nanoda` is off by default (it needs a separate Rust
+    build); see .github/workflows/telperion-comparator.yml.
+    """
+    profile = bernoulli_profile()
+    lean_dir.mkdir(parents=True, exist_ok=True)
+    # Solution: the Telperion-emitted file(s), placed where the lakefile builds them.
+    for fname, text in res.files.items():
+        (lean_dir / fname).write_text(text)
+    # Challenge: same theorem names (Comparator matches by qualified name),
+    # different Lean module, proved independently of Telperion's certificate.
+    scaffold = render_challenge_scaffold(res, profile, module_name="BernoulliChallenge")
+    (lean_dir / "BernoulliChallenge.lean").write_text(scaffold)
+    config = challenge_for_result(
+        res, profile,
+        challenge_module="BernoulliChallenge",
+        solution_module="Bernoulli",
+        enable_nanoda=enable_nanoda,
+    )
+    cpath = write_challenge_config(lean_dir / "Bernoulli.comparator.json", config)
+    print(f"wrote lean/{cpath.name} ({len(config['theorem_names'])} theorems) "
+          f"+ lean/Bernoulli.lean + lean/BernoulliChallenge.lean")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--comparator", action="store_true",
+                    help="materialize the runnable Comparator challenge into lean/ "
+                         "(solution + independent challenge module + config JSON)")
+    ap.add_argument("--nanoda", action="store_true",
+                    help="set enable_nanoda in the emitted config (needs nanoda on PATH)")
     args = ap.parse_args()
     res = build()
     if args.check:
@@ -152,6 +191,8 @@ def main() -> int:
         return 0 if ok else 1
     freeze(res, HERE / "frozen")
     print(f"wrote Bernoulli({res.n_theorems}) theorems; input hash {res.input_hash}")
+    if args.comparator:
+        write_comparator(res, HERE / "lean", enable_nanoda=args.nanoda)
     return 0
 
 

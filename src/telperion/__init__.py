@@ -133,6 +133,12 @@ from .nonvacuity import (  # noqa: F401
 from .family import BoxAxis, GridSpec, InequalityFamily  # noqa: F401
 from .lean import LeanProfile, TemplateError  # noqa: F401
 from .provenance import DiffReport, EmitResult, diff_frozen, family_hash, freeze  # noqa: F401
+from .comparator import (  # noqa: F401
+    CLEAN_AXIOMS, challenge_config, challenge_for_result, emitted_theorem_names,
+    emitted_theorem_names_by_file, render_challenge_scaffold,
+    render_sharded_challenge_scaffolds, sharded_challenge_configs,
+    solution_module_of, write_challenge_config,
+)
 from .workflow import ValidationReport, WorkflowError, emit  # noqa: F401
 from .prove import ProofResult, prove_goal  # noqa: F401
 from .backend_lift import (  # noqa: F401
