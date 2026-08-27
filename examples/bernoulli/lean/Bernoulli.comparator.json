@@ -1,0 +1,17 @@
+{
+  "challenge_module": "BernoulliChallenge",
+  "solution_module": "BernoulliSolution",
+  "theorem_names": [
+    "BernoulliInequality.bernoulli_k2",
+    "BernoulliInequality.bernoulli_k3",
+    "BernoulliInequality.bernoulli_k4",
+    "BernoulliInequality.bernoulli_k5",
+    "BernoulliInequality.bernoulli_k6"
+  ],
+  "permitted_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ],
+  "enable_nanoda": false
+}

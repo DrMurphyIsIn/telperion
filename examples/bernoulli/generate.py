@@ -5,7 +5,7 @@ Usage:  python3 examples/bernoulli/generate.py [--check]
 This example exercises the GENERAL telperion core (never telperion.bg) on a
 textbook inequality with nothing to do with Brualdi-Goldwasser:
 
-    Bernoulli's inequality (integer form): for integer k >= 1 and real x >= 0,
+    Bernoulli's inequality (integer form): for integer k >= 2 and real x >= 0,
 
         (1 + x)^k - 1 - k*x >= 0.
 
@@ -17,8 +17,13 @@ Expanded, (1+x)^k = sum_{j=0}^k C(k,j) x^j; the degree-0 (=1) and degree-1
 a polynomial with all-nonnegative INTEGER coefficients (binomial coeffs) and
 trivial denominator 1.  That is exactly a Polya certificate, so
 `DirectPolyaEmitter` closes each instance by `positivity`.  We drive the whole
-grid k in {1,2,3,4,5,6} through the enforced certify -> validate -> emit ->
+grid k in {2,3,4,5,6} through the enforced certify -> validate -> emit ->
 freeze pipeline.
+
+(k = 1 is excluded: it collapses to the vacuous equality 0 >= 0, whose emitted
+`rw [hkey] ; positivity` proof closes the goal at the rewrite -- leaving
+`positivity` with "no goals" -- so it is not a well-formed instance of the
+inequality.  Bernoulli's inequality is non-trivial only for k >= 2.)
 
 Without --check: writes frozen/Bernoulli.lean (and frozen/manifest.json).
 With --check: regenerates in memory and diffs against the frozen copy —
@@ -41,9 +46,12 @@ from telperion import (  # noqa: E402
     LeanProfile,
     ValidationReport,
     certify,
+    challenge_for_result,
     diff_frozen,
     emit,
     freeze,
+    render_challenge_scaffold,
+    write_challenge_config,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -51,8 +59,8 @@ HERE = Path(__file__).resolve().parent
 # The single nonnegative real variable of Bernoulli's inequality.
 x = sp.Symbol("x", nonnegative=True)
 
-# The grid: integer exponents k = 1..6.
-KS = [1, 2, 3, 4, 5, 6]
+# The grid: integer exponents k = 2..6 (k=1 is the vacuous 0 >= 0; see module doc).
+KS = [2, 3, 4, 5, 6]
 
 
 def bernoulli_target(pt) -> sp.Expr:
@@ -74,7 +82,14 @@ def bernoulli_family():
 
 
 def bernoulli_profile() -> LeanProfile:
-    return LeanProfile(namespace=("Bernoulli",))
+    # Namespace `BernoulliInequality` is deliberately distinct from the lake
+    # package (`BernoulliComparator`) and both Lean modules (`BernoulliSolution`,
+    # `BernoulliChallenge`).  A theorem name like `Bernoulli.bernoulli_k2` whose
+    # PREFIX collides with a package/module root makes lean4export resolve it as a
+    # module path (`Bernoulli/bernoulli_k2.olean`) during export -> "unknown module
+    # prefix 'Bernoulli'".  ten-proofs avoids this the same way (namespace
+    # `PermanentFormulaLowerBound` != package `ten-proofs` != module `Permanent`).
+    return LeanProfile(namespace=("BernoulliInequality",))
 
 
 def _exact_spot_checks() -> ValidationReport:
@@ -137,9 +152,51 @@ def build():
     return res
 
 
+def write_comparator(res, lean_dir: Path, *, enable_nanoda: bool = False) -> None:
+    """Materialize the runnable openai/ten-proofs `Comparator` challenge into the
+    lean/ project: the solution module(s), an independent challenge module, and
+    the challenge config JSON.
+
+    `lake env comparator Bernoulli.comparator.json` (run from lean/) then checks
+    that the emitted proof proves EXACTLY these statements, uses only the clean
+    axiom set, and survives an independent kernel replay (Comparator's own; plus
+    nanoda when enabled).  `nanoda` is off by default (it needs a separate Rust
+    build); see .github/workflows/telperion-comparator.yml.
+    """
+    profile = bernoulli_profile()
+    lean_dir.mkdir(parents=True, exist_ok=True)
+    # Solution: the Telperion-emitted proofs, as module `BernoulliSolution`.
+    # NOTE: the module must NOT be named `Bernoulli` -- that equals the theorems'
+    # namespace, and lean4export then mistakes the decl `Bernoulli.bernoulli_k2`
+    # for a submodule `Bernoulli/bernoulli_k2`.  ten-proofs avoids this the same
+    # way (namespace `PermanentFormulaLowerBound` != modules `Permanent` /
+    # `ComparatorChallenges.*`).  So: namespace `Bernoulli`, modules
+    # `BernoulliSolution` + `BernoulliChallenge`.
+    (solution_text,) = res.files.values()
+    (lean_dir / "BernoulliSolution.lean").write_text(solution_text)
+    # Challenge: same theorem names (Comparator matches by qualified name),
+    # different Lean module, proved independently of Telperion's certificate.
+    scaffold = render_challenge_scaffold(res, profile, module_name="BernoulliChallenge")
+    (lean_dir / "BernoulliChallenge.lean").write_text(scaffold)
+    config = challenge_for_result(
+        res, profile,
+        challenge_module="BernoulliChallenge",
+        solution_module="BernoulliSolution",
+        enable_nanoda=enable_nanoda,
+    )
+    cpath = write_challenge_config(lean_dir / "Bernoulli.comparator.json", config)
+    print(f"wrote lean/{cpath.name} ({len(config['theorem_names'])} theorems) "
+          f"+ lean/BernoulliSolution.lean + lean/BernoulliChallenge.lean")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--comparator", action="store_true",
+                    help="materialize the runnable Comparator challenge into lean/ "
+                         "(solution + independent challenge module + config JSON)")
+    ap.add_argument("--nanoda", action="store_true",
+                    help="set enable_nanoda in the emitted config (needs nanoda on PATH)")
     args = ap.parse_args()
     res = build()
     if args.check:
@@ -152,6 +209,8 @@ def main() -> int:
         return 0 if ok else 1
     freeze(res, HERE / "frozen")
     print(f"wrote Bernoulli({res.n_theorems}) theorems; input hash {res.input_hash}")
+    if args.comparator:
+        write_comparator(res, HERE / "lean", enable_nanoda=args.nanoda)
     return 0
 
 

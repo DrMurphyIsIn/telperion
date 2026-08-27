@@ -1,0 +1,30 @@
+name = "BernoulliComparator"
+defaultTargets = ["BernoulliSolution", "BernoulliChallenge"]
+
+# Same mathlib pin as every other telperion lean example (and as openai/ten-proofs).
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+# The Telperion-emitted proofs (the "solution" Comparator judges).
+# Package, modules, and namespace are all DISTINCT: package `BernoulliComparator`,
+# modules `BernoulliSolution`/`BernoulliChallenge`, namespace `BernoulliInequality`.
+# If any of these coincided with the theorems' namespace prefix, lean4export would
+# resolve `<prefix>.bernoulli_k2` as a module path and fail ("unknown module
+# prefix").  ten-proofs keeps the same separation.
+[[lean_lib]]
+name = "BernoulliSolution"
+
+# The independent statement authority (the "challenge"): same theorem names,
+# proved without Telperion's certificate.  Comparator asserts the solution proves
+# exactly these statements.  See ../generate.py --comparator and
+# .github/workflows/telperion-comparator.yml.
+[[lean_lib]]
+name = "BernoulliChallenge"
+
+# NOTE: `comparator` is NOT required here.  The comparator + lean4export binaries
+# are built once from a separate checkout of github.com/leanprover/comparator
+# (tag v4.32.0, matching this toolchain) and run against this project via
+# `lake env comparator Bernoulli.comparator.json`.  Keeping this project
+# mathlib-only avoids coupling its build to the judge.
