@@ -7,7 +7,7 @@
 
 import Mathlib
 
-namespace Bernoulli
+namespace BernoulliInequality
 
 theorem bernoulli_k2 (x : ℝ) (hx : 0 ≤ x) :
     0 ≤ x ^ 2 := by
@@ -29,4 +29,4 @@ theorem bernoulli_k6 (x : ℝ) (hx : 0 ≤ x) :
     0 ≤ 15 * x ^ 2 + 20 * x ^ 3 + 15 * x ^ 4 + 6 * x ^ 5 + x ^ 6 := by
   positivity
 
-end Bernoulli
+end BernoulliInequality

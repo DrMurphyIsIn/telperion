@@ -2,11 +2,11 @@
   "challenge_module": "BernoulliChallenge",
   "solution_module": "BernoulliSolution",
   "theorem_names": [
-    "Bernoulli.bernoulli_k2",
-    "Bernoulli.bernoulli_k3",
-    "Bernoulli.bernoulli_k4",
-    "Bernoulli.bernoulli_k5",
-    "Bernoulli.bernoulli_k6"
+    "BernoulliInequality.bernoulli_k2",
+    "BernoulliInequality.bernoulli_k3",
+    "BernoulliInequality.bernoulli_k4",
+    "BernoulliInequality.bernoulli_k5",
+    "BernoulliInequality.bernoulli_k6"
   ],
   "permitted_axioms": [
     "propext",

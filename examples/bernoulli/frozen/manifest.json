@@ -1,6 +1,6 @@
 {
   "family": "Bernoulli",
-  "input_hash": "964812f1a9d497db99d273a2d47091ca00b00a9d59d5101923162e3ec58d1b8d",
+  "input_hash": "3aa1dbc96efb889c36482fb2c02c88cb024af0cdc536e82d246f5927cfd49d37",
   "tool_version": "0.1.6",
   "files": [
     "Bernoulli.lean"

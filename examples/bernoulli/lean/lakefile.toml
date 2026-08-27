@@ -1,4 +1,4 @@
-name = "Bernoulli"
+name = "BernoulliComparator"
 defaultTargets = ["BernoulliSolution", "BernoulliChallenge"]
 
 # Same mathlib pin as every other telperion lean example (and as openai/ten-proofs).
@@ -8,10 +8,11 @@ scope = "leanprover-community"
 rev = "v4.32.0"
 
 # The Telperion-emitted proofs (the "solution" Comparator judges).
-# Named BernoulliSolution, NOT Bernoulli: the theorems live in namespace
-# `Bernoulli`, and a module also named `Bernoulli` makes lean4export mistake the
-# decl `Bernoulli.bernoulli_k2` for a submodule.  (ten-proofs uses namespace
-# `PermanentFormulaLowerBound` != module `Permanent` for the same reason.)
+# Package, modules, and namespace are all DISTINCT: package `BernoulliComparator`,
+# modules `BernoulliSolution`/`BernoulliChallenge`, namespace `BernoulliInequality`.
+# If any of these coincided with the theorems' namespace prefix, lean4export would
+# resolve `<prefix>.bernoulli_k2` as a module path and fail ("unknown module
+# prefix").  ten-proofs keeps the same separation.
 [[lean_lib]]
 name = "BernoulliSolution"
 

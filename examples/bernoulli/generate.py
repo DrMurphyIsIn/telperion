@@ -82,7 +82,14 @@ def bernoulli_family():
 
 
 def bernoulli_profile() -> LeanProfile:
-    return LeanProfile(namespace=("Bernoulli",))
+    # Namespace `BernoulliInequality` is deliberately distinct from the lake
+    # package (`BernoulliComparator`) and both Lean modules (`BernoulliSolution`,
+    # `BernoulliChallenge`).  A theorem name like `Bernoulli.bernoulli_k2` whose
+    # PREFIX collides with a package/module root makes lean4export resolve it as a
+    # module path (`Bernoulli/bernoulli_k2.olean`) during export -> "unknown module
+    # prefix 'Bernoulli'".  ten-proofs avoids this the same way (namespace
+    # `PermanentFormulaLowerBound` != package `ten-proofs` != module `Permanent`).
+    return LeanProfile(namespace=("BernoulliInequality",))
 
 
 def _exact_spot_checks() -> ValidationReport:

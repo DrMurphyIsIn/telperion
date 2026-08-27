@@ -129,9 +129,9 @@ def test_scaffold_restates_signatures_with_independent_proof():
 @pytest.mark.skipif(not FROZEN.exists(), reason="frozen Bernoulli.lean not present")
 def test_against_real_frozen_output():
     res = _result({"Bernoulli.lean": FROZEN.read_text()})
-    prof = LeanProfile(namespace=("Bernoulli",))
+    prof = LeanProfile(namespace=("BernoulliInequality",))
     names = emitted_theorem_names(res, prof)
-    assert names == [f"Bernoulli.bernoulli_k{k}" for k in range(2, 7)]
+    assert names == [f"BernoulliInequality.bernoulli_k{k}" for k in range(2, 7)]
     cfg = challenge_for_result(res, prof, challenge_module="BernoulliChallenge")
     assert len(cfg["theorem_names"]) == 5
 
