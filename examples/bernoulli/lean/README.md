@@ -49,3 +49,26 @@ then parsed as a module import → `unknown module prefix`). Because we verify o
 the real guarantee), so the CI points `COMPARATOR_LANDRUN` at a small shim that
 accepts landrun's flags but execs the child un-sandboxed with `--` preserved.
 See `.github/workflows/telperion-comparator.yml`.
+
+### Judging untrusted third-party solutions
+
+For that case you *do* want a real sandbox. Point `COMPARATOR_LANDRUN` at
+`.github/comparator/landrun-bwrap.sh` — a landrun-CLI-compatible wrapper backed by
+[bubblewrap](https://github.com/containers/bubblewrap) that provides real
+isolation (mount namespace, `--unshare-net`, `--clearenv`) **and** preserves `--`.
+It translates landrun's `--ro/--rw/--rox` flags into bwrap binds. The
+`comparator-sandbox-check` CI job self-tests it (bwrap runs, `--` survives, writes
+outside allowed paths are blocked, network is unshared). A full comparator run
+under bwrap may need extra binds (e.g. a larger writable `.lake`) tuned to the
+project; the wrapper's base mounts (`/proc`, `/dev`, tmpfs `/tmp`) cover the
+common cases.
+
+## nanoda — the 2nd, non-Lean kernel
+
+`generate.py --comparator --nanoda` sets `enable_nanoda` in the config; with a
+`nanoda_bin` on `COMPARATOR_NANODA`, Comparator replays the solution through
+[nanoda](https://github.com/ammkrn/nanoda_lib) (an independent Rust kernel) *in
+addition to* the Lean default kernel — so a bug would have to fool two
+independently-implemented kernels. The CI job builds nanoda and runs with it
+enabled. (Validated: nanoda accepts the bernoulli solution with the clean axiom
+set and rejects it under an empty whitelist.)
