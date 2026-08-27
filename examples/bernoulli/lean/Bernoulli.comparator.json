@@ -1,6 +1,6 @@
 {
   "challenge_module": "BernoulliChallenge",
-  "solution_module": "Bernoulli",
+  "solution_module": "BernoulliSolution",
   "theorem_names": [
     "Bernoulli.bernoulli_k2",
     "Bernoulli.bernoulli_k3",

@@ -158,9 +158,15 @@ def write_comparator(res, lean_dir: Path, *, enable_nanoda: bool = False) -> Non
     """
     profile = bernoulli_profile()
     lean_dir.mkdir(parents=True, exist_ok=True)
-    # Solution: the Telperion-emitted file(s), placed where the lakefile builds them.
-    for fname, text in res.files.items():
-        (lean_dir / fname).write_text(text)
+    # Solution: the Telperion-emitted proofs, as module `BernoulliSolution`.
+    # NOTE: the module must NOT be named `Bernoulli` -- that equals the theorems'
+    # namespace, and lean4export then mistakes the decl `Bernoulli.bernoulli_k2`
+    # for a submodule `Bernoulli/bernoulli_k2`.  ten-proofs avoids this the same
+    # way (namespace `PermanentFormulaLowerBound` != modules `Permanent` /
+    # `ComparatorChallenges.*`).  So: namespace `Bernoulli`, modules
+    # `BernoulliSolution` + `BernoulliChallenge`.
+    (solution_text,) = res.files.values()
+    (lean_dir / "BernoulliSolution.lean").write_text(solution_text)
     # Challenge: same theorem names (Comparator matches by qualified name),
     # different Lean module, proved independently of Telperion's certificate.
     scaffold = render_challenge_scaffold(res, profile, module_name="BernoulliChallenge")
@@ -168,12 +174,12 @@ def write_comparator(res, lean_dir: Path, *, enable_nanoda: bool = False) -> Non
     config = challenge_for_result(
         res, profile,
         challenge_module="BernoulliChallenge",
-        solution_module="Bernoulli",
+        solution_module="BernoulliSolution",
         enable_nanoda=enable_nanoda,
     )
     cpath = write_challenge_config(lean_dir / "Bernoulli.comparator.json", config)
     print(f"wrote lean/{cpath.name} ({len(config['theorem_names'])} theorems) "
-          f"+ lean/Bernoulli.lean + lean/BernoulliChallenge.lean")
+          f"+ lean/BernoulliSolution.lean + lean/BernoulliChallenge.lean")
 
 
 def main() -> int:

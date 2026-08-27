@@ -1,5 +1,5 @@
 name = "Bernoulli"
-defaultTargets = ["Bernoulli", "BernoulliChallenge"]
+defaultTargets = ["BernoulliSolution", "BernoulliChallenge"]
 
 # Same mathlib pin as every other telperion lean example (and as openai/ten-proofs).
 [[require]]
@@ -8,8 +8,12 @@ scope = "leanprover-community"
 rev = "v4.32.0"
 
 # The Telperion-emitted proofs (the "solution" Comparator judges).
+# Named BernoulliSolution, NOT Bernoulli: the theorems live in namespace
+# `Bernoulli`, and a module also named `Bernoulli` makes lean4export mistake the
+# decl `Bernoulli.bernoulli_k2` for a submodule.  (ten-proofs uses namespace
+# `PermanentFormulaLowerBound` != module `Permanent` for the same reason.)
 [[lean_lib]]
-name = "Bernoulli"
+name = "BernoulliSolution"
 
 # The independent statement authority (the "challenge"): same theorem names,
 # proved without Telperion's certificate.  Comparator asserts the solution proves
