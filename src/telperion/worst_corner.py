@@ -1,13 +1,23 @@
 """Worst-corner polynomial-positivity certificates (`worst_corner_positivity`).
 
-The primitive that three independent investigations converged on: BG's ~40 corner
-certs (`R47R4Kelmans*Cert`, `R47R6DeloadCert`, `R47Cert*`, `bilinear_corner_nonneg`,
-`HypFloors`, …), the RH Turán/Jensen/Toeplitz enclosure bridges
-(`toeplitz3_pos_of_enclosure`), and the `hub_dom` domination certs are ALL instances
-of one shape:
+The WORST-CORNER-MONOMIAL positivity shape: the RH Turán/Jensen/Toeplitz enclosure
+bridges (`toeplitz3_pos_of_enclosure`) and the `hub_dom` domination certs instantiate
 
     given a polynomial  P(g_1..g_n)  and a box  lo_i <= g_i <= hi_i  (lo_i >= 0),
-    certify  P > 0  over the box.
+    certify  P > 0  over the box,
+
+by bounding EACH monomial at its worst corner (floor if the coefficient is positive,
+ceiling if negative) and summing.
+
+SCOPE (honest, checked against the actual BG certs).  This is NOT the dominant BG
+corner pattern.  BG's Kelmans certs (`R47R4Kelmans*Cert`) are all-positive-coefficient
+(`positivity`); its de-load / shed certs (`shed_step_c1..c5`, `bilinear_corner_nonneg`,
+`linear_nonneg_of_endpoints`) use the MULTILINEAR / ENDPOINT-BRACKETING principle (a
+function affine in the activity variable is nonneg on a box iff nonneg at the
+endpoints) + `positivity` -- a DIFFERENT, complementary primitive (see
+`multilinear_corner.py`).  This module reproduces `toeplitz3_pos_of_enclosure` exactly
+and applies to genuinely mixed-sign-monomial positivity; it is the right tool for that
+flavor, not for BG's endpoint-bracketing certs.
 
 Since every `g_i >= 0`, each monomial `c * prod g_i^e_i` is minimized over the box at
 a CORNER: at the floor `g_i = lo_i` if `c > 0`, at the ceiling `g_i = hi_i` if `c < 0`
