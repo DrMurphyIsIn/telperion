@@ -214,7 +214,7 @@ from .branch_potential import (  # noqa: F401
 )
 # Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
 from .tie_regime import (  # noqa: F401
-    CHERRY, TieCherryWorstCertificate, binding_j, broom_child,
+    CHERRY, TieCherryWorstCertificate, TieSlackCertificate, binding_j, broom_child,
     cherry_vs_broom_ratio, slack_g, slack_hub_bound, slack_linobj, uniform_hub_ell,
 )
 

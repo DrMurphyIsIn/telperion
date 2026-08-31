@@ -130,4 +130,75 @@ class TieCherryWorstCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+# Frozen rigorous rational log-enclosures `log(p/q) in [lo/_D, hi/_D]` (floor/ceil at 80-digit precision) -- the
+# transcendental import for the slack-bound gate (turan/jensen/concavity trust model).  `(621,64)` = `log(621/64)`
+# (= 11 F*) AND `log(total(B(5)))` (same value).
+_D = 10 ** 30
+_LOG = {
+    (621, 64): (2272447998573806908489095813828, 2272447998573806908489095813829),
+    (3, 2): (405465108108164381978013115464, 405465108108164381978013115465),
+    (11, 4): (1011600911678479925227479335048, 1011600911678479925227479335049),
+    (135, 32): (1439538875638702901700334436702, 1439538875638702901700334436703),
+    (513, 80): (1858249210496887921925075323596, 1858249210496887921925075323597),
+    (6561, 448): (2684105076929892369553216423187, 2684105076929892369553216423188),
+    (22599, 1024): (3094189130894351300128314531495, 3094189130894351300128314531496),
+    (8505, 256): (3503232060350399661344481289616, 3503232060350399661344481289617),
+}
+
+
+def _log_lo(fr):
+    return Fr(_LOG[(fr.numerator, fr.denominator)][0], _D)
+
+
+def _log_hi(fr):
+    return Fr(_LOG[(fr.numerator, fr.denominator)][1], _D)
+
+
+@dataclass(frozen=True)
+class TieSlackCertificate:
+    """Kernel-gates the slack bound `slack_g(k) <= F*` for `k >= 16` (which covers MIXED hubs and closes the
+    branch-induction upper bound for `k >= 16`).  Three atom families, all rational after clearing `F* =
+    log(621/64)/11` and using frozen log-enclosures `L(x) in [lo, hi]`:
+
+      (A) `slack_g(16) < F*`:  per envelope child `c`, `phi_c(16) < F*`  <=>
+          `176 L(total_c) + 11 (h_c/d_c)(16/17) < (16|c|+1) L(621/64)`  (upper LHS by `L_hi`, lower RHS by `L_lo`);
+      (B) monotone: per non-`B(5)` envelope child, `dphi_c/dk|_{16} < 0`  <=>
+          `11 L(total_c) + 11 (h_c/d_c)/289 < |c| L(621/64)`  (so `slack_g(k) <= slack_g(16)` for `k >= 16`);
+      (C) `B(5)` bound: `F* > 3/23`  <=>  `23 L(621/64) > 33`.
+
+    Enclosures are the transcendental import (concavity/turan trust model).  Covers the envelope `{cherry,
+    B(2..8)}`; larger brooms / non-envelope branches are dominated (documented, verified).  conjecture1_proved =
+    False."""
+
+    def _children(self):
+        return [("cherry", CHERRY)] + [(f"B{j}", broom_child(j)) for j in range(2, 9)]
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)` with the certified `lhs op rhs` (`op` in {'<','>'}), exact rationals."""
+        g = Fr(621, 64)
+        Lg_lo = _log_lo(g)
+        out = []
+        for nm, c in self._children():
+            tot, sz, hd = c["total"], c["size"], Fr(c["h"], 1) / c["d"]
+            out.append((f"tie_slack_phi16_{nm}",
+                        176 * _log_hi(tot) + 11 * hd * Fr(16, 17), (16 * sz + 1) * Lg_lo, "<"))
+            if nm != "B5":
+                out.append((f"tie_slack_deriv16_{nm}",
+                            11 * _log_hi(tot) + 11 * hd * Fr(1, 289), sz * Lg_lo, "<"))
+        out.append(("tie_slack_Fstar_gt_3_23", 23 * Lg_lo, Fr(33), ">"))
+        return out
+
+    def check(self) -> bool:
+        return all((lhs < rhs) if op == "<" else (lhs > rhs) for _, lhs, rhs, op in self.atoms())
+
+    def lean_module(self, namespace="BGTieSlack") -> str:
+        assert self.check(), "slack certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
