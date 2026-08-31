@@ -72,6 +72,32 @@ def binding_j(k, jmax=25):
     return min(range(1, jmax + 1), key=lambda j: cherry_vs_broom_ratio(k, j))
 
 
+def _ell_of(child):
+    tot, sz = child["total"], child["size"]
+    return (math.log(tot.numerator) - math.log(tot.denominator)) - sz * F_STAR
+
+
+def slack_linobj(k, child):
+    """`ell(child) + h/((k+1)d)` -- the per-child term of the slack-regime bound (via `log(1+Σx) <= Σx`)."""
+    return _ell_of(child) + float(child["h"]) / ((k + 1) * child["d"])
+
+
+def slack_g(k, jmax=40):
+    """`g(k) = k * max over the branch envelope (cherry + brooms B(j)) of (ell(c) + h_c/((k+1)d_c))`.
+    Envelope reduction: per degree the `ell`-max branch is the broom, and larger branches have `ell` bounded away
+    from `0`, so the max lies on this small envelope (verified over all branches <= size 11)."""
+    envs = [CHERRY] + [broom_child(j) for j in range(2, jmax)]
+    return k * max(slack_linobj(k, c) for c in envs)
+
+
+def slack_hub_bound(k):
+    """Upper bound on `ell(hub of k children)` in the SLACK regime: `ell(hub) <= slack_g(k) - F*`.
+    (From `ell(hub) = Σ ell(c) + log(1 + Σ x_c) - F* <= Σ(ell(c) + x_c) - F* <= k*max(ell(c)+x_c) - F*`.)
+    `<= 0` for all `k >= 21` (sup at `k = 21`: `0.156 - F* = -0.050`; `-> 0.130 - F* = -0.077` as `k -> inf`)
+    -- the tie-free soft bound closing the slack regime `k >= 21`.  conjecture1_proved = False."""
+    return slack_g(k) - F_STAR
+
+
 @dataclass(frozen=True)
 class TieCherryWorstCertificate:
     """Certifies the FINITE tie-regime cherry-worst: for each `k` in `[2, k_max]`, the cherry is the worst
