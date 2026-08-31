@@ -191,5 +191,10 @@ from .majorization import (  # noqa: F401
     SchurConvexityCertificate, SchurVerdict, TTransform,
     is_schur_concave, is_schur_convex, majorization_chain, majorizes, recompose,
 )
+# VDB-weighted leaf-exchange / arm-balancing operator + ΔZ sign certificate (2026-08-30): skill S1b,
+# the local move whose exact ΔZ drives the (corrected) reduction step.
+from .vdb_exchange import (  # noqa: F401
+    LeafExchangeCertificate, apply_move, delta_Z, delta_Zk, local_delta_from_pairs,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
