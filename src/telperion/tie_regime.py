@@ -92,9 +92,11 @@ def slack_g(k, jmax=40):
 
 def slack_hub_bound(k):
     """Upper bound on `ell(hub of k children)` in the SLACK regime: `ell(hub) <= slack_g(k) - F*`.
-    (From `ell(hub) = Σ ell(c) + log(1 + Σ x_c) - F* <= Σ(ell(c) + x_c) - F* <= k*max(ell(c)+x_c) - F*`.)
-    `<= 0` for all `k >= 21` (sup at `k = 21`: `0.156 - F* = -0.050`; `-> 0.130 - F* = -0.077` as `k -> inf`)
-    -- the tie-free soft bound closing the slack regime `k >= 21`.  conjecture1_proved = False."""
+    (From `ell(hub) = Σ ell(c) + log(1 + Σ x_c) - F* <= Σ(ell(c) + x_c) - F* <= k*max(ell(c)+x_c) - F*`; the
+    `sum <= k*max` step holds for MIXED children, so this covers mixed hubs.)  `<= 0` for all `k >= 16`
+    (`slack_g(16) = 0.190 < F*`; sup near `k=16`, `-> 0.130 - F* = -0.077` as `k -> inf`) -- the tie-free soft
+    bound covering `k >= 16`.  (Combined with `mixed <= B(k)` for `k <= 15`, every `k` is covered with no gap.)
+    conjecture1_proved = False."""
     return slack_g(k) - F_STAR
 
 
