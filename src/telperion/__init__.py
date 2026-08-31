@@ -176,5 +176,10 @@ from .lean_lint import (  # noqa: F401
     lint_lean_file,
     lint_lean_text,
 )
+# VDB-weighted matching generating polynomial (2026-08-30): the coefficient vector Z_k for the
+# combinatorial extremality program (weight 1/(d_u d_v)); extends matching_free_energy.rho.
+from .weighted_matching import (  # noqa: F401
+    CoefficientwiseDomination, matching_generating_poly, weighted_Z,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
