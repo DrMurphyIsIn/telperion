@@ -181,5 +181,15 @@ from .lean_lint import (  # noqa: F401
 from .weighted_matching import (  # noqa: F401
     CoefficientwiseDomination, matching_generating_poly, weighted_Z,
 )
+# Caterpillar transfer recurrence (Pant) + Perron free energy, and majorization/Schur-convexity
+# (2026-08-30): combinatorial-program skills S0b, S1a.
+from .transfer_caterpillar import (  # noqa: F401
+    TransferCaterpillarCertificate, Z_recurrence, caterpillar_edges,
+    free_energy, perron_eigenvalue, uniform_transfer_matrix,
+)
+from .majorization import (  # noqa: F401
+    SchurConvexityCertificate, SchurVerdict, TTransform,
+    is_schur_concave, is_schur_convex, majorization_chain, majorizes, recompose,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
