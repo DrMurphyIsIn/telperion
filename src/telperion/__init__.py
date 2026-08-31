@@ -176,5 +176,31 @@ from .lean_lint import (  # noqa: F401
     lint_lean_file,
     lint_lean_text,
 )
+# VDB-weighted matching generating polynomial (2026-08-30): the coefficient vector Z_k for the
+# combinatorial extremality program (weight 1/(d_u d_v)); extends matching_free_energy.rho.
+from .weighted_matching import (  # noqa: F401
+    CoefficientwiseDomination, matching_generating_poly, weighted_Z,
+)
+# Caterpillar transfer recurrence (Pant) + Perron free energy, and majorization/Schur-convexity
+# (2026-08-30): combinatorial-program skills S0b, S1a.
+from .transfer_caterpillar import (  # noqa: F401
+    TransferCaterpillarCertificate, Z_recurrence, arm_balance_delta_g, caterpillar_edges,
+    free_energy, perron_eigenvalue, two_hub_Z, uniform_transfer_matrix,
+)
+from .majorization import (  # noqa: F401
+    SchurConvexityCertificate, SchurVerdict, TTransform,
+    is_schur_concave, is_schur_convex, majorization_chain, majorizes, recompose,
+)
+# VDB-weighted leaf-exchange / arm-balancing operator + ΔZ sign certificate (2026-08-30): skill S1b,
+# the local move whose exact ΔZ drives the (corrected) reduction step.
+from .vdb_exchange import (  # noqa: F401
+    LeafExchangeCertificate, apply_move, delta_Z, delta_Zk, local_delta_from_pairs,
+)
+# Star-of-cherry-brooms S(k,c) (2026-08-31): the family that beats Pant's caterpillars for the Laplacian ratio;
+# exact closed form + the c=5 branch-rate optimum (cross-exponentiated rational certificate).
+from .spider_broom import (  # noqa: F401
+    BroomOptimumCertificate, broom_argmax_c, broom_free_energy, broom_rate,
+    broom_total, rate_dominates, spider_Z, spider_edges,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).

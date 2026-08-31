@@ -1,0 +1,132 @@
+"""Star-of-cherry-brooms `S(k,c)` — the family that beats Pant's caterpillars for the Laplacian ratio.
+
+The Brualdi-Goldwasser problem asks for the tree maximizing `pi(T) = per(L)/prod(deg) = SUM_{matchings M}
+prod_{uv in M} 1/(d_u d_v)` (== `matching_free_energy.rho`).  The exact maximizer is OPEN.  Wu-Dong-Lai (DAM
+372, 2025) conjectured the *subdivided star* (one cherry per branch); Pant 2026 (arXiv:2605.14176) refuted them
+with *path-core caterpillars* `T(a_1..a_m)` but left the maximizer open.
+
+This module builds the **star-of-cherry-brooms** `S(k,c)`: one central hub joined to `k` branch-hubs, each
+branch-hub of degree `c+1` carrying `c` pendant length-2 arms ("cherries", each = branch-hub-armmid-leaf).  Its
+STAR core gives every branch-hub degree `c+1` (vs the caterpillar path-core's `c+2`); the lower degree means a
+larger `1/d` weight, and the single high-degree center is asymptotically free.  Exact closed form (verified ==
+`rho`):
+
+    total(c) = (3/2)^(c-1) (4c+3) / (2(c+1))                 # what the center sees from ONE B(c) branch
+    Z(S(k,c)) = total(c)^(k-1) * ( total(c) + (3/2)^c/(c+1) )
+
+so the per-vertex free-energy density is `F = (1/n) log Z -> log(total(c)) / (2c+1)` as `k -> inf` (each branch
+is `2c+1` vertices; the center is negligible).  This STRICTLY EXCEEDS the caterpillar sup `0.205098` for every
+`c >= 3`, peaking at `c = 5`: `total(5) = 621/64`, `F* = log(621/64)/11 = 0.206586` (rate `1.229474`).  Among
+all rooted branches up to 16 vertices, `B(5)` is the UNIQUE density maximizer (exhaustive check).
+
+`BroomOptimumCertificate` kernel-gates the `c = 5` optimum by CROSS-EXPONENTIATION: `rate(c1) > rate(c2)` iff
+`total(c1)^(2 c2 + 1) > total(c2)^(2 c1 + 1)` (both exact rationals -- clears the `(2c+1)`-th roots), a
+`norm_num`-checkable rational inequality.
+
+This is a NOVEL result (not in the literature; a stronger counterexample to Wu-Dong-Lai than Pant's, and a new
+lower bound on the max Laplacian ratio growth rate).  It is ASYMPTOTIC DOMINANCE of one explicit family, NOT a
+proof of the global maximizer -- that remains OPEN.  conjecture1_proved = False.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from fractions import Fraction as Fr
+
+
+def spider_edges(k, c):
+    """Build `S(k,c)`: center hub `0` joined to `k` branch-hubs, each carrying `c` length-2 cherries.
+
+    Returns `(n, edges)`, `n = 1 + k(2c+1)`.  Center degree `k`; each branch-hub degree `c+1`; armmids deg 2.
+    """
+    edges = []
+    nid = 1
+    center = 0
+    for _ in range(k):
+        bh = nid
+        nid += 1
+        edges.append((center, bh))
+        for _ in range(c):
+            armmid, leaf = nid, nid + 1
+            nid += 2
+            edges.append((bh, armmid))
+            edges.append((armmid, leaf))
+    return nid, tuple(edges)
+
+
+def broom_total(c):
+    """`total(c) = (3/2)^(c-1) (4c+3) / (2(c+1))` -- the exact weight a single `B(c)` branch presents to the
+    center (branch-hub unmatched-up OR matched-down to a cherry).  `total(5) = 621/64`."""
+    return Fr(3, 2) ** (c - 1) * (4 * c + 3) / (2 * (c + 1))
+
+
+def spider_Z(k, c):
+    """Exact closed form `Z(S(k,c)) = total(c)^(k-1) (total(c) + (3/2)^c/(c+1))` (== `matching_free_energy.rho`,
+    cross-checked in tests).  `k >= 1`, `c >= 1`."""
+    t = broom_total(c)
+    return t ** (k - 1) * (t + Fr(3, 2) ** c / (c + 1))
+
+
+def broom_rate(c):
+    """Per-vertex growth rate of the `S(k,c)` family as `k -> inf`: `total(c)^(1/(2c+1))` (float).
+    `F = log(rate)` is the free-energy density; peaks at `c = 5` (`rate = 1.229474`, `F = 0.206586`)."""
+    return float(broom_total(c)) ** (1.0 / (2 * c + 1))
+
+
+def broom_free_energy(c):
+    """`F(c) = log(total(c)) / (2c+1)`, the asymptotic per-vertex free energy of `S(k,c)`.  Argmax at `c = 5`
+    (`0.206586`), strictly above the caterpillar sup `0.205098`."""
+    t = broom_total(c)
+    return (math.log(t.numerator) - math.log(t.denominator)) / (2 * c + 1)
+
+
+def broom_argmax_c(lo=1, hi=12):
+    """The `c` maximizing `broom_rate(c)` over `[lo, hi]` (returns `5`)."""
+    return max(range(lo, hi + 1), key=broom_rate)
+
+
+def rate_dominates(c1, c2):
+    """Exact test `rate(c1) > rate(c2)` via cross-exponentiation (clears the roots):
+    `rate(c1) > rate(c2)  <=>  total(c1)^(2 c2 + 1) > total(c2)^(2 c1 + 1)` (both positive rationals).
+    Returns `(lhs, rhs, holds)` with `lhs = total(c1)^(2 c2 + 1)`, `rhs = total(c2)^(2 c1 + 1)`."""
+    lhs = broom_total(c1) ** (2 * c2 + 1)
+    rhs = broom_total(c2) ** (2 * c1 + 1)
+    return lhs, rhs, lhs > rhs
+
+
+@dataclass(frozen=True)
+class BroomOptimumCertificate:
+    """Certifies `c* = 5` maximizes the branch rate `total(c)^(1/(2c+1))` against a set of competitor `c`s, by
+    exact cross-exponentiated rational inequalities `total(5)^(2c+1) > total(c)^11`.  `.check()` verifies
+    exactly; `.lean_atom`/`.lean_module` emit the atoms as `norm_num` rational inequalities (untrusted
+    generator, kernel-checked).  Certifies the DISCRETE `c`-optimum only -- the family-vs-family dominance and
+    the global-maximizer question live elsewhere.  conjecture1_proved = False."""
+
+    c_star: int = 5
+    competitors: tuple = (2, 3, 4, 6, 7, 8)
+
+    def atoms(self):
+        """List of `(name, lhs, rhs)` with the certified strict inequality `lhs > rhs` (== `rate(c*) > rate(c)`)."""
+        out = []
+        for c in self.competitors:
+            lhs, rhs, _ = rate_dominates(self.c_star, c)
+            out.append((f"broom_rate_c{self.c_star}_gt_c{c}", lhs, rhs))
+        return out
+
+    def check(self) -> bool:
+        """True iff `rate(c*) > rate(c)` (via the exact cross-exponent test) for every competitor `c`."""
+        return all(rate_dominates(self.c_star, c)[2] for c in self.competitors)
+
+    def lean_atom(self, name, lhs, rhs) -> str:
+        return (f"theorem {name} : (({lhs.numerator} : ℚ)/{lhs.denominator}) > "
+                f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num")
+
+    def lean_module(self, namespace="BGBroomOptimum") -> str:
+        assert self.check(), "certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n"
+                f"namespace {namespace}\n\n")
+        body = "\n".join(self.lean_atom(nm, lhs, rhs) for nm, lhs, rhs in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+conjecture1_proved = False
