@@ -202,5 +202,10 @@ from .spider_broom import (  # noqa: F401
     BroomOptimumCertificate, broom_argmax_c, broom_free_energy, broom_ratio, broom_rate,
     broom_total, c5_unimodal_witness, rate_dominates, spider_Z, spider_edges,
 )
+# BG bulk-discharge engine (2026-08-31): exact Bethe/cavity decomposition + the box-positivity target
+# exp(11 phi_v) <= 621/64 for the analytic upper-bound route.
+from .bg_bulk_discharge import (  # noqa: F401
+    F_STAR_ARG, bethe_terms, cavity_fields, max_phi, phi_vertices, tau_degree, tau_equal,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
