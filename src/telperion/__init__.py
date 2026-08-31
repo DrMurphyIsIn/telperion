@@ -199,8 +199,8 @@ from .vdb_exchange import (  # noqa: F401
 # Star-of-cherry-brooms S(k,c) (2026-08-31): the family that beats Pant's caterpillars for the Laplacian ratio;
 # exact closed form + the c=5 branch-rate optimum (cross-exponentiated rational certificate).
 from .spider_broom import (  # noqa: F401
-    BroomOptimumCertificate, broom_argmax_c, broom_free_energy, broom_rate,
-    broom_total, rate_dominates, spider_Z, spider_edges,
+    BroomOptimumCertificate, broom_argmax_c, broom_free_energy, broom_ratio, broom_rate,
+    broom_total, c5_unimodal_witness, rate_dominates, spider_Z, spider_edges,
 )
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).

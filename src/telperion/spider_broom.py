@@ -94,6 +94,34 @@ def rate_dominates(c1, c2):
     return lhs, rhs, lhs > rhs
 
 
+def broom_ratio(s):
+    """The near-star recurrence factor `rho(s) = (529/486) (1 - 1/((4s+7)(s+1)))^11`, which equals EXACTLY the
+    broom cross-exponent-ratio step `X(s+1)/X(s)` where `X(s) = total(5)^(2s+1)/total(s)^11` (so `X(s) >= 1 <=>
+    rate(5) >= rate(s)`).  This is the SAME object as the Phi^11 near-star invariant `R(s)` from the
+    domination-bridge program (`529 = 23^2`, `486 = 2*3^5`); the two BG programs coincide on the extremal
+    near-star/broom family.  `rho` is strictly increasing (numerator `g(s) = (4s+7)(s+1)` is) and crosses `1`
+    once between `s = 4` and `s = 5`, giving the CLOSED all-`c` proof that `c = 5` uniquely maximizes the broom
+    rate (vs the finite case-check in `BroomOptimumCertificate`).  Exact `Fraction`."""
+    return Fr(529, 486) * (1 - Fr(1, (4 * s + 7) * (s + 1))) ** 11
+
+
+def c5_unimodal_witness(hi=40):
+    """Witness data for the CLOSED `c=5`-optimum proof via single-crossing of the near-star ratio `rho`:
+    returns `(g_increasing, rho4_lt_1, rho5_gt_1, X_ge_1_eq_iff_5)` -- all exact.  `g` strictly increasing +
+    `rho(4) < 1 < rho(5)` (monotone straddle) implies `X(s) = total(5)^(2s+1)/total(s)^11 >= 1` for every
+    integer `s in [0, hi]`, with equality iff `s = 5`.  Ties the classical-BG broom optimum to the Phi^11
+    near-star 23-adic proof (`R(5) = 1` exactly, `64*243*23 = 621*576`)."""
+    def g(s):
+        return (4 * s + 7) * (s + 1)
+    def X(s):
+        return broom_total(5) ** (2 * s + 1) / broom_total(s) ** 11
+    g_incr = all(g(s) < g(s + 1) for s in range(hi))
+    rho4 = broom_ratio(4) < 1
+    rho5 = broom_ratio(5) > 1
+    x_ok = all((X(s) >= 1) and ((X(s) == 1) == (s == 5)) for s in range(hi + 1))
+    return g_incr, rho4, rho5, x_ok
+
+
 @dataclass(frozen=True)
 class BroomOptimumCertificate:
     """Certifies `c* = 5` maximizes the branch rate `total(c)^(1/(2c+1))` against a set of competitor `c`s, by

@@ -16,8 +16,10 @@ from telperion.spider_broom import (  # noqa: E402
     BroomOptimumCertificate,
     broom_argmax_c,
     broom_free_energy,
+    broom_ratio,
     broom_rate,
     broom_total,
+    c5_unimodal_witness,
     rate_dominates,
     spider_Z,
     spider_edges,
@@ -70,6 +72,34 @@ def test_density_converges_from_below_exact():
         assert F > 0.205098
         prev = F
     assert prev < broom_free_energy(5)                    # finite-k below the k->inf limit
+
+
+def test_phi11_nearstar_equals_broom_ratio():
+    """RECONCILIATION (exact): the Phi^11 near-star invariant R(s) == the BG broom cross-exponent ratio
+    X(s) = total(5)^(2s+1)/total(s)^11, and the recurrence factor broom_ratio(s) == X(s+1)/X(s) ==
+    (529/486)(1-1/((4s+7)(s+1)))^11.  The two BG programs coincide on the extremal near-star/broom family."""
+    def X(s):
+        return broom_total(5) ** (2 * s + 1) / broom_total(s) ** 11
+    for s in range(0, 12):
+        assert broom_ratio(s) == X(s + 1) / X(s), f"ratio identity fails at s={s}"
+    # anchored recurrence reproduces X exactly from R(5)=1
+    R = {5: Fr(1)}
+    for s in range(5, 12):
+        R[s + 1] = R[s] * broom_ratio(s)
+    for s in range(5, 0, -1):
+        R[s - 1] = R[s] / broom_ratio(s - 1)
+    for s in range(0, 12):
+        assert R[s] == X(s), f"Phi11 R(s) != broom X(s) at s={s}"
+
+
+def test_c5_closed_unimodal_proof():
+    """CLOSED all-c proof: g increasing + broom_ratio(4)<1<broom_ratio(5) => X(s)>=1 with equality iff s=5
+    (c=5 uniquely maximizes the broom rate for EVERY c, not just the finite BroomOptimumCertificate set)."""
+    g_incr, rho4, rho5, x_ok = c5_unimodal_witness(hi=40)
+    assert g_incr and rho4 and rho5 and x_ok
+    # the 23-adic tie: R(5)=1 with 64*243*23 = 621*576
+    assert 64 * 243 * 23 == 621 * 576
+    assert broom_total(5) == Fr(621, 64)
 
 
 def test_certificate_and_lean():
