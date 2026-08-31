@@ -101,6 +101,46 @@ def Z_recurrence(arms):
     return U_prev + M_prev
 
 
+def two_hub_Z(a, b):
+    """Exact CLOSED FORM for the two-hub caterpillar `T(a, b)` (== `rho`, exact Fraction):
+
+        Z(T(a,b)) = (3/2)^(a+b-2) * ( (4a+3)(4b+3) + 9 ) / ( 4 (a+1)(b+1) ).
+
+    Derived from the `(U, M)` cavity of each hub: an arm presents `(1, 1/2)` on a deg-2 armmid,
+    a hub with `k` arms + one spine child has `U+M = (3/2)^{k-1}(4k+3)/(2(k+1))`.  Verified against
+    `matching_free_energy.rho` on the full `0<=a,b<=7` grid.  Base check: `T(0,0) = P_2`, `Z = 2`.
+    """
+    a, b = Fr(a), Fr(b)
+    return _ARM_TOTAL ** (a + b - 2) * ((4 * a + 3) * (4 * b + 3) + 9) / (4 * (a + 1) * (b + 1))
+
+
+def _two_hub_g(a, b):
+    """Split-dependent factor `g(a,b) = ((4a+3)(4b+3)+9)/((a+1)(b+1))`; `Z(T(a,b)) = (3/2)^{s-2}/4 * g`
+    with `s = a+b` fixed, so at fixed spine-arm-total the split maximizing `Z` maximizes `g`."""
+    a, b = Fr(a), Fr(b)
+    return ((4 * a + 3) * (4 * b + 3) + 9) / ((a + 1) * (b + 1))
+
+
+def arm_balance_delta_g(a, b):
+    """Exact `g(a-1, b+1) - g(a, b)` for the toward-balance arm move, in FACTORED form:
+
+        g(a-1,b+1) - g(a,b) = 2 (a - b - 1)(2a + 2b - 1) / ( a (a+1)(b+1)(b+2) ).
+
+    Every factor is > 0 for integers `a >= b + 2` (`a-b-1 >= 1`, `2a+2b-1 >= 3`, positive denom since
+    `a >= 2`), so moving one arm from the fuller hub to the emptier one **strictly increases** `Z`
+    until `|a-b| <= 1` (`a = b+1` gives `a-b-1 = 0`, the balanced tie).  This is the rigorous, ALL-`(a,b)`
+    m=2 arm-balancing lemma -- a clean `ring` + factor-positivity proof, not finite instances -- and the
+    one salvaged monotone move after local Z-monotone reduction to the caterpillar family was refuted at
+    n=16 (see docs/BG_PIECE3_OBSTRUCTION_MAP.md).  Returns the exact Fraction (positive iff `a >= b+2`).
+
+    LEAN PROOF OBLIGATION (for the `bg_arm_balancing` CI gate): over `a b : Nat`, `h : b + 2 <= a`,
+    the identity `g(a-1,b+1) - g(a,b) = 2*(a-b-1)*(2*a+2*b-1)/(a*(a+1)*(b+1)*(b+2))` by `field_simp; ring`,
+    then `> 0` by `positivity`/factor signs.  conjecture1_proved = False.
+    """
+    a, b = Fr(a), Fr(b)
+    return 2 * (a - b - 1) * (2 * a + 2 * b - 1) / (a * (a + 1) * (b + 1) * (b + 2))
+
+
 def uniform_transfer_matrix(a):
     """Exact rational 2x2 per-hub transfer matrix for the uniform interior hub (`d = a + 2`).
 

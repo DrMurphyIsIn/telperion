@@ -19,10 +19,12 @@ from telperion.matching_free_energy import rho, near_star_edges  # noqa: E402
 from telperion.transfer_caterpillar import (  # noqa: E402
     TransferCaterpillarCertificate,
     Z_recurrence,
+    arm_balance_delta_g,
     caterpillar_edges,
     free_energy,
     hub_degrees,
     perron_eigenvalue,
+    two_hub_Z,
     uniform_transfer_matrix,
 )
 
@@ -115,6 +117,40 @@ def test_free_energy_matches_long_caterpillar():
                        - math.log(int(zM1.numerator)) + math.log(int(zM1.denominator)))
     F_numeric = log_lam_numeric / (2 * a + 1)
     assert abs(free_energy(a) - F_numeric) < 1e-9
+
+
+def test_two_hub_closed_form_equals_rho():
+    """CLOSED FORM Z(T(a,b)) = (3/2)^(a+b-2)((4a+3)(4b+3)+9)/(4(a+1)(b+1)) == rho on the 0..8 grid."""
+    for a in range(0, 9):
+        for b in range(0, 9):
+            n, edges = caterpillar_edges([a, b])
+            assert two_hub_Z(a, b) == rho(n, edges), f"closed form != rho at ({a},{b})"
+    assert two_hub_Z(0, 0) == Fr(2)                        # T(0,0) = P_2
+
+
+def test_arm_balance_delta_g_identity_and_sign():
+    """arm_balance_delta_g == the factored 2(a-b-1)(2a+2b-1)/(a(a+1)(b+1)(b+2)), and it equals the
+    true g-difference from the closed form; strictly > 0 exactly for a >= b+2, == 0 at a = b+1."""
+    def g(a, b):
+        a, b = Fr(a), Fr(b)
+        return ((4 * a + 3) * (4 * b + 3) + 9) / ((a + 1) * (b + 1))
+    for a in range(2, 12):
+        for b in range(0, a):
+            got = arm_balance_delta_g(a, b)
+            assert got == g(a - 1, b + 1) - g(a, b), f"identity fails at ({a},{b})"
+            if a >= b + 2:
+                assert got > 0, f"balancing must strictly increase Z at ({a},{b})"
+            if a == b + 1:
+                assert got == 0, f"balanced tie must be flat at ({a},{b})"
+
+
+def test_arm_balance_matches_actual_Z_move():
+    """The toward-balance move strictly raises the true Z (via rho), confirming delta_g's sign drives Z."""
+    for a in range(2, 10):
+        for b in range(0, a - 1):                          # a >= b+2
+            n0, e0 = caterpillar_edges([a, b])
+            n1, e1 = caterpillar_edges([a - 1, b + 1])
+            assert rho(n1, e1) > rho(n0, e0), f"Z(T({a-1},{b+1})) !> Z(T({a},{b}))"
 
 
 def test_free_energy_interior_max_at_7():
