@@ -207,5 +207,10 @@ from .spider_broom import (  # noqa: F401
 from .bg_bulk_discharge import (  # noqa: F401
     F_STAR_ARG, bethe_terms, cavity_fields, max_phi, phi_vertices, tau_degree, tau_equal,
 )
+# Branch potential ell(B) = log total(B) - |B| F* (2026-08-31): the additive form of the BG upper bound;
+# the branch-ceiling reduces to broom-dominance per size + the proven broom c=5 optimum.
+from .branch_potential import (  # noqa: F401
+    F_STAR, branch_ell, branch_total, broom_edges,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
