@@ -212,5 +212,9 @@ from .bg_bulk_discharge import (  # noqa: F401
 from .branch_potential import (  # noqa: F401
     F_STAR, branch_ell, branch_total, broom_edges,
 )
+# Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
+from .tie_regime import (  # noqa: F401
+    CHERRY, broom_child, cherry_vs_broom_ratio, uniform_hub_ell,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
