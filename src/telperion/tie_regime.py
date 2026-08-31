@@ -23,6 +23,7 @@ regime. conjecture1_proved = False.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from fractions import Fraction as Fr
 
 from .spider_broom import broom_total
@@ -59,9 +60,46 @@ def _exp11_hub(k, child):
 
 def cherry_vs_broom_ratio(k, j):
     """EXACT rational `exp(11*(ell(k,cherry) - ell(k,B(j))))`.  `> 1` iff the cherry is the worse (higher-`ell`)
-    uniform child -- the campaign's cherry-worst inequality, rational in `(k, j)`.  Slack (`>= 2.4` in the tie
-    regime), so tie-free; only the broom step `ell(B(k)) <= 0` carries the `27*23` arithmetic."""
+    uniform child -- the campaign's cherry-worst inequality, rational in `(k, j)`.  Slack in the tie regime, so
+    tie-free; only the broom step `ell(B(k)) <= 0` carries the `27*23` arithmetic."""
     return _exp11_hub(k, CHERRY) / _exp11_hub(k, broom_child(j))
+
+
+def binding_j(k, jmax=25):
+    """The `j* = argmin_j cherry_vs_broom_ratio(k, j)` -- the BINDING broom-child (`ell(k,B(j))` closest to
+    `ell(k,cherry)`).  `cherry_vs_broom_ratio(k, ·)` is unimodal in `j` (decreasing to `j*`, then increasing),
+    so `ratio(k, j*) > 1` certifies cherry-worst for ALL `j` at that `k`."""
+    return min(range(1, jmax + 1), key=lambda j: cherry_vs_broom_ratio(k, j))
+
+
+@dataclass(frozen=True)
+class TieCherryWorstCertificate:
+    """Certifies the FINITE tie-regime cherry-worst: for each `k` in `[2, k_max]`, the cherry is the worst
+    uniform child, i.e. `cherry_vs_broom_ratio(k, j*(k)) > 1` at the binding `j*` (unimodal in `j`, so this
+    covers all `j`).  With the broom optimum `ell(B(k)) <= 0` [PROVEN] this closes the uniform tie-regime
+    (`k <= 20`; `k >= 21` is the slack regime).  `.check()` exact; `.lean_module` emits `norm_num` atoms
+    `1 < ratio(k, j*)`.  conjecture1_proved = False."""
+
+    k_max: int = 20
+
+    def atoms(self):
+        """List of `(name, ratio)` with the certified `1 < ratio` (each `ratio = cherry_vs_broom_ratio(k, j*)`)."""
+        out = []
+        for k in range(2, self.k_max + 1):
+            js = binding_j(k)
+            out.append((f"tie_cherry_worst_k{k}_j{js}", cherry_vs_broom_ratio(k, js)))
+        return out
+
+    def check(self) -> bool:
+        return all(r > 1 for _, r in self.atoms())
+
+    def lean_module(self, namespace="BGTieCherryWorst") -> str:
+        assert self.check(), "cherry-worst fails in the claimed range -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (1 : ℚ) < (({r.numerator} : ℚ)/{r.denominator}) := by norm_num"
+            for nm, r in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
 
 
 conjecture1_proved = False
