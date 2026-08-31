@@ -80,6 +80,26 @@ def test_ell_additive_recursion():
         assert abs(lhs - rhs) < 1e-9, f"recursion fails at seed {seed}"
 
 
+def test_mixed_le_Bk_exhaustive():
+    """mixed <= B(k), EXHAUSTIVELY (per the honest caveat): over ALL rooted branches with root-degree k,
+    ell <= ell(B(k)) for k >= 2 -- and it is TIGHT (max = ell(B(k))) for k <= 7 (where B(k) fits, N<=16).
+    No counterexample (contrast the tangent route, which had them)."""
+    from telperion.branch_potential import broom_edges
+    ellBk = {k: branch_ell(*broom_edges(k))[0] for k in range(1, 9)}
+    worst_per_k = {}
+    for N in range(2, 17):
+        for T in nx.nonisomorphic_trees(N):
+            idx = {v: i for i, v in enumerate(T.nodes())}
+            e = [(idx[a], idx[b]) for a, b in T.edges()]
+            for r in T.nodes():
+                k = T.degree(r)
+                ell, _ = branch_ell(N, e, idx[r])
+                worst_per_k[k] = max(worst_per_k.get(k, -9.9), ell)
+    for k in range(2, 8):                                      # B(k) fits in N<=16 (size 2k+1 <= 15)
+        assert worst_per_k[k] <= ellBk[k] + 1e-12, f"mixed > B({k})"
+        assert abs(worst_per_k[k] - ellBk[k]) < 1e-9, f"B({k}) should be the tight max at k={k}"
+
+
 def test_boundary_bound_pi_over_branch_total():
     """Boundary lemma: 1 <= pi(T)/branch_total(T,r) <= 4/3 (O(1)), so ell(B)<=0 => (1/n)log pi(T) <= F* + O(1/n).
     The branch-induction route to the asymptotic upper bound needs only this bounded root-boundary term."""
