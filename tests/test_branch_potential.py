@@ -80,6 +80,23 @@ def test_ell_additive_recursion():
         assert abs(lhs - rhs) < 1e-9, f"recursion fails at seed {seed}"
 
 
+def test_boundary_bound_pi_over_branch_total():
+    """Boundary lemma: 1 <= pi(T)/branch_total(T,r) <= 4/3 (O(1)), so ell(B)<=0 => (1/n)log pi(T) <= F* + O(1/n).
+    The branch-induction route to the asymptotic upper bound needs only this bounded root-boundary term."""
+    from telperion.matching_free_energy import rho
+    worst = Fr(1)
+    for N in range(2, 12):
+        for T in nx.nonisomorphic_trees(N):
+            idx = {v: i for i, v in enumerate(T.nodes())}
+            e = [(idx[a], idx[b]) for a, b in T.edges()]
+            pi = rho(N, e)
+            for r in range(N):
+                ratio = pi / branch_total(N, e, r)
+                assert ratio >= 1                              # up-edge lowers total
+                worst = max(worst, ratio)
+    assert worst <= Fr(4, 3)                                   # bounded => O(1) boundary
+
+
 def test_broom_dominance_exhaustive_small():
     """The broom B(c) is the UNIQUE total-maximising rooted branch of size 2c+1 (exhaustive, odd N<=13)."""
     for N in (3, 5, 7, 9, 11, 13):
