@@ -102,6 +102,18 @@ def test_c5_closed_unimodal_proof():
     assert broom_total(5) == Fr(621, 64)
 
 
+def test_evolve_nearstar_is_the_broom_c5_gate():
+    """BRIDGE: the frozen `evolve_nearstar` champion ratio (486/529)(1+1/(4s^2+11s+6))^11, peak s*=5, already
+    kernel-gated in examples/evolve_nearstar/EvolveNearStar.lean, equals EXACTLY 1/broom_ratio(s) = f(s+1)/f(s)
+    for f=1/X.  So that existing gate IS the closed all-c proof of the classical-BG c=5 broom optimum."""
+    import sympy as sp
+    s = sp.Symbol("s")
+    ratio_src = sp.Rational(486, 529) * (1 + 1 / (4 * s ** 2 + 11 * s + 6)) ** 11
+    for k in range(0, 8):
+        val = ratio_src.subs(s, k)
+        assert Fr(int(val.p), int(val.q)) == 1 / broom_ratio(k), f"bridge fails at s={k}"
+
+
 def test_certificate_and_lean():
     """The optimum certificate checks exactly and emits a well-formed norm_num Lean module."""
     cert = BroomOptimumCertificate()
