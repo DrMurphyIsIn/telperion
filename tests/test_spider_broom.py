@@ -157,9 +157,11 @@ def test_spider_beats_caterpillar_certificate():
     from telperion.branch_potential import F_STAR
     cert = SpiderBeatsCaterpillarCertificate()
     assert cert.check() is True
-    assert len(cert.atoms()) == 3 * 12                         # 3 rational atoms per a, a=1..12
-    # every gated a genuinely has F* > F(a) (a=7 is the caterpillar sup, the binding case)
-    assert all(F_STAR > free_energy(a) for a in range(1, 13))
-    assert max(range(1, 40), key=free_energy) == 7            # caterpillar arm-optimum
+    assert len(cert.atoms()) == 3 * 12 + 3                     # 3 per a (a=1..12) + 3 tail atoms (all a covered)
+    names = [a[0] for a in cert.atoms()]
+    assert sum("tail" in n for n in names) == 3               # GROWTH + BASE + uniform-bound
+    # complete coverage: F* > F(a) for ALL a (explicit a=1..12 + proven tail a>=13); a=7 is the caterpillar sup
+    assert all(F_STAR > free_energy(a) for a in range(1, 201))
+    assert max(range(1, 60), key=free_energy) == 7            # caterpillar arm-optimum
     mod = cert.lean_module()
     assert "namespace BGSpiderBeatsCaterpillar" in mod and mod.count("by norm_num") == len(cert.atoms())

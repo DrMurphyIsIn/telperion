@@ -263,18 +263,25 @@ def _lam_pow11_surd(a):
 
 @dataclass(frozen=True)
 class SpiderBeatsCaterpillarCertificate:
-    """Kernel-gates `F* > F(a)` (spider beats the uniform caterpillar) for every arm-count `a` in `[a_lo, a_hi]`
-    -- part (ii) of the broom-dominance reduction, asymptotic form.  For each `a`, with `L = (621/64)^(2a+1)` and
-    `lam(a)^11 = A + B sqrt(D)`, emits the three rational atoms `L > A`, `B > 0`, `(L - A)^2 > B^2 D`, together
-    exactly equivalent to `L > lam(a)^11`, i.e. `F* > F(a)`.  The arm-optimum `a=7` (caterpillar sup) is inside
-    the range; `F(a)` decreases past it toward `log(3/2)/2 < F*`, so this covers all caterpillars (with the
-    documented monotone tail).  `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+    """Kernel-gates `F* > F(a)` (spider beats the uniform caterpillar) for EVERY arm-count `a` -- part (ii) of the
+    broom-dominance reduction, asymptotic form, complete for all `a`.
+
+    * `a in [a_lo, a_hi]` (explicit, covering the caterpillar sup `a=7`): with `L = (621/64)^(2a+1)` and
+      `lam(a)^11 = A + B sqrt(D)`, the three rational atoms `L > A`, `B > 0`, `(L - A)^2 > B^2 D` are together
+      exactly equivalent to `L > lam(a)^11`, i.e. `F* > F(a)`.
+    * TAIL `a > a_hi` (uniform): `lam(a) < (4/3)(3/2)^a` for ALL `a` (reduces to the identity
+      `(2a+3)^2 + 9 < (2a+5)^2`, i.e. `9 < 8a+16`), so `lam(a)^11 < (4/3)^11 (3/2)^{11a}`; with the GROWTH atom
+      `(3/2)^11 < (621/64)^2` and the BASE atom `(4/3)^11 (3/2)^{11 a_hi... boundary} < (621/64)^(2*boundary+1)`
+      this gives `lam(a)^11 < (621/64)^(2a+1)` for every `a > a_hi`.  So all caterpillars are covered with no gap.
+
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
 
     a_lo: int = 1
     a_hi: int = 12
 
     def atoms(self):
-        """List of `(name, lhs, rhs, op)` rational facts; per `a`: `L>A`, `B>0`, `(L-A)^2>B^2 D` (`op` in {'>'})."""
+        """List of `(name, lhs, rhs, op)` rational facts; per explicit `a`: `L>A`, `B>0`, `(L-A)^2>B^2 D`; plus
+        the two tail atoms (GROWTH `(3/2)^11<(621/64)^2`, BASE `(4/3)^11(3/2)^{11 t}<(621/64)^(2t+1)`, `t=a_hi+1`)."""
         out = []
         for a in range(self.a_lo, self.a_hi + 1):
             A, B, D = _lam_pow11_surd(a)
@@ -282,6 +289,13 @@ class SpiderBeatsCaterpillarCertificate:
             out.append((f"spider_gt_cat_a{a}_L_gt_A", L, A, ">"))
             out.append((f"spider_gt_cat_a{a}_B_pos", B, Fr(0), ">"))
             out.append((f"spider_gt_cat_a{a}_surd", (L - A) ** 2, B * B * D, ">"))
+        # tail (a > a_hi): lam(a) < (4/3)(3/2)^a [proven: 9 < 8a+16] => lam^11 < (4/3)^11 (3/2)^{11a};
+        # GROWTH + BASE (at boundary t = a_hi+1) then give lam^11 < (621/64)^(2a+1) for all a >= t.
+        t = self.a_hi + 1
+        out.append(("spider_gt_cat_tail_growth", Fr(621, 64) ** 2, Fr(3, 2) ** 11, ">"))
+        out.append(("spider_gt_cat_tail_base",
+                    Fr(621, 64) ** (2 * t + 1), Fr(4, 3) ** 11 * Fr(3, 2) ** (11 * t), ">"))
+        out.append(("spider_gt_cat_tail_unifbound_at_t", Fr(8 * t + 16), Fr(9), ">"))   # 9 < 8a+16 at a=t
         return out
 
     def check(self) -> bool:

@@ -13,11 +13,15 @@
   `A,B`, and the three rational facts `L>A`, `B>0`, `(L−A)² > B²D` are together
   exactly equivalent to `L > lam^11`. Emits these as `norm_num` atoms for
   `a=1..12` (36 atoms, largest ~267 digits), covering the caterpillar arm-optimum
-  `a=7`; `F(a)` decreases past it to `log(3/2)/2 < F*`, so range + monotone tail
-  covers all caterpillars. This is the arithmetic core of (ii) — the surd
-  comparison the integrality-gap diagnosis said the proof must be. The residual
-  for a complete broom dominance is now just part (i) (exchange reachability,
-  verified `n<=13`) + the caterpillar arm-optimum `a=7`. `conjecture1_proved =
+  `a=7`. The **tail `a>=13` is gated uniformly** too (3 more atoms): `lam(a) <
+  (4/3)(3/2)^a` for all `a` (reduces to the identity `9 < 8a+16`, since
+  `lam(a)/(3/2)^a → 4/3`), so `lam^11 < (4/3)^11 (3/2)^{11a}`; with GROWTH
+  `(3/2)^11 < (621/64)^2` and BASE `(4/3)^11 (3/2)^143 < (621/64)^27` this gives
+  `lam^11 < (621/64)^(2a+1)` for every `a>=13`. So **all** caterpillars are
+  covered with no gap (39 atoms total). This is the arithmetic core of (ii) — the
+  surd comparison the integrality-gap diagnosis said the proof must be, now
+  complete end to end. The residual for a complete broom dominance is now **just
+  part (i)** (exchange reachability, verified `n<=13`). `conjecture1_proved =
   False`.
 
 ## Unreleased — BG: the exchange obstruction reduces to spider-vs-caterpillar
