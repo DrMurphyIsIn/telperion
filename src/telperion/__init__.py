@@ -214,8 +214,9 @@ from .branch_potential import (  # noqa: F401
 )
 # Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
 from .tie_regime import (  # noqa: F401
-    CHERRY, TieCherryWorstCertificate, TieSlackCertificate, binding_j, broom_child,
-    cherry_vs_broom_ratio, slack_g, slack_hub_bound, slack_linobj, uniform_hub_ell,
+    CHERRY, MixedHubKKTCertificate, TieCherryWorstCertificate, TieSlackCertificate,
+    binding_j, broom_child, cherry_is_kkt_argmax, cherry_vs_broom_ratio, child_value,
+    child_x, mixed_lambda, slack_g, slack_hub_bound, slack_linobj, uniform_hub_ell,
 )
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).

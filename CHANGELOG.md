@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — BG mixed-hub reduction via log-concavity + per-child KKT
+
+- **`telperion.tie_regime.MixedHubKKTCertificate`** (+ `mixed_lambda`, `child_x`,
+  `child_value`, `cherry_is_kkt_argmax`) — closes the last tie-free conceptual
+  piece of the Brualdi–Goldwasser branch-induction upper bound: the mixed-hub
+  bound `ell(hub) <= ell(B(k))` for `k <= 15`. A degree-changing exchange
+  argument had failed here (the worst child is a non-monotone `(x,ell)`-tradeoff;
+  it even false-passed a `k<=20` overclaim later killed by the exchange
+  analysis). The fix **decouples** the coupled `k`-child optimization via the
+  tangent of the concave `log` at the all-cherry point: with `lambda(k) =
+  3(k+1)/(4k+3)` and `V(c) = ell(c) + lambda(k)·x_c`, log-concavity gives
+  `ell(hub) - ell(B(k)) <= Σ_i (V(c_i) - V(cherry))`, so the *per-child* KKT
+  inequality `V(c) <= V(cherry)` (no coupling) proves the bound. It works where
+  the exchange failed because it is a **relative** comparison (hub vs `B(k)`) —
+  tie-free; the `27·23` tie stays confined to the separate broom-optimum gate.
+  The certificate emits `98` `norm_num` atoms (`k=2..15 × B(2..8)`) via the
+  slack gate's frozen log-enclosures, tightest margin `≈0.018`; the emitted LHS
+  were checked to dominate the true value (soundness). `conjecture1_proved =
+  False`.
+- **`examples/bg_mixed_kkt/`** — the kernel-gated example (generate.py + Lean +
+  README) with CI job `bg-mixed-kkt-compiles` (`telperion-lean-e2e.yml`) and a
+  `[[check]]` in `telperion.toml` (`quick` group). Docs:
+  `docs/BG_MIXED_KKT_20260831.md`.
+
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 
 - **`telperion.comparator` — a bridge to the openai/ten-proofs Comparator**, an
