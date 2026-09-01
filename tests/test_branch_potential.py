@@ -14,14 +14,54 @@ import networkx as nx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion.branch_potential import (  # noqa: E402
-    F_STAR, branch_ell, branch_total, broom_edges,
+    F_STAR, branch_ell, branch_ell_by_vertex, branch_total, broom_edges,
 )
-from telperion.spider_broom import broom_total  # noqa: E402
+from telperion.spider_broom import broom_total, spider_edges  # noqa: E402
 
 
 def _edges(T):
     idx = {v: i for i, v in enumerate(T.nodes())}
     return T.number_of_nodes(), [(idx[a], idx[b]) for a, b in T.edges()], idx
+
+
+def test_cavity_per_vertex_decomposition():
+    """ell(B) = sum_v (A_v - F*) exactly (the cavity telescoping): matches branch_ell, one term per vertex,
+    leaves contribute -F* (A=0), a cherry's armmid contributes +log(3/2)-F*."""
+    # leaf: single vertex, A=0 -> contribution -F*
+    ell1, contrib1 = branch_ell_by_vertex(1, ())
+    assert len(contrib1) == 1 and abs(contrib1[0] - (-F_STAR)) < 1e-12
+    # cherry (armmid 0 -> leaf 1): armmid A=log(3/2), leaf A=0
+    ell_c, contrib_c = branch_ell_by_vertex(2, ((0, 1),), 0)
+    assert abs(contrib_c[0] - (math.log(1.5) - F_STAR)) < 1e-12
+    assert abs(contrib_c[1] - (-F_STAR)) < 1e-12
+    # matches branch_ell over structured + random rooted branches
+    import random
+    rng = random.Random(3)
+    for N in range(2, 13):
+        trees = list(nx.nonisomorphic_trees(N))
+        for T in (trees if N <= 9 else rng.sample(trees, min(40, len(trees)))):
+            n, e, idx = _edges(T)
+            for r in list(T.nodes())[:3]:
+                e_ref, _ = branch_ell(n, tuple(e), idx[r])
+                e_dec, contrib = branch_ell_by_vertex(n, tuple(e), idx[r])
+                assert len(contrib) == n
+                assert abs(e_ref - e_dec) < 1e-11
+
+
+def test_low_degree_root_dilutes_adversarial():
+    """The make-or-break case for the small-degree refined-ceiling residual (b): a degree-2 root with a large
+    near-extremal star-of-brooms hanging entirely below it. The low root degree DILUTES per-vertex density, so
+    ell stays deeply below the tie (~ -0.27), NOT near 0 -- refuting the failure mode (a large low-degree branch
+    with ell ~ 0). Confirms the near-ceiling d<=6 set is the finite broom set, so (b) is finitely closable."""
+    from telperion.branch_potential import _adj
+    for kc in range(2, 9):
+        N, ee = spider_edges(kc, 5)                       # star of kc B(5)-arms; hub = max-degree vertex
+        adj = _adj(N, ee)
+        hub = max(range(N), key=lambda v: len(adj[v]))
+        # attach a new degree-2 root above the hub
+        ell, contrib = branch_ell_by_vertex(N + 1, tuple(list(ee) + [(hub, N)]), N)
+        assert len(contrib) == N + 1
+        assert ell < -0.2                                  # deeply sub-threshold (dilution), not near the ceiling
 
 
 def test_branch_total_matches_broom_closed_form():

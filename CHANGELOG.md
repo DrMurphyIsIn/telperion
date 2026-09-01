@@ -47,6 +47,15 @@
   make-or-break worry — a large low-root-degree near-extremal branch with
   `ell ≈ 0` and non-tiny `x_c` — was tested and refuted (such branches are
   lopsided, `ell ≈ -0.10`). `conjecture1_proved = False`.
+- **`telperion.branch_potential.branch_ell_by_vertex`** — the exact cavity
+  per-vertex decomposition `ell(B) = Σ_v (A_v − F*)` (verified `== branch_ell`,
+  error `~2·10⁻¹⁵` over 731 branches), the deficit accounting that seeds a
+  rigorous proof of residual (b): leaves cost `−F*`, hubs profit up to
+  `log((2d_v−1)/d_v) − F*`, and a low root degree caps `A_root` so a large
+  low-degree branch cannot offset its leaves. Adds the make-or-break adversarial
+  test (`test_low_degree_root_dilutes_adversarial`): a degree-2 root above a big
+  near-extremal star has `ell ≈ −0.27` (dilution), refuting the one failure mode
+  for (b). `conjecture1_proved = False`.
 
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 

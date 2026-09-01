@@ -78,6 +78,36 @@ def branch_ell(n, edges, root=0):
     return (math.log(t.numerator) - math.log(t.denominator)) - size * F_STAR, t
 
 
+def branch_ell_by_vertex(n, edges, root=0):
+    """The cavity per-vertex decomposition `ell(B) = sum_v (A_v - F*)` (VERIFIED == `branch_ell`).  Returns
+    `(ell, deficits)` where `deficits[v] = F* - A_v >= 0?` NO -- returns the per-vertex CONTRIBUTIONS `A_v - F*`
+    (a dict `v -> A_v - F*`), `A_v = log(1 + sum_{children w} h_w/(d_v d_w))` the rooted local-hub gain.  Leaves
+    contribute `-F*` (`A=0`); internal hubs can be positive (a cherry's armmid `= log(3/2)-F* = +0.198`).  The
+    deficit view of the branch ceiling: `ell(B) <= 0` iff the profitable hubs cover the leaves' `F*` cost.  This
+    is the exact object behind the small-degree refined-ceiling residual (b): a low root degree caps `A_root`, so
+    a large low-degree branch cannot marshal enough hub profit to offset its leaves -> `ell` stays well below 0
+    (empirically `>= 0.06` below the tie for `d_c <= 6` non-brooms)."""
+    adj = _adj(n, edges)
+    contrib = {}
+
+    def rec(u, p):
+        kids = [w for w in adj[u] if w != p]
+        d = len(kids) + 1
+        S = Fr(0)
+        tot_u = Fr(1)
+        for w in kids:
+            h_w, d_w, t_w = rec(w, u)
+            S += h_w / (d * d_w)
+            tot_u *= t_w
+        A = math.log((1 + S).numerator) - math.log((1 + S).denominator)
+        contrib[u] = A - F_STAR
+        tot_u *= (1 + S)
+        return Fr(1) / (1 + S), d, tot_u        # (h_u = U_u/total_u = 1/(1+S), d_u, total_u)
+
+    rec(root, -1)
+    return sum(contrib.values()), contrib
+
+
 def broom_edges(c):
     """The broom `B(c)`: one hub (`0`) with `c` length-2 cherries (hub-armmid-leaf).  Size `2c+1`."""
     edges = []
