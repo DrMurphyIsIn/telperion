@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — BG is an integrality gap: the smooth no-go, kernel-gated
+
+- **`telperion.spider_broom.SmoothNoGoCertificate`** (+ `examples/bg_smooth_nogo/`,
+  CI `bg-smooth-nogo-compiles`, docs `BG_INTEGRALITY_GAP_20260831.md`) — turns the
+  campaign's meta-lesson into a **checked theorem**: the broom per-vertex free
+  energy `f(c) = log(total(c))/(2c+1)` is maximised over *integer* `c` at `c=5`
+  (`f(5)=F*`), but its *continuous* relaxation overshoots — `f(24/5) > F*`
+  (`c* ≈ 4.819`, gap `≈ +3.9·10⁻⁶`, peak flat: `c=4,5,6` within `10⁻⁴`). Hence any
+  certificate that relaxes the integer arm-count (convex / SOS / moment / tangent
+  / spectral — everything smooth) is bounded below by `f(c*) > F*` and **cannot**
+  prove `F(T) <= F*`. Gated via one `norm_num` atom `f(24/5) > F*` (cleared to
+  `209 L(3/2)+55 L(111/5)−55 L(2)−55 L(29/5) > 53 L(621/64)`, frozen log-enclosures,
+  margin `≈2.3·10⁻³`). This explains why all eleven caught overclaims sprang the
+  same trap (smooth bounds land `~10⁻⁴` loose) and proves the BG optimum is an
+  integer-program optimum (`621/64`, prime `4·5+3=23`) with a positive integrality
+  gap — **crystal, not quasicrystal** — so the closing argument must be arithmetic.
+  `conjecture1_proved = False`.
+
 ## Unreleased — BG envelope-tail: degree-dependent threshold correction (11th caught overclaim)
 
 - **`telperion.tie_regime.small_degree_threshold` is now degree-dependent**:

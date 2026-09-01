@@ -125,3 +125,25 @@ def test_certificate_and_lean():
     # a broken certificate must refuse to emit
     bad = BroomOptimumCertificate(c_star=2, competitors=(5,))   # rate(2) < rate(5): claim false
     assert bad.check() is False
+
+
+def test_smooth_nogo_certificate():
+    """SmoothNoGoCertificate: the continuous broom free energy exceeds the integer optimum F* at c0=24/5, so no
+    smooth (relaxation-based) certificate can prove the BG upper bound. Checks exactly + emits norm_num, and the
+    witness genuinely overshoots (f_cont(24/5) > F* > integer neighbours)."""
+    import math
+    from telperion.spider_broom import SmoothNoGoCertificate
+    from telperion.branch_potential import F_STAR
+    cert = SmoothNoGoCertificate()
+    assert cert.check() is True
+    assert len(cert.atoms()) == 1
+    mod = cert.lean_module()
+    assert "namespace BGSmoothNoGo" in mod and mod.count("by norm_num") == 1
+    # the emitted rational LHS/RHS bracket 583*f(24/5) and 583*F* on the correct sides (soundness)
+    nm, lhs, rhs, op = cert.atoms()[0]
+    def fcont(c):
+        return ((c - 1) * math.log(1.5) + math.log(4 * c + 3) - math.log(2) - math.log(c + 1)) / (2 * c + 1)
+    assert fcont(24 / 5) > F_STAR                              # continuous relaxation overshoots the integer max
+    assert abs(fcont(5) - F_STAR) < 1e-12                      # integer optimum c=5 equals F*
+    assert float(lhs) <= 583 * fcont(24 / 5) + 1e-6            # LHS is a genuine lower bound on 583*f(24/5)
+    assert float(rhs) >= 583 * F_STAR - 1e-6                   # RHS a genuine upper bound on 583*F*
