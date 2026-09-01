@@ -184,8 +184,9 @@ from .weighted_matching import (  # noqa: F401
 # Caterpillar transfer recurrence (Pant) + Perron free energy, and majorization/Schur-convexity
 # (2026-08-30): combinatorial-program skills S0b, S1a.
 from .transfer_caterpillar import (  # noqa: F401
-    TransferCaterpillarCertificate, Z_recurrence, arm_balance_delta_g, caterpillar_edges,
-    free_energy, perron_eigenvalue, two_hub_Z, uniform_transfer_matrix,
+    SpiderBeatsCaterpillarCertificate, TransferCaterpillarCertificate, Z_recurrence,
+    arm_balance_delta_g, caterpillar_edges, free_energy, perron_eigenvalue, two_hub_Z,
+    uniform_transfer_matrix,
 )
 from .majorization import (  # noqa: F401
     SchurConvexityCertificate, SchurVerdict, TTransform,

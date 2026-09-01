@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — BG: spider-beats-caterpillar kernel-gated (broom dominance part ii)
+
+- **`telperion.transfer_caterpillar.SpiderBeatsCaterpillarCertificate`** (+
+  `examples/bg_spider_vs_caterpillar/`, CI `bg-spider-vs-caterpillar-compiles`) —
+  gates part (ii) of the broom-dominance reduction: the spider strictly beats
+  every caterpillar. Asymptotically `F* > F(a)` for every arm-count `a`, where
+  `F* = log(621/64)/11` (spider) and `F(a) = log(lam(a))/(2a+1)` (uniform
+  caterpillar, `lam(a)` the transfer-matrix Perron surd `(t+sqrt(D))/2`).
+  Cross-multiplying clears the logs to `(621/64)^(2a+1) > lam(a)^11 = A+B·sqrt(D)`;
+  since `lam` is a quadratic surd, `lam^11 = A+B·sqrt(D)` with exact rational
+  `A,B`, and the three rational facts `L>A`, `B>0`, `(L−A)² > B²D` are together
+  exactly equivalent to `L > lam^11`. Emits these as `norm_num` atoms for
+  `a=1..12` (36 atoms, largest ~267 digits), covering the caterpillar arm-optimum
+  `a=7`; `F(a)` decreases past it to `log(3/2)/2 < F*`, so range + monotone tail
+  covers all caterpillars. This is the arithmetic core of (ii) — the surd
+  comparison the integrality-gap diagnosis said the proof must be. The residual
+  for a complete broom dominance is now just part (i) (exchange reachability,
+  verified `n<=13`) + the caterpillar arm-optimum `a=7`. `conjecture1_proved =
+  False`.
+
 ## Unreleased — BG: the exchange obstruction reduces to spider-vs-caterpillar
 
 - **`test_exchange_local_maxima_are_caterpillars`** + doc — sharpens the open

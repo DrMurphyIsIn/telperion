@@ -147,3 +147,19 @@ def test_smooth_nogo_certificate():
     assert abs(fcont(5) - F_STAR) < 1e-12                      # integer optimum c=5 equals F*
     assert float(lhs) <= 583 * fcont(24 / 5) + 1e-6            # LHS is a genuine lower bound on 583*f(24/5)
     assert float(rhs) >= 583 * F_STAR - 1e-6                   # RHS a genuine upper bound on 583*F*
+
+
+def test_spider_beats_caterpillar_certificate():
+    """SpiderBeatsCaterpillarCertificate: F* > F(a) (spider beats every uniform caterpillar) via surd-cleared
+    rational atoms, a=1..12 -- part (ii) of the broom-dominance reduction. Checks exact + emits norm_num, and
+    the atoms genuinely certify F* > F(a) (soundness vs the float free energies)."""
+    from telperion.transfer_caterpillar import SpiderBeatsCaterpillarCertificate, free_energy
+    from telperion.branch_potential import F_STAR
+    cert = SpiderBeatsCaterpillarCertificate()
+    assert cert.check() is True
+    assert len(cert.atoms()) == 3 * 12                         # 3 rational atoms per a, a=1..12
+    # every gated a genuinely has F* > F(a) (a=7 is the caterpillar sup, the binding case)
+    assert all(F_STAR > free_energy(a) for a in range(1, 13))
+    assert max(range(1, 40), key=free_energy) == 7            # caterpillar arm-optimum
+    mod = cert.lean_module()
+    assert "namespace BGSpiderBeatsCaterpillar" in mod and mod.count("by norm_num") == len(cert.atoms())

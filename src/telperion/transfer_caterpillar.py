@@ -226,4 +226,75 @@ class TransferCaterpillarCertificate:
         return {a: free_energy(a) for a in range(lo, hi + 1)}
 
 
+# --------------------------------------------------------------------------------------------------------------
+# Spider beats caterpillar (2026-08-31): the asymptotic form of part (ii) of the broom-dominance reduction.
+#
+# The mixed-hub exchange analysis reduced broom dominance (Obligation A) to: every rich-exchange local maximum of
+# `rho` is the broom (spider) or a length-2 caterpillar, AND the spider beats every caterpillar.  Asymptotically
+# the latter is `F* > F(a)` for every arm-count `a`, where `F* = log(621/64)/11` is the spider free energy and
+# `F(a) = log(lam(a))/(2a+1)` the uniform-caterpillar free energy, `lam(a)` the transfer-matrix Perron eigenvalue
+# (a quadratic surd `lam = (t + sqrt(D))/2`).  Cross-multiplying clears the logs:
+#
+#     F* > F(a)   <=>   (621/64)^(2a+1) > lam(a)^11 = A_a + B_a sqrt(D_a),
+#
+# and since `lam` is a quadratic surd, `lam^11 = A + B sqrt(D)` with EXACT rational `A, B` (binomial expansion).
+# With `L := (621/64)^(2a+1)`, the three RATIONAL facts `L > A`, `B > 0`, `(L - A)^2 > B^2 D` are together exactly
+# equivalent to `L > A + B sqrt(D)` (for `D > 0`).  So the surd comparison is discharged by rational atoms -- the
+# arithmetic closing the diagnosis called for.  `F(a)` peaks at `a=7` (the caterpillar arm-optimum) and decreases
+# to `log(3/2)/2 < F*`, so gating `a` around the sup covers all caterpillars.  conjecture1_proved = False.
+
+
+def _lam_pow11_surd(a):
+    """`lam(a)^11 = A + B*sqrt(D)` for the caterpillar Perron surd `lam(a) = (t + sqrt(D))/2`.  Returns exact
+    `(A, B, D)` (Fractions) via binomial expansion of `((t + sqrt(D))/2)^11`."""
+    t, _det, D, _ = perron_eigenvalue(a)
+    A = Fr(0)
+    B = Fr(0)
+    half = Fr(1, 2)
+    for k in range(12):
+        # C(11,k) * t^(11-k) * (1/2)^11 * (sqrt(D))^k
+        c = Fr(math.comb(11, k)) * (t ** (11 - k)) * (half ** 11)
+        if k % 2 == 0:
+            A += c * (D ** (k // 2))
+        else:
+            B += c * (D ** ((k - 1) // 2))
+    return A, B, D
+
+
+@dataclass(frozen=True)
+class SpiderBeatsCaterpillarCertificate:
+    """Kernel-gates `F* > F(a)` (spider beats the uniform caterpillar) for every arm-count `a` in `[a_lo, a_hi]`
+    -- part (ii) of the broom-dominance reduction, asymptotic form.  For each `a`, with `L = (621/64)^(2a+1)` and
+    `lam(a)^11 = A + B sqrt(D)`, emits the three rational atoms `L > A`, `B > 0`, `(L - A)^2 > B^2 D`, together
+    exactly equivalent to `L > lam(a)^11`, i.e. `F* > F(a)`.  The arm-optimum `a=7` (caterpillar sup) is inside
+    the range; `F(a)` decreases past it toward `log(3/2)/2 < F*`, so this covers all caterpillars (with the
+    documented monotone tail).  `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    a_lo: int = 1
+    a_hi: int = 12
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)` rational facts; per `a`: `L>A`, `B>0`, `(L-A)^2>B^2 D` (`op` in {'>'})."""
+        out = []
+        for a in range(self.a_lo, self.a_hi + 1):
+            A, B, D = _lam_pow11_surd(a)
+            L = Fr(621, 64) ** (2 * a + 1)
+            out.append((f"spider_gt_cat_a{a}_L_gt_A", L, A, ">"))
+            out.append((f"spider_gt_cat_a{a}_B_pos", B, Fr(0), ">"))
+            out.append((f"spider_gt_cat_a{a}_surd", (L - A) ** 2, B * B * D, ">"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs > rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGSpiderBeatsCaterpillar") -> str:
+        assert self.check(), "spider-beats-caterpillar certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
