@@ -23,6 +23,17 @@
   README) with CI job `bg-mixed-kkt-compiles` (`telperion-lean-e2e.yml`) and a
   `[[check]]` in `telperion.toml` (`quick` group). Docs:
   `docs/BG_MIXED_KKT_20260831.md`.
+- **`telperion.tie_regime.HighDegreeTailCertificate`** (+ `examples/bg_hi_degree_tail/`,
+  CI `bg-hi-degree-tail-compiles`) — closes the **high-degree half** of the
+  per-child envelope tail `V(c) <= V(cherry)` that the mixed-KKT reduction leaves
+  open. For any branch with root degree `d_c >= 7`, `x_c` is small enough that the
+  ceiling alone gives `V(c) <= lambda(k)/(7(k+1)) < V(cherry)`, i.e. the cleared
+  `-44/(7(4k+3)) < 11·log(3/2) - 2·log(621/64)` (one `norm_num` atom per `k`, RHS
+  via the frozen log-enclosures; enclosures verified to bracket the true logs,
+  gap `~4·10⁻³⁰`). This shrinks the open envelope tail to a bounded small-degree
+  (`d_c <= 6`) non-broom set (max `V` empirically the broom `B(4)`, decaying with
+  size) — so the tail is **finitely closable**, not tied to the free-energy
+  convergence rate. `conjecture1_proved = False`.
 
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 

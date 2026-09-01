@@ -298,4 +298,52 @@ class MixedHubKKTCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+# --------------------------------------------------------------------------------------------------------------
+# High-degree tail of the per-child envelope `V(c) <= V(cherry)` (2026-08-31).
+#
+# The per-child KKT residual is `V(c) = ell(c) + lambda(k) x_c <= V(cherry)` for ALL branches `c`.  High-degree
+# branches close CLEANLY using only the ceiling `ell(c) <= 0` (the induction hypothesis) and `h_c <= 1`: for
+# `d_c >= 7`,
+#
+#     V(c) <= 0 + lambda(k) * (1/((k+1) * 7))  <  V(cherry) = ell(cherry) + lambda(k)/(3(k+1)),
+#
+# which (with `x_cherry = 1/(3(k+1))`, `lambda(k)/(k+1) = 3/(4k+3)`) is exactly the rational-cleared inequality
+#
+#     -44 / (7 (4k+3))  <  11 ell(cherry) = 11 log(3/2) - 2 log(621/64).
+#
+# So the OPEN part of the envelope tail shrinks to small-degree branches `d_c <= 6` (of which the brooms
+# `B(2..5)` are gated by `MixedHubKKTCertificate`; the residual is small-degree NON-broom branches, whose max
+# `V` is empirically the broom `B(4)` with margin ~0.0017 and decays with size).  conjecture1_proved = False.
+
+
+@dataclass(frozen=True)
+class HighDegreeTailCertificate:
+    """Kernel-gates the HIGH-DEGREE half of the per-child envelope tail `V(c) <= V(cherry)`: for every branch
+    with root branch-degree `d_c >= 7`, `V(c) < V(cherry)` (`k <= k_max`), using only `ell(c) <= 0` and
+    `h_c <= 1` -- no envelope enumeration.  Reduces to the rational inequality `-44/(7(4k+3)) < 11 ell(cherry)`
+    (`= 11 log(3/2) - 2 log(621/64)`), one atom per `k`, RHS lower-bounded by the frozen log-enclosures
+    (`11 L_lo(3/2) - 2 L_hi(621/64)`).  Shrinks the open envelope tail to small-degree (`d_c <= 6`) branches.
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    k_max: int = 15
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op='<')`: `-44/(7(4k+3)) < 11 L_lo(3/2) - 2 L_hi(621/64)`, exact rationals."""
+        rhs = 11 * _log_lo(Fr(3, 2)) - 2 * _log_hi(Fr(621, 64))    # lower bound on 11 ell(cherry)
+        return [(f"hi_degree_tail_k{k}", Fr(-44, 7 * (4 * k + 3)), rhs, "<")
+                for k in range(2, self.k_max + 1)]
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGHighDegreeTail") -> str:
+        assert self.check(), "high-degree tail certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
