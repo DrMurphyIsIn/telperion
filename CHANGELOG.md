@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — BG envelope-tail: degree-dependent threshold correction (11th caught overclaim)
+
+- **`telperion.tie_regime.small_degree_threshold` is now degree-dependent**:
+  `small_degree_threshold(k, d) = ell(cherry) + (d-3)/(d(4k+3))` (was a single
+  `d=2` value used for all degrees). The earlier single threshold was too strict
+  at small `k` for higher-degree children: a size-16 non-broom (`4 cherries +
+  B(3)`, `d=6`, `ell=-0.0164`) was mis-classified `open` at `k=2` even though its
+  actual `V` is `< V(cherry)` by `+0.018` — the sufficient-condition bookkeeping
+  failed, not the envelope (the size-14 exhaustive check never reached it). The
+  correct threshold comes from `x_c <= 1/((k+1)d_c)`: higher `d_c` => smaller
+  `x_c` => **higher** threshold (`d=3` gives exactly `ell(cherry)`, `d>=4` above).
+  With it **every** `d_c <= 6` non-broom is covered by case (3) directly —
+  re-verified over all branches `<= size 16` at every `k in [2,15]` (zero `open`
+  non-brooms). `envelope_tail_case` updated; `UpperBoundReduction` step 2b-lo
+  restated; `test_degree_dependent_threshold_regression` locks in the fix. The
+  underlying envelope `V(c) < V(cherry)` was re-stress-tested directly over all
+  non-cherry branches `<= size 15` (2.6M checks, worst margin `-0.00167` at the
+  gated broom `B(4)`) — sound. `conjecture1_proved = False`.
+
 ## Unreleased — BG mixed-hub reduction via log-concavity + per-child KKT
 
 - **`telperion.tie_regime.MixedHubKKTCertificate`** (+ `mixed_lambda`, `child_x`,

@@ -347,45 +347,52 @@ class HighDegreeTailCertificate:
 
 
 # --------------------------------------------------------------------------------------------------------------
-# Per-child envelope tail closure — the three-case split (2026-08-31).
+# Per-child envelope tail closure — the three-case split (2026-08-31; DEGREE-DEPENDENT threshold correction).
 #
 # The mixed-hub reduction needs `V(c) = ell(c) + lambda(k) x_c <= V(cherry)` for EVERY branch `c`.  This splits by
-# root branch-degree into three cases, only ONE still open (a single refined-ceiling statement):
+# root branch-degree into three cases, only ONE still open (a per-degree refined ceiling):
 #
 #   (1) d_c >= 7  -- GATED (`HighDegreeTailCertificate`): `x_c` small, ceiling `ell <= 0` alone suffices.
 #   (2) brooms B(2..8) (degrees 3..9) -- GATED (`MixedHubKKTCertificate`): `V(B(j)) < V(cherry)` directly.
-#   (3) d_c <= 6, NON-broom -- reduces (pure algebra) to the refined ceiling
+#   (3) d_c <= 6, NON-broom -- reduces (pure algebra) to the DEGREE-DEPENDENT refined ceiling
 #
-#         ell(c) < small_degree_threshold(k) := ell(cherry) - lambda(k)/(6(k+1)),
+#         ell(c) < small_degree_threshold(k, d_c) := ell(cherry) + (d_c - 3) / (d_c (4k+3)),
 #
-#       because then, using `h_c <= 1` and `d_c >= 2`,
-#         V(c) <= ell(c) + lambda(k)/(2(k+1)) < [ell(cherry) - lambda(k)/(6(k+1))] + lambda(k)/(2(k+1))
-#               = ell(cherry) + lambda(k)/(3(k+1)) = V(cherry).
+#       because then, using `x_c = h_c/((k+1)d_c) <= 1/((k+1)d_c)` (`h_c <= 1`) and `lambda(k)/(k+1) = 3/(4k+3)`,
+#         V(c) <= ell(c) + lambda(k)/((k+1) d_c) < [ell(cherry) + (d_c-3)/(d_c(4k+3))] + 3/((4k+3) d_c)
+#               = ell(cherry) + 1/(4k+3) = ell(cherry) + lambda(k)/(3(k+1)) = V(cherry).
 #
-# So the ONLY remaining analytic residual is the refined ceiling (b): every small-degree (`d_c <= 6`) non-broom
-# branch has `ell(c) < small_degree_threshold(k)`.  Verified exhaustively over all branches <= size 14, over
-# generalized brooms (hub of `m<=5` `B(j)`-children, to size 66), and over star-of-brooms rooted at low-degree
-# vertices (to size 101) -- all deeply sub-threshold (max non-broom `ell ~ -0.021` vs threshold `~ -0.016`; the
-# near-ceiling low-degree structures the worry required are all `>= 0.06` below).  The near-`V(cherry)` branches
-# are exactly the brooms (finite, gated) + high-degree hubs (gated); no low-degree branch approaches the ceiling,
-# and none depends on the free-energy convergence rate.  A finite-size decay bound would discharge (b) fully.
-# conjecture1_proved = False.
+# CORRECTION (2026-08-31, 11th caught overclaim): the earlier SINGLE threshold `ell(cherry) - lambda(k)/(6(k+1))`
+# was the `d=2` case used for ALL degrees -- too strict at small `k` for higher-degree children, so a size-16
+# non-broom (`4 cherries + B(3)`, `d=6`, `ell=-0.0164`) was mis-classified `open` at `k=2` (its ACTUAL `V` is
+# still `< V(cherry)` by `+0.018`; only the sufficient-condition bookkeeping failed).  The `x_c <= 1/((k+1)d_c)`
+# bound gives the correct degree-dependent threshold: higher `d_c` => `x_c` smaller => threshold HIGHER (nearer
+# the plain ceiling).  Hardest cases are the low degrees: `d=2` (`ell < ell(cherry) - 1/(2(4k+3))`), `d=3`
+# (`ell < ell(cherry)`); `d>=4` is essentially just the ceiling.
+#
+# With the corrected threshold EVERY `d_c <= 6` non-broom is covered by case (3) directly -- verified over all
+# branches <= size 16 at every `k in [2,15]` (zero `open` non-brooms), plus generalized brooms (to size 66) and
+# star-of-brooms rooted at low-degree vertices (to size 101).  The one open analytic input is the size-decay tail
+# of this per-degree ceiling (b); its failure mode -- a large low-root-degree near-extremal branch -- is refuted
+# (such branches are diluted, `ell ~ -0.27`, see `branch_ell_by_vertex`).  conjecture1_proved = False.
 
 
-def small_degree_threshold(k):
-    """The refined-ceiling threshold `ell(cherry) - lambda(k)/(6(k+1))` (float).  A branch with `d_c >= 2` and
-    `ell(c) < small_degree_threshold(k)` satisfies `V(c) < V(cherry)` (pure algebra; `h_c <= 1`, `d_c >= 2`).
-    Case (3) of the envelope-tail split reduces small-degree non-broom branches to `ell(c) < this`."""
-    return _ell_of(CHERRY) - float(mixed_lambda(k)) / (6 * (k + 1))
+def small_degree_threshold(k, d=2):
+    """The DEGREE-DEPENDENT refined-ceiling threshold `ell(cherry) + (d-3)/(d(4k+3))` (float).  A branch with
+    root degree `d >= 2` and `ell(c) < small_degree_threshold(k, d)` satisfies `V(c) < V(cherry)` (pure algebra
+    via `x_c <= 1/((k+1)d)`).  Higher `d` => higher threshold (nearer the plain ceiling); `d=3` gives exactly
+    `ell(cherry)`; `d=2` (default) gives `ell(cherry) - 1/(2(4k+3))` (the hardest, low-degree case)."""
+    return _ell_of(CHERRY) + (d - 3) / (d * (4 * k + 3))
 
 
 def envelope_tail_case(d, ell, k):
     """Classify which closure case covers a branch with root branch-degree `d` and potential `ell` at hub-degree
-    `k` (`h_c <= 1` assumed): `'hi_degree'` (d>=7, gated), `'threshold'` (ell below the refined ceiling => V<Vch),
-    or `'open'` (small-degree, ell at/above threshold -- must be a broom, gated by mixed_kkt, else the residual)."""
+    `k` (`h_c <= 1` assumed): `'hi_degree'` (d>=7, gated), `'threshold'` (ell below the degree-dependent refined
+    ceiling => V<Vch), or `'open'` (small-degree, ell at/above threshold -- must be a broom, gated by mixed_kkt,
+    else the residual)."""
     if d >= 7:
         return "hi_degree"
-    if ell < small_degree_threshold(k):
+    if ell < small_degree_threshold(k, d):
         return "threshold"
     return "open"
 
