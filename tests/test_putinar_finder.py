@@ -137,3 +137,73 @@ def test_finder_result_re_verifies_exactly():
     )
     inst, checks = certify_putinar_point(fam, {"j": 0}, "v")
     assert checks >= 1  # exact identity + per-coefficient checks all passed
+
+
+# --------------------------------------------------------------------------- #
+# EQUALITY-constrained Positivstellensatz: p = σ_0 + Σ σ_i g_i + Σ λ_j h_j     #
+# with FREE (arbitrary-sign) λ_j — certifies nonnegativity on the recursion-   #
+# constrained (reachable) VARIETY {h_j = 0}, not the free box.                 #
+# --------------------------------------------------------------------------- #
+
+def test_finder_finds_equality_certificate():
+    # p = x*y is NEGATIVE off the variety {x - y = 0} (e.g. x=1,y=-1 -> -1), so
+    # NO free-box SOS/Putinar certificate exists; on the variety it equals
+    # x^2 >= 0.  The finder must use the FREE equality multiplier λ·(x-y).
+    x, y = sp.symbols("x y")
+    p = x * y
+    res = find_putinar_certificate(p, constraints=[], syms=(x, y),
+                                   equalities=[(x - y, "heq")])
+    assert res is not None
+    sigma0, constraints, equalities = res
+    # exact reconstruction over Q, INCLUDING the free multiplier term
+    recon = sum((sp.nsimplify(c) * sp.sympify(b) ** 2 for c, b in sigma0),
+                sp.Integer(0))
+    for h, lam, _hyp in equalities:
+        recon += sp.sympify(lam) * sp.sympify(h)
+    assert sp.expand(recon - p) == 0
+    # σ_0 coefficients still nonnegative (it is a genuine SOS); the certificate
+    # is impossible without the equality (p < 0 somewhere off the variety)
+    for c, _b in sigma0:
+        assert sp.nsimplify(c) >= 0
+    assert sp.expand(p.subs({x: 1, y: -1})) < 0
+
+
+def test_equality_finder_mode_certifies_and_emits():
+    # Full path: spec returns a 4-tuple with equalities; Telperion finds the
+    # certificate, re-verifies EXACTLY, and emits Lean that discharges the
+    # equality hypothesis (λ·h = 0 by rw) and closes by linarith.
+    x, y = sp.symbols("x y")
+
+    def spec(pt):
+        return (x * y, None, [], [(x - y, None, "heq")])
+
+    fam = putinar_family("E", (x, y), GridSpec([("j", [0])]),
+                         lambda pt: "putinar_eq_found", spec,
+                         constants={"putinar_half_deg": 1})
+    res = emit(certify(fam), LeanProfile(namespace=("T",)),
+               [ConstrainedSOSEmitter()], GREEN)
+    body = next(iter(res.files.values()))
+    check_lean_text(body)
+    assert res.n_theorems == 1
+    assert "x - y = 0 →" in body           # the equality became a hypothesis
+    assert "rw [heq]" in body              # the free multiplier is zeroed on it
+    assert "linarith" in body
+
+
+def test_equality_certificate_reconstruction_is_gated():
+    # A WRONG equality multiplier must be REFUSED by the exact certifier (the
+    # honesty contract holds for the ideal part too).
+    from telperion.emit_constrained_sos import certify_putinar_point
+    from telperion.family import InequalityFamily
+    x, y = sp.symbols("x y")
+
+    def spec(pt):
+        # claim x*y = (x)^2 + (WRONG λ = 0)*(x - y) — does NOT reconstruct
+        return (x * y, [(sp.Integer(1), x)], [], [(x - y, sp.Integer(0), "heq")])
+
+    fam = InequalityFamily(
+        name="W", symbols=(x, y), grid=GridSpec([("j", [0])]),
+        lean_name=lambda pt: "w", special=("putinar", spec),
+    )
+    with pytest.raises(ValueError):
+        certify_putinar_point(fam, {"j": 0}, "w")
