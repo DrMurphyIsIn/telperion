@@ -210,7 +210,8 @@ from .bg_bulk_discharge import (  # noqa: F401
 # Branch potential ell(B) = log total(B) - |B| F* (2026-08-31): the additive form of the BG upper bound;
 # the branch-ceiling reduces to broom-dominance per size + the proven broom c=5 optimum.
 from .branch_potential import (  # noqa: F401
-    F_STAR, branch_ell, branch_ell_by_vertex, branch_total, broom_edges,
+    F_STAR, branch_ell, branch_ell_by_vertex, branch_total, broom_dominance_holds,
+    broom_edges, broom_optimum_prime,
 )
 # Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
 from .tie_regime import (  # noqa: F401

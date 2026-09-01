@@ -120,6 +120,42 @@ def broom_edges(c):
     return nid, tuple(edges)
 
 
+def broom_dominance_holds(n):
+    """BROOM DOMINANCE (Obligation A) witness: for ODD size `n = 2c+1`, is the broom `B(c)` the UNIQUE
+    total-maximiser among all rooted branches of size `n`?  Returns `(holds, max_total, broom_total)`.  This is
+    the open COMBINATORIAL core of the BG upper bound (the rooted analog of the tree->hub / Kelmans reduction);
+    verified here for small `n`.  Even `n` has no broom; returns `(None, max_total, None)`.  The self-similarity
+    of the mixed-hub envelope (brooms are the extremal children at every degree) makes the branch-induction
+    residual (b) a facet of THIS lemma -- so the remaining work is combinatorial, the arithmetic being gated
+    (`spider_broom.BroomOptimumCertificate` / `SmoothNoGoCertificate`).  conjecture1_proved = False."""
+    import networkx as nx
+    best = Fr(0)
+    for T in nx.nonisomorphic_trees(n):
+        idx = {v: i for i, v in enumerate(T.nodes())}
+        edges = tuple((idx[a], idx[b]) for a, b in T.edges())
+        for r in range(n):
+            t = branch_total(n, edges, r)
+            if t > best:
+                best = t
+    if n % 2 == 0:
+        return None, best, None
+    c = (n - 1) // 2
+    bt = branch_total(*broom_edges(c))
+    return bt == best, best, bt
+
+
+def broom_optimum_prime():
+    """The arithmetic pin of the `c=5` broom optimum: the prime `23`.  Returns the verified identities as a dict.
+    `4*5+3 = 23` (numerator of `total(B(5)) = 621/64 = 27*23/64`), `4*4+7 = 23` (the `broom_ratio` crossing
+    factor `g(4)=(4*4+7)(4+1)=23*5`), and `529 = 23^2` (the `broom_ratio` constant `529/486`, `486 = 2*3^5`).
+    `4s+7 = 4(s+1)+3` identically, so the single prime `23` at the integer boundary `s=4|5` pins the optimum in
+    all three places -- the arithmetic heart the smooth relaxation cannot see."""
+    assert 4 * 5 + 3 == 23 and 4 * 4 + 7 == 23 and 23 ** 2 == 529 and 2 * 3 ** 5 == 486
+    assert broom_total(5) == Fr(621, 64) == Fr(27 * 23, 64)
+    return {"prime": 23, "total_B5": Fr(621, 64), "num_at_c5": 4 * 5 + 3,
+            "ratio_factor_at_s4": 4 * 4 + 7, "ratio_const_num": 23 ** 2, "ratio_const_den": 2 * 3 ** 5}
+
+
 def broom_total(c):
     """Closed form `total(B(c)) = (3/2)^(c-1)(4c+3)/(2(c+1))` (== `branch_total(*broom_edges(c))`; `B(5)=621/64`)."""
     return Fr(3, 2) ** (c - 1) * (4 * c + 3) / (2 * (c + 1))

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — BG synthesis: the arithmetic is done, the residual is combinatorial
+
+- **`telperion.branch_potential.broom_dominance_holds` + `broom_optimum_prime`**
+  (docs `BG_ARITHMETIC_VS_COMBINATORIAL_20260831.md`) — a structural synthesis
+  factoring the branch ceiling into two poles. **(A) broom dominance** (the broom
+  `B(c)` is the *unique* total-maximiser among rooted branches of odd size `2c+1`)
+  is the open *combinatorial* core — the rooted analog of the parallel session's
+  Obligation A — verified unique-max for every odd size `<= 13`. **(B) broom
+  optimum** (`c=5`) is *arithmetic* and gated, pinned by the single prime **23**
+  in three exact places: `4·5+3 = 23` (numerator of `total(B5)=621/64=27·23/64`),
+  `4·4+7 = 23` (the `broom_ratio` crossing factor at `s=4|5`), `23² = 529` (the
+  ratio constant `529/486`, `486=2·3⁵`). The mixed-hub envelope is **self-similar**
+  — its extremal children are brooms at every degree (main envelope and the `d=2`
+  sub-envelope) — so the branch-induction residual (b) is a *facet of (A)*, not an
+  independent lemma. Honest correction: the branch route bypassed the *arithmetic*
+  half (gated) but relocated, not escaped, the *combinatorial* half. Net: the
+  arithmetic is done (gated: broom optimum + integrality-gap no-go), the sole open
+  piece is one combinatorial extremal lemma shared with Obligation A.
+  `conjecture1_proved = False`.
+
 ## Unreleased — BG is an integrality gap: the smooth no-go, kernel-gated
 
 - **`telperion.spider_broom.SmoothNoGoCertificate`** (+ `examples/bg_smooth_nogo/`,

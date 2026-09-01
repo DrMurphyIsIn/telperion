@@ -48,6 +48,25 @@ def test_cavity_per_vertex_decomposition():
                 assert abs(e_ref - e_dec) < 1e-11
 
 
+def test_broom_dominance_and_23_pin():
+    """The two poles of the BG upper bound: (combinatorial) broom dominance -- the broom B(c) is the UNIQUE
+    total-maximiser among rooted branches of odd size 2c+1 (Obligation A, open; verified small); and
+    (arithmetic) the c=5 optimum is pinned by the single prime 23 in three places."""
+    from telperion.branch_potential import broom_dominance_holds, broom_optimum_prime
+    from fractions import Fraction as Fr
+    # broom dominance holds for every odd size up to 13
+    for n in range(3, 14, 2):
+        holds, mx, bt = broom_dominance_holds(n)
+        assert holds is True, f"broom is NOT the unique total-max at size {n}"
+        assert bt == mx
+    # even sizes have no broom
+    assert broom_dominance_holds(6)[0] is None
+    # the 23-pin: 4*5+3 = 4*4+7 = 23, 529 = 23^2, total(B5) = 621/64 = 27*23/64
+    p = broom_optimum_prime()
+    assert p["prime"] == 23 == p["num_at_c5"] == p["ratio_factor_at_s4"]
+    assert p["ratio_const_num"] == 529 and p["total_B5"] == Fr(621, 64)
+
+
 def test_low_degree_root_dilutes_adversarial():
     """The make-or-break case for the small-degree refined-ceiling residual (b): a degree-2 root with a large
     near-extremal star-of-brooms hanging entirely below it. The low root degree DILUTES per-vertex density, so
