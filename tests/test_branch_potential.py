@@ -67,6 +67,47 @@ def test_broom_dominance_and_23_pin():
     assert p["ratio_const_num"] == 529 and p["total_B5"] == Fr(621, 64)
 
 
+def test_unrooted_broom_dominance_and_exchange_obstruction():
+    """Two facts about the combinatorial core (Obligation A): (1) the UNROOTED per(L)/prod-deg maximiser at odd
+    size 2c+1 is the single-hub broom B(c) (verified n<=13); (2) the natural 'concentration' exchange (move a
+    cherry between two edge-joined hubs) is NON-MONOTONE toward the broom -- deltaZ flips sign with the hub
+    balance -- so a greedy single-move exchange cannot prove broom dominance. This is the precise obstruction
+    that keeps (A) open."""
+    from fractions import Fraction as Fr
+    import networkx as nx
+    from telperion.matching_free_energy import rho
+    from telperion.vdb_exchange import delta_Z
+
+    def degseq(T):
+        return sorted((d for _, d in T.degree()), reverse=True)
+
+    # (1) unrooted rho max at size 2c+1 is the single-hub broom degseq [c, 2 (x c), 1 (x c)]
+    for c in (3, 4, 5):
+        n = 2 * c + 1
+        best = (Fr(0), None)
+        for T in nx.nonisomorphic_trees(n):
+            idx = {v: i for i, v in enumerate(T.nodes())}
+            ee = tuple((idx[a], idx[b]) for a, b in T.edges())
+            z = rho(n, ee)
+            if z > best[0]:
+                best = (z, degseq(T))
+        assert best[1] == [c] + [2] * c + [1] * c, f"unrooted max at n={n} is not the broom: {best[1]}"
+
+    # (2) non-monotone concentration move
+    def two_hub(a, b):
+        edges = [(0, 1)]; nid = 2
+        for _ in range(a):
+            edges += [(0, nid), (nid, nid + 1)]; nid += 2
+        for _ in range(b):
+            edges += [(1, nid), (nid, nid + 1)]; nid += 2
+        return nid, tuple(edges)
+
+    n1, e1 = two_hub(1, 1); n2, e2 = two_hub(1, 3)
+    d_equal = delta_Z(n1, e1, ("balance_arm", 1, 0))     # concentrate onto equal hub: LOWERS Z
+    d_unbal = delta_Z(n2, e2, ("balance_arm", 1, 0))     # move from bigger hub: RAISES Z
+    assert d_equal < 0 < d_unbal                          # opposite signs => greedy exchange is non-monotone
+
+
 def test_low_degree_root_dilutes_adversarial():
     """The make-or-break case for the small-degree refined-ceiling residual (b): a degree-2 root with a large
     near-extremal star-of-brooms hanging entirely below it. The low root degree DILUTES per-vertex density, so
