@@ -63,8 +63,7 @@ theorem integrableOn_bounded_div_cpow {b : ℝ → ℂ} {p : ℂ} {c B : ℝ}
   · refine (MeasureTheory.ae_restrict_iff' measurableSet_Ioi).mpr
       (Filter.Eventually.of_forall (fun x hx => ?_))
     have hxpos : (0 : ℝ) < x := lt_trans hc hx
-    rw [Real.norm_of_nonneg (by positivity), norm_div,
-      Complex.norm_cpow_eq_rpow_re_of_pos hxpos, Real.rpow_neg hxpos.le, div_eq_mul_inv]
+    rw [norm_div, Complex.norm_cpow_eq_rpow_re_of_pos hxpos, Real.rpow_neg hxpos.le, div_eq_mul_inv]
     exact mul_le_mul (hb x) le_rfl (by positivity) (le_trans (norm_nonneg _) (hb x))
 """
 
