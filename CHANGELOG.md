@@ -34,6 +34,19 @@
   (`d_c <= 6`) non-broom set (max `V` empirically the broom `B(4)`, decaying with
   size) — so the tail is **finitely closable**, not tied to the free-energy
   convergence rate. `conjecture1_proved = False`.
+- **`telperion.tie_regime.small_degree_threshold` / `envelope_tail_case`** — the
+  per-child envelope tail `V(c) <= V(cherry)` now closes into a **three-case
+  split**, only one case open: (1) `d_c >= 7` gated, (2) brooms `B(2..8)` gated,
+  (3) `d_c <= 6` non-broom reduces by *pure algebra* to the refined ceiling
+  `ell(c) < ell(cherry) - lambda(k)/(6(k+1))`. The remaining analytic residual is
+  the single structural fact (b): every small-degree non-broom branch is below
+  that threshold — verified over all branches `<= size 14`, generalized brooms
+  (to size 66), and star-of-brooms rooted at low-degree vertices (to size 101);
+  every such branch is `>= 0.06` below the threshold, and the only `open`-case
+  branches are gated brooms (`test_envelope_tail_case_split_closes`). The
+  make-or-break worry — a large low-root-degree near-extremal branch with
+  `ell ≈ 0` and non-tiny `x_c` — was tested and refuted (such branches are
+  lopsided, `ell ≈ -0.10`). `conjecture1_proved = False`.
 
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 

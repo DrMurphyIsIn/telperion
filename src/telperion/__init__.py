@@ -216,7 +216,8 @@ from .branch_potential import (  # noqa: F401
 from .tie_regime import (  # noqa: F401
     CHERRY, HighDegreeTailCertificate, MixedHubKKTCertificate, TieCherryWorstCertificate,
     TieSlackCertificate, binding_j, broom_child, cherry_is_kkt_argmax, cherry_vs_broom_ratio,
-    child_value, child_x, mixed_lambda, slack_g, slack_hub_bound, slack_linobj, uniform_hub_ell,
+    child_value, child_x, envelope_tail_case, mixed_lambda, slack_g, slack_hub_bound,
+    slack_linobj, small_degree_threshold, uniform_hub_ell,
 )
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
