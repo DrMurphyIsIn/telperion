@@ -203,11 +203,6 @@ from .spider_broom import (  # noqa: F401
     BroomOptimumCertificate, SmoothNoGoCertificate, broom_argmax_c, broom_free_energy, broom_ratio,
     broom_rate, broom_total, c5_unimodal_witness, rate_dominates, spider_Z, spider_edges,
 )
-# BG bulk-discharge engine (2026-08-31): exact Bethe/cavity decomposition + the box-positivity target
-# exp(11 phi_v) <= 621/64 for the analytic upper-bound route.
-from .bg_bulk_discharge import (  # noqa: F401
-    F_STAR_ARG, bethe_terms, cavity_fields, max_phi, phi_vertices, tau_degree, tau_equal,
-)
 # Branch potential ell(B) = log total(B) - |B| F* (2026-08-31): the additive form of the BG upper bound;
 # the branch-ceiling reduces to broom-dominance per size + the proven broom c=5 optimum.
 from .branch_potential import (  # noqa: F401
@@ -221,9 +216,7 @@ from .tie_regime import (  # noqa: F401
     child_value, child_x, envelope_tail_case, mixed_lambda, slack_g, slack_hub_bound,
     slack_linobj, small_degree_threshold, uniform_hub_ell,
 )
-# BG asymptotic upper bound — the composed reduction skeleton (2026-08-31): the honest "one lemma away" ledger.
-from .bg_upper_bound import (  # noqa: F401
-    BASE, BOUNDARY, GATED, HYPOTHESIS, LEMMA, ReductionStep, UpperBoundReduction,
-)
-
-# The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
+# The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules
+# `bg_bulk_discharge` and `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them
+# directly (`from telperion.bg_upper_bound import UpperBoundReduction`), not via `import telperion`, so the
+# core/bg boundary (test_core_boundary) stays clean.

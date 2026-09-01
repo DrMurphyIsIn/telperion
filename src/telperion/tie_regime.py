@@ -124,8 +124,11 @@ class TieCherryWorstCertificate:
     def lean_module(self, namespace="BGTieCherryWorst") -> str:
         assert self.check(), "cherry-worst fails in the claimed range -- refusing to emit"
         head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        # Emit the CROSS-MULTIPLIED integer form `denom < num` (equivalent to `1 < num/denom` since denom > 0):
+        # a plain big-integer comparison, which `norm_num` handles far faster than normalizing a ~700-digit ℚ
+        # fraction (matches the green `bg_broom_optimum` gate's cleared-integer style).
         body = "\n".join(
-            f"theorem {nm} : (1 : ℚ) < (({r.numerator} : ℚ)/{r.denominator}) := by norm_num"
+            f"theorem {nm} : (({r.denominator} : ℤ)) < (({r.numerator} : ℤ)) := by norm_num"
             for nm, r in self.atoms())
         return head + body + f"\n\nend {namespace}\n"
 
