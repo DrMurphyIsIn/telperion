@@ -219,5 +219,9 @@ from .tie_regime import (  # noqa: F401
     child_value, child_x, envelope_tail_case, mixed_lambda, slack_g, slack_hub_bound,
     slack_linobj, small_degree_threshold, uniform_hub_ell,
 )
+# BG asymptotic upper bound — the composed reduction skeleton (2026-08-31): the honest "one lemma away" ledger.
+from .bg_upper_bound import (  # noqa: F401
+    BASE, BOUNDARY, GATED, HYPOTHESIS, LEMMA, ReductionStep, UpperBoundReduction,
+)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).

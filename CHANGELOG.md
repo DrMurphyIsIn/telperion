@@ -56,6 +56,17 @@
   test (`test_low_degree_root_dilutes_adversarial`): a degree-2 root above a big
   near-extremal star has `ell ≈ −0.27` (dilution), refuting the one failure mode
   for (b). `conjecture1_proved = False`.
+- **`telperion.bg_upper_bound.UpperBoundReduction`** — the composed BG
+  asymptotic-upper-bound **reduction skeleton**: the whole branch-induction
+  argument assembled into one explicit chain of 8 steps, each tagged GATED (a
+  kernel-gated certificate that `.check()`s), BASE (finite exhaustive), BOUNDARY
+  (`O(1)` constant), LEMMA, or HYPOTHESIS. `verify_gated()` confirms all **4**
+  gated certificates pass (`TieSlackCertificate`, `MixedHubKKTCertificate`,
+  `HighDegreeTailCertificate`, `BroomOptimumCertificate`); `open_hypotheses()`
+  returns **exactly one** — the small-degree non-broom refined ceiling (b);
+  `conjecture_proved` is `False` while it stands. The honest "one lemma away"
+  ledger in code (`test_bg_upper_bound.py`, docs
+  `BG_UPPER_BOUND_REDUCTION_20260831.md`). `conjecture1_proved = False`.
 
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 
