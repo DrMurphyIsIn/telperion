@@ -108,6 +108,58 @@ def test_unrooted_broom_dominance_and_exchange_obstruction():
     assert d_equal < 0 < d_unbal                          # opposite signs => greedy exchange is non-monotone
 
 
+def test_exchange_local_maxima_are_caterpillars():
+    """The sharp form of the exchange obstruction: under the RICH single-edge-relocation neighborhood, the only
+    spurious local maxima of the unrooted rho (broom dominance) are multi-hub LENGTH-2-ARM CATERPILLARS -- exactly
+    Pant's conjectured maximiser family -- and the broom (spider) beats each. So Obligation A reduces to
+    [every rich-exchange local max is the broom or a length-2 caterpillar] + [spider > caterpillar] (the
+    transfer-matrix comparison the campaign established). Verified n<=11 (n=13 verified offline)."""
+    import networkx as nx
+    from telperion.matching_free_energy import rho
+
+    def strip(G):
+        G = G.copy(); G.remove_nodes_from([v for v in list(G) if G.degree(v) <= 1]); return G
+
+    def is_len2_caterpillar_multihub(T):
+        spine = strip(strip(T))                       # remove leaves twice -> the hub spine
+        if spine.number_of_nodes() < 2:
+            return False                              # single-hub (the broom), not a multi-hub caterpillar
+        return (nx.is_connected(spine) and all(spine.degree(v) <= 2 for v in spine)
+                and sum(1 for v in spine if spine.degree(v) == 1) <= 2)     # spine is a path
+
+    def subtree_moves(n, edges):
+        G = nx.Graph(); G.add_nodes_from(range(n)); G.add_edges_from(edges); out = []
+        for (a, b) in edges:
+            G.remove_edge(a, b); comp = list(nx.connected_components(G))
+            ca = comp[0] if a in comp[0] else comp[1]; cb = comp[1] if a in comp[0] else comp[0]
+            base = [e for e in edges if set(e) != {a, b}]
+            for u in ca:
+                if u != a: out.append(tuple(base + [(b, u)]))
+            for u in cb:
+                if u != b: out.append(tuple(base + [(a, u)]))
+            G.add_edge(a, b)
+        return out
+
+    from telperion.branch_potential import branch_total, broom_edges
+    for n in (9, 11):
+        c = (n - 1) // 2
+        broomdeg = [c] + [2] * c + [1] * c
+        broom_rho = rho(*broom_edges(c))                                  # the broom's unrooted Z (computed upfront)
+        spurious = 0
+        for T in nx.nonisomorphic_trees(n):
+            idx = {v: i for i, v in enumerate(T.nodes())}
+            ee = tuple((idx[a], idx[b]) for a, b in T.edges())
+            z = rho(n, ee)
+            degs = sorted((d for _, d in T.degree()), reverse=True)
+            if not any(rho(n, e2) > z for e2 in subtree_moves(n, ee)):     # a local max
+                if degs != broomdeg:
+                    spurious += 1
+                    assert is_len2_caterpillar_multihub(T), f"n={n}: spurious local max is not a length-2 caterpillar"
+                    assert z < broom_rho                                   # spider strictly beats the caterpillar
+        if n == 11:
+            assert spurious >= 1                                          # the barrier is real (not vacuous)
+
+
 def test_low_degree_root_dilutes_adversarial():
     """The make-or-break case for the small-degree refined-ceiling residual (b): a degree-2 root with a large
     near-extremal star-of-brooms hanging entirely below it. The low root degree DILUTES per-vertex density, so

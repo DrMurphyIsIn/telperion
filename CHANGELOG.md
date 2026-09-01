@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — BG: the exchange obstruction reduces to spider-vs-caterpillar
+
+- **`test_exchange_local_maxima_are_caterpillars`** + doc — sharpens the open
+  combinatorial core (broom dominance / Obligation A) to a comparison the campaign
+  already has. Under the *leaf-move* neighborhood the `rho` landscape is wildly
+  multimodal (spurious local maxima grow `2, 6, 14` at `n=9,11,13`); under the
+  **rich** single-edge-relocation neighborhood it collapses to `0, 1, 1`, and the
+  surviving spurious local maxima are *exactly* multi-hub **length-2-arm
+  caterpillars** — **Pant's conjectured maximiser family** — each strictly beaten
+  by the broom/spider (`+0.42, +0.52`). So Obligation A reduces to *(i)* every
+  rich-exchange local max is the broom or a length-2 caterpillar (verified
+  `n<=13`) + *(ii)* spider > caterpillar (the established transfer-recurrence
+  comparison, `transfer_caterpillar.py`). This explains *why* Pant conjectured
+  caterpillars — they are the exchange *local* maxima, locally unbeatable — and
+  isolates the entire remaining difficulty in the one non-local step already known
+  to favor the broom. (Caught + fixed a misclassification: the spurious family are
+  length-2-arm caterpillars, not length-1.) `conjecture1_proved = False`.
+
 ## Unreleased — BG synthesis: the arithmetic is done, the residual is combinatorial
 
 - **`telperion.branch_potential.broom_dominance_holds` + `broom_optimum_prime`**
