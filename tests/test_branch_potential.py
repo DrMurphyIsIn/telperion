@@ -113,7 +113,9 @@ def test_exchange_local_maxima_are_caterpillars():
     spurious local maxima of the unrooted rho (broom dominance) are multi-hub LENGTH-2-ARM CATERPILLARS -- exactly
     Pant's conjectured maximiser family -- and the broom (spider) beats each. So Obligation A reduces to
     [every rich-exchange local max is the broom or a length-2 caterpillar] + [spider > caterpillar] (the
-    transfer-matrix comparison the campaign established). Verified n<=11 (n=13 verified offline)."""
+    transfer-matrix comparison the campaign established). Verified n<=11 here (n=13, 15 verified offline).
+    NB: part (i) does NOT factor via the obvious arm-shortening move (length-3 arm tip -> cherry DECREASES rho);
+    the rho-increasing escape from a non-caterpillar tree is genuinely non-greedy."""
     import networkx as nx
     from telperion.matching_free_energy import rho
 

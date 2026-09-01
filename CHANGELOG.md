@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — BG: part (i) extended to n=15; it does not factor via obvious moves
+
+- **Broom-dominance part (i)** (every rich-exchange local max of `rho` is the
+  broom or a length-2 caterpillar) extended and verified to **n=15** (2 local
+  maxima: broom + 1 caterpillar). Honest negative result recorded: part (i) does
+  NOT factor into a one-move sign lemma — the natural arm-shortening move (a
+  length-3 arm `h–x–y–z`, reattach tip `z` onto `x` to make a cherry) *decreases*
+  `rho` by `≈0.5`, so a non-caterpillar tree is not escaped by shortening its
+  arm; the `rho`-increasing escape is genuinely non-greedy (consistent with the
+  exchange barrier). Part (i) is the sole open residual of broom dominance — a
+  real combinatorial statement, verified `n<=15`, all arithmetic around it gated.
+  `conjecture1_proved = False`.
+
 ## Unreleased — BG: spider-beats-caterpillar kernel-gated (broom dominance part ii)
 
 - **`telperion.transfer_caterpillar.SpiderBeatsCaterpillarCertificate`** (+
