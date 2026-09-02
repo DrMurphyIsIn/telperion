@@ -1,5 +1,185 @@
 # Changelog
 
+## Unreleased — BG: part (i) extended to n=15; it does not factor via obvious moves
+
+- **Broom-dominance part (i)** (every rich-exchange local max of `rho` is the
+  broom or a length-2 caterpillar) extended and verified to **n=15** (2 local
+  maxima: broom + 1 caterpillar). Honest negative result recorded: part (i) does
+  NOT factor into a one-move sign lemma — the natural arm-shortening move (a
+  length-3 arm `h–x–y–z`, reattach tip `z` onto `x` to make a cherry) *decreases*
+  `rho` by `≈0.5`, so a non-caterpillar tree is not escaped by shortening its
+  arm; the `rho`-increasing escape is genuinely non-greedy (consistent with the
+  exchange barrier). Part (i) is the sole open residual of broom dominance — a
+  real combinatorial statement, verified `n<=15`, all arithmetic around it gated.
+  `conjecture1_proved = False`.
+
+## Unreleased — BG: spider-beats-caterpillar kernel-gated (broom dominance part ii)
+
+- **`telperion.transfer_caterpillar.SpiderBeatsCaterpillarCertificate`** (+
+  `examples/bg_spider_vs_caterpillar/`, CI `bg-spider-vs-caterpillar-compiles`) —
+  gates part (ii) of the broom-dominance reduction: the spider strictly beats
+  every caterpillar. Asymptotically `F* > F(a)` for every arm-count `a`, where
+  `F* = log(621/64)/11` (spider) and `F(a) = log(lam(a))/(2a+1)` (uniform
+  caterpillar, `lam(a)` the transfer-matrix Perron surd `(t+sqrt(D))/2`).
+  Cross-multiplying clears the logs to `(621/64)^(2a+1) > lam(a)^11 = A+B·sqrt(D)`;
+  since `lam` is a quadratic surd, `lam^11 = A+B·sqrt(D)` with exact rational
+  `A,B`, and the three rational facts `L>A`, `B>0`, `(L−A)² > B²D` are together
+  exactly equivalent to `L > lam^11`. Emits these as `norm_num` atoms for
+  `a=1..12` (36 atoms, largest ~267 digits), covering the caterpillar arm-optimum
+  `a=7`. The **tail `a>=13` is gated uniformly** too (3 more atoms): `lam(a) <
+  (4/3)(3/2)^a` for all `a` (reduces to the identity `9 < 8a+16`, since
+  `lam(a)/(3/2)^a → 4/3`), so `lam^11 < (4/3)^11 (3/2)^{11a}`; with GROWTH
+  `(3/2)^11 < (621/64)^2` and BASE `(4/3)^11 (3/2)^143 < (621/64)^27` this gives
+  `lam^11 < (621/64)^(2a+1)` for every `a>=13`. So **all** caterpillars are
+  covered with no gap (39 atoms total). This is the arithmetic core of (ii) — the
+  surd comparison the integrality-gap diagnosis said the proof must be, now
+  complete end to end. The residual for a complete broom dominance is now **just
+  part (i)** (exchange reachability, verified `n<=13`). `conjecture1_proved =
+  False`.
+
+## Unreleased — BG: the exchange obstruction reduces to spider-vs-caterpillar
+
+- **`test_exchange_local_maxima_are_caterpillars`** + doc — sharpens the open
+  combinatorial core (broom dominance / Obligation A) to a comparison the campaign
+  already has. Under the *leaf-move* neighborhood the `rho` landscape is wildly
+  multimodal (spurious local maxima grow `2, 6, 14` at `n=9,11,13`); under the
+  **rich** single-edge-relocation neighborhood it collapses to `0, 1, 1`, and the
+  surviving spurious local maxima are *exactly* multi-hub **length-2-arm
+  caterpillars** — **Pant's conjectured maximiser family** — each strictly beaten
+  by the broom/spider (`+0.42, +0.52`). So Obligation A reduces to *(i)* every
+  rich-exchange local max is the broom or a length-2 caterpillar (verified
+  `n<=13`) + *(ii)* spider > caterpillar (the established transfer-recurrence
+  comparison, `transfer_caterpillar.py`). This explains *why* Pant conjectured
+  caterpillars — they are the exchange *local* maxima, locally unbeatable — and
+  isolates the entire remaining difficulty in the one non-local step already known
+  to favor the broom. (Caught + fixed a misclassification: the spurious family are
+  length-2-arm caterpillars, not length-1.) `conjecture1_proved = False`.
+
+## Unreleased — BG synthesis: the arithmetic is done, the residual is combinatorial
+
+- **`telperion.branch_potential.broom_dominance_holds` + `broom_optimum_prime`**
+  (docs `BG_ARITHMETIC_VS_COMBINATORIAL_20260831.md`) — a structural synthesis
+  factoring the branch ceiling into two poles. **(A) broom dominance** (the broom
+  `B(c)` is the *unique* total-maximiser among rooted branches of odd size `2c+1`)
+  is the open *combinatorial* core — the rooted analog of the parallel session's
+  Obligation A — verified unique-max for every odd size `<= 13`. **(B) broom
+  optimum** (`c=5`) is *arithmetic* and gated, pinned by the single prime **23**
+  in three exact places: `4·5+3 = 23` (numerator of `total(B5)=621/64=27·23/64`),
+  `4·4+7 = 23` (the `broom_ratio` crossing factor at `s=4|5`), `23² = 529` (the
+  ratio constant `529/486`, `486=2·3⁵`). The mixed-hub envelope is **self-similar**
+  — its extremal children are brooms at every degree (main envelope and the `d=2`
+  sub-envelope) — so the branch-induction residual (b) is a *facet of (A)*, not an
+  independent lemma. Honest correction: the branch route bypassed the *arithmetic*
+  half (gated) but relocated, not escaped, the *combinatorial* half. Net: the
+  arithmetic is done (gated: broom optimum + integrality-gap no-go), the sole open
+  piece is one combinatorial extremal lemma shared with Obligation A.
+  `conjecture1_proved = False`.
+
+## Unreleased — BG is an integrality gap: the smooth no-go, kernel-gated
+
+- **`telperion.spider_broom.SmoothNoGoCertificate`** (+ `examples/bg_smooth_nogo/`,
+  CI `bg-smooth-nogo-compiles`, docs `BG_INTEGRALITY_GAP_20260831.md`) — turns the
+  campaign's meta-lesson into a **checked theorem**: the broom per-vertex free
+  energy `f(c) = log(total(c))/(2c+1)` is maximised over *integer* `c` at `c=5`
+  (`f(5)=F*`), but its *continuous* relaxation overshoots — `f(24/5) > F*`
+  (`c* ≈ 4.819`, gap `≈ +3.9·10⁻⁶`, peak flat: `c=4,5,6` within `10⁻⁴`). Hence any
+  certificate that relaxes the integer arm-count (convex / SOS / moment / tangent
+  / spectral — everything smooth) is bounded below by `f(c*) > F*` and **cannot**
+  prove `F(T) <= F*`. Gated via one `norm_num` atom `f(24/5) > F*` (cleared to
+  `209 L(3/2)+55 L(111/5)−55 L(2)−55 L(29/5) > 53 L(621/64)`, frozen log-enclosures,
+  margin `≈2.3·10⁻³`). This explains why all eleven caught overclaims sprang the
+  same trap (smooth bounds land `~10⁻⁴` loose) and proves the BG optimum is an
+  integer-program optimum (`621/64`, prime `4·5+3=23`) with a positive integrality
+  gap — **crystal, not quasicrystal** — so the closing argument must be arithmetic.
+  `conjecture1_proved = False`.
+
+## Unreleased — BG envelope-tail: degree-dependent threshold correction (11th caught overclaim)
+
+- **`telperion.tie_regime.small_degree_threshold` is now degree-dependent**:
+  `small_degree_threshold(k, d) = ell(cherry) + (d-3)/(d(4k+3))` (was a single
+  `d=2` value used for all degrees). The earlier single threshold was too strict
+  at small `k` for higher-degree children: a size-16 non-broom (`4 cherries +
+  B(3)`, `d=6`, `ell=-0.0164`) was mis-classified `open` at `k=2` even though its
+  actual `V` is `< V(cherry)` by `+0.018` — the sufficient-condition bookkeeping
+  failed, not the envelope (the size-14 exhaustive check never reached it). The
+  correct threshold comes from `x_c <= 1/((k+1)d_c)`: higher `d_c` => smaller
+  `x_c` => **higher** threshold (`d=3` gives exactly `ell(cherry)`, `d>=4` above).
+  With it **every** `d_c <= 6` non-broom is covered by case (3) directly —
+  re-verified over all branches `<= size 16` at every `k in [2,15]` (zero `open`
+  non-brooms). `envelope_tail_case` updated; `UpperBoundReduction` step 2b-lo
+  restated; `test_degree_dependent_threshold_regression` locks in the fix. The
+  underlying envelope `V(c) < V(cherry)` was re-stress-tested directly over all
+  non-cherry branches `<= size 15` (2.6M checks, worst margin `-0.00167` at the
+  gated broom `B(4)`) — sound. `conjecture1_proved = False`.
+
+## Unreleased — BG mixed-hub reduction via log-concavity + per-child KKT
+
+- **`telperion.tie_regime.MixedHubKKTCertificate`** (+ `mixed_lambda`, `child_x`,
+  `child_value`, `cherry_is_kkt_argmax`) — closes the last tie-free conceptual
+  piece of the Brualdi–Goldwasser branch-induction upper bound: the mixed-hub
+  bound `ell(hub) <= ell(B(k))` for `k <= 15`. A degree-changing exchange
+  argument had failed here (the worst child is a non-monotone `(x,ell)`-tradeoff;
+  it even false-passed a `k<=20` overclaim later killed by the exchange
+  analysis). The fix **decouples** the coupled `k`-child optimization via the
+  tangent of the concave `log` at the all-cherry point: with `lambda(k) =
+  3(k+1)/(4k+3)` and `V(c) = ell(c) + lambda(k)·x_c`, log-concavity gives
+  `ell(hub) - ell(B(k)) <= Σ_i (V(c_i) - V(cherry))`, so the *per-child* KKT
+  inequality `V(c) <= V(cherry)` (no coupling) proves the bound. It works where
+  the exchange failed because it is a **relative** comparison (hub vs `B(k)`) —
+  tie-free; the `27·23` tie stays confined to the separate broom-optimum gate.
+  The certificate emits `98` `norm_num` atoms (`k=2..15 × B(2..8)`) via the
+  slack gate's frozen log-enclosures, tightest margin `≈0.018`; the emitted LHS
+  were checked to dominate the true value (soundness). `conjecture1_proved =
+  False`.
+- **`examples/bg_mixed_kkt/`** — the kernel-gated example (generate.py + Lean +
+  README) with CI job `bg-mixed-kkt-compiles` (`telperion-lean-e2e.yml`) and a
+  `[[check]]` in `telperion.toml` (`quick` group). Docs:
+  `docs/BG_MIXED_KKT_20260831.md`.
+- **`telperion.tie_regime.HighDegreeTailCertificate`** (+ `examples/bg_hi_degree_tail/`,
+  CI `bg-hi-degree-tail-compiles`) — closes the **high-degree half** of the
+  per-child envelope tail `V(c) <= V(cherry)` that the mixed-KKT reduction leaves
+  open. For any branch with root degree `d_c >= 7`, `x_c` is small enough that the
+  ceiling alone gives `V(c) <= lambda(k)/(7(k+1)) < V(cherry)`, i.e. the cleared
+  `-44/(7(4k+3)) < 11·log(3/2) - 2·log(621/64)` (one `norm_num` atom per `k`, RHS
+  via the frozen log-enclosures; enclosures verified to bracket the true logs,
+  gap `~4·10⁻³⁰`). This shrinks the open envelope tail to a bounded small-degree
+  (`d_c <= 6`) non-broom set (max `V` empirically the broom `B(4)`, decaying with
+  size) — so the tail is **finitely closable**, not tied to the free-energy
+  convergence rate. `conjecture1_proved = False`.
+- **`telperion.tie_regime.small_degree_threshold` / `envelope_tail_case`** — the
+  per-child envelope tail `V(c) <= V(cherry)` now closes into a **three-case
+  split**, only one case open: (1) `d_c >= 7` gated, (2) brooms `B(2..8)` gated,
+  (3) `d_c <= 6` non-broom reduces by *pure algebra* to the refined ceiling
+  `ell(c) < ell(cherry) - lambda(k)/(6(k+1))`. The remaining analytic residual is
+  the single structural fact (b): every small-degree non-broom branch is below
+  that threshold — verified over all branches `<= size 14`, generalized brooms
+  (to size 66), and star-of-brooms rooted at low-degree vertices (to size 101);
+  every such branch is `>= 0.06` below the threshold, and the only `open`-case
+  branches are gated brooms (`test_envelope_tail_case_split_closes`). The
+  make-or-break worry — a large low-root-degree near-extremal branch with
+  `ell ≈ 0` and non-tiny `x_c` — was tested and refuted (such branches are
+  lopsided, `ell ≈ -0.10`). `conjecture1_proved = False`.
+- **`telperion.branch_potential.branch_ell_by_vertex`** — the exact cavity
+  per-vertex decomposition `ell(B) = Σ_v (A_v − F*)` (verified `== branch_ell`,
+  error `~2·10⁻¹⁵` over 731 branches), the deficit accounting that seeds a
+  rigorous proof of residual (b): leaves cost `−F*`, hubs profit up to
+  `log((2d_v−1)/d_v) − F*`, and a low root degree caps `A_root` so a large
+  low-degree branch cannot offset its leaves. Adds the make-or-break adversarial
+  test (`test_low_degree_root_dilutes_adversarial`): a degree-2 root above a big
+  near-extremal star has `ell ≈ −0.27` (dilution), refuting the one failure mode
+  for (b). `conjecture1_proved = False`.
+- **`telperion.bg_upper_bound.UpperBoundReduction`** — the composed BG
+  asymptotic-upper-bound **reduction skeleton**: the whole branch-induction
+  argument assembled into one explicit chain of 8 steps, each tagged GATED (a
+  kernel-gated certificate that `.check()`s), BASE (finite exhaustive), BOUNDARY
+  (`O(1)` constant), LEMMA, or HYPOTHESIS. `verify_gated()` confirms all **4**
+  gated certificates pass (`TieSlackCertificate`, `MixedHubKKTCertificate`,
+  `HighDegreeTailCertificate`, `BroomOptimumCertificate`); `open_hypotheses()`
+  returns **exactly one** — the small-degree non-broom refined ceiling (b);
+  `conjecture_proved` is `False` while it stands. The honest "one lemma away"
+  ledger in code (`test_bg_upper_bound.py`, docs
+  `BG_UPPER_BOUND_REDUCTION_20260831.md`). `conjecture1_proved = False`.
+
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 
 - **`telperion.comparator` — a bridge to the openai/ten-proofs Comparator**, an

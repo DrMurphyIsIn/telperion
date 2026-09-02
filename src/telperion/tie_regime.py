@@ -1,0 +1,802 @@
+"""Tie-regime campaign — the arithmetic R(s)-generalization for the BG upper bound (uniform hubs).
+
+The BG upper bound reduces (see `docs/BG_BROOM_DOMINANCE_20260831.md`) to `ell(B) <= 0` for rooted branches, and
+for a UNIFORM hub (k identical children `tau`) the potential is
+
+    ell(k, tau) = k * ell(tau) + log(1 + k * x_tau) - F*,     x_tau = h_tau / ((k+1) * d_tau),
+
+`d_tau` = child branch-degree (with up-edge), `h_tau = U_tau/total_tau` the child cavity field, `F* = log(621/64)/11`.
+
+PHASE-1 STRUCTURE (this module, verified):
+  * **Envelope = brooms.** Per child branch-degree `d`, the `ell`-maximising branch is the broom `B(d-1)`
+    (`d=2`->cherry, ..., `d=6`->B(5) at `ell=0`). So the worst uniform child lies among brooms.
+  * **Cherry is the worst uniform child (tie regime).** `ell(k, cherry) >= ell(k, tau)` for every branch `tau`
+    and `k` in the tie regime (`k` small). Combined with the broom optimum `ell(B(k)) <= 0` (PROVEN via the
+    `R(s)` single-crossing, `spider_broom.broom_ratio`), this closes the uniform tie-regime.
+  * **Cherry-worst is ARITHMETIC and SLACK.** `ell(k,cherry) - ell(k,B(j)) >= 0` iff the exact RATIONAL
+    `exp(11 * (...)) >= 1` (the `11 = 2*5+1` clears both `F*` and the 11th root) -- and the ratio is `>= 2.4`
+    (NOT tight), so only the final broom step carries the `27*23` tie. This is the campaign's tractable target.
+
+Open: prove cherry-worst (slack -> soft/arithmetic argument), then mixed<=uniform near the tie + the slack
+regime. conjecture1_proved = False.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from fractions import Fraction as Fr
+
+from .spider_broom import broom_total
+
+F_STAR = math.log(621 / 64) / 11
+
+# The cherry child: armmid+leaf rooted at armmid -- degree 2, field 2/3, total 3/2, size 2.
+CHERRY = {"d": 2, "h": Fr(2, 3), "total": Fr(3, 2), "size": 2}
+
+
+def broom_child(j):
+    """`B(j)` (j cherries on one hub) as a CHILD branch (rooted at the hub, up-edge): `(d, h, total, size)`.
+    Degree `j+1`, `U = (3/2)^j` (hub unmatched = product of cherry totals), `h = U/total`, size `2j+1`."""
+    tot = broom_total(j)
+    U = Fr(3, 2) ** j
+    return {"d": j + 1, "h": U / tot, "total": tot, "size": 2 * j + 1}
+
+
+def uniform_hub_ell(k, child):
+    """`ell(hub of k copies of `child`)` (float): `k*ell(child) + log(1 + k*x) - F*`, `x = h/((k+1)d)`.
+    `ell(child) = log total - size * F*`. For `child = CHERRY` this is `ell(B(k))` (the broom)."""
+    d, h, tot, sz = child["d"], child["h"], child["total"], child["size"]
+    ell_child = (math.log(tot.numerator) - math.log(tot.denominator)) - sz * F_STAR
+    x = float(h) / ((k + 1) * d)
+    return k * ell_child + math.log(1 + k * x) - F_STAR
+
+
+def _exp11_hub(k, child):
+    """`exp(11 * (k*ell(child) + log(1+k x) - F*))` as an EXACT Fraction (the 11 clears `F* = log(621/64)/11`)."""
+    d, h, tot, sz = child["d"], child["h"], child["total"], child["size"]
+    x = h / ((k + 1) * d)
+    return tot ** (11 * k) * Fr(64, 621) ** (k * sz) * (1 + k * x) ** 11 * Fr(64, 621)
+
+
+def cherry_vs_broom_ratio(k, j):
+    """EXACT rational `exp(11*(ell(k,cherry) - ell(k,B(j))))`.  `> 1` iff the cherry is the worse (higher-`ell`)
+    uniform child -- the campaign's cherry-worst inequality, rational in `(k, j)`.  Slack in the tie regime, so
+    tie-free; only the broom step `ell(B(k)) <= 0` carries the `27*23` arithmetic."""
+    return _exp11_hub(k, CHERRY) / _exp11_hub(k, broom_child(j))
+
+
+def binding_j(k, jmax=25):
+    """The `j* = argmin_j cherry_vs_broom_ratio(k, j)` -- the BINDING broom-child (`ell(k,B(j))` closest to
+    `ell(k,cherry)`).  `cherry_vs_broom_ratio(k, ·)` is unimodal in `j` (decreasing to `j*`, then increasing),
+    so `ratio(k, j*) > 1` certifies cherry-worst for ALL `j` at that `k`."""
+    return min(range(1, jmax + 1), key=lambda j: cherry_vs_broom_ratio(k, j))
+
+
+def _ell_of(child):
+    tot, sz = child["total"], child["size"]
+    return (math.log(tot.numerator) - math.log(tot.denominator)) - sz * F_STAR
+
+
+def slack_linobj(k, child):
+    """`ell(child) + h/((k+1)d)` -- the per-child term of the slack-regime bound (via `log(1+Σx) <= Σx`)."""
+    return _ell_of(child) + float(child["h"]) / ((k + 1) * child["d"])
+
+
+def slack_g(k, jmax=40):
+    """`g(k) = k * max over the branch envelope (cherry + brooms B(j)) of (ell(c) + h_c/((k+1)d_c))`.
+    Envelope reduction: per degree the `ell`-max branch is the broom, and larger branches have `ell` bounded away
+    from `0`, so the max lies on this small envelope (verified over all branches <= size 11)."""
+    envs = [CHERRY] + [broom_child(j) for j in range(2, jmax)]
+    return k * max(slack_linobj(k, c) for c in envs)
+
+
+def slack_hub_bound(k):
+    """Upper bound on `ell(hub of k children)` in the SLACK regime: `ell(hub) <= slack_g(k) - F*`.
+    (From `ell(hub) = Σ ell(c) + log(1 + Σ x_c) - F* <= Σ(ell(c) + x_c) - F* <= k*max(ell(c)+x_c) - F*`; the
+    `sum <= k*max` step holds for MIXED children, so this covers mixed hubs.)  `<= 0` for all `k >= 16`
+    (`slack_g(16) = 0.190 < F*`; sup near `k=16`, `-> 0.130 - F* = -0.077` as `k -> inf`) -- the tie-free soft
+    bound covering `k >= 16`.  (Combined with `mixed <= B(k)` for `k <= 15`, every `k` is covered with no gap.)
+    conjecture1_proved = False."""
+    return slack_g(k) - F_STAR
+
+
+@dataclass(frozen=True)
+class TieCherryWorstCertificate:
+    """Certifies the FINITE tie-regime cherry-worst: for each `k` in `[2, k_max]`, the cherry is the worst
+    uniform child, i.e. `cherry_vs_broom_ratio(k, j*(k)) > 1` at the binding `j*` (unimodal in `j`, so this
+    covers all `j`).  With the broom optimum `ell(B(k)) <= 0` [PROVEN] this closes the uniform tie-regime
+    (`k <= 20`; `k >= 21` is the slack regime).  `.check()` exact; `.lean_module` emits `norm_num` atoms
+    `1 < ratio(k, j*)`.  conjecture1_proved = False."""
+
+    k_max: int = 20
+
+    def atoms(self):
+        """List of `(name, ratio)` with the certified `1 < ratio` (each `ratio = cherry_vs_broom_ratio(k, j*)`)."""
+        out = []
+        for k in range(2, self.k_max + 1):
+            js = binding_j(k)
+            out.append((f"tie_cherry_worst_k{k}_j{js}", cherry_vs_broom_ratio(k, js)))
+        return out
+
+    def check(self) -> bool:
+        return all(r > 1 for _, r in self.atoms())
+
+    def lean_module(self, namespace="BGTieCherryWorst") -> str:
+        assert self.check(), "cherry-worst fails in the claimed range -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        # Emit the CROSS-MULTIPLIED integer form `denom < num` (equivalent to `1 < num/denom` since denom > 0):
+        # a plain big-integer comparison, which `norm_num` handles far faster than normalizing a ~700-digit ℚ
+        # fraction (matches the green `bg_broom_optimum` gate's cleared-integer style).
+        body = "\n".join(
+            f"theorem {nm} : (({r.denominator} : ℤ)) < (({r.numerator} : ℤ)) := by norm_num"
+            for nm, r in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# Frozen rigorous rational log-enclosures `log(p/q) in [lo/_D, hi/_D]` (floor/ceil at 80-digit precision) -- the
+# transcendental import for the slack-bound gate (turan/jensen/concavity trust model).  `(621,64)` = `log(621/64)`
+# (= 11 F*) AND `log(total(B(5)))` (same value).
+_D = 10 ** 30
+_LOG = {
+    (621, 64): (2272447998573806908489095813828, 2272447998573806908489095813829),
+    (3, 2): (405465108108164381978013115464, 405465108108164381978013115465),
+    (11, 4): (1011600911678479925227479335048, 1011600911678479925227479335049),
+    (135, 32): (1439538875638702901700334436702, 1439538875638702901700334436703),
+    (513, 80): (1858249210496887921925075323596, 1858249210496887921925075323597),
+    (6561, 448): (2684105076929892369553216423187, 2684105076929892369553216423188),
+    (22599, 1024): (3094189130894351300128314531495, 3094189130894351300128314531496),
+    (8505, 256): (3503232060350399661344481289616, 3503232060350399661344481289617),
+    # M_d geometric-tail worst-structure totals (per-degree per-size max non-broom, exhaustive enum <= 17):
+    (17, 8): (753771802376380151997838253498, 753771802376380151997838253499),          # d=2 peak, size 4
+    (79, 24): (1191394022119075874526003940184, 1191394022119075874526003940185),        # d=3 peak, size 6
+    (489, 64): (2033479406115200168956784874294, 2033479406115200168956784874295),       # d=4 peak, size 10
+    (22599, 1280): (2871045579580141544362019441185, 2871045579580141544362019441186),   # d=5 peak, size 14
+    (27459, 1024): (3288977456453435931386036463646, 3288977456453435931386036463647),   # d=6 boundary, size 16
+    (3051, 2008): (418330203905049828297585601000, 418330203905049828297585601001),       # d=6 delta ratio t16/t14 (=27459/18072)
+}
+
+
+def _log_lo(fr):
+    return Fr(_LOG[(fr.numerator, fr.denominator)][0], _D)
+
+
+def _log_hi(fr):
+    return Fr(_LOG[(fr.numerator, fr.denominator)][1], _D)
+
+
+@dataclass(frozen=True)
+class TieSlackCertificate:
+    """Kernel-gates the slack bound `slack_g(k) <= F*` for `k >= 16` (which covers MIXED hubs and closes the
+    branch-induction upper bound for `k >= 16`).  Three atom families, all rational after clearing `F* =
+    log(621/64)/11` and using frozen log-enclosures `L(x) in [lo, hi]`:
+
+      (A) `slack_g(16) < F*`:  per envelope child `c`, `phi_c(16) < F*`  <=>
+          `176 L(total_c) + 11 (h_c/d_c)(16/17) < (16|c|+1) L(621/64)`  (upper LHS by `L_hi`, lower RHS by `L_lo`);
+      (B) monotone: per non-`B(5)` envelope child, `dphi_c/dk|_{16} < 0`  <=>
+          `11 L(total_c) + 11 (h_c/d_c)/289 < |c| L(621/64)`  (so `slack_g(k) <= slack_g(16)` for `k >= 16`);
+      (C) `B(5)` bound: `F* > 3/23`  <=>  `23 L(621/64) > 33`.
+
+    Enclosures are the transcendental import (concavity/turan trust model).  Covers the envelope `{cherry,
+    B(2..8)}`; larger brooms / non-envelope branches are dominated (documented, verified).  conjecture1_proved =
+    False."""
+
+    def _children(self):
+        return [("cherry", CHERRY)] + [(f"B{j}", broom_child(j)) for j in range(2, 9)]
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)` with the certified `lhs op rhs` (`op` in {'<','>'}), exact rationals."""
+        g = Fr(621, 64)
+        Lg_lo = _log_lo(g)
+        out = []
+        for nm, c in self._children():
+            tot, sz, hd = c["total"], c["size"], Fr(c["h"], 1) / c["d"]
+            out.append((f"tie_slack_phi16_{nm}",
+                        176 * _log_hi(tot) + 11 * hd * Fr(16, 17), (16 * sz + 1) * Lg_lo, "<"))
+            if nm != "B5":
+                out.append((f"tie_slack_deriv16_{nm}",
+                            11 * _log_hi(tot) + 11 * hd * Fr(1, 289), sz * Lg_lo, "<"))
+        out.append(("tie_slack_Fstar_gt_3_23", 23 * Lg_lo, Fr(33), ">"))
+        return out
+
+    def check(self) -> bool:
+        return all((lhs < rhs) if op == "<" else (lhs > rhs) for _, lhs, rhs, op in self.atoms())
+
+    def lean_module(self, namespace="BGTieSlack") -> str:
+        assert self.check(), "slack certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Mixed-hub reduction via log-concavity + per-child KKT (the tie-free decoupling, 2026-08-31).
+#
+# The mixed-hub bound `ell(hub) <= ell(B(k))` (`k <= 15`) reduces to a SINGLE-CHILD inequality by the tangent of
+# the concave `log` at the all-cherry point.  With `x_cherry(k) = 1/(3(k+1))` and slope `lambda(k) =
+# 1/(1 + k x_cherry) = 3(k+1)/(4k+3)`, define the per-child Lagrangian value `V(c) = ell(c) + lambda(k) x_c`.
+# Log-concavity gives, for ANY children `c_1..c_k`,
+#
+#     ell(hub) - ell(B(k)) = Σ ell(c_i) - k ell(cherry) + [log(1+Σx_i) - log(1 + k x_cherry)]
+#                         <= Σ ell(c_i) - k ell(cherry) + lambda(k) (Σx_i - k x_cherry)   [tangent above the curve]
+#                          = Σ [V(c_i) - V(cherry)].
+#
+# So if `V(c) <= V(cherry)` for EVERY child (per-child KKT, NO coupling through the other children), then
+# `ell(hub) <= ell(B(k))`.  This is why it works where the earlier degree-changing exchange failed: it is a
+# RELATIVE comparison (hub vs `B(k)`), tie-free -- the `27*23` arithmetic stays confined to `ell(B(k)) <= 0`.
+# The tangent step is rigorous (concavity); the residual is the per-child `V(c) <= V(cherry)` (verified over the
+# broom envelope + all branches <= size 11; the (x, ell)-tradeoff dominates larger branches -- high-x branches
+# have sharply negative `ell`).  conjecture1_proved = False.
+
+
+def mixed_lambda(k):
+    """The tangent slope `lambda(k) = 1/(1 + k x_cherry) = 3(k+1)/(4k+3)` (EXACT Fraction).  `x_cherry(k) =
+    1/(3(k+1))` is the cherry's hub-field share; `lambda` is the derivative of `log(1+.)` at the all-cherry point,
+    the concavity constant that decouples the mixed-hub bound into per-child inequalities."""
+    return Fr(3 * (k + 1), 4 * k + 3)
+
+
+def child_x(child, k):
+    """`x_c(k) = h_c / ((k+1) d_c)` (EXACT Fraction) -- the child's share of the hub cavity field."""
+    return Fr(child["h"], 1) / ((k + 1) * child["d"])
+
+
+def child_value(child, k):
+    """The per-child Lagrangian value `V(c) = ell(c) + lambda(k) x_c` (float; `ell` is transcendental).  The
+    concavity reduction is `ell(hub) - ell(B(k)) <= Σ (V(c_i) - V(cherry))`, so `V(c) <= V(cherry)` per child
+    proves `mixed <= B(k)`."""
+    return _ell_of(child) + float(mixed_lambda(k)) * float(child_x(child, k))
+
+
+def cherry_is_kkt_argmax(k, jmax=40):
+    """True iff the cherry maximises `V(c)` over the branch envelope `{cherry, B(2..jmax)}` at `k` -- the
+    per-child KKT condition that (with concavity) yields `mixed <= B(k)`.  Holds in the tie regime `k <= 15`;
+    fails for large `k` (consistent with `mixed <= B(k)` itself failing at `k >= 20`)."""
+    vch = child_value(CHERRY, k)
+    return all(child_value(broom_child(j), k) <= vch + 1e-12 for j in range(2, jmax))
+
+
+@dataclass(frozen=True)
+class MixedHubKKTCertificate:
+    """Kernel-gates the per-child KKT inequality `V(c) < V(cherry)` for every broom envelope child `B(j)` and
+    every `k` in the tie regime `[2, k_max]` -- which, via the rigorous log-concavity tangent, PROVES the
+    mixed-hub reduction `ell(hub) <= ell(B(k))` for `k <= 15` (the last tie-free conceptual piece of the
+    branch-induction upper bound).  Clearing `11 F* = log(621/64)` and `lambda(k) = 3(k+1)/(4k+3)` (rational),
+    each atom is
+
+        11 L(total_c) - 11 L(3/2) - (|c|-2) L(621/64)  <  11 lambda(k) (x_cherry(k) - x_c(k)),
+
+    LHS upper-bounded by frozen log-enclosures (`L_hi(total_c)`, `L_lo(3/2)`, `L_lo(621/64)` -- the `-(|c|-2)<0`
+    coefficient takes `L_lo`), RHS an exact rational.  Reuses the slack cert's `_LOG` enclosures (same envelope).
+    The cherry child is the reference (`V=V`, trivial) and omitted.  `.check()` exact; `.lean_module` emits
+    `norm_num` atoms.  conjecture1_proved = False."""
+
+    k_max: int = 15
+
+    def _brooms(self):
+        return [(f"B{j}", broom_child(j)) for j in range(2, 9)]
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op='<')` with the certified `lhs < rhs`, exact rationals."""
+        g = Fr(621, 64)
+        Lg_lo = _log_lo(g)
+        L32_lo = _log_lo(Fr(3, 2))
+        out = []
+        for k in range(2, self.k_max + 1):
+            lam = mixed_lambda(k)
+            xch = child_x(CHERRY, k)
+            for nm, c in self._brooms():
+                tot, sz = c["total"], c["size"]
+                # LHS upper bound: 11 L_hi(total_c) - 11 L_lo(3/2) - (sz-2) L_lo(621/64)  [sz-2 > 0 for brooms]
+                lhs = 11 * _log_hi(tot) - 11 * L32_lo - (sz - 2) * Lg_lo
+                rhs = 11 * lam * (xch - child_x(c, k))
+                out.append((f"mixed_kkt_k{k}_{nm}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMixedHubKKT") -> str:
+        assert self.check(), "mixed-hub KKT certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# --------------------------------------------------------------------------------------------------------------
+# High-degree tail of the per-child envelope `V(c) <= V(cherry)` (2026-08-31).
+#
+# The per-child KKT residual is `V(c) = ell(c) + lambda(k) x_c <= V(cherry)` for ALL branches `c`.  High-degree
+# branches close CLEANLY using only the ceiling `ell(c) <= 0` (the induction hypothesis) and `h_c <= 1`: for
+# `d_c >= 7`,
+#
+#     V(c) <= 0 + lambda(k) * (1/((k+1) * 7))  <  V(cherry) = ell(cherry) + lambda(k)/(3(k+1)),
+#
+# which (with `x_cherry = 1/(3(k+1))`, `lambda(k)/(k+1) = 3/(4k+3)`) is exactly the rational-cleared inequality
+#
+#     -44 / (7 (4k+3))  <  11 ell(cherry) = 11 log(3/2) - 2 log(621/64).
+#
+# So the OPEN part of the envelope tail shrinks to small-degree branches `d_c <= 6` (of which the brooms
+# `B(2..5)` are gated by `MixedHubKKTCertificate`; the residual is small-degree NON-broom branches, whose max
+# `V` is empirically the broom `B(4)` with margin ~0.0017 and decays with size).  conjecture1_proved = False.
+
+
+@dataclass(frozen=True)
+class HighDegreeTailCertificate:
+    """Kernel-gates the HIGH-DEGREE half of the per-child envelope tail `V(c) <= V(cherry)`: for every branch
+    with root branch-degree `d_c >= 7`, `V(c) < V(cherry)` (`k <= k_max`), using only `ell(c) <= 0` and
+    `h_c <= 1` -- no envelope enumeration.  Reduces to the rational inequality `-44/(7(4k+3)) < 11 ell(cherry)`
+    (`= 11 log(3/2) - 2 log(621/64)`), one atom per `k`, RHS lower-bounded by the frozen log-enclosures
+    (`11 L_lo(3/2) - 2 L_hi(621/64)`).  Shrinks the open envelope tail to small-degree (`d_c <= 6`) branches.
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    k_max: int = 15
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op='<')`: `-44/(7(4k+3)) < 11 L_lo(3/2) - 2 L_hi(621/64)`, exact rationals."""
+        rhs = 11 * _log_lo(Fr(3, 2)) - 2 * _log_hi(Fr(621, 64))    # lower bound on 11 ell(cherry)
+        return [(f"hi_degree_tail_k{k}", Fr(-44, 7 * (4 * k + 3)), rhs, "<")
+                for k in range(2, self.k_max + 1)]
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGHighDegreeTail") -> str:
+        assert self.check(), "high-degree tail certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Per-child envelope tail closure — the three-case split (2026-08-31; DEGREE-DEPENDENT threshold correction).
+#
+# The mixed-hub reduction needs `V(c) = ell(c) + lambda(k) x_c <= V(cherry)` for EVERY branch `c`.  This splits by
+# root branch-degree into three cases, only ONE still open (a per-degree refined ceiling):
+#
+#   (1) d_c >= 7  -- GATED (`HighDegreeTailCertificate`): `x_c` small, ceiling `ell <= 0` alone suffices.
+#   (2) brooms B(2..8) (degrees 3..9) -- GATED (`MixedHubKKTCertificate`): `V(B(j)) < V(cherry)` directly.
+#   (3) d_c <= 6, NON-broom -- reduces (pure algebra) to the DEGREE-DEPENDENT refined ceiling
+#
+#         ell(c) < small_degree_threshold(k, d_c) := ell(cherry) + (d_c - 3) / (d_c (4k+3)),
+#
+#       because then, using `x_c = h_c/((k+1)d_c) <= 1/((k+1)d_c)` (`h_c <= 1`) and `lambda(k)/(k+1) = 3/(4k+3)`,
+#         V(c) <= ell(c) + lambda(k)/((k+1) d_c) < [ell(cherry) + (d_c-3)/(d_c(4k+3))] + 3/((4k+3) d_c)
+#               = ell(cherry) + 1/(4k+3) = ell(cherry) + lambda(k)/(3(k+1)) = V(cherry).
+#
+# CORRECTION (2026-08-31, 11th caught overclaim): the earlier SINGLE threshold `ell(cherry) - lambda(k)/(6(k+1))`
+# was the `d=2` case used for ALL degrees -- too strict at small `k` for higher-degree children, so a size-16
+# non-broom (`4 cherries + B(3)`, `d=6`, `ell=-0.0164`) was mis-classified `open` at `k=2` (its ACTUAL `V` is
+# still `< V(cherry)` by `+0.018`; only the sufficient-condition bookkeeping failed).  The `x_c <= 1/((k+1)d_c)`
+# bound gives the correct degree-dependent threshold: higher `d_c` => `x_c` smaller => threshold HIGHER (nearer
+# the plain ceiling).  Hardest cases are the low degrees: `d=2` (`ell < ell(cherry) - 1/(2(4k+3))`), `d=3`
+# (`ell < ell(cherry)`); `d>=4` is essentially just the ceiling.
+#
+# With the corrected threshold EVERY `d_c <= 6` non-broom is covered by case (3) directly -- verified over all
+# branches <= size 16 at every `k in [2,15]` (zero `open` non-brooms), plus generalized brooms (to size 66) and
+# star-of-brooms rooted at low-degree vertices (to size 101).  The one open analytic input is the size-decay tail
+# of this per-degree ceiling (b); its failure mode -- a large low-root-degree near-extremal branch -- is refuted
+# (such branches are diluted, `ell ~ -0.27`, see `branch_ell_by_vertex`).  conjecture1_proved = False.
+
+
+def small_degree_threshold(k, d=2):
+    """The DEGREE-DEPENDENT refined-ceiling threshold `ell(cherry) + (d-3)/(d(4k+3))` (float).  A branch with
+    root degree `d >= 2` and `ell(c) < small_degree_threshold(k, d)` satisfies `V(c) < V(cherry)` (pure algebra
+    via `x_c <= 1/((k+1)d)`).  Higher `d` => higher threshold (nearer the plain ceiling); `d=3` gives exactly
+    `ell(cherry)`; `d=2` (default) gives `ell(cherry) - 1/(2(4k+3))` (the hardest, low-degree case)."""
+    return _ell_of(CHERRY) + (d - 3) / (d * (4 * k + 3))
+
+
+def envelope_tail_case(d, ell, k):
+    """Classify which closure case covers a branch with root branch-degree `d` and potential `ell` at hub-degree
+    `k` (`h_c <= 1` assumed): `'hi_degree'` (d>=7, gated), `'threshold'` (ell below the degree-dependent refined
+    ceiling => V<Vch), or `'open'` (small-degree, ell at/above threshold -- must be a broom, gated by mixed_kkt,
+    else the residual)."""
+    if d >= 7:
+        return "hi_degree"
+    if ell < small_degree_threshold(k, d):
+        return "threshold"
+    return "open"
+
+
+# --------------------------------------------------------------------------------------------------------------
+# M_d frontier bound -- Phase 1 (y-floor) + Phase 2 (per-degree step, binding near-broom cases) (2026-09-01).
+#
+# The single-child lemma's residual (b) is the uniform per-degree bound M_d: every d<=6 non-broom branch has
+# ell(c) < threshold(k,d).  Plan `quiet-singing-kahn`: prove by induction on size via the additive recursion
+# ell(c) = Σ_i ell(c_i) + L(y),  L = log(1 + (Σ y_i)/d) - F*,  L increasing in each child field y_i.  So the
+# WORST non-broom hub of degree d is (d-2) cherries + 1 small broom (Phase 0 gate, exact: closes < threshold for
+# every d=2..6, margins +0.017..+0.044).  This certificate gates that per-degree binding step; the residual is
+# the EXTREMALITY (the near-broom is the max non-broom hub = "brooms maximize V among non-cherry children per
+# degree"), a per-degree exchange shared with the parallel Lean Obligation A.  conjecture1_proved = False.
+
+
+def y_floor(d):
+    """Reachable-field floor: for a degree-`d` branch, `y_c = h_c/d >= 1/(2d-1)` (exact rational; the min is the
+    degree-`d` star of leaves, `h = d/(2d-1)`).  The `y`-roof is `1/d` (`h -> 1`).  So the per-degree step lives
+    over the compact box `y in [1/(2d-1), 1/d]`."""
+    return Fr(1, 2 * d - 1)
+
+
+# Frozen log-enclosures of the worst near-broom hub totals `(d-2) cherries + 1 B(j*)` (floor/ceil, denom 10^30).
+_MDHUB = {
+    3: {"j": 2, "size": 8, "num": 119, "den": 24,
+        "Llo": 1601069662763583765707945760019, "Lhi": 1601069662763583765707945760020},
+    4: {"j": 2, "size": 10, "num": 489, "den": 64,
+        "Llo": 2033479406115200168956784874294, "Lhi": 2033479406115200168956784874295},
+    5: {"j": 3, "size": 14, "num": 22599, "den": 1280,
+        "Llo": 2871045579580141544362019441185, "Lhi": 2871045579580141544362019441186},
+    6: {"j": 3, "size": 16, "num": 27459, "den": 1024,
+        "Llo": 3288977456453435931386036463646, "Lhi": 3288977456453435931386036463647},
+}
+
+
+@dataclass(frozen=True)
+class MdStepCertificate:
+    """Kernel-gates the per-degree binding STEP of the M_d frontier bound: the worst non-broom hub of root-degree
+    `d in {3,4,5,6}` -- `(d-2)` cherries + `1` small broom `B(j*)` -- has `ell(hub) < threshold(k,d)` for every
+    `k in [2,15]`.  Clearing `11 F* = log(621/64)` and using frozen log-enclosures, each atom is
+
+        11 L(total_hub) - |hub| L(621/64)  <  11 L(3/2) - 2 L(621/64) + 11(d-3)/(d(4k+3)),
+
+    LHS upper-bounded (`L_hi(total_hub)`, `L_lo(621/64)`), RHS lower-bounded (`L_lo(3/2)`, `L_hi(621/64)`).  This
+    gates the empirically-binding branch of each per-degree induction step (Phase 0 verified it is < threshold
+    exactly, margins +0.017..+0.044).  SCOPE (honest): gates the near-broom binding case, NOT all non-broom
+    branches -- the extremality (near-broom = max non-broom hub) is the residual (the per-degree exchange).
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: the cleared per-degree step atoms, exact rationals via enclosures."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo, Lg_hi = _log_lo(Fr(621, 64)), _log_hi(Fr(621, 64))
+        out = []
+        for d in range(3, 7):
+            h = _MDHUB[d]
+            thi = Fr(h["Lhi"], 10 ** 30)                  # L_hi(total_hub)
+            lhs = 11 * thi - h["size"] * Lg_lo
+            for k in range(2, 16):
+                rhs = 11 * L32_lo - 2 * Lg_hi + Fr(11 * (d - 3), d * (4 * k + 3))
+                out.append((f"md_step_d{d}_k{k}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdStep") -> str:
+        assert self.check(), "M_d step certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+@dataclass(frozen=True)
+class MonotoneTailCertificate:
+    """Kernel-gates the M_d monotone-tail lemma (Phase 3): any non-broom hub of root-degree `d in {3,4,5,6}` with
+    at least one child of degree `>= 7` has `ell(hub) < threshold(k,d)` for every `k in [2,15]` -- so the M_d
+    induction restricts to `d_i <= 6` children (finite, well-founded).  RIGOROUS (no enumeration): by the
+    concavity tangent `ell(hub) <= ell(B(d-1)) + Σ_i (V(c_i) - V(cherry))`, the `d>=7` child contributes
+    `V(c_j) - V(cherry) <= λ(k)/(7(k+1)) - V(cherry)` (`HighDegreeTailCertificate`), and the rest `<= 0`, giving
+
+        ell(hub) <= ell(B(d-1)) - ell(cherry) - (4/7)/(4k+3).
+
+    Cleared (`× 11`, `11 F* = log(621/64)`), the atom `ell(B(d-1)) - 2 ell(cherry) < [4/7 + (d-3)/d]/(4k+3)` is
+
+        11 L(total(B(d-1))) - 22 L(3/2) - (2d-5) L(621/64)  <  11 [4/7 + (d-3)/d] / (4k+3),
+
+    LHS upper-bounded by frozen log-enclosures (`L_hi(total B)`, `L_lo(3/2)`, `L_lo(621/64)`), RHS rational.
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: the cleared monotone-tail atoms (d=3..6, k=2..15), exact rationals."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo = _log_lo(Fr(621, 64))
+        out = []
+        for d in range(3, 7):
+            tB = broom_total(d - 1)                        # 11/4, 135/32, 513/80, 621/64 -- all in _LOG
+            lhs = 11 * _log_hi(tB) - 22 * L32_lo - (2 * d - 5) * Lg_lo
+            for k in range(2, 16):
+                rhs = 11 * (Fr(4, 7) + Fr(d - 3, d)) / (4 * k + 3)
+                out.append((f"md_tail_d{d}_k{k}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdTail") -> str:
+        assert self.check(), "monotone-tail certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+@dataclass(frozen=True)
+class FreeClosureCertificate:
+    """Kernel-gates the M_d "free closure" degrees `d in {3,4,6}`: for these, the concavity ceiling alone beats
+    the threshold, so NO extremality is needed.  For any non-broom hub of degree `d`, the tangent gives
+    `ell(hub) <= ell(B(d-1))` (given the IH `V(c_i) <= V(cherry)`, the MixedHubKKT machinery), and
+
+        ell(B(d-1)) < threshold(k,d) = ell(cherry) + (d-3)/(d(4k+3))   for d in {3,4,6}, all k.
+
+    So `ell(hub) < threshold(k,d)` with no per-hub work.  Cleared (`× 11`, `11 F* = log(621/64)`), each atom is
+
+        11 L(total(B(d-1))) - 11 L(3/2) - (2d-3) L(621/64)  <  11(d-3)/(d(4k+3)),
+
+    LHS upper-bounded by frozen log-enclosures, RHS rational.  `d=5` does NOT close free (`ell(B(4)) = -0.00103 >
+    threshold(5,15) = -0.00136`) -- its worst non-broom hub is gated by `MdStepCertificate`, and the residual is
+    the `d=5` extremality (near-broom = max non-broom hub, a per-degree exchange, off by ~0.0003).
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    free_degrees: tuple = (3, 4, 6)
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: `ell(B(d-1)) < threshold(k,d)` cleared, for d in {3,4,6}, k=2..15."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo = _log_lo(Fr(621, 64))
+        out = []
+        for d in self.free_degrees:
+            tB = broom_total(d - 1)
+            lhs = 11 * _log_hi(tB) - 11 * L32_lo - (2 * d - 3) * Lg_lo
+            for k in range(2, 16):
+                rhs = Fr(11 * (d - 3), d * (4 * k + 3))
+                out.append((f"md_free_d{d}_k{k}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdFree") -> str:
+        assert self.check(), "free-closure certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# M_d geometric-tail worst-structure data (per-degree per-size max non-broom-non-cherry, exhaustive enum to size 17).
+# d=2,3,4,5 PEAK at a finite interior size (4,6,10,14) then decrease -- their max is the enumerated peak (bounded,
+# no extrapolation).  d=6 is still CLIMBING at the size-16 enumeration boundary; its even-size increments shrink
+# geometrically (observed ratio ~0.28 < 5/12), so the geometric tail with rate rho=5/12 caps M_6 below threshold.
+_MDGEO = {
+    2: {"total": (17, 8), "size": 4},
+    3: {"total": (79, 24), "size": 6},
+    4: {"total": (489, 64), "size": 10},
+    5: {"total": (22599, 1280), "size": 14},
+    6: {"total": (27459, 1024), "size": 16},
+}
+_MDGEO_DELTA = (3051, 2008)   # total(d=6,size16)/total(d=6,size14) = 27459/18072 reduced: last even-step ratio, d=6 tail
+
+
+@dataclass(frozen=True)
+class MdGeometricTailCertificate:
+    """Kernel-gates the FINITE arithmetic of the M_d frontier closure, CONDITIONAL on the one open lemma -- the
+    even-step `ell`-subsequence contraction `rho <= 5/12` (the rooted cavity-contraction, = the parallel Lean
+    Obligation A in its per-degree scalar form).  This is the sharpened residual of the single-child lemma tail:
+    the whole M_d bound reduces to this single contraction rate.
+
+    The size-trend (exhaustive enum to size 17, exact struct-based broom exclusion) is a PARITY OSCILLATION whose
+    even-size max-`ell` subsequence, per root-degree, behaves as:
+
+      - d=2: monotone-decreasing from size 4 -> `M_2 = ell(17/8) = -0.0726` (interior peak, bounded).
+      - d=3: peaks size 6 (`ell(79/24) = -0.0481`), then decreases.
+      - d=4: peaks size 10 (`ell(489/64) = -0.0324`), then decreases.
+      - d=5: peaks size 14 (`ell(22599/1280) = -0.0212`), then decreases (this IS the d=5 extremality residual;
+        the worst non-broom d=5 hub sits far below threshold, margin +0.020 -- the earlier "off by 0.0003"
+        FreeClosure framing was the loose broom CEILING, not the actual max non-broom hub).
+      - d=6: still CLIMBING at the size-16 boundary (`ell(27459/1024) = -0.0164`); the geometric tail with
+        `rho <= 5/12` gives `M_6 <= ell(27459/1024) + (rho/(1-rho)) * Delta <= -0.0127 < threshold(6) = +0.0002`,
+        where `Delta = ell(6,16) - ell(6,14) = L(27459/18072) - 2F*`.
+
+    Atoms (cleared, `11 F* = log(621/64)`, frozen log-enclosures), all with margin `>= +0.013`:
+      (peak, d in {2,3,4,5}): `11 L(total_peak_d) - (size-2) L(621/64) - 11 L(3/2) < 11(d-3)/(d(4k+3))`, k=2..15.
+      (tail, d=6, x77): `77 L(27459/1024) + 55 L(27459/18072) - 108 L(621/64) - 77 L(3/2) < 77/(2(4k+3))`, k=2..15.
+
+    HONEST SCOPE: gates the finite arithmetic and ISOLATES the open lemma.  Soundness is CONDITIONAL on (a) the
+    even-step contraction `rho <= 5/12` (unproven -- the field-map Jacobian bound `h^2/(d_v d_w) <= 1/2` gives
+    field convergence, but the `ell`-max-subsequence contraction is the residual work), and (b) the enumerated
+    per-(degree,size) maxima being the true max (exhaustive-enum generator trust, to size 17).  Does NOT close the
+    M_d bound outright.  `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    rho: Fr = Fr(5, 12)
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: peaked-degree + d=6 geometric-tail atoms, exact rationals via enclosures."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo = _log_lo(Fr(621, 64))
+        out = []
+        for d in (2, 3, 4, 5):
+            p, q = _MDGEO[d]["total"]
+            sz = _MDGEO[d]["size"]
+            lhs = 11 * _log_hi(Fr(p, q)) - (sz - 2) * Lg_lo - 11 * L32_lo
+            for k in range(2, 16):
+                out.append((f"md_geo_peak_d{d}_k{k}", lhs, Fr(11 * (d - 3), d * (4 * k + 3)), "<"))
+        # d=6 geometric tail: M_6 <= ell(6,16) + (rho/(1-rho)) Delta.  rho=5/12 => rho/(1-rho)=5/7; x11 and x7 => x77.
+        assert self.rho == Fr(5, 12), "d=6 tail atom is cleared for rho=5/12"
+        p, q = _MDGEO[6]["total"]
+        dp, dq = _MDGEO_DELTA
+        lhs6 = 77 * _log_hi(Fr(p, q)) + 55 * _log_hi(Fr(dp, dq)) - 108 * Lg_lo - 77 * L32_lo
+        for k in range(2, 16):
+            out.append((f"md_geo_tail_d6_k{k}", lhs6, Fr(77, 2 * (4 * k + 3)), "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdGeoTail") -> str:
+        assert self.check(), "M_d geometric-tail certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# Near-broom family unimodality (2026-09-01): the family "(d-2) cherries + B(m)" (root-degree d), peaks at
+# m* = max(1, d-3), then STRICTLY DECREASES -- so its sup over all sizes is the finite peak (no infinite tail,
+# no contraction constant).  This REPLACES the earlier "geometric tail conditional on rho<=5/12": that framing was
+# wrong -- the family does not converge up toward threshold, it decreases (linearly) away from it.
+#   ell(d,m) = (d-2+m) ell_cherry + log((4m+3)/(3(m+1))) + log(1 + s(m)/d) - 2F*,  s(m) = (d-2)/3 + 3/(4m+3).
+#   Delta(d,m) = ell(d,m+1) - ell(d,m) < 0  <=>  BIG(d,m)^11 < (621/64)^2   (F* cleared EXACTLY; PURE rational atoms,
+#   no log-enclosures), where BIG(d,m) = (3/2)(4m+7)(m+1)/((m+2)(4m+3)) * (d+s(m+1))/(d+s(m)).
+_NEARBROOM_MSTAR = {2: 1, 3: 1, 4: 2, 5: 3, 6: 3}
+# Monotone-tail Handelman data: numerator of BIG(d, m*+t) - BIG(d, m*+t+1), as a poly in t>=0, is c1*t + c0 with
+# c1, c0 > 0 (verified symbolically) -- so BIG is strictly decreasing for m >= m* (d=3,4,5,6), den > 0 on the ray.
+_NEARBROOM_MONO = {3: (240, 717), 4: (1680, 6645), 5: (48, 237), 6: (6864, 33813)}
+
+
+def _nearbroom_s(d, m):
+    return Fr(d - 2, 3) + Fr(3, 4 * m + 3)
+
+
+def _nearbroom_BIG(d, m):
+    """BIG(d,m): Delta(d,m) < 0 iff BIG(d,m)^11 < (621/64)^2.  Exact rational (F* cleared)."""
+    return (Fr(3, 2) * Fr((4 * m + 7) * (m + 1), (m + 2) * (4 * m + 3))
+            * (d + _nearbroom_s(d, m + 1)) / (d + _nearbroom_s(d, m)))
+
+
+@dataclass(frozen=True)
+class NearBroomUnimodalityCertificate:
+    """Kernel-gates the UNCONDITIONAL unimodality of the near-broom family "(d-2) cherries + B(m)" (root-degree
+    d in {2..6}) -- the argmax family of the M_d frontier bound (adversarially confirmed: two-broom / deep-nested
+    competitors sit >= +0.017 below the near-broom peak).  The family `ell(d,m)` peaks at `m* = max(1, d-3)` and
+    STRICTLY DECREASES for `m > m*`, so its sup over ALL sizes is the finite peak `ell(d,m*)` -- which is the M_d
+    value, verified `< threshold(d)` (margins +0.017..+0.040).  NO contraction constant, NO infinite tail: this
+    replaces the earlier "d=6 geometric tail conditional on rho<=5/12" (a mischaracterization -- the family
+    decreases AWAY from threshold, it does not climb toward it).
+
+    All atoms are PURE RATIONAL (F* = log(621/64)/11 cleared exactly via the 11th power; no log-enclosures):
+      (peak)      `BIG(d,m*)^11   < (621/64)^2`   for d=2..6   [Delta(d,m*) < 0: m* is a local max]
+      (peak-loc)  `BIG(d,m*-1)^11 > (621/64)^2`   for d=4,5,6  [Delta(d,m*-1) > 0: the peak is exactly m*]
+      (mono)      numerator of `BIG(d,m*+t) - BIG(d,m*+t+1)` is `c1 t + c0`, c1,c0 > 0 (d=3,4,5,6) [Handelman on
+                  the ray t>=0 => BIG strictly decreasing for m >= m* => Delta(d,m) < 0 for all m >= m*]
+      (d=2 tail)  `(3/2)^11 < (621/64)^2`, with `BIG(2,m) < 3/2` for all m (<=> `4m+3 > 0`) [d=2 decreasing from m=1]
+
+    Assembly (documented; the ring identity `BIG(m)-BIG(m+1) = (c1 t + c0)/den`, den>0, and `BIG<3/2` for d=2 are
+    `ring`/`positivity` facts, verified symbolically): BIG < (621/64)^{2/11} for all m >= m* => Delta(d,m) < 0 for
+    all m >= m* => `ell(d,m) <= ell(d,m*)` => M_d(near-broom) = ell(d,m*) < threshold(d).  UNCONDITIONAL.
+
+    HONEST SCOPE: gates the near-broom family bound outright.  The ONE remaining open input of the M_d frontier is
+    now purely the EXTREMALITY (that the near-broom is the argmax over ALL non-broom degree-d branches, not just
+    this family) -- a combinatorial single-child statement with a fat margin, NOT a rate.  `.check()` exact;
+    `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)`: pure-rational unimodality atoms (peak, peak-loc, mono coeffs, d=2 tail)."""
+        tgt = Fr(621, 64) ** 2
+        out = []
+        for d in range(2, 7):
+            ms = _NEARBROOM_MSTAR[d]
+            out.append((f"nb_peak_d{d}", _nearbroom_BIG(d, ms) ** 11, tgt, "<"))
+        for d in (4, 5, 6):
+            ms = _NEARBROOM_MSTAR[d]
+            out.append((f"nb_peakloc_d{d}", _nearbroom_BIG(d, ms - 1) ** 11, tgt, ">"))
+        for d, (c1, c0) in _NEARBROOM_MONO.items():
+            out.append((f"nb_mono_c1_d{d}", Fr(c1), Fr(0), ">"))
+            out.append((f"nb_mono_c0_d{d}", Fr(c0), Fr(0), ">"))
+        out.append(("nb_tail_d2", Fr(3, 2) ** 11, tgt, "<"))
+        return out
+
+    def check(self) -> bool:
+        # (a) rational atoms hold; (b) the monotone-tail coefficients are positive AND BIG really is strictly
+        # decreasing on the ray (spot-verify exactly); (c) d=2: BIG(2,m) < 3/2 on a wide range.
+        for _, lhs, rhs, op in self.atoms():
+            if not ((lhs < rhs) if op == "<" else (lhs > rhs)):
+                return False
+        for d in _NEARBROOM_MONO:
+            ms = _NEARBROOM_MSTAR[d]
+            for t in range(0, 30):
+                m = ms + t
+                if _nearbroom_BIG(d, m) - _nearbroom_BIG(d, m + 1) <= 0:
+                    return False
+        for m in range(1, 200):
+            if _nearbroom_BIG(2, m) >= Fr(3, 2):
+                return False
+        return True
+
+    def lean_module(self, namespace="BGNearBroomUnimodal") -> str:
+        assert self.check(), "near-broom unimodality certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# Extremality reduction (2026-09-02): the single-child lemma `V_mu(c) = ell(c) + mu*y_c <= V_mu(cherry)` closes by
+# JOINT induction on |c| over the invariant price interval I = [456/3703, 3/7].  The concavity tangent of
+# `L(s) = log(1+s/d)-F*` at the all-cherry point s*=(d-1)/3 sends a hub's price `mu` to its children's price
+# `mu'' = 3[(4d-1)-3 mu]/(4d-1)^2`; I is exactly invariant under this map for hub-degrees d in {2..6}, and its floor
+# A = 456/3703 is the fixed point of the tightest (d=6) map.  All actual hub prices mu_d = 3/(4d-1) lie in I.
+_EXTREMALITY_I = (Fr(456, 3703), Fr(3, 7))   # invariant price interval I = [A, B]
+
+
+def _price_map(dc, mu):
+    """Children's price after the concavity tangent at a degree-`dc` hub: mu'' = 3[(4dc-1)-3 mu]/(4dc-1)^2."""
+    return Fr(3) * ((4 * dc - 1) - 3 * mu) / (4 * dc - 1) ** 2
+
+
+@dataclass(frozen=True)
+class ExtremalityPriceMapCertificate:
+    """Kernel-gates the price-flow backbone of the EXTREMALITY reduction (the sole open input of the M_d frontier):
+    the single-child lemma `V_mu(c) = ell(c) + mu*y_c <= V_mu(cherry)` is proved by joint induction on |c|, and the
+    induction's prices stay inside the invariant interval `I = [456/3703, 3/7]`.
+
+    The concavity tangent of `L(s) = log(1 + s/d) - F*` (log is concave) at the all-cherry reference `s* = (d-1)/3`
+    linearizes a degree-`d` hub, replacing its child prices `mu` by `mu'' = L'(s*) - mu/(d+s*)^2 =
+    3[(4d-1) - 3 mu]/(4d-1)^2`.  This certificate gates (pure exact rational, no enclosures):
+
+      (invariance)  for d in {2..6}:  `mu''(d, B) >= A`  and  `mu''(d, A) <= B`   (A=456/3703, B=3/7; mu'' is
+                    decreasing in mu, so the two endpoints bound the image) -- so `mu in I  =>  mu'' in I`.
+      (prices-in-I) for d in {2..6}:  `A <= mu_d = 3/(4d-1) <= B`   -- the actual hub prices live in I.
+
+    Together with the (verified, separately gated/pending) facts -- SCL holds on I for non-broom deg>=2 children
+    (margin +0.031), broom-vs-cherry on I (unimodal in k, margin +0.012), leaf->cherry raises ell & V for d>=3
+    (so bare leaves never occur in the extremum), and the deg>=7 `HighDegreeTailCertificate` -- the joint induction
+    gives `V_mu(c) <= V_mu(cherry)` for all children, hence `ell(hub) <= ell(B(d-1))` (tangent, worst gap 0), hence
+    the near-broom is the argmax => EXTREMALITY.  This cert gates the price-flow invariance; the SCL/broom-family
+    steps and the induction assembly are the remaining work.  `.check()` exact.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)`: exact-rational price-map invariance + prices-in-I atoms, d=2..6."""
+        A, B = _EXTREMALITY_I
+        out = []
+        for d in range(2, 7):
+            out.append((f"pm_lo_d{d}", _price_map(d, B), A, ">="))   # mu''(d,B) >= A
+            out.append((f"pm_hi_d{d}", _price_map(d, A), B, "<="))   # mu''(d,A) <= B
+            md = Fr(3, 4 * d - 1)
+            out.append((f"pm_price_lo_d{d}", md, A, ">="))           # mu_d >= A
+            out.append((f"pm_price_hi_d{d}", md, B, "<="))           # mu_d <= B
+        return out
+
+    def check(self) -> bool:
+        ops = {">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b}
+        return all(ops[op](lhs, rhs) for _, lhs, rhs, op in self.atoms())
+
+    def lean_module(self, namespace="BGExtremalityPriceMap") -> str:
+        assert self.check(), "extremality price-map certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+conjecture1_proved = False

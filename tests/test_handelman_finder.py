@@ -73,3 +73,23 @@ def test_finder_mode_refuses_when_not_positive():
                            lambda pt: (x - 2, [(x, "hx")], None))
     with pytest.raises(CertificationError):
         certify(fam)
+
+
+def test_bernstein_fastpath_high_degree_box():
+    # BG leaf discharge Q = 621*3^7 - 64*(3+h)^7 >= 0 on [0,1] — degree 7,
+    # ~10^6 coefficients: the generic subset-search / SDP-rounding finders stall,
+    # the Bernstein fast-path certifies it directly and exactly.
+    h = sp.Symbol("h")
+    Q = sp.expand(621 * 3 ** 7 - 64 * (3 + h) ** 7)
+    terms = find_handelman_certificate(Q, [h, 1 - h], (h,))
+    assert terms is not None
+    assert _verify(Q, [h, 1 - h], terms)                 # exact reconstruction
+    assert all(sp.Rational(c) >= 0 for c, _e in terms)   # nonnegative combination
+
+
+def test_bernstein_fastpath_shifted_interval():
+    # a != 0 interval [1,2]: 10 - (x-1)^2 >= 0 there (min 9 at x=2).
+    x = sp.Symbol("x")
+    R = sp.expand(10 - (x - 1) ** 2)
+    terms = find_handelman_certificate(R, [x - 1, 2 - x], (x,))
+    assert terms is not None and _verify(R, [x - 1, 2 - x], terms)

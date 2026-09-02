@@ -94,6 +94,34 @@ def rate_dominates(c1, c2):
     return lhs, rhs, lhs > rhs
 
 
+def broom_ratio(s):
+    """The near-star recurrence factor `rho(s) = (529/486) (1 - 1/((4s+7)(s+1)))^11`, which equals EXACTLY the
+    broom cross-exponent-ratio step `X(s+1)/X(s)` where `X(s) = total(5)^(2s+1)/total(s)^11` (so `X(s) >= 1 <=>
+    rate(5) >= rate(s)`).  This is the SAME object as the Phi^11 near-star invariant `R(s)` from the
+    domination-bridge program (`529 = 23^2`, `486 = 2*3^5`); the two BG programs coincide on the extremal
+    near-star/broom family.  `rho` is strictly increasing (numerator `g(s) = (4s+7)(s+1)` is) and crosses `1`
+    once between `s = 4` and `s = 5`, giving the CLOSED all-`c` proof that `c = 5` uniquely maximizes the broom
+    rate (vs the finite case-check in `BroomOptimumCertificate`).  Exact `Fraction`."""
+    return Fr(529, 486) * (1 - Fr(1, (4 * s + 7) * (s + 1))) ** 11
+
+
+def c5_unimodal_witness(hi=40):
+    """Witness data for the CLOSED `c=5`-optimum proof via single-crossing of the near-star ratio `rho`:
+    returns `(g_increasing, rho4_lt_1, rho5_gt_1, X_ge_1_eq_iff_5)` -- all exact.  `g` strictly increasing +
+    `rho(4) < 1 < rho(5)` (monotone straddle) implies `X(s) = total(5)^(2s+1)/total(s)^11 >= 1` for every
+    integer `s in [0, hi]`, with equality iff `s = 5`.  Ties the classical-BG broom optimum to the Phi^11
+    near-star 23-adic proof (`R(5) = 1` exactly, `64*243*23 = 621*576`)."""
+    def g(s):
+        return (4 * s + 7) * (s + 1)
+    def X(s):
+        return broom_total(5) ** (2 * s + 1) / broom_total(s) ** 11
+    g_incr = all(g(s) < g(s + 1) for s in range(hi))
+    rho4 = broom_ratio(4) < 1
+    rho5 = broom_ratio(5) > 1
+    x_ok = all((X(s) >= 1) and ((X(s) == 1) == (s == 5)) for s in range(hi + 1))
+    return g_incr, rho4, rho5, x_ok
+
+
 @dataclass(frozen=True)
 class BroomOptimumCertificate:
     """Certifies `c* = 5` maximizes the branch rate `total(c)^(1/(2c+1))` against a set of competitor `c`s, by
@@ -126,6 +154,69 @@ class BroomOptimumCertificate:
         head = ("import Mathlib\n\n"
                 f"namespace {namespace}\n\n")
         body = "\n".join(self.lean_atom(nm, lhs, rhs) for nm, lhs, rhs in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Smooth no-go / integrality gap (2026-08-31): why NO smooth certificate can prove the BG upper bound.
+#
+# The per-vertex free energy of the broom family `f(c) = log(total(c))/(2c+1)` is maximised over INTEGER `c` at
+# `c = 5` (`f(5) = F* = log(621/64)/11`), but its CONTINUOUS relaxation peaks at `c* ~ 4.819` with
+# `f(c*) > F*` (overshoot `~ 3.9e-6`).  The peak is nearly flat (`f''(5) ~ -2e-4`; every real `c in [4.06, 5.87]`
+# is within `1e-4` of the max), so `c = 4, 5, 6` are near-degenerate.  Consequence: ANY certificate that relaxes
+# the integer arm-count (convex/SOS/moment/tangent/spectral -- everything smooth) is bounded below by
+# `f(c*) > F*` and so CANNOT certify `F(T) <= F*`.  This is a no-go theorem, not a heuristic: it is exactly why a
+# smooth bound always lands `~1e-4` loose.  The BG optimum is an INTEGER-PROGRAM optimum with a positive
+# integrality gap (rational value `621/64`, prime `4*5+3 = 23`), not a smooth one -- the closing argument must be
+# arithmetic (exact on integer `c`).  conjecture1_proved = False.
+
+# Frozen rigorous log-enclosures `log(p/q) in [lo/_DNG, hi/_DNG]` (floor/ceil at 60-digit precision).
+_DNG = 10 ** 30
+_LOG_NG = {
+    (3, 2): (405465108108164381978013115464, 405465108108164381978013115465),
+    (111, 5): (3100092288878233761162581574727, 3100092288878233761162581574728),
+    (2, 1): (693147180559945309417232121458, 693147180559945309417232121459),
+    (29, 5): (1757857917552373652582512699135, 1757857917552373652582512699136),
+    (621, 64): (2272447998573806908489095813828, 2272447998573806908489095813829),
+}
+
+
+@dataclass(frozen=True)
+class SmoothNoGoCertificate:
+    """Kernel-gates the INTEGRALITY-GAP no-go: the continuous broom free energy exceeds the integer optimum `F*`
+    at the rational witness `c0 = 24/5`, `f(24/5) > F* = log(621/64)/11`.  Clearing denominators (`* 11 * 53`)
+    the inequality `f(24/5) > F*` becomes the single rational-log atom
+
+        209 L(3/2) + 55 L(111/5) - 55 L(2) - 55 L(29/5)  >  53 L(621/64),
+
+    LHS lower-bounded and RHS upper-bounded by the frozen log-enclosures (margin `~2.3e-3`).  Certifies that the
+    continuous relaxation of the broom family overshoots `F*`, hence NO smooth (relaxation-based) certificate can
+    prove the BG upper bound `F(T) <= F*` -- the proof must be arithmetic (exact on the integer arm-count).
+    `.check()` exact; `.lean_module` emits the `norm_num` atom.  conjecture1_proved = False."""
+
+    def _lo(self, pq):
+        return Fr(_LOG_NG[pq][0], _DNG)
+
+    def _hi(self, pq):
+        return Fr(_LOG_NG[pq][1], _DNG)
+
+    def atoms(self):
+        """`[(name, lhs, rhs, '>')]`: the single cleared atom `f(24/5) > F*` (exact rationals via enclosures)."""
+        lhs = (209 * self._lo((3, 2)) + 55 * self._lo((111, 5))
+               - 55 * self._hi((2, 1)) - 55 * self._hi((29, 5)))       # lower bound on 583*f(24/5)
+        rhs = 53 * self._hi((621, 64))                                 # upper bound on 583*F*
+        return [("smooth_nogo_fcont_24_5_gt_Fstar", lhs, rhs, ">")]
+
+    def check(self) -> bool:
+        return all((lhs > rhs) if op == ">" else (lhs < rhs) for _, lhs, rhs, op in self.atoms())
+
+    def lean_module(self, namespace="BGSmoothNoGo") -> str:
+        assert self.check(), "smooth no-go certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
         return head + body + f"\n\nend {namespace}\n"
 
 

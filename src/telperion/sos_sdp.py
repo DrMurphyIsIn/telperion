@@ -248,20 +248,37 @@ def _gram_terms(Q, mons):
     return terms
 
 
-def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
-    """SEARCH for a Putinar certificate `p = σ_0 + Σ_i σ_i·g_i` on `{g_i ≥ 0}`
-    with every `σ_j` a sum of squares (Route A: numeric SDP -> EXACT rational
-    rounding).  ``constraints`` is a list of ``(g_i, hyp_name)`` pairs.  Returns
-    ``(sigma0, out_constraints)`` where ``sigma0`` is a list of ``(coef, base)``
-    SOS terms for σ_0 and ``out_constraints`` a list of ``(g_i, sigma_i, hyp)``
-    with ``sigma_i`` the found SOS multiplier — the exact shape
-    `certify_putinar_point` re-verifies — or ``None`` (a REFUSAL, not a claim of
-    non-existence: the SDP was infeasible, or no ladder rung rounded exactly).
+def _round_vector(v, denom: int):
+    """Round a float numpy vector to an exact rational sympy list on 1/denom."""
+    return [sp.Rational(round(float(x) * denom), denom) for x in v]
 
-    The float Gram matrices from the SDP are rounded to exact rationals on a
-    denominator ladder; the FIRST rung whose rounded certificate reconstructs
-    `p` exactly over ℚ is accepted, and its LDLᵀ gives the rational squares.
-    The finder is untrusted: the caller re-verifies via `certify_putinar_point`.
+
+def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None,
+                             equalities=()):
+    """SEARCH for a Positivstellensatz certificate on `{g_i ≥ 0} ∩ {h_j = 0}`:
+
+        p = σ_0 + Σ_i σ_i·g_i + Σ_j λ_j·h_j
+
+    with every `σ_j` a sum of squares (PSD Gram) and every `λ_j` a FREE
+    polynomial multiplier (arbitrary real coefficients — NOT constrained SOS or
+    nonnegative), the standard ideal-membership augmentation for equality
+    constraints (Route A: numeric SDP -> EXACT rational rounding).  ``constraints``
+    is a list of ``(g_i, hyp_name)`` pairs (inequalities `g_i ≥ 0`); ``equalities``
+    is a list of ``(h_j, hyp_name)`` pairs (equalities `h_j = 0`, e.g. the cavity
+    recursion `h·(1+Σ…) − 1 = 0`).
+
+    Returns ``(sigma0, out_constraints, out_equalities)`` where ``sigma0`` is a
+    list of ``(coef, base)`` SOS terms for σ_0, ``out_constraints`` a list of
+    ``(g_i, sigma_i, hyp)``, and ``out_equalities`` a list of ``(h_j, lambda_j,
+    hyp)`` with ``lambda_j`` a sympy polynomial (the free multiplier) — the exact
+    shape `certify_putinar_point` re-verifies — or ``None`` (a REFUSAL, not a
+    claim of non-existence).
+
+    On the variety every `h_j = 0`, so `Σ_j λ_j·h_j = 0` there and the certificate
+    reduces to `p = σ_0 + Σ σ_i g_i ≥ 0` on `{g_i ≥ 0} ∩ {h_j = 0}` — a
+    nonnegativity certificate over the RECURSION-CONSTRAINED (reachable) field set,
+    exactly what excludes the free-box cheaters.  The finder is untrusted: the
+    caller re-verifies via `certify_putinar_point`.
     """
     import cvxpy as cp
     import numpy as np
@@ -270,6 +287,8 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
     syms = tuple(syms)
     gens = [sp.expand(sp.sympify(g)) for g, _h in constraints]
     hyps = [h for _g, h in constraints]
+    heqs = [sp.expand(sp.sympify(h)) for h, _hn in equalities]
+    ehyps = [hn for _h, hn in equalities]
 
     if half_deg is None:
         pdeg = sp.Poly(p, *syms).total_degree() if p != 0 else 0
@@ -298,6 +317,21 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
             form = g * form
         sym_forms.append(sp.expand(form))
 
+    # FREE multiplier blocks λ_j·h_j: λ_j = Σ_α l{j}_α · m_α over monomials up to
+    # `2·half_deg − deg h_j` (so λ_j·h_j stays within total degree 2·half_deg).
+    # The l-coefficients are UNCONSTRAINED cvxpy scalars (any sign) — no PSD, no
+    # nonnegativity; this is the ideal (equality) part of the Positivstellensatz.
+    Lvars, lam_monlists = [], []
+    for jidx, h in enumerate(heqs):
+        hd = sp.Poly(h, *syms).total_degree() if h != 0 else 0
+        lam_half = max(0, 2 * half_deg - hd)
+        lmons = _monomials_upto(syms, lam_half)
+        lam_monlists.append(lmons)
+        Lvars.append(cp.Variable(len(lmons)))
+        lsym = [sp.Symbol(f"l{jidx}_{a}") for a in range(len(lmons))]
+        lam_form = sum((lsym[a] * lmons[a] for a in range(len(lmons))), sp.Integer(0))
+        sym_forms.append(sp.expand(h * lam_form))
+
     total = sp.expand(sum(sym_forms, sp.Integer(0)))
     diff = sp.Poly(sp.expand(total - p), *syms)
 
@@ -310,6 +344,9 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
         for i in range(n):
             for j in range(i, n):
                 allq[_qsymbol(bidx, i, j)] = 0
+    for jidx, lmons in enumerate(lam_monlists):
+        for a in range(len(lmons)):
+            allq[sp.Symbol(f"l{jidx}_{a}")] = 0
 
     cons = [Q >> 0 for Q in Qvars]
     for _mono, coef in diff.terms():
@@ -321,12 +358,20 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
                     c = coef.coeff(_qsymbol(bidx, i, j))
                     if c != 0:
                         row = row + float(c) * Qvars[bidx][i, j]
+        for jidx, lmons in enumerate(lam_monlists):
+            for a in range(len(lmons)):
+                c = coef.coeff(sp.Symbol(f"l{jidx}_{a}"))
+                if c != 0:
+                    row = row + float(c) * Lvars[jidx][a]
         const = float(coef.subs(allq))
         cons.append(row + const == 0)
 
-    # Minimize total trace: a small, well-conditioned analytic center that tends
-    # to round cleanly.  Deterministic: fixed solver, no random restarts.
-    prob = cp.Problem(cp.Minimize(sum(cp.trace(Q) for Q in Qvars)), cons)
+    # Minimize total trace (+ a tiny ridge on the free multipliers so the SDP has
+    # a unique, well-conditioned optimum that rounds cleanly).  Deterministic.
+    obj = sum(cp.trace(Q) for Q in Qvars)
+    for Lv in Lvars:
+        obj = obj + 1e-6 * cp.sum_squares(Lv)
+    prob = cp.Problem(cp.Minimize(obj), cons)
     try:
         # Pin the solver and a tight tolerance so the returned Gram (hence the
         # rounded certificate) is deterministic and clean enough to round to
@@ -338,10 +383,13 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
         return None
     if any(Q.value is None or not np.all(np.isfinite(Q.value)) for Q in Qvars):
         return None
+    if any(Lv.value is None or not np.all(np.isfinite(Lv.value)) for Lv in Lvars):
+        return None
 
     # Symmetrize away solver asymmetry noise before rounding (Q is theoretically
     # symmetric; SCS returns it up to ~1e-5, which would defeat exact rounding).
     Qsym = [(np.asarray(Q.value) + np.asarray(Q.value).T) / 2 for Q in Qvars]
+    Lval = [np.asarray(Lv.value).reshape(-1) for Lv in Lvars]
 
     # Exact rational rounding on the denominator ladder: accept the first rung
     # whose rounded Grams (a) LDLᵀ-decompose PSD and (b) reconstruct p exactly.
@@ -350,13 +398,20 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
         term_lists = [_gram_terms(Qr, mons) for Qr, (mons, _g) in zip(rounded, bases)]
         if any(t is None for t in term_lists):
             continue
-        # reconstruct σ_0 + Σ σ_i g_i and check the identity EXACTLY over ℚ
+        lam_polys = []
+        for jidx, lmons in enumerate(lam_monlists):
+            coeffs = _round_vector(Lval[jidx], denom)
+            lam_polys.append(sp.expand(sum((coeffs[a] * lmons[a]
+                                            for a in range(len(lmons))), sp.Integer(0))))
+        # reconstruct σ_0 + Σ σ_i g_i + Σ λ_j h_j and check the identity over ℚ
         recon = sp.Integer(0)
         for (coef, base) in term_lists[0]:
             recon += coef * base ** 2
         for k, g in enumerate(gens, start=1):
             for (coef, base) in term_lists[k]:
                 recon += g * coef * base ** 2
+        for jidx, h in enumerate(heqs):
+            recon += lam_polys[jidx] * h
         if sp.expand(recon - p) != 0:
             continue
         sigma0 = [(sp.Rational(c), sp.expand(b)) for c, b in term_lists[0]]
@@ -365,5 +420,10 @@ def find_putinar_certificate(p, constraints, syms, half_deg: int | None = None):
              hyps[k - 1])
             for k in range(1, len(bases))
         ]
+        out_equalities = [
+            (heqs[jidx], lam_polys[jidx], ehyps[jidx]) for jidx in range(len(heqs))
+        ]
+        if out_equalities:
+            return sigma0, out_constraints, out_equalities
         return sigma0, out_constraints
     return None

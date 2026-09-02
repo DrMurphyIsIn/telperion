@@ -74,6 +74,11 @@ REGISTRY: dict[str, SensitivityStance] = {
     "HandelmanEmitter": _S(CERTIFICATE_SENSITIVE,
                            "p = Σ c_α ∏ ℓᵢ^{αᵢ} nonnegative product combination; "
                            "the coefficients are load-bearing"),
+    "ZeroFreeCosineEmitter": _S(CERTIFICATE_SENSITIVE,
+                                "same shape as HandelmanEmitter: p = Σ c_α ∏ ℓ^α "
+                                "Fejér–Riesz/Handelman witness closed by `ring`; a "
+                                "corrupted coefficient breaks the identity",
+                                checked_in="emit_zero_free_cosine"),
     "NullstellensatzEmitter": _S(CERTIFICATE_SENSITIVE,
                                  "p = Σ hᵢ·gᵢ ideal-membership cofactors; a "
                                  "corrupted cofactor breaks linear_combination"),

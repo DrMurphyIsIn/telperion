@@ -53,6 +53,88 @@ def _term_expr(coef, exps, constraints) -> sp.Expr:
     return acc
 
 
+def _bernstein_interval_certificate(p, gens, syms, max_elevation: int = 12):
+    """Fast, exact, LP-free Handelman certificate for a UNIVARIATE polynomial on
+    an interval `[a, b]` given by two linear generators `L = x - a ≥ 0` and
+    `U = b - x ≥ 0`.
+
+    Bernstein's theorem: a polynomial strictly positive on `[a, b]` has, at some
+    elevation degree `n`, all-nonnegative Bernstein coefficients `b_i ≥ 0`, giving
+
+        p = Σ_i b_i·C(n,i)/(b-a)^n · L^i · U^{n-i}          (each L^i U^{n-i} ≥ 0),
+
+    a Handelman certificate supported on the two interval generators.  Returns the
+    ``(coef, exps)`` term list (matching `find_handelman_certificate`), or None if
+    the structure is not a single-variable interval or no elevation up to
+    `deg p + max_elevation` makes every `b_i ≥ 0` (a polynomial only *nonnegative*
+    with an interior root may need the SOS/facial path instead of Bernstein).
+
+    This is the right engine for the BG discharge polynomials — degree-11-ish,
+    large-coefficient box positivity where the generic SDP-rounding / subset-search
+    finders stall.  Exact throughout; the caller re-verifies regardless.
+    """
+    if len(syms) != 1 or len(gens) != 2:
+        return None
+    x = syms[0]
+    p = sp.expand(sp.sympify(p))
+    L = U = None
+    Lidx = Uidx = None
+    for idx, g in enumerate(gens):
+        gp = sp.Poly(sp.expand(sp.sympify(g)), x)
+        if gp.degree() != 1:
+            return None
+        c1 = gp.coeff_monomial(x)
+        c0 = gp.coeff_monomial(1)
+        if c1 == 1:                     # L = x - a  (a = -c0)
+            L, Lidx = -c0, idx
+        elif c1 == -1:                  # U = b - x  (b = c0)
+            U, Uidx = c0, idx
+        else:
+            return None
+    if L is None or U is None:
+        return None
+    a, b = sp.Rational(L), sp.Rational(U)
+    if not b > a:
+        return None
+    t = sp.Symbol("_bt")
+    # P(t) = p(a + (b-a) t) on t ∈ [0,1]
+    P = sp.expand(p.subs(x, a + (b - a) * t))
+    pc = sp.Poly(P, t)
+    pk = [sp.Rational(pc.coeff_monomial(t ** k)) for k in range(pc.degree() + 1)]
+    degp = len(pk) - 1
+    for n in range(max(degp, 1), degp + max_elevation + 1):
+        # Bernstein coefficients of P at degree n: b_i = Σ_{k≤i} C(i,k)/C(n,k) pk[k]
+        bcoeffs = []
+        ok = True
+        for i in range(n + 1):
+            bi = sp.Integer(0)
+            for k in range(0, min(i, degp) + 1):
+                bi += sp.binomial(i, k) / sp.binomial(n, k) * pk[k]
+            bi = sp.nsimplify(bi)
+            if bi < 0:
+                ok = False
+                break
+            bcoeffs.append(bi)
+        if not ok:
+            continue
+        # coef of L^i U^{n-i} is b_i·C(n,i)/(b-a)^n ; build exps over (Lidx, Uidx)
+        terms = []
+        for i in range(n + 1):
+            coef = sp.Rational(bcoeffs[i] * sp.binomial(n, i) / (b - a) ** n)
+            if coef == 0:
+                continue
+            exps = [0, 0]
+            exps[Lidx] = i
+            exps[Uidx] = n - i
+            terms.append((coef, tuple(exps)))
+        # exact reconstruction gate
+        recon = sum((_term_expr(c, e, [(g, None) for g in gens]) for c, e in terms),
+                    sp.Integer(0))
+        if sp.expand(recon - p) == 0:
+            return terms
+    return None
+
+
 def find_handelman_certificate(p, constraint_exprs, syms, max_deg: int = 2):
     """SEARCH for a Handelman certificate: nonnegative `c_α` and exponent vectors
     `α` (total degree ≤ `max_deg`) with `p = Σ c_α ∏ ℓ_i^{α_i}`.  Returns a
@@ -64,11 +146,21 @@ def find_handelman_certificate(p, constraint_exprs, syms, max_deg: int = 2):
     subsets, solve `A c = b` exactly, and keep the first nonnegative solution.
     The result is exactly verified before return; a wrong search never yields a
     certificate (the certifier re-verifies regardless — the finder is untrusted).
+
+    FAST-PATH: for a UNIVARIATE polynomial on an interval `[a, b]` (two linear
+    generators `x - a`, `b - x`) the Bernstein construction gives the certificate
+    directly by degree elevation — exact, no subset search — the right engine for
+    the high-degree, large-coefficient BG discharge box polynomials on which the
+    generic enumeration (and the SDP-rounding Putinar finder) stall.
     """
     p = sp.expand(sp.sympify(p))
     gens = [sp.expand(sp.sympify(g)) for g in constraint_exprs]
     m = len(gens)
     syms = tuple(syms)
+
+    bern = _bernstein_interval_certificate(p, gens, syms)
+    if bern is not None:
+        return bern
 
     products, seen = [], set()          # (alpha, product-expr), α total-deg ≤ D
     for total in range(0, max_deg + 1):

@@ -184,8 +184,9 @@ from .weighted_matching import (  # noqa: F401
 # Caterpillar transfer recurrence (Pant) + Perron free energy, and majorization/Schur-convexity
 # (2026-08-30): combinatorial-program skills S0b, S1a.
 from .transfer_caterpillar import (  # noqa: F401
-    TransferCaterpillarCertificate, Z_recurrence, arm_balance_delta_g, caterpillar_edges,
-    free_energy, perron_eigenvalue, two_hub_Z, uniform_transfer_matrix,
+    SpiderBeatsCaterpillarCertificate, TransferCaterpillarCertificate, Z_recurrence,
+    arm_balance_delta_g, caterpillar_edges, free_energy, perron_eigenvalue, two_hub_Z,
+    uniform_transfer_matrix,
 )
 from .majorization import (  # noqa: F401
     SchurConvexityCertificate, SchurVerdict, TTransform,
@@ -199,8 +200,25 @@ from .vdb_exchange import (  # noqa: F401
 # Star-of-cherry-brooms S(k,c) (2026-08-31): the family that beats Pant's caterpillars for the Laplacian ratio;
 # exact closed form + the c=5 branch-rate optimum (cross-exponentiated rational certificate).
 from .spider_broom import (  # noqa: F401
-    BroomOptimumCertificate, broom_argmax_c, broom_free_energy, broom_rate,
-    broom_total, rate_dominates, spider_Z, spider_edges,
+    BroomOptimumCertificate, SmoothNoGoCertificate, broom_argmax_c, broom_free_energy, broom_ratio,
+    broom_rate, broom_total, c5_unimodal_witness, rate_dominates, spider_Z, spider_edges,
 )
-
-# The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).
+# Branch potential ell(B) = log total(B) - |B| F* (2026-08-31): the additive form of the BG upper bound;
+# the branch-ceiling reduces to broom-dominance per size + the proven broom c=5 optimum.
+from .branch_potential import (  # noqa: F401
+    F_STAR, branch_ell, branch_ell_by_vertex, branch_total, broom_dominance_holds,
+    broom_edges, broom_optimum_prime,
+)
+# Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
+from .tie_regime import (  # noqa: F401
+    CHERRY, ExtremalityPriceMapCertificate, HighDegreeTailCertificate, MdGeometricTailCertificate,
+    MdStepCertificate, MixedHubKKTCertificate, FreeClosureCertificate, MonotoneTailCertificate,
+    NearBroomUnimodalityCertificate, TieCherryWorstCertificate, TieSlackCertificate, binding_j, broom_child,
+    cherry_is_kkt_argmax, cherry_vs_broom_ratio, child_value, child_x, envelope_tail_case,
+    mixed_lambda, slack_g, slack_hub_bound, slack_linobj, small_degree_threshold, uniform_hub_ell,
+    y_floor,
+)
+# The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules
+# `bg_bulk_discharge` and `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them
+# directly (`from telperion.bg_upper_bound import UpperBoundReduction`), not via `import telperion`, so the
+# core/bg boundary (test_core_boundary) stays clean.
