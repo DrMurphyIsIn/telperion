@@ -148,6 +148,9 @@ _SPECIAL_KINDS = (
     # RH wave-2 (2026-09-02): finite-argmax margin, magnitude split, disk->coord
     # bounds, Cauchy derivative estimate, dVP log-derivative region core.
     "finite_argmax", "magnitude_split", "disk_coord", "cauchy_deriv", "logderiv_region",
+    # Sweep-2 (2026-09-02): pseudo-expectation SoS-duality, order-balance boundary
+    # hinge, nonneg-cosine L-product, parametric-integral holomorphy.
+    "pe_duality", "order_balance", "lfunction_product", "parametric_holomorphy",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -187,6 +190,10 @@ _SPECIAL_DISPATCH = {
     "disk_coord": ("emit_disk_coord", "certify_disk_coord_point"),
     "cauchy_deriv": ("emit_cauchy_deriv", "certify_cauchy_deriv_point"),
     "logderiv_region": ("emit_logderiv_region", "certify_logderiv_region_point"),
+    "pe_duality": ("emit_pe_duality", "certify_pe_duality_point"),
+    "order_balance": ("emit_order_balance", "certify_order_balance_point"),
+    "lfunction_product": ("emit_lfunction_product", "certify_lfunction_product_point"),
+    "parametric_holomorphy": ("emit_parametric_holomorphy", "certify_parametric_holomorphy_point"),
 }
 
 
