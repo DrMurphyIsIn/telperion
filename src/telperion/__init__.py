@@ -88,6 +88,18 @@ from .emit_cauchy_deriv import (  # noqa: F401
 from .emit_logderiv_region import (  # noqa: F401
     LogDerivRegionCoreEmitter, logderiv_region_certificate, logderiv_region_family,
 )
+from .emit_pe_duality import (  # noqa: F401
+    PseudoExpectationDualityEmitter, pe_duality_certificate, pe_duality_family,
+)
+from .emit_order_balance import (  # noqa: F401
+    OrderBalanceEmitter, order_balance_certificate, order_balance_family,
+)
+from .emit_lfunction_product import (  # noqa: F401
+    LFunctionProductEmitter, lfunction_product_certificate, lfunction_product_family,
+)
+from .emit_parametric_holomorphy import (  # noqa: F401
+    ParametricHolomorphyEmitter, parametric_holomorphy_certificate, parametric_holomorphy_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
