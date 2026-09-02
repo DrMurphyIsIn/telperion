@@ -212,7 +212,8 @@ from .branch_potential import (  # noqa: F401
 # Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
 from .tie_regime import (  # noqa: F401
     CHERRY, HighDegreeTailCertificate, MdGeometricTailCertificate, MdStepCertificate, MixedHubKKTCertificate,
-    FreeClosureCertificate, MonotoneTailCertificate, TieCherryWorstCertificate, TieSlackCertificate, binding_j, broom_child,
+    FreeClosureCertificate, MonotoneTailCertificate, NearBroomUnimodalityCertificate,
+    TieCherryWorstCertificate, TieSlackCertificate, binding_j, broom_child,
     cherry_is_kkt_argmax, cherry_vs_broom_ratio, child_value, child_x, envelope_tail_case,
     mixed_lambda, slack_g, slack_hub_bound, slack_linobj, small_degree_threshold, uniform_hub_ell,
     y_floor,

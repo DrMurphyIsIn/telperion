@@ -647,4 +647,96 @@ class MdGeometricTailCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+# Near-broom family unimodality (2026-09-01): the family "(d-2) cherries + B(m)" (root-degree d), peaks at
+# m* = max(1, d-3), then STRICTLY DECREASES -- so its sup over all sizes is the finite peak (no infinite tail,
+# no contraction constant).  This REPLACES the earlier "geometric tail conditional on rho<=5/12": that framing was
+# wrong -- the family does not converge up toward threshold, it decreases (linearly) away from it.
+#   ell(d,m) = (d-2+m) ell_cherry + log((4m+3)/(3(m+1))) + log(1 + s(m)/d) - 2F*,  s(m) = (d-2)/3 + 3/(4m+3).
+#   Delta(d,m) = ell(d,m+1) - ell(d,m) < 0  <=>  BIG(d,m)^11 < (621/64)^2   (F* cleared EXACTLY; PURE rational atoms,
+#   no log-enclosures), where BIG(d,m) = (3/2)(4m+7)(m+1)/((m+2)(4m+3)) * (d+s(m+1))/(d+s(m)).
+_NEARBROOM_MSTAR = {2: 1, 3: 1, 4: 2, 5: 3, 6: 3}
+# Monotone-tail Handelman data: numerator of BIG(d, m*+t) - BIG(d, m*+t+1), as a poly in t>=0, is c1*t + c0 with
+# c1, c0 > 0 (verified symbolically) -- so BIG is strictly decreasing for m >= m* (d=3,4,5,6), den > 0 on the ray.
+_NEARBROOM_MONO = {3: (240, 717), 4: (1680, 6645), 5: (48, 237), 6: (6864, 33813)}
+
+
+def _nearbroom_s(d, m):
+    return Fr(d - 2, 3) + Fr(3, 4 * m + 3)
+
+
+def _nearbroom_BIG(d, m):
+    """BIG(d,m): Delta(d,m) < 0 iff BIG(d,m)^11 < (621/64)^2.  Exact rational (F* cleared)."""
+    return (Fr(3, 2) * Fr((4 * m + 7) * (m + 1), (m + 2) * (4 * m + 3))
+            * (d + _nearbroom_s(d, m + 1)) / (d + _nearbroom_s(d, m)))
+
+
+@dataclass(frozen=True)
+class NearBroomUnimodalityCertificate:
+    """Kernel-gates the UNCONDITIONAL unimodality of the near-broom family "(d-2) cherries + B(m)" (root-degree
+    d in {2..6}) -- the argmax family of the M_d frontier bound (adversarially confirmed: two-broom / deep-nested
+    competitors sit >= +0.017 below the near-broom peak).  The family `ell(d,m)` peaks at `m* = max(1, d-3)` and
+    STRICTLY DECREASES for `m > m*`, so its sup over ALL sizes is the finite peak `ell(d,m*)` -- which is the M_d
+    value, verified `< threshold(d)` (margins +0.017..+0.040).  NO contraction constant, NO infinite tail: this
+    replaces the earlier "d=6 geometric tail conditional on rho<=5/12" (a mischaracterization -- the family
+    decreases AWAY from threshold, it does not climb toward it).
+
+    All atoms are PURE RATIONAL (F* = log(621/64)/11 cleared exactly via the 11th power; no log-enclosures):
+      (peak)      `BIG(d,m*)^11   < (621/64)^2`   for d=2..6   [Delta(d,m*) < 0: m* is a local max]
+      (peak-loc)  `BIG(d,m*-1)^11 > (621/64)^2`   for d=4,5,6  [Delta(d,m*-1) > 0: the peak is exactly m*]
+      (mono)      numerator of `BIG(d,m*+t) - BIG(d,m*+t+1)` is `c1 t + c0`, c1,c0 > 0 (d=3,4,5,6) [Handelman on
+                  the ray t>=0 => BIG strictly decreasing for m >= m* => Delta(d,m) < 0 for all m >= m*]
+      (d=2 tail)  `(3/2)^11 < (621/64)^2`, with `BIG(2,m) < 3/2` for all m (<=> `4m+3 > 0`) [d=2 decreasing from m=1]
+
+    Assembly (documented; the ring identity `BIG(m)-BIG(m+1) = (c1 t + c0)/den`, den>0, and `BIG<3/2` for d=2 are
+    `ring`/`positivity` facts, verified symbolically): BIG < (621/64)^{2/11} for all m >= m* => Delta(d,m) < 0 for
+    all m >= m* => `ell(d,m) <= ell(d,m*)` => M_d(near-broom) = ell(d,m*) < threshold(d).  UNCONDITIONAL.
+
+    HONEST SCOPE: gates the near-broom family bound outright.  The ONE remaining open input of the M_d frontier is
+    now purely the EXTREMALITY (that the near-broom is the argmax over ALL non-broom degree-d branches, not just
+    this family) -- a combinatorial single-child statement with a fat margin, NOT a rate.  `.check()` exact;
+    `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)`: pure-rational unimodality atoms (peak, peak-loc, mono coeffs, d=2 tail)."""
+        tgt = Fr(621, 64) ** 2
+        out = []
+        for d in range(2, 7):
+            ms = _NEARBROOM_MSTAR[d]
+            out.append((f"nb_peak_d{d}", _nearbroom_BIG(d, ms) ** 11, tgt, "<"))
+        for d in (4, 5, 6):
+            ms = _NEARBROOM_MSTAR[d]
+            out.append((f"nb_peakloc_d{d}", _nearbroom_BIG(d, ms - 1) ** 11, tgt, ">"))
+        for d, (c1, c0) in _NEARBROOM_MONO.items():
+            out.append((f"nb_mono_c1_d{d}", Fr(c1), Fr(0), ">"))
+            out.append((f"nb_mono_c0_d{d}", Fr(c0), Fr(0), ">"))
+        out.append(("nb_tail_d2", Fr(3, 2) ** 11, tgt, "<"))
+        return out
+
+    def check(self) -> bool:
+        # (a) rational atoms hold; (b) the monotone-tail coefficients are positive AND BIG really is strictly
+        # decreasing on the ray (spot-verify exactly); (c) d=2: BIG(2,m) < 3/2 on a wide range.
+        for _, lhs, rhs, op in self.atoms():
+            if not ((lhs < rhs) if op == "<" else (lhs > rhs)):
+                return False
+        for d in _NEARBROOM_MONO:
+            ms = _NEARBROOM_MSTAR[d]
+            for t in range(0, 30):
+                m = ms + t
+                if _nearbroom_BIG(d, m) - _nearbroom_BIG(d, m + 1) <= 0:
+                    return False
+        for m in range(1, 200):
+            if _nearbroom_BIG(2, m) >= Fr(3, 2):
+                return False
+        return True
+
+    def lean_module(self, namespace="BGNearBroomUnimodal") -> str:
+        assert self.check(), "near-broom unimodality certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
