@@ -73,6 +73,21 @@ from .emit_algebraic_bracket import (  # noqa: F401
 from .emit_halfplane_disk import (  # noqa: F401
     HalfPlaneDiskEmitter, halfplane_disk_certificate, halfplane_disk_family,
 )
+from .emit_finite_argmax import (  # noqa: F401
+    FiniteArgmaxMarginEmitter, finite_argmax_certificate, finite_argmax_family,
+)
+from .emit_magnitude_split import (  # noqa: F401
+    MagnitudeSplitBoundEmitter, magnitude_split_certificate, magnitude_split_family,
+)
+from .emit_disk_coord import (  # noqa: F401
+    DiskCoordBoundsEmitter, disk_coord_certificate, disk_coord_family,
+)
+from .emit_cauchy_deriv import (  # noqa: F401
+    CauchyDerivBoundEmitter, cauchy_deriv_certificate, cauchy_deriv_family,
+)
+from .emit_logderiv_region import (  # noqa: F401
+    LogDerivRegionCoreEmitter, logderiv_region_certificate, logderiv_region_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
