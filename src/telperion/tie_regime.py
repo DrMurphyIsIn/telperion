@@ -516,4 +516,49 @@ class MonotoneTailCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+@dataclass(frozen=True)
+class FreeClosureCertificate:
+    """Kernel-gates the M_d "free closure" degrees `d in {3,4,6}`: for these, the concavity ceiling alone beats
+    the threshold, so NO extremality is needed.  For any non-broom hub of degree `d`, the tangent gives
+    `ell(hub) <= ell(B(d-1))` (given the IH `V(c_i) <= V(cherry)`, the MixedHubKKT machinery), and
+
+        ell(B(d-1)) < threshold(k,d) = ell(cherry) + (d-3)/(d(4k+3))   for d in {3,4,6}, all k.
+
+    So `ell(hub) < threshold(k,d)` with no per-hub work.  Cleared (`× 11`, `11 F* = log(621/64)`), each atom is
+
+        11 L(total(B(d-1))) - 11 L(3/2) - (2d-3) L(621/64)  <  11(d-3)/(d(4k+3)),
+
+    LHS upper-bounded by frozen log-enclosures, RHS rational.  `d=5` does NOT close free (`ell(B(4)) = -0.00103 >
+    threshold(5,15) = -0.00136`) -- its worst non-broom hub is gated by `MdStepCertificate`, and the residual is
+    the `d=5` extremality (near-broom = max non-broom hub, a per-degree exchange, off by ~0.0003).
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    free_degrees: tuple = (3, 4, 6)
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: `ell(B(d-1)) < threshold(k,d)` cleared, for d in {3,4,6}, k=2..15."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo = _log_lo(Fr(621, 64))
+        out = []
+        for d in self.free_degrees:
+            tB = broom_total(d - 1)
+            lhs = 11 * _log_hi(tB) - 11 * L32_lo - (2 * d - 3) * Lg_lo
+            for k in range(2, 16):
+                rhs = Fr(11 * (d - 3), d * (4 * k + 3))
+                out.append((f"md_free_d{d}_k{k}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdFree") -> str:
+        assert self.check(), "free-closure certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
