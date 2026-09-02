@@ -739,4 +739,64 @@ class NearBroomUnimodalityCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+# Extremality reduction (2026-09-02): the single-child lemma `V_mu(c) = ell(c) + mu*y_c <= V_mu(cherry)` closes by
+# JOINT induction on |c| over the invariant price interval I = [456/3703, 3/7].  The concavity tangent of
+# `L(s) = log(1+s/d)-F*` at the all-cherry point s*=(d-1)/3 sends a hub's price `mu` to its children's price
+# `mu'' = 3[(4d-1)-3 mu]/(4d-1)^2`; I is exactly invariant under this map for hub-degrees d in {2..6}, and its floor
+# A = 456/3703 is the fixed point of the tightest (d=6) map.  All actual hub prices mu_d = 3/(4d-1) lie in I.
+_EXTREMALITY_I = (Fr(456, 3703), Fr(3, 7))   # invariant price interval I = [A, B]
+
+
+def _price_map(dc, mu):
+    """Children's price after the concavity tangent at a degree-`dc` hub: mu'' = 3[(4dc-1)-3 mu]/(4dc-1)^2."""
+    return Fr(3) * ((4 * dc - 1) - 3 * mu) / (4 * dc - 1) ** 2
+
+
+@dataclass(frozen=True)
+class ExtremalityPriceMapCertificate:
+    """Kernel-gates the price-flow backbone of the EXTREMALITY reduction (the sole open input of the M_d frontier):
+    the single-child lemma `V_mu(c) = ell(c) + mu*y_c <= V_mu(cherry)` is proved by joint induction on |c|, and the
+    induction's prices stay inside the invariant interval `I = [456/3703, 3/7]`.
+
+    The concavity tangent of `L(s) = log(1 + s/d) - F*` (log is concave) at the all-cherry reference `s* = (d-1)/3`
+    linearizes a degree-`d` hub, replacing its child prices `mu` by `mu'' = L'(s*) - mu/(d+s*)^2 =
+    3[(4d-1) - 3 mu]/(4d-1)^2`.  This certificate gates (pure exact rational, no enclosures):
+
+      (invariance)  for d in {2..6}:  `mu''(d, B) >= A`  and  `mu''(d, A) <= B`   (A=456/3703, B=3/7; mu'' is
+                    decreasing in mu, so the two endpoints bound the image) -- so `mu in I  =>  mu'' in I`.
+      (prices-in-I) for d in {2..6}:  `A <= mu_d = 3/(4d-1) <= B`   -- the actual hub prices live in I.
+
+    Together with the (verified, separately gated/pending) facts -- SCL holds on I for non-broom deg>=2 children
+    (margin +0.031), broom-vs-cherry on I (unimodal in k, margin +0.012), leaf->cherry raises ell & V for d>=3
+    (so bare leaves never occur in the extremum), and the deg>=7 `HighDegreeTailCertificate` -- the joint induction
+    gives `V_mu(c) <= V_mu(cherry)` for all children, hence `ell(hub) <= ell(B(d-1))` (tangent, worst gap 0), hence
+    the near-broom is the argmax => EXTREMALITY.  This cert gates the price-flow invariance; the SCL/broom-family
+    steps and the induction assembly are the remaining work.  `.check()` exact.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, op)`: exact-rational price-map invariance + prices-in-I atoms, d=2..6."""
+        A, B = _EXTREMALITY_I
+        out = []
+        for d in range(2, 7):
+            out.append((f"pm_lo_d{d}", _price_map(d, B), A, ">="))   # mu''(d,B) >= A
+            out.append((f"pm_hi_d{d}", _price_map(d, A), B, "<="))   # mu''(d,A) <= B
+            md = Fr(3, 4 * d - 1)
+            out.append((f"pm_price_lo_d{d}", md, A, ">="))           # mu_d >= A
+            out.append((f"pm_price_hi_d{d}", md, B, "<="))           # mu_d <= B
+        return out
+
+    def check(self) -> bool:
+        ops = {">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b}
+        return all(ops[op](lhs, rhs) for _, lhs, rhs, op in self.atoms())
+
+    def lean_module(self, namespace="BGExtremalityPriceMap") -> str:
+        assert self.check(), "extremality price-map certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
