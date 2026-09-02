@@ -473,4 +473,47 @@ class MdStepCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+@dataclass(frozen=True)
+class MonotoneTailCertificate:
+    """Kernel-gates the M_d monotone-tail lemma (Phase 3): any non-broom hub of root-degree `d in {3,4,5,6}` with
+    at least one child of degree `>= 7` has `ell(hub) < threshold(k,d)` for every `k in [2,15]` -- so the M_d
+    induction restricts to `d_i <= 6` children (finite, well-founded).  RIGOROUS (no enumeration): by the
+    concavity tangent `ell(hub) <= ell(B(d-1)) + Σ_i (V(c_i) - V(cherry))`, the `d>=7` child contributes
+    `V(c_j) - V(cherry) <= λ(k)/(7(k+1)) - V(cherry)` (`HighDegreeTailCertificate`), and the rest `<= 0`, giving
+
+        ell(hub) <= ell(B(d-1)) - ell(cherry) - (4/7)/(4k+3).
+
+    Cleared (`× 11`, `11 F* = log(621/64)`), the atom `ell(B(d-1)) - 2 ell(cherry) < [4/7 + (d-3)/d]/(4k+3)` is
+
+        11 L(total(B(d-1))) - 22 L(3/2) - (2d-5) L(621/64)  <  11 [4/7 + (d-3)/d] / (4k+3),
+
+    LHS upper-bounded by frozen log-enclosures (`L_hi(total B)`, `L_lo(3/2)`, `L_lo(621/64)`), RHS rational.
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: the cleared monotone-tail atoms (d=3..6, k=2..15), exact rationals."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo = _log_lo(Fr(621, 64))
+        out = []
+        for d in range(3, 7):
+            tB = broom_total(d - 1)                        # 11/4, 135/32, 513/80, 621/64 -- all in _LOG
+            lhs = 11 * _log_hi(tB) - 22 * L32_lo - (2 * d - 5) * Lg_lo
+            for k in range(2, 16):
+                rhs = 11 * (Fr(4, 7) + Fr(d - 3, d)) / (4 * k + 3)
+                out.append((f"md_tail_d{d}_k{k}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdTail") -> str:
+        assert self.check(), "monotone-tail certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
