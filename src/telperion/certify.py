@@ -141,6 +141,13 @@ _SPECIAL_KINDS = (
     # Tier-9 SoS / P=NP certificate (2026-08-22): 3-XOR moment-matrix PSD via
     # GF(2) closure -> block-rank-one SOS.
     "xor3_moment",
+    # RH / cross-cutting emitters (2026-09-02): bilinear worst-corner box
+    # positivity, algebraic-number (sqrt) bracket, Borel-Caratheodory
+    # half-plane->disk positivity core.
+    "bilinear_corner", "algebraic_bracket", "halfplane_disk",
+    # RH wave-2 (2026-09-02): finite-argmax margin, magnitude split, disk->coord
+    # bounds, Cauchy derivative estimate, dVP log-derivative region core.
+    "finite_argmax", "magnitude_split", "disk_coord", "cauchy_deriv", "logderiv_region",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -172,6 +179,14 @@ _SPECIAL_DISPATCH = {
     "cauchy_schwarz": ("emit_cs", "certify_cs_point"),
     "psd_form": ("emit_psd_form", "certify_psd_point"),
     "xor3_moment": ("emit_xor3", "certify_xor3_point"),
+    "bilinear_corner": ("emit_bilinear_corner", "certify_bilinear_corner_point"),
+    "algebraic_bracket": ("emit_algebraic_bracket", "certify_algebraic_bracket_point"),
+    "halfplane_disk": ("emit_halfplane_disk", "certify_halfplane_disk_point"),
+    "finite_argmax": ("emit_finite_argmax", "certify_finite_argmax_point"),
+    "magnitude_split": ("emit_magnitude_split", "certify_magnitude_split_point"),
+    "disk_coord": ("emit_disk_coord", "certify_disk_coord_point"),
+    "cauchy_deriv": ("emit_cauchy_deriv", "certify_cauchy_deriv_point"),
+    "logderiv_region": ("emit_logderiv_region", "certify_logderiv_region_point"),
 }
 
 
