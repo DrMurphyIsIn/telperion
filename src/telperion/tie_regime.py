@@ -153,6 +153,12 @@ _LOG = {
     (22599, 1280): (2871045579580141544362019441185, 2871045579580141544362019441186),   # d=5 peak, size 14
     (27459, 1024): (3288977456453435931386036463646, 3288977456453435931386036463647),   # d=6 boundary, size 16
     (3051, 2008): (418330203905049828297585601000, 418330203905049828297585601001),       # d=6 delta ratio t16/t14 (=27459/18072)
+    # SCL per-hub decouple: log((4d-1)/(3d)) = broom L-term at the all-cherry reference s0=(d-1)/3, d=2..6:
+    (7, 6): (154150679827258304292875385062, 154150679827258304292875385063),               # d=2
+    (11, 9): (200670695462151161271453104120, 200670695462151161271453104121),               # d=3
+    (5, 4): (223143551314209755766295090309, 223143551314209755766295090310),                # d=4  (15/12 reduced)
+    (19, 15): (236388778064230394013022861739, 236388778064230394013022861740),              # d=5
+    (23, 18): (245122458032984998599030236506, 245122458032984998599030236507),              # d=6
 }
 
 
@@ -957,6 +963,73 @@ class SCLInductionCertificate:
             f"-- leg {nm}: {len(cert.atoms())} atoms discharged"
             for nm, cert in self.components() if hasattr(cert, "atoms"))
         return head + manifest + f"\n\nend {namespace}\n"
+
+
+def _decouple_muPP(d, mu):
+    """Flowed child price mu'' = 3(4d-1-3mu)/(4d-1)^2 = (1/(d+s0))(1 - mu/(d+s0)), s0=(d-1)/3.  Exact rational."""
+    return Fr(3) * (4 * d - 1 - 3 * mu) / (4 * d - 1) ** 2
+
+
+# Per-hub decouple reachable child-field sum S = Σ_c bY(c): d=2 non-leaf child => S<1/2 (S=1 is the cherry base,
+# handled separately); d>=3 => S in [0, d-1] (leaf children allowed, each <= cherry at the flowed price mu''<=3/11).
+_DECOUPLE_SMAX = {2: Fr(1, 2), 3: Fr(2), 4: Fr(3), 5: Fr(4), 6: Fr(5)}
+
+
+@dataclass(frozen=True)
+class PerHubDecoupleResidualCertificate:
+    """Kernel-gates the SCL per-hub decouple RESIDUAL -- "the single highest-risk nlinarith" of the SCL discharge
+    (BGSCLStep.lean).  After the concave-log tangent `bell_node_tangent` (at the all-cherry reference `s0=(d-1)/3`)
+    + `bY_node` + the child IH at the FLOWED price `mu'' = muPP(d,mu)` (NOT the single price mu -- the single-price
+    step is too loose, verified: residual +0.15), proving `bV_mu(node cs) <= bV_mu(cherry)` reduces to
+
+        R(S) := (d-1)·bV_{mu''}(cherry) - s0/(d+s0) + log((4d-1)/(3d)) - F*
+                + mu·S/(d+s0)^2 + mu/(d+S) - bV_mu(cherry)   <=  0   for S in [0, Smax_d], mu in I.
+
+    Cleared by (d+S)(d+s0)^2 > 0, `R` is an UPWARD parabola in `S` (S^2-coeff = mu > 0), so `R <= 0` on the interval
+    reduces to its two ENDPOINTS `S in {0, Smax_d}`.  Each endpoint is a rational + log-combination
+    (`(d-2)log(3/2) + log((4d-1)/(3d)) - (2d-3)F*` + rationals) upper-bounded by frozen log-enclosures -- 20 atoms
+    (d=2..6 x mu in {A=456/3703, B=3/7} x S in {0, Smax}).  Margins +0.007..+0.076.  This is the Telperion
+    generation of the hard nlinarith: the decouple leg emitted as 20 `norm_num` atoms.
+
+    SCOPE (honest): gates the tangent-decouple residual for the FLOWED per-hub step (the correct form of `SCLStep`).
+    Combined with `BroomVsCherryOnICertificate` (hbroom, leg #4) and `leaf_le_cherry` (leaf children at mu''<=3/11),
+    it discharges the per-hub step.  The single-price `SCLStep mu` as currently stated in BGSCLInduction.lean is too
+    loose (and false for the bare leaf at mu>0.298) -- the discharge must target the flowed step.  `.check()` exact;
+    `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    _I = (Fr(456, 3703), Fr(3, 7))
+
+    def _R_upper(self, d, S, mu):
+        """Upper bound of R(S) via frozen enclosures (L_hi for +coeff logs, L_lo for -coeff): if <= 0, R(S) <= 0."""
+        ncs = d - 1
+        s0 = Fr(d - 1, 3)
+        mpp = _decouple_muPP(d, mu)
+        # transcendental part (d-2)log(3/2) + log((4d-1)/(3d)) - (2d-3)F*, F* = log(621/64)/11:
+        trans_hi = ((d - 2) * _log_hi(Fr(3, 2)) + _log_hi(Fr(4 * d - 1, 3 * d))
+                    - Fr(2 * d - 3, 11) * _log_lo(Fr(621, 64)))
+        rat = ncs * mpp / 3 - mu / 3 - s0 / (d + s0) + mu * S / (d + s0) ** 2 + mu / (d + S)
+        return trans_hi + rat
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<=')`: the 20 residual-endpoint atoms (R_upper <= 0), exact via enclosures."""
+        out = []
+        for d in range(2, 7):
+            for mu, mn in zip(self._I, ("A", "B")):
+                for S, sn in ((Fr(0), "0"), (_DECOUPLE_SMAX[d], "Smax")):
+                    out.append((f"decouple_d{d}_{mn}_S{sn}", self._R_upper(d, S, mu), Fr(0), "<="))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs <= rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGPerHubDecouple") -> str:
+        assert self.check(), "per-hub decouple residual certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
 
 
 conjecture1_proved = False
