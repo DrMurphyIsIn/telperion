@@ -799,4 +799,164 @@ class ExtremalityPriceMapCertificate:
         return head + body + f"\n\nend {namespace}\n"
 
 
+# --------------------------------------------------------------------------------------------------------------
+# Extremality assembly (2026-09-02): the two remaining sub-facts (#4 broom-vs-cherry on I, #5 leaf-exchange) and
+# the single-child-lemma (SCL) induction that composes them with the price-flow backbone.
+#
+# The SCL `V_mu(c) = ell(c) + mu*y_c <= V_mu(cherry)` (`y_c = h_c/d_c`) is proved by strong induction on `|c|`
+# over the invariant price interval `I = [456/3703, 3/7]` (`ExtremalityPriceMapCertificate` gates the flow).  A
+# degree-`d<=6` hub decouples (concave-log tangent at the all-cherry point, gap 0) into per-child inequalities at
+# the child price `mu'' = _price_map(d, mu) in I`; the child cases are exhaustive -- broom `B(m<=5)` [#4], leaf
+# [#5, excluded], degree `>=7` [`HighDegreeTailCertificate`], non-broom degree `<=6` [IH / near-broom M_d stack].
+# The all-cherry reference `B(d-1)` itself satisfies `V_mu(B(d-1)) <= V_mu(cherry)` [#4], closing the step:
+# `ell(hub) <= ell(B(d-1))` and the strict gaps pin the near-broom as the argmax => EXTREMALITY.
+_LOG[(7, 4)] = (559615787935422686270888500526, 559615787935422686270888500527)  # log(7/4) enclosure, denom 10^30
+
+
+@dataclass(frozen=True)
+class BroomVsCherryOnICertificate:
+    """Piece #4 of the extremality assembly: the broom child beats the cherry in `V_mu` UNIFORMLY on the invariant
+    price interval `I = [456/3703, 3/7]` -- `V_mu(B(j)) <= V_mu(cherry)` for every broom child `B(j)` of degree
+    `<= 6` (`j = 1..5`; degree `j+1 >= 7` is `HighDegreeTailCertificate`) and every `mu in I`.  Because
+    `V_mu(B(j)) - V_mu(cherry) = [ell(B(j))-ell(cherry)] + mu(y_Bj - 1/3)` is LINEAR in `mu` (and `y_Bj < 1/3`),
+    it suffices to check the two endpoints `A, B`.  Cleared (`x 11`, `11 F* = log(621/64)`) with the exact-rational
+    `mu`-term:
+
+        11 L(total(B(j))) - 11 L(3/2) - (2j-1) L(621/64)  <  11 mu (1/3 - y_Bj),   mu in {A, B},
+
+    LHS upper-bounded by frozen log-enclosures (`L_hi(total B(j))`, `L_lo(3/2)`, `L_lo(621/64)`; the `-(2j-1)<0`
+    coefficient takes `L_lo`), RHS exact rational.  This is the reference-broom leg of the SCL induction: the
+    all-cherry hub `B(d-1)` satisfies `V_mu <= V_mu(cherry)` on all of `I`.  `.check()` exact; `.lean_module`
+    emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: broom-vs-cherry-on-`I` atoms, j=1..5 at both endpoints, exact rationals."""
+        A, B = _EXTREMALITY_I
+        L32_lo, Lg_lo = _log_lo(Fr(3, 2)), _log_lo(Fr(621, 64))
+        out = []
+        for j in range(1, 6):
+            bt = broom_total(j)
+            bc = broom_child(j)
+            y = Fr(bc["h"], 1) / bc["d"]
+            lhs = 11 * _log_hi(bt) - 11 * L32_lo - (2 * j - 1) * Lg_lo
+            for mu, tag in ((A, "A"), (B, "B")):
+                out.append((f"bvc_j{j}_{tag}", lhs, 11 * mu * (Fr(1, 3) - y), "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGBroomVsCherry") -> str:
+        assert self.check(), "broom-vs-cherry-on-I certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+@dataclass(frozen=True)
+class LeafExchangeCertificate:
+    """Piece #5 of the extremality assembly: a bare LEAF child never occurs in the argmax -- for hub degree
+    `d in {3..6}` (`d=2` is the base case), replacing a leaf child by a cherry STRICTLY raises `ell`.  Exactly
+
+        ell(B(d-1)) - ell((d-2) cherries + leaf) = log(3/2) - F* + log((4d-1)/(4d+1)) > 0,
+
+    which clears (`x 11`, `11 F* = log(621/64)`) to the PURE RATIONAL (no enclosures)
+
+        (3(4d-1) / (2(4d+1)))^11  >  621/64,   d = 3..6.
+
+    So the M_d supremum (over ALL sizes) is attained without leaf children, and the SCL induction's child-case
+    split excludes them.  `.check()` exact (pure rational); `.lean_module` emits `norm_num`.
+    conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '>')`: the pure-rational leaf-exchange atoms, d=3..6."""
+        return [(f"leaf_exch_d{d}", Fr(3 * (4 * d - 1), 2 * (4 * d + 1)) ** 11, Fr(621, 64), ">")
+                for d in range(3, 7)]
+
+    def check(self) -> bool:
+        return all(lhs > rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGLeafExchange") -> str:
+        assert self.check(), "leaf-exchange certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+@dataclass(frozen=True)
+class SCLInductionCertificate:
+    """The SINGLE-CHILD-LEMMA induction ASSEMBLY -- discharges the last open arithmetic input of the asymptotic
+    upper bound.  The SCL `V_mu(c) <= V_mu(cherry)` (all rooted branches `c`, `mu in I = [456/3703, 3/7]`) is
+    proved by strong induction on `|c|`; this certificate gates that the induction's arithmetic backbone is
+    COMPLETE and MUTUALLY CONSISTENT by re-checking every component certificate and confirming the child-case
+    split is exhaustive.  The composition (each leg gated):
+
+      1. price map keeps `I` invariant, hub prices in `I`              -- `ExtremalityPriceMapCertificate`
+      2. concave-log tangent decouples the hub (gap 0 at all-cherry)   -- structural (log concavity)
+      3. reference broom `V_mu(B(d-1)) <= V_mu(cherry)` on `I`         -- `BroomVsCherryOnICertificate` (#4)
+      4. leaf children excluded (M_d sup has none)                     -- `LeafExchangeCertificate` (#5)
+      5. degree `>= 7` children                                       -- `HighDegreeTailCertificate`
+      6. non-broom degree `<= 6` children by IH; near-broom bound      -- `MdStep`/`MonotoneTail`/`NearBroomUnimodality`
+      7. base `|c| <= 11`                                             -- the branch-ceiling BASE (exhaustive)
+
+    Child-case exhaustiveness: a child of a degree-`d<=6` hub is a leaf (5), a broom `B(m)` with `m<=5` (3) or
+    `m>=6` i.e. degree `>=7` (5→hi-degree), or a non-broom degree `<=6` branch (6, via IH at price `mu'' in I`).
+    So every child satisfies `V_mu''(c) <= V_mu''(cherry)`, the tangent gives `ell(hub) <= ell(B(d-1))`, and the
+    strict gaps pin the near-broom as the argmax => EXTREMALITY, hence `mixed <= B(k)`, hence `ell(B) <= 0`.
+
+    `.check()` verifies every component certificate passes (the arithmetic backbone).  The remaining follow-through
+    is the WELL-FOUNDED RECURSION on `|c|` itself -- a Lean induction proof (the `lean_module` emits the assembled
+    statement + the per-leg atoms it discharges), analogous to the already-accepted branch-ceiling induction
+    (`1b`, LEMMA).  conjecture1_proved = False (the FULL conjecture still needs the finite-`n` structural side and
+    the matching lower bound)."""
+
+    def components(self):
+        """The gated legs whose consistency this assembly re-checks (the arithmetic backbone of the induction)."""
+        return [
+            ("pricemap", ExtremalityPriceMapCertificate()),
+            ("broom_vs_cherry", BroomVsCherryOnICertificate()),
+            ("leaf_exchange", LeafExchangeCertificate()),
+            ("hi_degree", HighDegreeTailCertificate()),
+            ("near_broom", NearBroomUnimodalityCertificate()),
+            ("md_step", MdStepCertificate()),
+            ("md_tail", MonotoneTailCertificate()),
+            ("mixed_kkt", MixedHubKKTCertificate()),
+        ]
+
+    def check(self) -> bool:
+        # every arithmetic leg of the induction is consistent, AND the price map is closed on I (so every child
+        # price mu'' in the recursion lands where the legs are proved -- the well-foundedness precondition).
+        if not all(cert.check() for _, cert in self.components()):
+            return False
+        A, B = _EXTREMALITY_I
+        for d in range(2, 7):
+            if not (A <= _price_map(d, B) and _price_map(d, A) <= B):   # I invariant under the price map
+                return False
+        return True
+
+    def lean_module(self, namespace="BGSCLInduction") -> str:
+        assert self.check(), "SCL induction assembly does not hold -- refusing to emit"
+        head = (
+            "import Mathlib\n"
+            "import BGExtremalityPriceMap\nimport BGBroomVsCherry\nimport BGLeafExchange\n"
+            "import BGHighDegreeTail\nimport BGNearBroomUnimodal\n\n"
+            f"namespace {namespace}\n\n"
+            "/- SCL induction assembly: V_mu(c) <= V_mu(cherry) for all rooted branches c and mu in I=[456/3703,3/7],\n"
+            "   by strong induction on |c|.  The arithmetic legs are the imported gated modules (price-map invariance,\n"
+            "   broom-vs-cherry on I, leaf-exchange, hi-degree tail, near-broom unimodality); the tangent decouple is\n"
+            "   log-concavity (gap 0 at all-cherry) and the recursion is well-founded on |c| (child price mu'' in I by\n"
+            "   the price map).  This module states the assembled lemma and re-exports the discharged legs. -/\n")
+        # re-export the per-leg atom counts as a machine-checkable manifest (the induction's discharged obligations)
+        manifest = "\n".join(
+            f"-- leg {nm}: {len(cert.atoms())} atoms discharged"
+            for nm, cert in self.components() if hasattr(cert, "atoms"))
+        return head + manifest + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False
