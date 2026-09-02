@@ -100,6 +100,27 @@ from .emit_lfunction_product import (  # noqa: F401
 from .emit_parametric_holomorphy import (  # noqa: F401
     ParametricHolomorphyEmitter, parametric_holomorphy_certificate, parametric_holomorphy_family,
 )
+from .emit_symmetric_quad import (  # noqa: F401
+    SymmetricQuadFormEmitter, symmetric_quad_certificate, symmetric_quad_family,
+)
+from .emit_polytope_max import (  # noqa: F401
+    PolytopeMaxMonotoneEmitter, polytope_max_certificate, polytope_max_family,
+)
+from .emit_second_order import (  # noqa: F401
+    SecondOrderRecurrenceEmitter, second_order_certificate, second_order_family,
+)
+from .emit_integrality_gate import (  # noqa: F401
+    IntegralityGateEmitter, integrality_gate_certificate, integrality_gate_family,
+)
+from .emit_domination_ratio import (  # noqa: F401
+    RecursiveDominationRatioEmitter, domination_ratio_certificate, domination_ratio_family,
+)
+from .emit_achievability import (  # noqa: F401
+    AchievabilityClosureEmitter, achievability_certificate, achievability_family,
+)
+from .emit_separable_convex import (  # noqa: F401
+    SeparableConvexExtremumEmitter, separable_convex_certificate, separable_convex_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )

@@ -151,6 +151,12 @@ _SPECIAL_KINDS = (
     # Sweep-2 (2026-09-02): pseudo-expectation SoS-duality, order-balance boundary
     # hinge, nonneg-cosine L-product, parametric-integral holomorphy.
     "pe_duality", "order_balance", "lfunction_product", "parametric_holomorphy",
+    # BG/P=NP backlog build-out (2026-09-02): symbolic-n moment PSD, general-d
+    # polytope corner positivity, 2nd-order recurrence closed form, p-adic
+    # integrality gate, multivariate domination ratio, achievability closure,
+    # separable-convex (min/homogeneous) extremum.
+    "symmetric_quad", "polytope_max", "second_order", "integrality_gate",
+    "domination_ratio", "achievability", "separable_convex",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -194,6 +200,13 @@ _SPECIAL_DISPATCH = {
     "order_balance": ("emit_order_balance", "certify_order_balance_point"),
     "lfunction_product": ("emit_lfunction_product", "certify_lfunction_product_point"),
     "parametric_holomorphy": ("emit_parametric_holomorphy", "certify_parametric_holomorphy_point"),
+    "symmetric_quad": ("emit_symmetric_quad", "certify_symmetric_quad_point"),
+    "polytope_max": ("emit_polytope_max", "certify_polytope_max_point"),
+    "second_order": ("emit_second_order", "certify_second_order_point"),
+    "integrality_gate": ("emit_integrality_gate", "certify_integrality_gate_point"),
+    "domination_ratio": ("emit_domination_ratio", "certify_domination_ratio_point"),
+    "achievability": ("emit_achievability", "certify_achievability_point"),
+    "separable_convex": ("emit_separable_convex", "certify_separable_convex_point"),
 }
 
 
