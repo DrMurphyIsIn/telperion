@@ -400,4 +400,77 @@ def envelope_tail_case(d, ell, k):
     return "open"
 
 
+# --------------------------------------------------------------------------------------------------------------
+# M_d frontier bound -- Phase 1 (y-floor) + Phase 2 (per-degree step, binding near-broom cases) (2026-09-01).
+#
+# The single-child lemma's residual (b) is the uniform per-degree bound M_d: every d<=6 non-broom branch has
+# ell(c) < threshold(k,d).  Plan `quiet-singing-kahn`: prove by induction on size via the additive recursion
+# ell(c) = Σ_i ell(c_i) + L(y),  L = log(1 + (Σ y_i)/d) - F*,  L increasing in each child field y_i.  So the
+# WORST non-broom hub of degree d is (d-2) cherries + 1 small broom (Phase 0 gate, exact: closes < threshold for
+# every d=2..6, margins +0.017..+0.044).  This certificate gates that per-degree binding step; the residual is
+# the EXTREMALITY (the near-broom is the max non-broom hub = "brooms maximize V among non-cherry children per
+# degree"), a per-degree exchange shared with the parallel Lean Obligation A.  conjecture1_proved = False.
+
+
+def y_floor(d):
+    """Reachable-field floor: for a degree-`d` branch, `y_c = h_c/d >= 1/(2d-1)` (exact rational; the min is the
+    degree-`d` star of leaves, `h = d/(2d-1)`).  The `y`-roof is `1/d` (`h -> 1`).  So the per-degree step lives
+    over the compact box `y in [1/(2d-1), 1/d]`."""
+    return Fr(1, 2 * d - 1)
+
+
+# Frozen log-enclosures of the worst near-broom hub totals `(d-2) cherries + 1 B(j*)` (floor/ceil, denom 10^30).
+_MDHUB = {
+    3: {"j": 2, "size": 8, "num": 119, "den": 24,
+        "Llo": 1601069662763583765707945760019, "Lhi": 1601069662763583765707945760020},
+    4: {"j": 2, "size": 10, "num": 489, "den": 64,
+        "Llo": 2033479406115200168956784874294, "Lhi": 2033479406115200168956784874295},
+    5: {"j": 3, "size": 14, "num": 22599, "den": 1280,
+        "Llo": 2871045579580141544362019441185, "Lhi": 2871045579580141544362019441186},
+    6: {"j": 3, "size": 16, "num": 27459, "den": 1024,
+        "Llo": 3288977456453435931386036463646, "Lhi": 3288977456453435931386036463647},
+}
+
+
+@dataclass(frozen=True)
+class MdStepCertificate:
+    """Kernel-gates the per-degree binding STEP of the M_d frontier bound: the worst non-broom hub of root-degree
+    `d in {3,4,5,6}` -- `(d-2)` cherries + `1` small broom `B(j*)` -- has `ell(hub) < threshold(k,d)` for every
+    `k in [2,15]`.  Clearing `11 F* = log(621/64)` and using frozen log-enclosures, each atom is
+
+        11 L(total_hub) - |hub| L(621/64)  <  11 L(3/2) - 2 L(621/64) + 11(d-3)/(d(4k+3)),
+
+    LHS upper-bounded (`L_hi(total_hub)`, `L_lo(621/64)`), RHS lower-bounded (`L_lo(3/2)`, `L_hi(621/64)`).  This
+    gates the empirically-binding branch of each per-degree induction step (Phase 0 verified it is < threshold
+    exactly, margins +0.017..+0.044).  SCOPE (honest): gates the near-broom binding case, NOT all non-broom
+    branches -- the extremality (near-broom = max non-broom hub) is the residual (the per-degree exchange).
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: the cleared per-degree step atoms, exact rationals via enclosures."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo, Lg_hi = _log_lo(Fr(621, 64)), _log_hi(Fr(621, 64))
+        out = []
+        for d in range(3, 7):
+            h = _MDHUB[d]
+            thi = Fr(h["Lhi"], 10 ** 30)                  # L_hi(total_hub)
+            lhs = 11 * thi - h["size"] * Lg_lo
+            for k in range(2, 16):
+                rhs = 11 * L32_lo - 2 * Lg_hi + Fr(11 * (d - 3), d * (4 * k + 3))
+                out.append((f"md_step_d{d}_k{k}", lhs, rhs, "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdStep") -> str:
+        assert self.check(), "M_d step certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
 conjecture1_proved = False

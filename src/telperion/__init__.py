@@ -211,10 +211,10 @@ from .branch_potential import (  # noqa: F401
 )
 # Tie-regime campaign (2026-08-31): uniform-hub potential + the arithmetic cherry-worst reduction.
 from .tie_regime import (  # noqa: F401
-    CHERRY, HighDegreeTailCertificate, MixedHubKKTCertificate, TieCherryWorstCertificate,
-    TieSlackCertificate, binding_j, broom_child, cherry_is_kkt_argmax, cherry_vs_broom_ratio,
-    child_value, child_x, envelope_tail_case, mixed_lambda, slack_g, slack_hub_bound,
-    slack_linobj, small_degree_threshold, uniform_hub_ell,
+    CHERRY, HighDegreeTailCertificate, MdStepCertificate, MixedHubKKTCertificate,
+    TieCherryWorstCertificate, TieSlackCertificate, binding_j, broom_child, cherry_is_kkt_argmax,
+    cherry_vs_broom_ratio, child_value, child_x, envelope_tail_case, mixed_lambda, slack_g,
+    slack_hub_bound, slack_linobj, small_degree_threshold, uniform_hub_ell, y_floor,
 )
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules
 # `bg_bulk_discharge` and `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them
