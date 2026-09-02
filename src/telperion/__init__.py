@@ -64,6 +64,15 @@ from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_fa
 from .emit_cs import CauchySchwarzEmitter, cauchy_schwarz_family, cs_certificate  # noqa: F401
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
+from .emit_bilinear_corner import (  # noqa: F401
+    BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
+)
+from .emit_algebraic_bracket import (  # noqa: F401
+    AlgebraicBracketEmitter, algebraic_bracket_certificate, algebraic_bracket_family,
+)
+from .emit_halfplane_disk import (  # noqa: F401
+    HalfPlaneDiskEmitter, halfplane_disk_certificate, halfplane_disk_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )

@@ -141,6 +141,10 @@ _SPECIAL_KINDS = (
     # Tier-9 SoS / P=NP certificate (2026-08-22): 3-XOR moment-matrix PSD via
     # GF(2) closure -> block-rank-one SOS.
     "xor3_moment",
+    # RH / cross-cutting emitters (2026-09-02): bilinear worst-corner box
+    # positivity, algebraic-number (sqrt) bracket, Borel-Caratheodory
+    # half-plane->disk positivity core.
+    "bilinear_corner", "algebraic_bracket", "halfplane_disk",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -172,6 +176,9 @@ _SPECIAL_DISPATCH = {
     "cauchy_schwarz": ("emit_cs", "certify_cs_point"),
     "psd_form": ("emit_psd_form", "certify_psd_point"),
     "xor3_moment": ("emit_xor3", "certify_xor3_point"),
+    "bilinear_corner": ("emit_bilinear_corner", "certify_bilinear_corner_point"),
+    "algebraic_bracket": ("emit_algebraic_bracket", "certify_algebraic_bracket_point"),
+    "halfplane_disk": ("emit_halfplane_disk", "certify_halfplane_disk_point"),
 }
 
 
