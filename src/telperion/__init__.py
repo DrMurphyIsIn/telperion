@@ -64,6 +64,42 @@ from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_fa
 from .emit_cs import CauchySchwarzEmitter, cauchy_schwarz_family, cs_certificate  # noqa: F401
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
+from .emit_bilinear_corner import (  # noqa: F401
+    BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
+)
+from .emit_algebraic_bracket import (  # noqa: F401
+    AlgebraicBracketEmitter, algebraic_bracket_certificate, algebraic_bracket_family,
+)
+from .emit_halfplane_disk import (  # noqa: F401
+    HalfPlaneDiskEmitter, halfplane_disk_certificate, halfplane_disk_family,
+)
+from .emit_finite_argmax import (  # noqa: F401
+    FiniteArgmaxMarginEmitter, finite_argmax_certificate, finite_argmax_family,
+)
+from .emit_magnitude_split import (  # noqa: F401
+    MagnitudeSplitBoundEmitter, magnitude_split_certificate, magnitude_split_family,
+)
+from .emit_disk_coord import (  # noqa: F401
+    DiskCoordBoundsEmitter, disk_coord_certificate, disk_coord_family,
+)
+from .emit_cauchy_deriv import (  # noqa: F401
+    CauchyDerivBoundEmitter, cauchy_deriv_certificate, cauchy_deriv_family,
+)
+from .emit_logderiv_region import (  # noqa: F401
+    LogDerivRegionCoreEmitter, logderiv_region_certificate, logderiv_region_family,
+)
+from .emit_pe_duality import (  # noqa: F401
+    PseudoExpectationDualityEmitter, pe_duality_certificate, pe_duality_family,
+)
+from .emit_order_balance import (  # noqa: F401
+    OrderBalanceEmitter, order_balance_certificate, order_balance_family,
+)
+from .emit_lfunction_product import (  # noqa: F401
+    LFunctionProductEmitter, lfunction_product_certificate, lfunction_product_family,
+)
+from .emit_parametric_holomorphy import (  # noqa: F401
+    ParametricHolomorphyEmitter, parametric_holomorphy_certificate, parametric_holomorphy_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
