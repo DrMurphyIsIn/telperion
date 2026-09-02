@@ -153,6 +153,7 @@ _LOG = {
     (22599, 1280): (2871045579580141544362019441185, 2871045579580141544362019441186),   # d=5 peak, size 14
     (27459, 1024): (3288977456453435931386036463646, 3288977456453435931386036463647),   # d=6 boundary, size 16
     (3051, 2008): (418330203905049828297585601000, 418330203905049828297585601001),       # d=6 delta ratio t16/t14 (=27459/18072)
+    (7, 4): (559615787935422686270888500526, 559615787935422686270888500527),             # broom_total(1)=B(1)=P3, for broom-vs-cherry
 }
 
 
@@ -791,6 +792,87 @@ class ExtremalityPriceMapCertificate:
 
     def lean_module(self, namespace="BGExtremalityPriceMap") -> str:
         assert self.check(), "extremality price-map certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+@dataclass(frozen=True)
+class LeafExchangeCertificate:
+    """Kernel-gates EXTREMALITY piece #5: for a hub of root-degree `d >= 3`, replacing a bare LEAF child by a
+    CHERRY child strictly raises `ell` (and `y_c`, hence `V_mu`).  So the ell-maximal non-broom branch has no bare
+    leaf children -- the single-child lemma restricts to degree-`>=2` children (the one d=2 exception, a leaf on a
+    degree-2 hub, is exactly the cherry base and is not bounded).
+
+    Exchange delta: `Delta_ell = (log(3/2) - F*) + log((d+s-2/3)/(d+s))` (leaf y=1 -> cherry y=1/3 drops s by 2/3).
+    `Delta_ell > 0  <=>  (d+s-2/3)/(d+s) > (2/3)(621/64)^{1/11}  <=>  [(d+s-2/3)/(d+s)]^11 > (2/3)^11 (621/64)`
+    (both sides in (0,1); the 11th power clears F* and preserves order).  The bracket is increasing in `d+s`, and
+    for `d >= 3` with a leaf present `s >= 1` so `d+s >= 4`; the worst case `d+s = 4` gives bracket `= 5/6`.  So a
+    SINGLE pure-rational atom closes it for all such hubs:
+
+        (5/6)^11  >  (2/3)^11 (621/64)          [= 48828125/362797056 > 736/6561, margin +0.022].
+
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    def atoms(self):
+        """The single cleared leaf-exchange atom at the `d+s=4` floor (monotone in `d+s` extends it to all d>=3)."""
+        return [("leaf_exchange_floor", Fr(5, 6) ** 11, Fr(2, 3) ** 11 * Fr(621, 64), ">")]
+
+    def check(self) -> bool:
+        return all((lhs > rhs) if op == ">" else (lhs < rhs) for _, lhs, rhs, op in self.atoms())
+
+    def lean_module(self, namespace="BGLeafExchange") -> str:
+        assert self.check(), "leaf-exchange certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+@dataclass(frozen=True)
+class BroomVsCherryCertificate:
+    """Kernel-gates EXTREMALITY piece #4: a broom child `B(k)` never beats the cherry on the invariant price
+    interval `I = [456/3703, 3/7]` -- `V_mu(B(k)) = ell(B(k)) + mu*y_{B(k)} <= V_mu(cherry)` for all `k >= 1` and
+    `mu in I` (`y_{B(k)} = 3/(4k+3)`).  Linear in `mu`, so the two endpoints A=456/3703, B=3/7 bound the interval.
+
+    Finite head `k = 1..4` (cleared `x 11`, `11 F* = log(621/64)`, frozen log-enclosures):
+        11 L(bt(k)) - 11 L(3/2) - (2k-1) L(621/64)  <=  11 mu (1/3 - 3/(4k+3)),   bt(k) = 7/4,11/4,135/32,513/80.
+    Tail `k >= 5`: `ell(B(k)) <= 0` (BroomOptimumCertificate, = 0 at the k=5 tie) and `y_{B(k)} <= 3/23`, so
+    `V_mu(B(k)) <= mu*3/23`; the atom `11 mu (3/23 - 1/3) <= 11 L(3/2) - 2 L(621/64)` (= `mu*3/23 <= V_mu(cherry)`)
+    closes all `k >= 5` at once.  (At k=5 this is tight: ell(B(5))=0, y=3/23.)  The tie `B(5)` beating the cherry
+    only happens BELOW `I` -- the crossover `mu ~ 0.038 < A = 0.1231` -- which is why `I` is the right interval.
+
+    `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    _I = (Fr(456, 3703), Fr(3, 7))
+    _BT = {1: (7, 4), 2: (11, 4), 3: (135, 32), 4: (513, 80)}
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<=')`: finite k=1..4 + tail atoms at both endpoints of I, exact via enclosures."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo, Lg_hi = _log_lo(Fr(621, 64)), _log_hi(Fr(621, 64))
+        out = []
+        for i, mu in enumerate(self._I):
+            tag = "A" if i == 0 else "B"
+            for k in range(1, 5):
+                p, q = self._BT[k]
+                lhs = 11 * _log_hi(Fr(p, q)) - 11 * L32_lo - (2 * k - 1) * Lg_lo
+                rhs = 11 * mu * (Fr(1, 3) - Fr(3, 4 * k + 3))
+                out.append((f"bvc_k{k}_{tag}", lhs, rhs, "<="))
+            # tail k>=5 (uses broom optimum ell(B(k))<=0 + y<=3/23):
+            out.append((f"bvc_tail_{tag}", 11 * mu * (Fr(3, 23) - Fr(1, 3)), 11 * L32_lo - 2 * Lg_hi, "<="))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs <= rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGBroomVsCherry") -> str:
+        assert self.check(), "broom-vs-cherry certificate does not hold -- refusing to emit"
         head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
         body = "\n".join(
             f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
