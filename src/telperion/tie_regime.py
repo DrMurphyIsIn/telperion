@@ -146,6 +146,13 @@ _LOG = {
     (6561, 448): (2684105076929892369553216423187, 2684105076929892369553216423188),
     (22599, 1024): (3094189130894351300128314531495, 3094189130894351300128314531496),
     (8505, 256): (3503232060350399661344481289616, 3503232060350399661344481289617),
+    # M_d geometric-tail worst-structure totals (per-degree per-size max non-broom, exhaustive enum <= 17):
+    (17, 8): (753771802376380151997838253498, 753771802376380151997838253499),          # d=2 peak, size 4
+    (79, 24): (1191394022119075874526003940184, 1191394022119075874526003940185),        # d=3 peak, size 6
+    (489, 64): (2033479406115200168956784874294, 2033479406115200168956784874295),       # d=4 peak, size 10
+    (22599, 1280): (2871045579580141544362019441185, 2871045579580141544362019441186),   # d=5 peak, size 14
+    (27459, 1024): (3288977456453435931386036463646, 3288977456453435931386036463647),   # d=6 boundary, size 16
+    (3051, 2008): (418330203905049828297585601000, 418330203905049828297585601001),       # d=6 delta ratio t16/t14 (=27459/18072)
 }
 
 
@@ -553,6 +560,85 @@ class FreeClosureCertificate:
 
     def lean_module(self, namespace="BGMdFree") -> str:
         assert self.check(), "free-closure certificate does not hold -- refusing to emit"
+        head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
+        body = "\n".join(
+            f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
+            f"(({rhs.numerator} : ℚ)/{rhs.denominator}) := by norm_num"
+            for nm, lhs, rhs, op in self.atoms())
+        return head + body + f"\n\nend {namespace}\n"
+
+
+# M_d geometric-tail worst-structure data (per-degree per-size max non-broom-non-cherry, exhaustive enum to size 17).
+# d=2,3,4,5 PEAK at a finite interior size (4,6,10,14) then decrease -- their max is the enumerated peak (bounded,
+# no extrapolation).  d=6 is still CLIMBING at the size-16 enumeration boundary; its even-size increments shrink
+# geometrically (observed ratio ~0.28 < 5/12), so the geometric tail with rate rho=5/12 caps M_6 below threshold.
+_MDGEO = {
+    2: {"total": (17, 8), "size": 4},
+    3: {"total": (79, 24), "size": 6},
+    4: {"total": (489, 64), "size": 10},
+    5: {"total": (22599, 1280), "size": 14},
+    6: {"total": (27459, 1024), "size": 16},
+}
+_MDGEO_DELTA = (3051, 2008)   # total(d=6,size16)/total(d=6,size14) = 27459/18072 reduced: last even-step ratio, d=6 tail
+
+
+@dataclass(frozen=True)
+class MdGeometricTailCertificate:
+    """Kernel-gates the FINITE arithmetic of the M_d frontier closure, CONDITIONAL on the one open lemma -- the
+    even-step `ell`-subsequence contraction `rho <= 5/12` (the rooted cavity-contraction, = the parallel Lean
+    Obligation A in its per-degree scalar form).  This is the sharpened residual of the single-child lemma tail:
+    the whole M_d bound reduces to this single contraction rate.
+
+    The size-trend (exhaustive enum to size 17, exact struct-based broom exclusion) is a PARITY OSCILLATION whose
+    even-size max-`ell` subsequence, per root-degree, behaves as:
+
+      - d=2: monotone-decreasing from size 4 -> `M_2 = ell(17/8) = -0.0726` (interior peak, bounded).
+      - d=3: peaks size 6 (`ell(79/24) = -0.0481`), then decreases.
+      - d=4: peaks size 10 (`ell(489/64) = -0.0324`), then decreases.
+      - d=5: peaks size 14 (`ell(22599/1280) = -0.0212`), then decreases (this IS the d=5 extremality residual;
+        the worst non-broom d=5 hub sits far below threshold, margin +0.020 -- the earlier "off by 0.0003"
+        FreeClosure framing was the loose broom CEILING, not the actual max non-broom hub).
+      - d=6: still CLIMBING at the size-16 boundary (`ell(27459/1024) = -0.0164`); the geometric tail with
+        `rho <= 5/12` gives `M_6 <= ell(27459/1024) + (rho/(1-rho)) * Delta <= -0.0127 < threshold(6) = +0.0002`,
+        where `Delta = ell(6,16) - ell(6,14) = L(27459/18072) - 2F*`.
+
+    Atoms (cleared, `11 F* = log(621/64)`, frozen log-enclosures), all with margin `>= +0.013`:
+      (peak, d in {2,3,4,5}): `11 L(total_peak_d) - (size-2) L(621/64) - 11 L(3/2) < 11(d-3)/(d(4k+3))`, k=2..15.
+      (tail, d=6, x77): `77 L(27459/1024) + 55 L(27459/18072) - 108 L(621/64) - 77 L(3/2) < 77/(2(4k+3))`, k=2..15.
+
+    HONEST SCOPE: gates the finite arithmetic and ISOLATES the open lemma.  Soundness is CONDITIONAL on (a) the
+    even-step contraction `rho <= 5/12` (unproven -- the field-map Jacobian bound `h^2/(d_v d_w) <= 1/2` gives
+    field convergence, but the `ell`-max-subsequence contraction is the residual work), and (b) the enumerated
+    per-(degree,size) maxima being the true max (exhaustive-enum generator trust, to size 17).  Does NOT close the
+    M_d bound outright.  `.check()` exact; `.lean_module` emits `norm_num`.  conjecture1_proved = False."""
+
+    rho: Fr = Fr(5, 12)
+
+    def atoms(self):
+        """List of `(name, lhs, rhs, '<')`: peaked-degree + d=6 geometric-tail atoms, exact rationals via enclosures."""
+        L32_lo = _log_lo(Fr(3, 2))
+        Lg_lo = _log_lo(Fr(621, 64))
+        out = []
+        for d in (2, 3, 4, 5):
+            p, q = _MDGEO[d]["total"]
+            sz = _MDGEO[d]["size"]
+            lhs = 11 * _log_hi(Fr(p, q)) - (sz - 2) * Lg_lo - 11 * L32_lo
+            for k in range(2, 16):
+                out.append((f"md_geo_peak_d{d}_k{k}", lhs, Fr(11 * (d - 3), d * (4 * k + 3)), "<"))
+        # d=6 geometric tail: M_6 <= ell(6,16) + (rho/(1-rho)) Delta.  rho=5/12 => rho/(1-rho)=5/7; x11 and x7 => x77.
+        assert self.rho == Fr(5, 12), "d=6 tail atom is cleared for rho=5/12"
+        p, q = _MDGEO[6]["total"]
+        dp, dq = _MDGEO_DELTA
+        lhs6 = 77 * _log_hi(Fr(p, q)) + 55 * _log_hi(Fr(dp, dq)) - 108 * Lg_lo - 77 * L32_lo
+        for k in range(2, 16):
+            out.append((f"md_geo_tail_d6_k{k}", lhs6, Fr(77, 2 * (4 * k + 3)), "<"))
+        return out
+
+    def check(self) -> bool:
+        return all(lhs < rhs for _, lhs, rhs, _ in self.atoms())
+
+    def lean_module(self, namespace="BGMdGeoTail") -> str:
+        assert self.check(), "M_d geometric-tail certificate does not hold -- refusing to emit"
         head = ("import Mathlib\n\n" f"namespace {namespace}\n\n")
         body = "\n".join(
             f"theorem {nm} : (({lhs.numerator} : ℚ)/{lhs.denominator}) {op} "
