@@ -1,55 +1,78 @@
 # Telperion
 
-**A general-purpose tool for proving families of mathematical statements in
-Lean 4 — by exact-arithmetic certificate and kernel verification.**
+**A certificate compiler for Lean 4 — it turns families of concrete mathematical
+claims into kernel-checked Mathlib proofs by exact-arithmetic witness, not by
+trust.**
 
-You describe your problem as a parameterized *family* of statements; Telperion
+You describe your problem as a parameterized *family* of statements. Telperion
 certifies each instance in exact rational arithmetic, then emits Lean 4 that
-Mathlib's kernel re-proves from scratch. The generator is untrusted by design —
-a wrong certificate is a compile error, never a false theorem — so you get
-machine-checked proofs without having to trust (or read) the tool that wrote
-them.
+Mathlib's kernel re-proves from scratch. **The generator is untrusted by
+design** — a wrong certificate is a compile error, never a false theorem — so
+you get machine-checked proofs without having to trust, or even read, the tool
+that wrote them. That inversion (check the witness, don't trust the author) is
+the whole point: it is exactly what makes an unreliable, heuristic, or
+LLM-driven generator safe to build on.
 
-It was forged as the engine behind a hard research proof (Brualdi–Goldwasser;
-see [Origin](#origin)), where it produced 200+ CI-green Mathlib theorems. But
-**nothing about the engine is specific to that problem** — the same pipeline
-proves an unrelated textbook inequality
-([`examples/bernoulli`](examples/bernoulli/)) through identical machinery.
-Telperion is now a standalone, problem-agnostic artifact: bring your own
-inequality, identity, or bound, and it will try to hand you a kernel-checked
-Lean proof of it.
+Telperion was forged as the engine behind a hard research proof — the
+Brualdi–Goldwasser Laplacian-ratio problem — but nothing in the engine is
+specific to it. It is now a standalone, problem-agnostic artifact, battle-tested
+across three very different campaigns:
+
+- **Extremal combinatorics** — the Brualdi–Goldwasser proof, thousands of
+  CI-green Mathlib theorems (`g1_floors` alone: 3,084).
+- **Analytic number theory** — an *unconditional* Riemann-ζ zero-free region,
+  the Borel–Carathéodory machinery, and sharp near-line growth bounds, all
+  sorry-free (classical-analysis formalization, not a claim on RH itself).
+- **Proof complexity** — sum-of-squares refutations of unsatisfiable systems and
+  their pseudo-expectation-duality complement (no low-degree refutation exists).
+
+The same `certify → emit → freeze` pipeline that discharges a 3,084-theorem
+combinatorial floor table also proves a textbook inequality
+([`examples/bernoulli`](examples/bernoulli/)) through identical machinery. Bring
+your own inequality, identity, bound, enclosure, or positivity certificate, and
+it will try to hand you a kernel-checked Lean proof of it.
 
 ## What you can prove with it
 
-Telperion turns a problem into Lean when you can express it as a *certifiable
+Telperion turns a problem into Lean whenever you can express it as a *certifiable
 family* — a grid of instances, each reducible to one of its certificate shapes.
-That covers a large slice of concrete mathematics:
+Fifty-plus shapes now span a broad slice of concrete mathematics:
 
-- **Rational-function inequalities** — `0 ≤ f(x̄)` or `g(x̄) ≤ h(x̄)` for
-  rational `f,g,h` over nonnegative variables (Pólya positivity; box-corner
-  reductions in two variables).
-- **Polynomial nonnegativity** — `0 ≤ p(x̄)` via an exact rational
-  sum-of-squares (reaches interior equality cases Pólya lifting cannot).
-- **Exact identities and arithmetic** — integer/rational identities, powers,
-  and closed-form equalities (`ring`/`norm_num` cores).
-- **p-adic valuation facts** — `v_p(n) = k` as decidable divisibility.
-- **Two-sided transcendental enclosures** — rigorous rational brackets
-  `lo ≤ exp(−θ) ≤ hi` at a rational point.
-- **Finite case analysis** — dispatch over a bounded parameter (`interval_cases`),
-  subdivision of a region into cells and gluing the pieces back.
-- **`∀ K ≥ K₀` tails** — a finite table plus one uniform certificate.
-- **Assemblies of the above**, in the original variables (substitution glue,
-  dichotomies, custom skeletons).
+- **Positivity & inequalities** — `0 ≤ f(x̄)` / `g ≤ h` for rational `f,g,h`
+  (Pólya, two-variable box-corner), polynomial nonnegativity via exact rational
+  sum-of-squares (interior equality cases included), Positivstellensatz
+  certificates on polytopes and semialgebraic sets (Handelman, Putinar), and
+  reverse/pairwise inequalities (Cauchy–Schwarz, tangent-line convex sums).
+- **Exact identities, arithmetic & valuations** — integer/rational identities and
+  powers, rational-function identities on a ray, p-adic valuations `v_p(n)=k`,
+  hypergeometric/binomial sum identities (Wilf–Zeilberger), and ideal-membership
+  equalities (Nullstellensatz).
+- **Enclosures** — rigorous two-sided rational brackets of transcendentals
+  (`lo ≤ exp(−θ) ≤ hi`) and of algebraic numbers (`lo ≤ √a ≤ hi`).
+- **Infeasibility & duality** — a system has *no* real solution (a
+  Positivstellensatz/SOS refutation), or its dual: *no low-degree SoS refutation
+  exists* (pseudo-expectation / moment-relaxation feasibility).
+- **Extremal & combinatorial facts** — integer maxima of unimodal and log-concave
+  sequences, telescoping tree/potential bounds, lattice-box (`ℤ^d_{≥0}`) integer
+  Positivstellensatz bounds, and finite argmax-with-margin extremality.
+- **Complex analysis** — coordinate and magnitude bounds on disks, Cauchy
+  derivative estimates, the Borel–Carathéodory half-plane→disk core,
+  parametric-integral holomorphy, and the ζ zero-free-region assembly (product
+  inequality + growth + pole → an explicit region gap).
+- **Finite & assembled reasoning** — case dispatch over a bounded parameter,
+  region subdivision and glue, `∀ K ≥ K₀` tails, and substitution/dichotomy
+  assemblies of all of the above, expressed in the original variables.
 
 If your statement fits one of these shapes — or a product/quantifier over a grid
-of them — Telperion will certify it in exact arithmetic and emit the Lean. If it
+of them — Telperion certifies it in exact arithmetic and emits the Lean. If it
 needs a new shape, you add an emitter (see [Extending it](#extending-it)); the
 trust model and the whole pipeline come for free.
 
-### Certificate shapes (v0.1.6)
+### Certificate shapes
 
 Each shape is an *emitter*; all flow through the same `certify → validate →
-emit → freeze` workflow.
+emit → freeze` workflow, and every one below has a worked, CI-compiled example
+under [`examples/`](examples/).
 
 | Emitter | Proves | Lean it writes |
 |---|---|---|
@@ -119,26 +142,53 @@ emit → freeze` workflow.
 saturated; the remaining roadmap items are the 08-21 BG/P=NP backlog and a few
 fold-in sub-modes (`HodgeRiemann`→`psd_form`, `DiscreteConcavity`→`logconcave`).*
 
-The Pólya engine underneath (`polya_lift`: multiply through by `(1+Σxᵢ)^N`;
-recursive box subdivision; SOS for the rationalizable subset) turns "true but
-not obviously in Pólya form" into a certificate automatically, and `diagnose`
-tells you which case you're in (see below).
+Under the positivity shapes sits an automatic search: the Pólya engine
+(`polya_lift` — multiply through by `(1+Σxᵢ)^N`, recursively subdivide the box,
+solve the rationalizable subset by SOS) turns "true but not obviously in Pólya
+form" into a certificate on its own, and `diagnose` tells you which case you are
+in — certifiable, not-yet-Pólya (with remedy hints), or actually false (with an
+exact rational counterexample).
 
 ## The trust model
 
-**The generator is untrusted by design.** The Lean kernel is the sole trusted
-component: a defective certificate manifests as a compile failure, never a false
-theorem. The exact-arithmetic self-checks exist to catch mistakes *before* a CI
-round-trip, not to establish truth. The design corollary is that the generator
-stays small, readable, and dependency-light (sympy only) — a referee can audit
-the engine (~a few thousand lines) instead of trusting it.
+**The generator is untrusted by design; the Lean kernel is the sole trusted
+component.** A defective certificate becomes a compile failure, never a false
+theorem — so the correctness guarantee is *independent* of how the certificate
+was found. That is the load-bearing inversion: instead of trying to make the
+generator trustworthy (hopeless for a heuristic search or an LLM), Telperion
+makes its trustworthiness irrelevant. Finding a certificate is hard and can be
+delegated to anything; *checking* one is a cheap, mechanical kernel computation.
+The exact-arithmetic self-checks exist only to catch mistakes *before* you burn
+a CI round-trip — not to establish truth. The corollary is a small, readable,
+dependency-light engine (sympy only, a few thousand lines) a referee can audit
+rather than trust.
 
-**The one thing the kernel can't catch — vacuity.** The kernel rejects a *false*
-theorem, but a *true-but-vacuous* one (`X = X`, `0 ≤ 0`) compiles green while
-proving nothing about the certificate — the defect lives in the statement, not
-the proof. `nonvacuity.py` is Telperion pointed at its own output: `emit()`
-refuses a reflexive emitted statement (`check_nonvacuous`), and the identity
-emitters additionally require the certificate to be *load-bearing* — a corrupted
+**Why this matters for LLM-generated mathematics.** The defining failure of a
+language model let loose on math is the confident *hallucination* — a
+plausible-looking lemma, proof step, or numeric claim that is simply wrong, and
+wrong in a way that survives casual review precisely because it *reads*
+correctly. Telperion structurally forecloses that failure. An LLM (or any
+heuristic search) may *propose* a certificate; it can never produce a false
+theorem, because the only thing that counts as success is a witness the Lean
+kernel re-checks from scratch. A hallucinated sum-of-squares decomposition, a
+wrong Handelman multiplier, a fabricated constant — each becomes a red
+`lake build`, not an accepted result. The failure mode is downgraded from
+"silent false theorem" to "loud rejection," and the component doing the
+rejecting is a small, fixed kernel that neither knows nor cares that an LLM wrote
+the input — so the guarantee holds no matter how unreliable the generator is.
+Hallucination is *contained*, not merely discouraged: the model may be as wrong
+as it likes on the inside of the kernel boundary, and nothing false gets out.
+(What the kernel does *not* police is whether you asked the right question — a
+valid proof of a vacuous or mis-stated goal is still valid. That gap is the job
+of the vacuity guard below, the Comparator's independent statement check, and
+plain honesty about what you set out to prove.)
+
+**The one thing the kernel cannot catch — vacuity.** The kernel rejects a
+*false* theorem, but a *true-but-vacuous* one (`X = X`, `0 ≤ 0`) compiles green
+while proving nothing — the defect lives in the *statement*, not the proof.
+`nonvacuity.py` is Telperion turned on its own output: `emit()` refuses a
+reflexive emitted statement (`check_nonvacuous`), and the identity emitters
+additionally require the certificate to be *load-bearing* — corrupting the
 certificate must break the claim (`assert_certificate_sensitive`). A family that
 deliberately emits reference identities opts out with
 `LeanProfile(allow_reflexive=True)`.
@@ -192,8 +242,13 @@ both kernels, and all — lives in [`examples/bernoulli/lean`](examples/bernoull
 
 **It has been pointed at real proofs, not just the examples.** The three anchor
 theorems of the Brualdi–Goldwasser formalization (the `Φ ≤ 1` crux, the g-step /
-master-inequality crux, and the conditional R7′ capstone) are re-verified this
-way in CI: both the Lean kernel *and* nanoda accept each, axiom-clean.
+master-inequality crux, and the conditional R7′ capstone) are re-verified in CI
+through the full judge — both the Lean kernel *and* nanoda accept each,
+axiom-clean. The analytic-number-theory campaign is guarded in the same spirit
+at the kernel level: its unconditional anchors (the elementary and polylog ζ
+zero-free regions, the sharp near-line growth bound, the strip representation)
+carry a `#print axioms` guard in CI that fails on any hidden `sorryAx` — so a
+green build cannot smuggle a gap past a docstring that merely *says* "no sorry".
 
 Two honest notes. First, for verifying *your own* output the sandbox isn't the
 point (the kernel replay is), so CI wraps the judge in a shim that sidesteps a
@@ -263,24 +318,33 @@ is the non-BG example, Bernoulli's inequality end-to-end through the core engine
 
 New kind of statement? Write an emitter. An `Emitter` is a small class that
 turns a certified instance into Lean text; it inherits the entire pipeline —
-enforcement, provenance hashing, drift net, soundness lint, byte-stability, all
-three agent surfaces — for free. The existing emitters (thirty-plus, see the
-table above) are the working examples; `docs/TACTIC_CONTRACT.md` documents the
-exact Mathlib tactics the default templates assume, and `docs/METHODOLOGY.md`
-the discipline.
+enforcement, provenance hashing, drift net, soundness lint, byte-stability, and
+all three agent surfaces — for free. The fifty-plus emitters in the table above
+are the working examples: the newest were added by modelling each emitted proof
+on a lemma already proven in the corpus, then verifying with a single
+`lake build`. `docs/TACTIC_CONTRACT.md` documents the exact Mathlib tactics the
+default templates assume; `docs/METHODOLOGY.md`, the discipline. Candidate
+shapes still on the roadmap live in `docs/EMITTER_ROADMAP_*.md`.
 
 ## Honest scope — what it is and isn't
 
 Telperion is a **certificate compiler, not an autoformalizer.** It proves what
-reduces to certified inequalities, identities, valuations, brackets, and finite
-case analysis — a broad and growing class, but not *every* Lean theorem. It will
-not invent a structural induction or a clever lemma for you; it turns "I'm
-confident this concrete inequality/identity/bound holds" into machine-checked
-Lean, fast and byte-reproducibly. When a target is *outside* its shapes it says
-so — `diagnose` triages any refusal into `FALSE` (with an exact rational
-counterexample), `NOT_POLYA` (with remedy hints), or `CERTIFIABLE` — rather than
-emitting a plausible-but-wrong proof. The project's discipline is to name what
-it cannot do, not to paper over it.
+reduces to certified inequalities, identities, valuations, brackets, positivity
+certificates, and finite case analysis — a broad and growing class, but not
+*every* Lean theorem. It will not invent a structural induction or a clever
+lemma for you; it turns "I'm confident this concrete inequality / identity /
+bound / certificate holds" into machine-checked Lean, fast and byte-reproducibly.
+When a target is *outside* its shapes it says so — `diagnose` triages any refusal
+into `FALSE` (with an exact rational counterexample), `NOT_POLYA` (with remedy
+hints), or `CERTIFIABLE` — rather than emitting a plausible-but-wrong proof.
+
+The same discipline governs the research campaigns. Telperion formalizes
+*classical and certificate-shaped* mathematics: the analytic-number-theory work
+is a kernel-checked, unconditional **zero-free region** and its supporting
+bounds — classical results, formalized honestly — and carries
+`conjecture1_proved = False` throughout; it is **not** progress on the Riemann
+Hypothesis, and the Brualdi–Goldwasser and proof-complexity campaigns are held to
+the same standard. The project names what it cannot do rather than paper over it.
 
 ## Search, when you don't know the certificate yet — `telperion.evolve`
 
@@ -298,7 +362,11 @@ Beyond the family workflow, Telperion exposes a **single-goal front door**:
 hand it one goal string (`0 ≤ <expr>` over given symbols) and it routes the
 goal through a kind-router to the right emitter and returns a kernel-checkable
 aux lemma — deterministic, CPU-cheap, and honest on failure (exact triage:
-FALSE with a rational counterexample, or NOT_POLYA with hints). The
+FALSE with a rational counterexample, or NOT_POLYA with hints). This is the
+trust model applied to an LLM prover's inner loop: the model proposes the
+subgoal, Telperion returns either a kernel-checked discharge or a clean refusal,
+and it never fabricates a proof — so the certificate-shaped fraction of the
+model's reasoning inherits the no-false-theorem guarantee for free. The
 integration seam is one JSON request/response (`telperion.tactic::discharge`),
 with a sketched Lean `telperion_discharge` tactic frontend and a lift harness +
 certifiable benchmark for measuring what the backend adds — see
@@ -346,17 +414,23 @@ one is running. See [Origin](#origin) for the `bg` research-lab extra.
 
 Telperion was extracted clean-room from the Brualdi–Goldwasser (1984)
 Laplacian-ratio proof campaign in [`../proof/`](../proof/), where the pattern
-produced 200+ CI-green Mathlib theorems (a 36-cell bilinear certificate table,
-36 dispatch adapters, 72 vee/mirror branches, 42 leg and 55 shedding
-certificates — most batches first-try green). That campaign is still the tool's
-largest stress test: its frozen families are re-certified and byte-diffed in CI,
-the biggest also compiled against pinned Mathlib by the `telperion-production`
-gate (e.g. `g1_floors`: 3,084 theorems). Those problem-specific research modules
-live in the opt-in `telperion.bg` subpackage — `import telperion` loads **zero**
-of them (statically and dynamically enforced by
+produced thousands of CI-green Mathlib theorems (a 36-cell bilinear certificate
+table, 36 dispatch adapters, 72 vee/mirror branches, 42 leg and 55 shedding
+certificates — most batches first-try green; `g1_floors` alone is 3,084). That
+campaign is still the tool's largest single stress test: its frozen families are
+re-certified and byte-diffed in CI, the biggest also compiled against pinned
+Mathlib by the `telperion-production` gate.
+
+Two further campaigns then drove the engine well past its origin — the
+analytic-number-theory work (the ζ zero-free region, Borel–Carathéodory, the
+sharp near-line bound) and the proof-complexity work (SoS refutations and
+pseudo-expectation duality). Each contributed new certificate shapes, growing the
+catalog to fifty-plus, and each is exercised in CI against pinned Mathlib. The
+problem-specific research modules live in the opt-in `telperion.bg` subpackage —
+`import telperion` loads **zero** of them (statically and dynamically enforced by
 [`tests/test_core_boundary.py`](tests/test_core_boundary.py)), keeping the
-general engine small and auditable. Install the `bg` extra (networkx, numpy)
-only if you want the research lab.
+general engine small and auditable. Install the `bg` extra (networkx, numpy) only
+if you want the research lab.
 
 The methodology — untrusted generator, trusted kernel, numeric-first discipline,
 provenance-and-drift — is written up in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
