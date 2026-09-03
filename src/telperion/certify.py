@@ -160,6 +160,10 @@ _SPECIAL_KINDS = (
     # Trading-derived certificate shapes (2026-09-02): objective-degeneracy
     # (leverage↔position_size Sharpe homogeneity) + Kelly concave-stationary max.
     "scale_invariance", "concave_stationary_max",
+    # Open-front build-out (2026-09-02): symbolic-in-n d=2 moment-matrix PSD
+    # (three-piece completing-the-square). (separable-convex MAX/vertex ships as a
+    # mode of the existing "separable_convex" kind, no new entry.)
+    "symmetric_quad_d2",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -212,6 +216,7 @@ _SPECIAL_DISPATCH = {
     "separable_convex": ("emit_separable_convex", "certify_separable_convex_point"),
     "scale_invariance": ("emit_scale_invariance", "certify_scale_invariance_point"),
     "concave_stationary_max": ("emit_concave_stationary_max", "certify_concave_stationary_max_point"),
+    "symmetric_quad_d2": ("emit_symmetric_quad_d2", "certify_symmetric_quad_d2_point"),
 }
 
 

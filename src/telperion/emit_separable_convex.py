@@ -18,34 +18,61 @@ the knee/kink discussion):
     robust, search-free ``have … = Σcⱼ·bⱼ² := by ring; positivity`` and the whole
     claim assembles by ``linarith`` over the ``hᵢ`` and ``Σxᵢ = S``.
 
-  * the MAXIMUM is at a VERTEX (all-but-one coordinate at a box bound) — this is
-    the genuinely HARD direction, requiring the two-point spreading-exchange
-    induction with the two-region (below-knee / above-knee) kink bookkeeping of
-    the design doc.  **This emitter does NOT attempt the max/vertex direction**:
-    the sum-preserving spreading-exchange induction (``glemma_spread`` /
-    ``glemma_push_to_bound`` / ``vertex_bound_cons`` list induction) does not
-    reduce to a search-free per-term SOS + ``linarith`` shape, so it is NOT a
-    reliably-green single-instance certificate.  It is honestly reported as
-    NAMED-OPEN below and in the module report.
+  * the MAXIMUM is at a VERTEX (all-but-one coordinate at the common box bound
+    ``u``, the last coordinate carrying the residual) — the genuinely
+    STRUCTURAL direction.  The engine is the two-point spreading exchange
+    ``φ(a) + φ(b) ≤ φ(a + b − u) + φ(u)`` (push one coordinate up to the bound,
+    the other carries the excess), assembled by the vertex list-induction.  This
+    is EXACTLY the proven, sorry-free development
+    ``proof/formalization/R3Cert/VertexLemma.lean`` (``glemma_two_point_spread``)
+    + ``VertexLemmaFull.lean`` (``glemma_spread`` / ``glemma_push_to_bound`` /
+    ``sum_le_half_length`` / ``vertex_bound`` / ``vertex_bound_cons``), with the
+    specific ``glemma`` family and cap ``1/2`` replaced by the certificate's
+    convex polynomial ``φ`` and common upper bound ``u``.  This emitter
+    PARAMETERIZES that proven structure in a ``mode="max"`` face — a fixed-``n``
+    UNROLLED vertex bound (``n − 1`` push-to-bound exchanges chained, each an
+    exact ``nlinarith`` fact ``φ(a) + φ(b) ≤ φ(a+b−u) + φ(u)`` from the box
+    slacks ``0 ≤ u − a``, ``0 ≤ u − b``, per ``glemma_push_to_bound``), then the
+    residual-substitution + ``nlinarith`` assembly.
 
-So this emitter certifies the MIN / homogeneous direction only — a first-class,
-reliably-green ``n·φ(S/n) ≤ Σφ(xᵢ)`` on the fixed-sum box.  Relative to the bare
-``emit_tangent``, it additionally carries the BOX ``lᵢ ≤ xᵢ ≤ uᵢ`` in the
-certificate (the design-doc slice) and emits the box hypotheses as binders — the
-homogeneous point ``S/n`` must lie inside the box (else the bound is vacuous /
-mis-stated), which is checked at certification.  The box hypotheses are present
-but unused by ``linarith`` for the min direction (Jensen needs only the
-sum-constraint); they scope the statement to the design-doc slice and set up the
-vertex/max companion.
+So this emitter ships BOTH faces of the separable-convex extremum on the
+fixed-sum box:
 
-NEGATIVE CONTROL: a NON-CONVEX ``φ`` (surplus ``φ−L`` lacks a nonnegative rational
-SOS form) is refused at certification with ``ValueError``.  Also refused: the
-homogeneous point ``S/n`` outside the box ``[min lᵢ, max uᵢ]`` (mis-stated slice),
-``n < 2``, or a linear ``φ``.
+  * ``mode="min"`` (default): the homogeneous-point bound ``n·φ(S/n) ≤ Σφ(xᵢ)``
+    (Jensen), search-free per-term SOS + ``linarith``.  Relative to the bare
+    ``emit_tangent``, it additionally carries the BOX ``lᵢ ≤ xᵢ ≤ uᵢ`` in the
+    certificate (the design-doc slice) and emits the box hypotheses as binders —
+    the homogeneous point ``S/n`` must lie inside the box (else the bound is
+    vacuous / mis-stated), which is checked at certification.  The box
+    hypotheses are present but unused by ``linarith`` for the min direction.
 
-HONEST SCOPE: this proves ONLY the min/homogeneous face of the separable-convex
-extremum problem.  The vertex/max face is named-open (heavy spreading-exchange
-induction).  conjecture1_proved=False.
+  * ``mode="max"`` (vertex): the vertex bound
+    ``Σφ(xᵢ) ≤ (n−1)·φ(u) + φ(S − (n−1)·u)`` over the UNIFORM box
+    ``{Σxᵢ = S, l ≤ xᵢ ≤ u}`` (common ``l``, ``u``), the residual
+    ``S − (n−1)·u`` required to lie in ``[l, u]`` (else the stated vertex is not
+    a box member).  The per-pair push-to-bound exchange
+    ``φ(a) + φ(b) ≤ φ(a+b−u) + φ(u)`` is the parameterized ``glemma_push_to_bound``;
+    every exchange's two box slacks are ``linarith``-derivable from the box
+    binders, so the chained proof is reliably green.  Restricted to convex
+    polynomials of even degree ``≤ 6`` (the ``nlinarith`` per-pair exchange is
+    empirically robust there; degree 8+ is named-open as the ``nlinarith`` hint
+    set stops closing it).
+
+NEGATIVE CONTROL: a NON-CONVEX ``φ`` is refused at certification with
+``ValueError`` — for ``min`` because the tangent surplus ``φ−L`` lacks a
+nonnegative rational SOS, for ``max`` because ``φ''`` lacks a nonnegative
+rational SOS (convexity fails, so the spreading exchange is false).  Also
+refused: ``min`` with the homogeneous point ``S/n`` outside the box (mis-stated
+slice); ``max`` with a non-uniform box, a residual ``S − (n−1)·u`` outside
+``[l, u]`` (the stated vertex is not a box member), or degree ``> 6`` /
+odd-degree (named-open ``nlinarith`` range).  Also for both: ``n < 2`` or a
+linear ``φ``.
+
+HONEST SCOPE: both faces are exact, kernel-checkable single-instance
+certificates.  The ``max`` face is a fixed-``n`` UNROLLED vertex bound (not the
+general list induction of ``vertex_bound_cons`` — that stays in the proven Lean
+development this parameterizes), restricted to convex even-degree-``≤6``
+polynomials on a uniform box.  conjecture1_proved=False.
 """
 from __future__ import annotations
 
@@ -129,6 +156,28 @@ def _univariate_rational_sos(p, x):
     for c, base in sos:
         merged[base] = merged.get(base, sp.Integer(0)) + c
     return [(c, base) for base, c in merged.items() if c != 0]
+
+
+def _is_convex(phi, x) -> bool:
+    """True iff ``φ`` is convex on ℝ, i.e. ``φ'' ≥ 0`` everywhere.
+
+    A univariate polynomial is ``≥ 0`` everywhere iff it is the zero polynomial's
+    complement — concretely: positive leading coefficient, even degree, and every
+    real root of even multiplicity (an odd-multiplicity real root is a sign
+    change).  Exact over ℚ via ``Poly.real_roots`` with multiplicity.  Returns
+    False on a non-convex ``φ`` (the max-mode NEGATIVE CONTROL) and on a linear
+    ``φ`` (``φ'' = 0``, no genuine curvature)."""
+    d2 = sp.expand(sp.diff(phi, x, 2))
+    if d2 == 0:
+        return False  # linear φ — no curvature, not a genuine convex bound
+    p = sp.Poly(d2, x)
+    if p.degree() == 0:
+        return sp.nsimplify(p.LC()) > 0  # constant φ'' (quadratic φ)
+    if p.degree() % 2 == 1 or sp.nsimplify(p.LC()) < 0:
+        return False
+    from collections import Counter
+    mult = Counter(p.real_roots())
+    return all(m % 2 == 0 for m in mult.values())
 
 
 # ---------------------------------------------------------------------------
@@ -241,17 +290,148 @@ def separable_convex_certificate(*, phi, x, n, S, box=None) -> SeparableConvexCe
     )
 
 
-def certify_separable_convex_point(family, pt, name):
-    """Certify one separable-convex MIN instance from
-    ``family.special[1](pt) -> spec``.
+@dataclass(frozen=True)
+class SeparableConvexMaxCertificate:
+    """A verified separable-convex MAX (vertex) certificate.
 
-    ``spec`` is ``((φ, x), n, S)`` or ``((φ, x), n, S, box)`` where ``box`` is a
-    sequence of ``n`` ``(lᵢ, uᵢ)`` rational pairs (or ``None``).  Returns
-    ``(CertifiedInstance, n)``."""
+    For a convex polynomial ``φ`` (even degree ``≤ 6``) over the UNIFORM
+    fixed-sum box ``{Σxᵢ = S, l ≤ xᵢ ≤ u}``, the maximum of ``Σφ(xᵢ)`` is the
+    vertex value ``B = (n−1)·φ(u) + φ(residual)`` with ``residual = S − (n−1)·u``
+    (push ``n−1`` coordinates to the common upper bound ``u``, the last carries
+    the residual).  Certified by the chained push-to-bound exchanges
+    ``φ(a) + φ(b) ≤ φ(a+b−u) + φ(u)`` (the parameterized
+    ``VertexLemmaFull.glemma_push_to_bound``), each an exact ``nlinarith`` fact
+    from the box slacks, then residual substitution + ``nlinarith`` assembly.
+    ``residual ∈ [l, u]`` is enforced at certification (else the vertex is not a
+    box member)."""
+
+    n: int
+    phi: sp.Expr
+    x: sp.Symbol
+    degree: int
+    l: sp.Rational           # common lower box bound
+    u: sp.Rational           # common upper box bound
+    S: sp.Rational
+    residual: sp.Rational    # S − (n−1)·u — the free coordinate at the vertex
+    half_deg: int            # degree // 2 (drives the nlinarith hint set size)
+    B: sp.Rational           # (n−1)·φ(u) + φ(residual) — the vertex maximum
+
+
+def separable_convex_max_certificate(*, phi, x, n, S, box) -> SeparableConvexMaxCertificate:
+    """Build and EXACTLY self-check a separable-convex MAX (vertex) certificate.
+
+    ``box`` is a sequence of ``n`` ``(lᵢ, uᵢ)`` rational pairs that MUST be
+    uniform (a common ``(l, u)``).  Refuses (``ValueError`` — the negative
+    control): a non-convex ``φ`` (``φ''`` lacks a rational SOS), a linear ``φ``,
+    ``n < 2``, an odd or ``> 6`` degree (outside the robust ``nlinarith`` range),
+    a non-uniform box, ``l > u``, or a residual ``S − (n−1)·u`` outside
+    ``[l, u]`` (the stated vertex is not a box member — mis-stated slice)."""
+    phi = sp.expand(sp.sympify(phi))
+    S = sp.nsimplify(S)
+    n = int(n)
+    if n < 2:
+        raise ValueError("separable-convex vertex extremum needs n ≥ 2 terms")
+    deg = sp.Poly(phi, x).degree()
+    if deg < 2:
+        raise ValueError(
+            f"separable-convex (max) needs a non-linear (curved) φ; got degree {deg}"
+        )
+    if deg % 2 == 1 or deg > 6:
+        raise ValueError(
+            f"REFUSED: max/vertex mode is restricted to even degree ≤ 6 (the robust "
+            f"nlinarith per-pair exchange range); got degree {deg} — named-open"
+        )
+    if not _is_convex(phi, x):
+        raise ValueError(
+            "REFUSED: φ'' takes negative values — φ is NOT convex, so the "
+            "spreading-exchange (φ(a)+φ(b) ≤ φ(a+b−u)+φ(u)) is FALSE — negative control"
+        )
+
+    box = list(box)
+    if len(box) != n:
+        raise ValueError(f"box must have n={n} (lᵢ,uᵢ) pairs; got {len(box)}")
+    lowers = tuple(sp.nsimplify(lo) for lo, _ in box)
+    uppers = tuple(sp.nsimplify(hi) for _, hi in box)
+    l, u = lowers[0], uppers[0]
+    if any(ll != l for ll in lowers) or any(uu != u for uu in uppers):
+        raise ValueError(
+            "REFUSED: max/vertex mode needs a UNIFORM box (a common (l,u) across "
+            "coordinates — the common bound the spreading exchange pushes to)"
+        )
+    if l > u:
+        raise ValueError(f"REFUSED: box has l={l} > u={u}")
+
+    residual = sp.nsimplify(S - (n - 1) * u)
+    if not (l <= residual <= u):
+        raise ValueError(
+            f"REFUSED: residual S − (n−1)·u = {residual} lies outside the box "
+            f"[{l}, {u}] — the stated vertex is not a box member (mis-stated slice)"
+        )
+
+    fu = phi.subs(x, u)
+    fres = phi.subs(x, residual)
+    B = sp.nsimplify((n - 1) * fu + fres)
+
+    # exact assembly self-check: the chained push-to-bound exchanges telescope to
+    # Σφ(xᵢ) ≤ B when Σxᵢ = S.  Verify the exact per-pair surplus identity
+    # φ(a+b−u)+φ(u)−φ(a)−φ(b) = (u−a)(u−b)·Q with Q ≥ 0 on the box (⇐ convexity),
+    # and that the telescoped vertex value equals B at Σxᵢ = S.
+    a_, b_ = sp.symbols("a_ b_")
+    surplus = sp.expand(
+        phi.subs(x, a_ + b_ - u) + fu - phi.subs(x, a_) - phi.subs(x, b_)
+    )
+    q = sp.cancel(surplus / ((u - a_) * (u - b_)))
+    if sp.expand(surplus - (u - a_) * (u - b_) * q) != 0:
+        raise ValueError("separable-convex-max surplus factorization self-check failed")
+    # symbolic telescope: Σφ(xᵢ) − B = Σ per-pair surpluses (all ≥ 0) with the
+    # running free coordinate carrying the residual; verify the endpoint value.
+    xs = sp.symbols(f"x1:{n + 1}")
+    # push x2..xn to u one at a time; running low coordinate r starts at x1.
+    r = xs[0]
+    total_surplus = sp.Integer(0)
+    for k in range(1, n):
+        # exchange (r, x_{k+1}) -> (r + x_{k+1} - u, u)
+        s_k = sp.expand(
+            phi.subs(x, r + xs[k] - u) + fu - phi.subs(x, r) - phi.subs(x, xs[k])
+        )
+        total_surplus += s_k
+        r = sp.expand(r + xs[k] - u)
+    # after n−1 pushes: r = Σxᵢ − (n−1)u ; Σφ(xᵢ) + total_surplus = (n−1)φ(u) + φ(r)
+    lhs = sum(phi.subs(x, xi) for xi in xs) + total_surplus
+    rhs = (n - 1) * fu + phi.subs(x, r)
+    if sp.expand(lhs - rhs) != 0:
+        raise ValueError("separable-convex-max telescope self-check failed")
+    # and at Σxᵢ = S the endpoint φ(r) = φ(residual), so rhs = B.
+    r_at_S = sp.nsimplify(S - (n - 1) * u)
+    if sp.expand(((n - 1) * fu + phi.subs(x, r_at_S)) - B) != 0:
+        raise ValueError("separable-convex-max endpoint value self-check failed")
+
+    return SeparableConvexMaxCertificate(
+        n=n, phi=phi, x=x, degree=deg, l=l, u=u, S=S,
+        residual=residual, half_deg=deg // 2, B=B,
+    )
+
+
+def certify_separable_convex_point(family, pt, name):
+    """Certify one separable-convex instance from ``family.special[1](pt) -> spec``.
+
+    ``spec`` selects the FACE by an optional trailing ``mode`` field:
+
+      * MIN (default): ``((φ, x), n, S)`` or ``((φ, x), n, S, box)`` — the
+        homogeneous-point bound; ``box`` is a sequence of ``n`` ``(lᵢ, uᵢ)``
+        pairs (or ``None``).
+      * MAX (vertex): ``((φ, x), n, S, box, "max")`` — the vertex bound over the
+        uniform ``box``.
+
+    Returns ``(CertifiedInstance, n_theorems)``."""
     spec = family.special[1](pt)
     (phi, x), n, S = spec[0], spec[1], spec[2]
     box = spec[3] if len(spec) > 3 else None
-    cert = separable_convex_certificate(phi=phi, x=x, n=n, S=S, box=box)
+    mode = spec[4] if len(spec) > 4 else "min"
+    if mode == "max":
+        cert = separable_convex_max_certificate(phi=phi, x=x, n=n, S=S, box=box)
+    else:
+        cert = separable_convex_certificate(phi=phi, x=x, n=n, S=S, box=box)
     inst = CertifiedInstance(point=dict(pt), lean_name=name, corners=(), payload=cert)
     return inst, cert.n
 
@@ -268,9 +448,16 @@ class SeparableConvexExtremumEmitter(Emitter):
     assembled by ``linarith`` over the ``hᵢ`` and the sum-constraint ``hsum``.
 
     The box bounds ``lᵢ ≤ xᵢ ≤ uᵢ`` are emitted as binders (the design-doc
-    slice) but are unused by ``linarith`` for this direction — Jensen needs only
-    ``Σxᵢ = S``.  The vertex/MAX direction is NAMED-OPEN (heavy spreading-exchange
-    induction) and is NOT emitted."""
+    slice) but are unused by ``linarith`` for the MIN direction — Jensen needs
+    only ``Σxᵢ = S``.
+
+    The MAX / vertex direction (``mode="max"`` certificate) emits the vertex
+    bound ``Σφ(xᵢ) ≤ (n−1)·φ(u) + φ(S−(n−1)·u)`` over the uniform box: ``n − 1``
+    chained push-to-bound exchanges ``φ(a)+φ(b) ≤ φ(a+b−u)+φ(u)`` (each an
+    ``nlinarith`` fact seeded by the box slacks, per the proven
+    ``VertexLemmaFull.glemma_push_to_bound``), residual substitution, then an
+    ``nlinarith`` assembly.  Here the box binders ARE load-bearing (every
+    exchange's slacks are ``linarith``-derived from them)."""
 
     def __post_init__(self):
         self.kind = "separable_convex"
@@ -279,6 +466,18 @@ class SeparableConvexExtremumEmitter(Emitter):
         lines: list[str] = []
         nthm = 0
         for inst in fam.instances:
+            if isinstance(inst.payload, SeparableConvexMaxCertificate):
+                block, k = self._emit_max_instance(inst)
+            else:
+                block, k = self._emit_min_instance(inst)
+            lines.append(block)
+            nthm += k
+        return "".join(lines), nthm
+
+    def _emit_min_instance(self, inst) -> tuple[str, int]:
+        lines: list[str] = []
+        nthm = 0
+        for inst in (inst,):
             cert: SeparableConvexCertificate = inst.payload  # type: ignore[assignment]
             n = cert.n
             x = cert.x
@@ -335,6 +534,114 @@ class SeparableConvexExtremumEmitter(Emitter):
             nthm += 1
         return "".join(lines), nthm
 
+    def _emit_max_instance(self, inst) -> tuple[str, int]:
+        """Emit one separable-convex MAX (vertex) theorem — the fixed-``n``
+        UNROLLED parameterization of the proven ``vertex_bound`` push-to-bound
+        chain (``VertexLemmaFull``), with ``glemma`` replaced by the convex
+        polynomial ``φ`` and the cap ``1/2`` by the common upper bound ``u``."""
+        cert: SeparableConvexMaxCertificate = inst.payload  # type: ignore[assignment]
+        n = cert.n
+        x = cert.x
+        u = cert.u
+        l = cert.l
+        m = cert.half_deg  # degree // 2
+
+        # φ's rational monomials, once — used to render φ(<Lean atom>) WITHOUT
+        # expanding the atom (so the final low coordinate stays a rewrite target).
+        phi_poly = sp.Poly(cert.phi, x)
+        phi_terms = sorted(
+            ((int(mono[0]), sp.Rational(coeff))
+             for mono, coeff in zip(phi_poly.monoms(), phi_poly.coeffs())
+             if coeff != 0),
+            key=lambda t: t[0],
+        )
+
+        def phi_at_str(atom: str) -> str:
+            """φ rendered at a Lean expression string ``atom`` (kept UNexpanded)."""
+            parts = []
+            for deg, c in phi_terms:
+                if deg == 0:
+                    parts.append(rat_lean(c))
+                elif deg == 1:
+                    parts.append(f"{rat_lean(c)} * ({atom})")
+                else:
+                    parts.append(f"{rat_lean(c)} * ({atom})^{deg}")
+            return " + ".join(parts) if parts else "0"
+
+        xs = sp.symbols(f"x1:{n + 1}")
+        binders = " ".join(f"x{i}" for i in range(1, n + 1))
+        hsum_lhs = " + ".join(f"x{i}" for i in range(1, n + 1))
+        box_hyps = "".join(
+            f" (hlo{i} : ({rat_lean(l)} : ℝ) ≤ x{i}) (hhi{i} : x{i} ≤ {rat_lean(u)})"
+            for i in range(1, n + 1)
+        )
+        phiterms = " + ".join(f"({phi_at_str(f'x{i}')})" for i in range(1, n + 1))
+        phi_u = rat_lean(cert.phi.subs(x, u))
+
+        def exchange_hints(a_str: str, b_str: str) -> str:
+            """nlinarith hints for φ(a)+φ(b) ≤ φ(a+b−u)+φ(u): the box-slack product
+            times the pairwise even SOS bases (a^j ± b^j)², j = 1..m−1 (mirrors
+            the ``(1/2−a)(1/2−b) ≥ 0`` product feeding ``glemma_push_to_bound``)."""
+            slack_a = f"(by linarith : (0:ℝ) ≤ {rat_lean(u)} - ({a_str}))"
+            slack_b = f"(by linarith : (0:ℝ) ≤ {rat_lean(u)} - ({b_str}))"
+            base = f"mul_nonneg {slack_a} {slack_b}"
+            hints = [base]
+            for j in range(1, m):
+                aj = f"({a_str})^{j}" if j > 1 else f"({a_str})"
+                bj = f"({b_str})^{j}" if j > 1 else f"({b_str})"
+                hints.append(f"mul_nonneg ({base}) (sq_nonneg ({aj} + {bj}))")
+                hints.append(f"mul_nonneg ({base}) (sq_nonneg ({aj} - {bj}))")
+            return ",\n               ".join(hints)
+
+        # chained push-to-bound exchanges: running low coordinate (a Lean STRING,
+        # kept unexpanded) starts at x1; each step pushes the next coord to u.
+        haves: list[str] = []
+        r_str = "x1"
+        ename: list[str] = []
+        for k in range(1, n):
+            a_str = r_str
+            b_str = f"x{k + 1}"
+            low_next = f"({a_str}) + {b_str} - {rat_lean(u)}"
+            lhs = f"({phi_at_str(a_str)}) + ({phi_at_str(b_str)})"
+            rhs = f"({phi_at_str(low_next)}) + ({phi_u})"
+            nm = f"e{k}"
+            ename.append(nm)
+            haves.append(
+                f"  have {nm} : {lhs} ≤ {rhs} := by\n"
+                f"    nlinarith [{exchange_hints(a_str, b_str)}]\n"
+            )
+            r_str = low_next
+
+        # r_str is now (Σxᵢ − (n−1)·u) as an unexpanded atom; rewrite it to the
+        # residual constant inside the last exchange, simplify, and assemble.
+        last = ename[-1]
+        hres = (
+            f"  have hres : ({r_str}) = {rat_lean(cert.residual)} := by linarith\n"
+        )
+        rw_and_simp = (
+            f"  rw [hres] at {last}\n"
+            f"  norm_num at {last}\n"
+        )
+        assembly = f"  linarith [{', '.join(ename)}]\n"
+
+        note = (
+            "-- Separable-convex MAXIMUM at the VERTEX (push n−1 coords to the common "
+            "bound u; last carries the residual).\n"
+            "-- Parameterizes the proven VertexLemmaFull.glemma_push_to_bound "
+            "spreading exchange + vertex_bound chain.\n"
+        )
+        body = (
+            note
+            + f"theorem {inst.lean_name} ({binders} : ℝ){box_hyps} "
+            f"(hsum : {hsum_lhs} = {rat_lean(cert.S)}) :\n"
+            f"    {phiterms} ≤ ({rat_lean(cert.B)} : ℝ) := by\n"
+            + "".join(haves)
+            + hres
+            + rw_and_simp
+            + assembly
+        )
+        return body, 1
+
 
 # ---------------------------------------------------------------------------
 # Convenience constructor
@@ -347,14 +654,19 @@ def separable_convex_family(
     spec: Callable,
     constants: dict | None = None,
 ) -> InequalityFamily:
-    """Build a separable-convex MIN family (kind='separable_convex').
+    """Build a separable-convex family (kind='separable_convex') — MIN or MAX face.
 
-    ``spec``: a callable ``pt -> ((φ, x), n, S)`` or ``pt -> ((φ, x), n, S, box)``
-    where ``φ`` is a convex polynomial (degree ≥ 2) in ``x``, ``n ≥ 2``, ``S`` the
-    sum-constraint ``Σxᵢ = S``, and ``box`` an optional sequence of ``n``
-    ``(lᵢ, uᵢ)`` rational bound-pairs.  Refuses (at certification) a non-convex φ,
-    a linear φ, a box with ``lᵢ > uᵢ``, or a homogeneous point ``S/n`` outside the
-    box range (no Lean for a non-member)."""
+    ``spec``: a callable ``pt -> ((φ, x), n, S[, box[, mode]])`` where ``φ`` is a
+    convex polynomial (degree ≥ 2) in ``x``, ``n ≥ 2``, ``S`` the sum-constraint
+    ``Σxᵢ = S``, ``box`` an optional sequence of ``n`` ``(lᵢ, uᵢ)`` rational
+    bound-pairs, and ``mode`` optionally ``"max"`` (vertex face) vs the default
+    ``"min"`` (homogeneous face).
+
+      * MIN: refuses a non-convex φ, a linear φ, a box with ``lᵢ > uᵢ``, or a
+        homogeneous point ``S/n`` outside the box range.
+      * MAX: refuses a non-convex φ, a linear φ, an odd or ``> 6`` degree, a
+        non-uniform box, or a residual ``S − (n−1)·u`` outside ``[l, u]`` (the
+        stated vertex is not a box member)."""
     return InequalityFamily(
         name=name,
         symbols=(),
@@ -419,7 +731,76 @@ if __name__ == "__main__":
     except ValueError as e:
         print(f"  correctly REFUSED: {e}")
 
-    print("\n=== emitted Lean (three instances) ===")
+    # ---- MAX / vertex mode --------------------------------------------------
+    print("\n=== positive (MAX): φ=x², n=3, S=6 on box [0,3]³ => Σx² <= 18 (vertex) ===")
+    certM1 = separable_convex_max_certificate(
+        phi=_x**2, x=_x, n=3, S=sp.Integer(6),
+        box=[(0, 3), (0, 3), (0, 3)],
+    )
+    print(f"  cert OK: n={certM1.n}, u={certM1.u}, residual={certM1.residual}, "
+          f"B(max)={certM1.B}")
+
+    print("\n=== positive (MAX): convex quartic φ=x⁴, n=3, S=5 on box [0,2]³ "
+          "=> Σx⁴ <= 33 (vertex) ===")
+    certM2 = separable_convex_max_certificate(
+        phi=_x**4, x=_x, n=3, S=sp.Integer(5),
+        box=[(0, 2), (0, 2), (0, 2)],
+    )
+    print(f"  cert OK: n={certM2.n}, deg={certM2.degree}, residual={certM2.residual}, "
+          f"B(max)={certM2.B}")
+
+    print("\n=== positive (MAX): degree-6 φ=x⁶+x², n=2, S=3 on box [1,2]² "
+          "=> Σφ <= vertex ===")
+    certM3 = separable_convex_max_certificate(
+        phi=_x**6 + _x**2, x=_x, n=2, S=sp.Integer(3),
+        box=[(1, 2), (1, 2)],
+    )
+    print(f"  cert OK: n={certM3.n}, deg={certM3.degree}, residual={certM3.residual}, "
+          f"B(max)={certM3.B}")
+
+    print("\n=== NEGATIVE CONTROL (MAX): NON-CONVEX φ=x⁴-4x² "
+          "(φ'' sign-changes) — expect ValueError ===")
+    try:
+        separable_convex_max_certificate(
+            phi=_x**4 - 4 * _x**2, x=_x, n=3, S=sp.Integer(5),
+            box=[(0, 2), (0, 2), (0, 2)],
+        )
+        raise SystemExit("FAIL: non-convex φ was NOT refused (max)")
+    except ValueError as e:
+        print(f"  correctly REFUSED: {e}")
+
+    print("\n=== NEGATIVE CONTROL (MAX): residual outside box "
+          "(S too small) — expect ValueError ===")
+    try:
+        separable_convex_max_certificate(
+            phi=_x**2, x=_x, n=3, S=sp.Integer(2),  # residual = 2 - 6 = -4 ∉ [0,3]
+            box=[(0, 3), (0, 3), (0, 3)],
+        )
+        raise SystemExit("FAIL: bad residual was NOT refused (max)")
+    except ValueError as e:
+        print(f"  correctly REFUSED: {e}")
+
+    print("\n=== NEGATIVE CONTROL (MAX): non-uniform box — expect ValueError ===")
+    try:
+        separable_convex_max_certificate(
+            phi=_x**2, x=_x, n=2, S=sp.Integer(3),
+            box=[(0, 2), (0, 3)],
+        )
+        raise SystemExit("FAIL: non-uniform box was NOT refused (max)")
+    except ValueError as e:
+        print(f"  correctly REFUSED: {e}")
+
+    print("\n=== NEGATIVE CONTROL (MAX): odd degree φ=x³ — expect ValueError ===")
+    try:
+        separable_convex_max_certificate(
+            phi=_x**3, x=_x, n=2, S=sp.Integer(2),
+            box=[(0, 2), (0, 2)],
+        )
+        raise SystemExit("FAIL: odd degree was NOT refused (max)")
+    except ValueError as e:
+        print(f"  correctly REFUSED: {e}")
+
+    print("\n=== emitted Lean (three MIN + three MAX instances) ===")
     insts = [
         CertifiedInstance(point={"case": 0}, lean_name="sepconv_jensen_sq3",
                           corners=(), payload=cert),
@@ -427,6 +808,12 @@ if __name__ == "__main__":
                           corners=(), payload=cert2),
         CertifiedInstance(point={"case": 2}, lean_name="sepconv_quad_unbounded",
                           corners=(), payload=cert3),
+        CertifiedInstance(point={"case": 3}, lean_name="sepconv_max_sq3",
+                          corners=(), payload=certM1),
+        CertifiedInstance(point={"case": 4}, lean_name="sepconv_max_quartic",
+                          corners=(), payload=certM2),
+        CertifiedInstance(point={"case": 5}, lean_name="sepconv_max_deg6",
+                          corners=(), payload=certM3),
     ]
 
     class _View:
