@@ -157,6 +157,9 @@ _SPECIAL_KINDS = (
     # separable-convex (min/homogeneous) extremum.
     "symmetric_quad", "polytope_max", "second_order", "integrality_gate",
     "domination_ratio", "achievability", "separable_convex",
+    # Trading-derived certificate shapes (2026-09-02): objective-degeneracy
+    # (leverage↔position_size Sharpe homogeneity) + Kelly concave-stationary max.
+    "scale_invariance", "concave_stationary_max",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -207,6 +210,8 @@ _SPECIAL_DISPATCH = {
     "domination_ratio": ("emit_domination_ratio", "certify_domination_ratio_point"),
     "achievability": ("emit_achievability", "certify_achievability_point"),
     "separable_convex": ("emit_separable_convex", "certify_separable_convex_point"),
+    "scale_invariance": ("emit_scale_invariance", "certify_scale_invariance_point"),
+    "concave_stationary_max": ("emit_concave_stationary_max", "certify_concave_stationary_max_point"),
 }
 
 
