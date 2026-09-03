@@ -121,6 +121,12 @@ from .emit_achievability import (  # noqa: F401
 from .emit_separable_convex import (  # noqa: F401
     SeparableConvexExtremumEmitter, separable_convex_certificate, separable_convex_family,
 )
+from .emit_scale_invariance import (  # noqa: F401
+    ScaleInvarianceEmitter, scale_invariance_certificate, scale_invariance_family,
+)
+from .emit_concave_stationary_max import (  # noqa: F401
+    ConcaveStationaryMaxEmitter, concave_stationary_max_certificate, concave_stationary_max_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
