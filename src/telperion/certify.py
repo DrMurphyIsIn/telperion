@@ -181,6 +181,10 @@ _SPECIAL_KINDS = (
     # of a transcendental (log for BG cells; Montgomery-Taylor C0 trig face deferred).
     "curvature_boundary",
     "transcendental_enclosure",
+    # F*-folding companion to transcendental_enclosure (2026-09-03): Sum c_i log(r_i) <= q
+    # by folding to log(prod r_i^c_i); tight-at-tie (no separate F* lower bound). Dogfooded
+    # against BG BGSCLSubaction.lean (regenerates log74_le_4fstar / log54_sub_fstar_le).
+    "log_combination",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -241,6 +245,7 @@ _SPECIAL_DISPATCH = {
     "per_size_dominance_sweep": ("emit_per_size_dominance_sweep", "certify_per_size_dominance_sweep_point"),
     "curvature_boundary": ("emit_curvature_boundary", "certify_curvature_boundary_point"),
     "transcendental_enclosure": ("emit_transcendental_enclosure", "certify_transcendental_enclosure_point"),
+    "log_combination": ("emit_log_combination", "certify_log_combination_point"),
 }
 
 

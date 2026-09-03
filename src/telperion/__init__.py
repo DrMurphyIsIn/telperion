@@ -158,6 +158,10 @@ from .emit_transcendental_enclosure import (  # noqa: F401
     TranscendentalEnclosureEmitter, transcendental_enclosure_certificate,
     transcendental_enclosure_family, certify_transcendental_enclosure_point,
 )
+from .emit_log_combination import (  # noqa: F401
+    LogCombinationEmitter, log_combination_certificate,
+    log_combination_family, certify_log_combination_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
