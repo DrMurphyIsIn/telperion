@@ -1,14 +1,17 @@
-# New Telperion emitters (2026-09-02) — parallel-session skill reference
+# New Telperion emitters (2026-09-02..03) — parallel-session skill reference
 
-Nineteen new certificate emitters landed across two RH+BG "emitter sweeps" and the
-build-out of the 2026-08-21 BG/P=NP backlog. This is the quick reference so any
-session knows what Telperion can now discharge without re-deriving it.
+**Consolidated 2026-09-03.** The campaign grew past the original nineteen: **31 new
+certificate emitters** now landed — the two RH+BG "emitter sweeps" + the 2026-08-21
+BG/P=NP backlog (the 19 below), then **twelve more** (trading-derived, the two
+open-fronts, and the BG-remaining-core / AxiomMath-ported / F\*-fold families — see
+the **Consolidation** section). This is the quick reference so any session knows what
+Telperion can now discharge without re-deriving it.
 
 ## Meta — read first
-- **All 19 are registered and CI-gated.** Each has an entry in `certify.py`
+- **All are registered and CI-gated.** Each has an entry in `certify.py`
   (`_SPECIAL_KINDS` tuple + `_SPECIAL_DISPATCH` dict), an export in `__init__.py`,
   a worked `examples/<name>/` regeneration harness, a row in the README
-  "Certificate shapes" table (now **64 rows**), a `<name>-compiles` CI job, and a
+  "Certificate shapes" table (now **75 rows**), a `<name>-compiles` CI job, and a
   `telperion.toml` `[[check]]` manifest entry.
 - **Local Lean builds work again** (machine serviced; the Aug-9 "CI-only" rule is
   lifted). Verify an example with
@@ -56,22 +59,60 @@ session knows what Telperion can now discharge without re-deriving it.
 | `SecondOrderRecurrenceEmitter` | `second_order` | closed form for a 3-term recurrence `A·f(q+2)+B·f(q+1)+C·f(q)=0` (Hahn/Krawtchouk; generalizes `fwd_telescope`) | |
 | `IntegralityGateEmitter` | `integrality_gate` | finite exceptional table + p-adic tie pin (the BG 23-gate); composes `padic`+`finite_decide` | |
 
+## Consolidation — the twelve emitters shipped after the initial nineteen (2026-09-02..03)
+
+Grouped by the front that motivated them. All kernel-green (local `lake build`),
+`--check` byte-for-byte, negative controls firing.
+
+### Trading-derived (exact-algebraic structures from the Arda trading system)
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `ScaleInvarianceEmitter` | `scale_invariance` | degree-0 homogeneity / parameter cancellation `f(λ•x)=f(x)` — models the leverage↔position_size Sharpe degeneracy (why leverage is a non-evolvable gene) | `field_simp; ring` |
+| `ConcaveStationaryMaxEmitter` | `concave_stationary_max` | a stationary point of a strictly-concave objective is its unique max — Kelly-fraction optimality (FOC + `−g''>0`) | |
+
+### Open fronts (the two named-open residuals, now CLOSED)
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `SymmetricQuadD2Emitter` | `symmetric_quad_d2` | the **degree-2** subset-form moment PSD, **symbolic in n** (three-piece completing-the-square + centered CS) — closes the `symmetric_quad` d≥2 front | scheme leaf facts as hypotheses |
+| `SeparableConvexExtremumEmitter` (max mode) | `separable_convex` | adds the **max/vertex** face `Σφ ≤ (n−1)φ(u)+φ(S−(n−1)u)`, parameterizing the proven `VertexLemmaFull` push-chain | uniform box, even deg ≤ 6 |
+
+### BG remaining-core (the verified open core: capstone conditional on Hnorm/Hdom, heart = SCLStep)
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `TightCapEnclosureEmitter` | `tight_cap_enclosure` | the BG g-step fixed-config closure `(baseOf l)¹¹·prodBcap l/(W(5/3)¹¹) ≤ 1` (concrete + single-symbolic-child faces) | models proven `single_child_le_one` |
+| `AffineParamEndpointEmitter` | `affine_param_endpoint` | an affine-in-parameter gap `A+μB ≥ 0` on `[lo,hi]` ⟺ at the two endpoints — **collapses SCLStep's price interval `I=[456/3703,3/7]` to two rational checks** | RH-reusable |
+| `RecursionClosureEmitter` | `recursion_closure` | tangent-majorant + per-child ceiling ⟹ node ceiling (fixed price); all-cherry = equality (composes with the `tight_cap` tie) | assembly only; all-cherry exchange is structural |
+| `CavityExchangeEmitter` | `cavity_exchange` | Kelmans de-branch monotonicity: bilinear 4-corner reduction + all-nonneg-coeff Polya corners | generalizes `R47R4Kelmans*Cert` |
+| `PerSizeDominanceSweepEmitter` | `per_size_dominance_sweep` | a finite per-size sweep aggregating `tight_cap` per-config certs | per-n, non-exhaustive by honest scope |
+
+### AxiomMath-ported (from Lamzouri arXiv:2609.02882 / AxiomMath/ZetaZeros Lean certs)
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `CurvatureBoundaryEmitter` | `curvature_boundary` | a function with definite `f''` sign has its extremum at the boundary (concave→min, convex→max, affine→endpoints) — ports their `extremalG_const`, generalizes `affine_param_endpoint`, covers the BG concave-corner case | interval-aware curvature check |
+| `TranscendentalEnclosureEmitter` | `transcendental_enclosure` | rational `L ≤ expr ≤ U` over a box — **log face** (`log(1+x)`, discharges the BG per-cell `log(1+S/d)`); Montgomery–Taylor `C₀` trig face deferred/refused | |
+
+### F\*-fold (cross-front dogfood)
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `LogCombinationEmitter` | `log_combination` | `Σ cᵢ·log(rᵢ) ≤ q` by folding into a single `log(∏ rᵢ^{cᵢ})` — **tight at the tie**, no separate F\* lower bound; monotone + tangent routes | **dogfooded**: regenerates the BG `log74_le_4fstar` / `log54_sub_fstar_le` in `BGSCLSubaction.lean` byte-for-byte (modulo ascriptions) |
+
 ## Where to look / follow-ups
 - **Shape reference:** `README.md` "Certificate shapes" table.
 - **Design + honest scope:** `docs/EMITTER_ROADMAP_2026-09-02_RH_CROSSCUT.md`,
   `docs/EMITTER_ROADMAP_2026-09-02_SWEEP2.md`, and
   `docs/EMITTER_ROADMAP_2026-08-21.md` (see its `STATUS UPDATE (2026-09-02)`
   section — the BG/P=NP backlog is now essentially complete).
-- **Two residual open fronts** worth a session: **`symmetric_quad` d≥2** (harmonic
-  completeness — the marquee P=NP moment-PSD generalization) and
-  **`separable_convex` max/vertex** (`VertexLemmaFull.lean` spreading-exchange
-  induction).
-- **The two sweeps found the general certificate surface close to saturated** —
-  the remaining roadmap is these two open fronts plus a couple of fold-in
-  sub-modes (`HodgeRiemann`→`psd_form` signature-(1,n−1) mode,
-  `DiscreteConcavity`→`logconcave` enclosure mode).
+- **The two residual open fronts are now CLOSED** — `symmetric_quad` d≥2 shipped as
+  `SymmetricQuadD2Emitter`, and `separable_convex` max/vertex shipped as the
+  `mode="max"` face (see Consolidation above).
+- **BG live front (2026-09-03):** the ceiling was reframed from the refuted
+  multiplicative cap to an **additive subaction** (`bg/scl-on-main`
+  `BGSCLSubaction.lean`); the `curvature_boundary` + `transcendental_enclosure` +
+  `log_combination` trio are the per-cell analytic tools, and `LogCombinationEmitter`
+  is **dogfooded** against the two in-kernel BG cells. Remaining BG work is on the
+  proof side (per-cell family, high-degree tail lemma, instantiating ρ).
 
-## Building your own emitter (the recipe these 19 followed)
+## Building your own emitter (the recipe all 31 followed)
 An emitter = `src/telperion/emit_<name>.py` (a frozen `Certificate` dataclass +
 `<name>_certificate(...)` that exact-self-checks and RAISES on bad input +
 `certify_<name>_point(family,pt,name)` + `<Name>Emitter(Emitter).emit_body` +
