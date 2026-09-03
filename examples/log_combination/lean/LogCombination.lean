@@ -1,5 +1,5 @@
-/- telperion 0.1.6 | family LogCombination | input-hash 62990fe54570e27d
-   5 theorems, 5 generation-time self-checks passed.
+/- telperion 0.1.6 | family LogCombination | input-hash 9839b4c5d22e2921
+   6 theorems, 6 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
 
@@ -90,6 +90,43 @@ theorem log74_le_4fstar_broom : Real.log (7/4 : ℝ) - (4 * FSTAR : ℝ) ≤ (-1
     push_cast; ring
   rw [hsplit] at hr
   have hnum : (7/4 : ℝ) ^ (11 : ℕ) * (((621/64 : ℝ) ^ (4 : ℕ))⁻¹) - 1 ≤ -11/2688 := by norm_num
+  linarith
+
+-- ===== F*-folding, TIGHT route (k=-1, ADDED FSTAR): 1·log(7/9) − -1·FSTAR ≤ -1/24 (FSTAR = log(621/64)/11) =====
+-- Fold X = (7/9)^11·(621/64)^1 (≈ 0.6114); goal ⟺ log X ≤ Q = -11/24.
+-- Degree-1 tangent (log x ≤ x−1) is TOO LOOSE here (X−1 > Q); use the TIGHT
+-- route: log X ≤ Q ⟺ X ≤ exp Q (Real.log_le_iff_le_exp), exp Q = (exp(−Q))⁻¹
+-- (Real.exp_neg), exp(−Q) ≤ U via degree-3 Taylor (Real.exp_bound'), X·U ≤ 1.
+theorem log79_add_fstar : Real.log (7/9 : ℝ) - (-1 * FSTAR : ℝ) ≤ (-1/24 : ℝ) := by
+  rw [FSTAR]
+  have hXpos : (0 : ℝ) < (7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)) := by positivity
+  have hsplit : Real.log ((7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)))
+      = 11 * Real.log (7/9 : ℝ) + 1 * Real.log (621/64 : ℝ) := by
+    rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,
+        Real.log_pow]
+    push_cast; ring
+  have hexp := Real.exp_bound' (x := (11/24 : ℝ)) (by norm_num) (by norm_num)
+    (n := 3) (by norm_num)
+  have hU : (∑ m ∈ Finset.range 3, (11/24 : ℝ) ^ m / m.factorial)
+      + (11/24 : ℝ) ^ 3 * (3 + 1) / ((3 : ℕ).factorial * 3) ≤ (98585/62208 : ℝ) := by
+    norm_num [Finset.sum_range_succ, Nat.factorial]
+  have hexpU : Real.exp (11/24 : ℝ) ≤ (98585/62208 : ℝ) := le_trans hexp hU
+  have hexppos : (0 : ℝ) < Real.exp (11/24 : ℝ) := Real.exp_pos _
+  have hprod : (7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)) * Real.exp (11/24 : ℝ) ≤ 1 := by
+    have hmono : (7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)) * Real.exp (11/24 : ℝ)
+        ≤ (7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)) * (98585/62208 : ℝ) :=
+      mul_le_mul_of_nonneg_left hexpU (le_of_lt hXpos)
+    have hXU : (7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)) * (98585/62208 : ℝ) ≤ 1 := by norm_num
+    linarith
+  have hXle : (7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ)) ≤ Real.exp (-(11/24) : ℝ) := by
+    rw [Real.exp_neg, ← one_div]
+    rw [le_div_iff₀ hexppos]
+    linarith [hprod]
+  have hlogle : Real.log ((7/9 : ℝ) ^ (11 : ℕ) * ((621/64 : ℝ) ^ (1 : ℕ))) ≤ (-11/24 : ℝ) := by
+    rw [Real.log_le_iff_le_exp hXpos]
+    have hEq : (-(11/24) : ℝ) = (-11/24 : ℝ) := by norm_num
+    rw [hEq] at hXle; exact hXle
+  rw [hsplit] at hlogle
   linarith
 
 end LogCombination

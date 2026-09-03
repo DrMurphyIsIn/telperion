@@ -67,16 +67,23 @@ _SPECS = {
     # (proof/formalization/R3Cert/BGSCLSubactionCells.lean).
     3: {"terms": [(1, "5/4"), (-1, "621/64")], "q": "1/40", "route": "tangent"},
     4: {"terms": [(1, "7/4"), (-4, "621/64")], "q": "-1/2688", "route": "tangent"},
+    # Instance 5 (2026-09-03): the degree-2/deg-3-child subaction BLOCKER. The
+    # degree-1 tangent (log x ≤ x−1) is TOO LOOSE (X−1 ≈ −0.389 > Q = −11/24), so
+    # this uses the TIGHT route (log X ≤ Q ⟺ X ≤ exp Q, degree-3 Taylor exp upper).
+    # NOTE the ADDED +FSTAR term: encoded as a POSITIVE fstar coefficient (+1) ⇒
+    # k = −1, folded as (7/9)^11·(621/64)^1.  Builds GREEN against BGSCLInduction.
+    5: {"terms": [(1, "7/9"), (1, "621/64")], "q": "-1/24", "route": "tight"},
 }
 _NAMES = {0: "log74_le_4fstar", 1: "log54_sub_fstar_le", 2: "log32_sq_le_log94",
-          3: "log54_sub_fstar_le_40", 4: "log74_le_4fstar_broom"}
+          3: "log54_sub_fstar_le_40", 4: "log74_le_4fstar_broom",
+          5: "log79_add_fstar"}
 _OUT = Path(__file__).resolve().parent / "lean" / "LogCombination.lean"
 
 
 def build() -> str:
     fam = log_combination_family(
         "LogCombination",
-        GridSpec([("case", [0, 1, 2, 3, 4])]),
+        GridSpec([("case", [0, 1, 2, 3, 4, 5])]),
         lambda pt: _NAMES[pt["case"]],
         spec=lambda pt: _SPECS[pt["case"]],
     )

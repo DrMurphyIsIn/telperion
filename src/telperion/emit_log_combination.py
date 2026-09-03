@@ -150,8 +150,10 @@ def log_combination_certificate(
     (621/64)^4`` so ``F ≈ 20 > 1``), or pick a ``q`` too small for the tangent route
     (``F − 1 > N·q``).
     """
-    if route not in ("monotone", "tangent"):
-        raise ValueError(f"REFUSED: unknown route {route!r} (expected monotone|tangent)")
+    if route not in ("monotone", "tangent", "tight"):
+        raise ValueError(
+            f"REFUSED: unknown route {route!r} (expected monotone|tangent|tight)"
+        )
     if len(terms) != 2:
         raise ValueError(
             "REFUSED: this FSTAR-normalized encoding expects exactly two terms "
@@ -170,16 +172,27 @@ def log_combination_certificate(
         raise ValueError(f"REFUSED: leading coeff must be positive, got {coeff}")
     if not (rat > 0):
         raise ValueError(f"REFUSED: leading log argument must be > 0, got {rat}")
-    if fneg >= 0:
+    # The FSTAR term is written  − k·FSTAR  with  k = −fneg.  A NEGATIVE fneg
+    # gives the classic subtracted term (+k·FSTAR removed, k>0).  A POSITIVE
+    # fneg gives k<0, i.e. an ADDED  +|k|·FSTAR  term — the BG blocker
+    # (log(7/9) + FSTAR + 1/24 ≤ 0, k = −1).  monotone/tangent-general-k below
+    # keep requiring k>0; the `tight` route and the tangent-general-k branch
+    # handle k<0 via a POSITIVE power B^{|k|} (no inverse).
+    if fneg == 0:
         raise ValueError(
-            f"REFUSED: the FSTAR term coefficient must be NEGATIVE (− k·FSTAR), "
+            f"REFUSED: the FSTAR term coefficient must be NONZERO (− k·FSTAR), "
             f"got {fneg}"
+        )
+    if route == "monotone" and fneg > 0:
+        raise ValueError(
+            f"REFUSED: monotone route requires a SUBTRACTED FSTAR term "
+            f"(fneg < 0 ⇒ k > 0), got {fneg}"
         )
     if fbase != B:
         raise ValueError(
             f"REFUSED: FSTAR term base {fbase} must equal fstar_base {B}"
         )
-    k = -fneg  # positive multiplier of FSTAR
+    k = -fneg  # multiplier of FSTAR in the − k·FSTAR encoding (k<0 ⇒ +|k|·FSTAR)
 
     if route == "monotone":
         if q != 0:
@@ -196,6 +209,67 @@ def log_combination_certificate(
         return LogCombinationCertificate(
             coeff=coeff, rat=rat, fstar_coeff=k, fstar_base=B, fstar_den=N,
             q=q, route="monotone", fold_value=fold,
+        )
+
+    if route == "tight":
+        # TIGHT route: for the folded  X = r^{cN}·B^{-k}  and  Q = N·q, discharge
+        #   log X ≤ Q   ⟺   X ≤ exp Q   (Real.log_le_iff_le_exp, X>0)
+        # with  exp Q = (exp(−Q))⁻¹  (Real.exp_neg), bounding  exp(−Q) ≤ U  by the
+        # degree-3 Taylor UPPER bound (Real.exp_bound', needs −Q ∈ [0,1]), then the
+        # rational  X·U ≤ 1  (norm_num).  Used exactly where the degree-1 tangent
+        # (`log x ≤ x − 1`) is TOO LOOSE: X − 1 > Q.
+        fold = sp.nsimplify(rat ** (coeff * N) * B ** (-k))
+        if not (fold > 0):
+            raise ValueError(
+                f"REFUSED: tight route needs fold X > 0, got X = {fold}"
+            )
+        Q = sp.nsimplify(N * q)
+        if not (Q < 0):
+            raise ValueError(
+                f"REFUSED: tight route requires the folded Q = N·q < 0, got Q = {Q} "
+                f"(use the tangent/monotone route for Q ≥ 0)"
+            )
+        if not (fold < 1):
+            raise ValueError(
+                f"REFUSED: tight route requires the folded X = r^(cN)·B^(−k) < 1, "
+                f"got X = {fold}"
+            )
+        negQ = -Q  # = −N·q > 0; the exponent for the Taylor exp upper bound.
+        if not (0 <= negQ <= 1):
+            raise ValueError(
+                f"REFUSED: tight route needs −Q = {negQ} ∈ [0, 1] for the degree-3 "
+                f"exp Taylor upper bound (Real.exp_bound')"
+            )
+        # NEGATIVE CONTROL (the bound itself): the theorem log X ≤ Q must hold.
+        # log is transcendental, so check at high precision.
+        log_fold = sp.log(fold)
+        if not bool((log_fold - Q).evalf(50) <= 0):
+            raise ValueError(
+                f"REFUSED: tight bound FALSE — log(X) = {float(log_fold):.6f} > Q = "
+                f"{float(Q):.6f}; {coeff}·log({rat}) − {k}·FSTAR ≤ {q} does not hold "
+                f"(negative control)"
+            )
+        # STEER: the tight route is only warranted when the degree-1 tangent is too
+        # loose (X − 1 > Q).  Otherwise steer the caller to the cheaper tangent.
+        if not (fold - 1 > Q):
+            raise ValueError(
+                f"REFUSED: tight route unnecessary — tangent suffices "
+                f"(X − 1 = {sp.nsimplify(fold - 1)} ≤ Q = {Q}); use route='tangent'"
+            )
+        # Degree-3 Taylor UPPER bound on exp(−Q): U = 1 + x + x²/2 + 2·x³/9  (x=−Q),
+        # matching Real.exp_bound' at n=3:  ∑_{m<3} x^m/m! + x³·4/(6·3).
+        x = negQ
+        taylor_ub = sp.nsimplify(1 + x + x ** 2 / 2 + sp.Rational(2, 9) * x ** 3)
+        # The kernel norm_num fact the emitted proof discharges: X · U ≤ 1.
+        if not (fold * taylor_ub <= 1):
+            raise ValueError(
+                f"REFUSED: tight Taylor upper bound too weak — X·U = "
+                f"{sp.nsimplify(fold * taylor_ub)} > 1 (X = {fold}, U = {taylor_ub}); "
+                f"the degree-3 exp bound does not close X ≤ exp(Q)"
+            )
+        return LogCombinationCertificate(
+            coeff=coeff, rat=rat, fstar_coeff=k, fstar_base=B, fstar_den=N,
+            q=q, route="tight", fold_value=fold, tangent_bound=taylor_ub,
         )
 
     # tangent route: valid for ANY sign of q. `log x ≤ x − 1` holds for all
@@ -352,9 +426,9 @@ class LogCombinationEmitter(Emitter):
         # folded argument (5/4)^cN * (Binv) with k folded (k==1 assumed for tangent BG).
         split_lhs = f"{cN} * Real.log ({r} : ℝ)" if c == 1 \
             else f"{cN} * ({c} * Real.log ({r} : ℝ))"
-        if k != 1:
-            # General-k tangent: fold (r)^cN · ((B)^k)⁻¹, so the split carries the
-            # matching k·log(B) coefficient (the k==1 path below hardcodes k=1 and
+        if k != 1 and k > 0:
+            # General-k tangent, k > 0: fold (r)^cN · ((B)^k)⁻¹, so the split carries
+            # the matching k·log(B) coefficient (the k==1 path below hardcodes k=1 and
             # is kept byte-identical for the BG dogfood).  No log(B) ≥ 0 needed —
             # the coefficient matches exactly, so `linarith` closes for any q sign.
             return (
@@ -375,6 +449,34 @@ class LogCombinationEmitter(Emitter):
                 f"    push_cast; ring\n"
                 f"  rw [hsplit] at hr\n"
                 f"  have hnum : ({r} : ℝ) ^ ({cN} : ℕ) * ((({B} : ℝ) ^ ({k} : ℕ))⁻¹) - 1 ≤ {Nq} "
+                f":= by norm_num\n"
+                f"  linarith\n"
+            )
+        if k < 0:
+            # General-k tangent, k < 0 (ADDED +|k|·FSTAR): fold as a POSITIVE power
+            # (r)^cN · (B)^{|k|} (NO inverse), split = cN·log r + |k|·log B via
+            # Real.log_mul + Real.log_pow (no Real.log_inv).  linarith closes for any
+            # q sign since the |k|·log B coefficient matches exactly.
+            ak = -int(k)  # |k|
+            # − k·FSTAR = + |k|·FSTAR, so the split is split_lhs + |k|·log B.
+            return (
+                f"-- ===== F*-folding, TANGENT route (general k={k}, ADDED FSTAR): "
+                f"{c}·log({r}) − {k}·FSTAR ≤ {q} (FSTAR = log({B})/{N}) =====\n"
+                f"-- Fold: {N}·({c}·log {r} − {k}·FSTAR) = log(({r})^{cN}·({B})^{ak})\n"
+                f"-- ≤ ({r})^{cN}·({B})^{ak} − 1  (Real.log_le_sub_one_of_pos); the fold − 1\n"
+                f"-- ≤ {Nq} is a rational norm_num fact.  Positive power (no inverse).\n"
+                f"theorem {name} : {lhs} - ({fstar_term} : ℝ) ≤ ({q} : ℝ) := by\n"
+                f"  rw [FSTAR]\n"
+                f"  have hpos : (0 : ℝ) < ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
+                f":= by positivity\n"
+                f"  have hr := Real.log_le_sub_one_of_pos hpos\n"
+                f"  have hsplit : Real.log (({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)))\n"
+                f"      = {split_lhs} + {ak} * Real.log ({B} : ℝ) := by\n"
+                f"    rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,\n"
+                f"        Real.log_pow]\n"
+                f"    push_cast; ring\n"
+                f"  rw [hsplit] at hr\n"
+                f"  have hnum : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) - 1 ≤ {Nq} "
                 f":= by norm_num\n"
                 f"  linarith\n"
             )
@@ -399,6 +501,79 @@ class LogCombinationEmitter(Emitter):
             f"  linarith\n"
         )
 
+    def _emit_tight(self, cert: LogCombinationCertificate, name: str) -> str:
+        # TIGHT route: discharge  log X ≤ Q  where the degree-1 tangent is too loose.
+        #   X = r^{cN}·B^{|k|}  (folded, POSITIVE power for the ADDED +|k|·FSTAR term)
+        #   Q = N·q < 0 ,  −Q ∈ [0,1]
+        # via  log X ≤ Q ⟺ X ≤ exp Q  (Real.log_le_iff_le_exp, X>0);
+        #      exp Q = (exp(−Q))⁻¹   (Real.exp_neg);
+        #      exp(−Q) ≤ U           (Real.exp_bound', degree-3 Taylor upper);
+        #      X·U ≤ 1               (norm_num).
+        c = cert.coeff
+        k = cert.fstar_coeff       # < 0 for the ADDED +|k|·FSTAR blocker
+        N = cert.fstar_den
+        cN = int(c * N)
+        ak = -int(k)               # |k|, the POSITIVE power of B in the fold
+        r = _lean_rat(cert.rat)
+        B = _lean_rat(cert.fstar_base)
+        q = _lean_rat(cert.q)
+        Q = sp.Rational(N) * sp.Rational(cert.q)   # folded threshold N·q (< 0)
+        Qs = _lean_rat(Q)                          # Lean literal for Q
+        negQ = _lean_rat(-Q)                       # −Q ∈ [0,1]
+        U = _lean_rat(cert.tangent_bound)          # rational Taylor upper bound on exp(−Q)
+        lhs = f"Real.log ({r} : ℝ)" if c == 1 else f"({c} : ℝ) * Real.log ({r} : ℝ)"
+        fstar_term = f"FSTAR" if k == 1 else f"{k} * FSTAR"
+        # split of log X = cN·log r + |k|·log B  (positive power, no log_inv).
+        split_lhs = f"{cN} * Real.log ({r} : ℝ)" if c == 1 \
+            else f"{cN} * ({c} * Real.log ({r} : ℝ))"
+        # The exp_bound' RHS at n=3 (evaluated by norm_num to a rational ≤ U).
+        return (
+            f"-- ===== F*-folding, TIGHT route (k={k}, ADDED FSTAR): {c}·log({r}) − "
+            f"{k}·FSTAR ≤ {q} (FSTAR = log({B})/{N}) =====\n"
+            f"-- Fold X = ({r})^{cN}·({B})^{ak} (≈ {float(cert.fold_value):.4f}); goal ⟺ "
+            f"log X ≤ Q = {Qs}.\n"
+            f"-- Degree-1 tangent (log x ≤ x−1) is TOO LOOSE here (X−1 > Q); use the TIGHT\n"
+            f"-- route: log X ≤ Q ⟺ X ≤ exp Q (Real.log_le_iff_le_exp), exp Q = (exp(−Q))⁻¹\n"
+            f"-- (Real.exp_neg), exp(−Q) ≤ U via degree-3 Taylor (Real.exp_bound'), X·U ≤ 1.\n"
+            f"theorem {name} : {lhs} - ({fstar_term} : ℝ) ≤ ({q} : ℝ) := by\n"
+            f"  rw [FSTAR]\n"
+            f"  have hXpos : (0 : ℝ) < ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
+            f":= by positivity\n"
+            f"  have hsplit : Real.log (({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)))\n"
+            f"      = {split_lhs} + {ak} * Real.log ({B} : ℝ) := by\n"
+            f"    rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,\n"
+            f"        Real.log_pow]\n"
+            f"    push_cast; ring\n"
+            f"  have hexp := Real.exp_bound' (x := ({negQ} : ℝ)) (by norm_num) (by norm_num)\n"
+            f"    (n := 3) (by norm_num)\n"
+            f"  have hU : (∑ m ∈ Finset.range 3, ({negQ} : ℝ) ^ m / m.factorial)\n"
+            f"      + ({negQ} : ℝ) ^ 3 * (3 + 1) / ((3 : ℕ).factorial * 3) ≤ ({U} : ℝ) := by\n"
+            f"    norm_num [Finset.sum_range_succ, Nat.factorial]\n"
+            f"  have hexpU : Real.exp ({negQ} : ℝ) ≤ ({U} : ℝ) := le_trans hexp hU\n"
+            f"  have hexppos : (0 : ℝ) < Real.exp ({negQ} : ℝ) := Real.exp_pos _\n"
+            f"  have hprod : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
+            f"* Real.exp ({negQ} : ℝ) ≤ 1 := by\n"
+            f"    have hmono : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
+            f"* Real.exp ({negQ} : ℝ)\n"
+            f"        ≤ ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) * ({U} : ℝ) :=\n"
+            f"      mul_le_mul_of_nonneg_left hexpU (le_of_lt hXpos)\n"
+            f"    have hXU : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
+            f"* ({U} : ℝ) ≤ 1 := by norm_num\n"
+            f"    linarith\n"
+            f"  have hXle : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
+            f"≤ Real.exp (-({negQ}) : ℝ) := by\n"
+            f"    rw [Real.exp_neg, ← one_div]\n"
+            f"    rw [le_div_iff₀ hexppos]\n"
+            f"    linarith [hprod]\n"
+            f"  have hlogle : Real.log (({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ))) "
+            f"≤ ({Qs} : ℝ) := by\n"
+            f"    rw [Real.log_le_iff_le_exp hXpos]\n"
+            f"    have hEq : (-({negQ}) : ℝ) = ({Qs} : ℝ) := by norm_num\n"
+            f"    rw [hEq] at hXle; exact hXle\n"
+            f"  rw [hsplit] at hlogle\n"
+            f"  linarith\n"
+        )
+
     def emit_body(self, fam, profile: LeanProfile) -> tuple[str, int]:
         lines: list[str] = []
         nthm = 0
@@ -409,6 +584,8 @@ class LogCombinationEmitter(Emitter):
                 lines.append(self._emit_monotone(cert, name))
             elif cert.route == "tangent":
                 lines.append(self._emit_tangent(cert, name))
+            elif cert.route == "tight":
+                lines.append(self._emit_tight(cert, name))
             else:  # pragma: no cover — guarded at certify time
                 raise ValueError(f"unknown route {cert.route!r}")
             nthm += 1
@@ -472,3 +649,34 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: too-small tangent q was NOT refused")
     except ValueError as e:
         print(f"  correctly REFUSED: {str(e)[:100]}...")
+
+    print("\n=== positive: TIGHT  log(7/9) + FSTAR ≤ −1/24  (BG blocker log79_add_fstar) ===")
+    c5 = log_combination_certificate(
+        terms=[(1, Fraction(7, 9)), (1, Fraction(621, 64))], q=Fraction(-1, 24),
+        route="tight",
+    )
+    print(f"  cert OK: route={c5.route}, fold X = (7/9)^11·(621/64) = {c5.fold_value} "
+          f"(≈ {float(c5.fold_value):.6f}) < 1; Taylor U = {c5.tangent_bound} "
+          f"(≈ {float(c5.tangent_bound):.6f}); X·U ≈ "
+          f"{float(c5.fold_value * c5.tangent_bound):.6f} ≤ 1 "
+          f"(degree-1 tangent too loose: X−1 ≈ {float(c5.fold_value) - 1:.4f} > Q = −11/24)")
+
+    print("\n=== NEGATIVE CONTROL: TIGHT  q = −1/12 makes log X > Q (bound FALSE) ===")
+    try:
+        log_combination_certificate(
+            terms=[(1, Fraction(7, 9)), (1, Fraction(621, 64))], q=Fraction(-1, 12),
+            route="tight",
+        )
+        raise SystemExit("FAIL: false tight combination was NOT refused")
+    except ValueError as e:
+        print(f"  correctly REFUSED: {str(e)[:100]}...")
+
+    print("\n=== NEGATIVE CONTROL: TIGHT  steers to tangent when it suffices ===")
+    try:
+        log_combination_certificate(
+            terms=[(1, Fraction(7, 4)), (-4, Fraction(621, 64))], q=Fraction(-1, 2688),
+            route="tight",
+        )
+        raise SystemExit("FAIL: tangent-suffices tight instance was NOT steered")
+    except ValueError as e:
+        print(f"  correctly STEERED to tangent: {str(e)[:100]}...")
