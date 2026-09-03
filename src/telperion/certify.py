@@ -164,6 +164,11 @@ _SPECIAL_KINDS = (
     # (three-piece completing-the-square). (separable-convex MAX/vertex ships as a
     # mode of the existing "separable_convex" kind, no new entry.)
     "symmetric_quad_d2",
+    # BG g-step fixed-config tight-cap enclosure (2026-09-02): certifies the
+    # in-repo closure (baseOf l)^11*prodBcap l/(W(5/3)^11) <= 1 for a named config,
+    # concrete or single symbolic child. Models the proven single_child_le_one /
+    # two_child_le_one; NOT the general-arity g-lemma open core.
+    "tight_cap_enclosure",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -217,6 +222,7 @@ _SPECIAL_DISPATCH = {
     "scale_invariance": ("emit_scale_invariance", "certify_scale_invariance_point"),
     "concave_stationary_max": ("emit_concave_stationary_max", "certify_concave_stationary_max_point"),
     "symmetric_quad_d2": ("emit_symmetric_quad_d2", "certify_symmetric_quad_d2_point"),
+    "tight_cap_enclosure": ("emit_tight_cap_enclosure", "certify_tight_cap_enclosure_point"),
 }
 
 

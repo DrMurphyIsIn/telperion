@@ -130,6 +130,10 @@ from .emit_concave_stationary_max import (  # noqa: F401
 from .emit_symmetric_quad_d2 import (  # noqa: F401
     SymmetricQuadD2Emitter, symmetric_quad_d2_certificate, symmetric_quad_d2_family,
 )
+from .emit_tight_cap_enclosure import (  # noqa: F401
+    TightCapEnclosureEmitter, tight_cap_enclosure_certificate,
+    tight_cap_enclosure_family, certify_tight_cap_enclosure_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
