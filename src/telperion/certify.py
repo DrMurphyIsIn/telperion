@@ -176,6 +176,11 @@ _SPECIAL_KINDS = (
     "recursion_closure",
     "cavity_exchange",
     "per_size_dominance_sweep",
+    # Ported from AxiomMath/ZetaZeros (arXiv:2609.02882, 2026-09-02): curvature-sign
+    # -> boundary extremum (generalizes affine_param_endpoint), and rational enclosure
+    # of a transcendental (log for BG cells; Montgomery-Taylor C0 trig face deferred).
+    "curvature_boundary",
+    "transcendental_enclosure",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -234,6 +239,8 @@ _SPECIAL_DISPATCH = {
     "recursion_closure": ("emit_recursion_closure", "certify_recursion_closure_point"),
     "cavity_exchange": ("emit_cavity_exchange", "certify_cavity_exchange_point"),
     "per_size_dominance_sweep": ("emit_per_size_dominance_sweep", "certify_per_size_dominance_sweep_point"),
+    "curvature_boundary": ("emit_curvature_boundary", "certify_curvature_boundary_point"),
+    "transcendental_enclosure": ("emit_transcendental_enclosure", "certify_transcendental_enclosure_point"),
 }
 
 

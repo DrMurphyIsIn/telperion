@@ -150,6 +150,14 @@ from .emit_per_size_dominance_sweep import (  # noqa: F401
     PerSizeDominanceSweepEmitter, per_size_dominance_sweep_certificate,
     per_size_dominance_sweep_family, certify_per_size_dominance_sweep_point,
 )
+from .emit_curvature_boundary import (  # noqa: F401
+    CurvatureBoundaryEmitter, curvature_boundary_certificate,
+    curvature_boundary_family, certify_curvature_boundary_point,
+)
+from .emit_transcendental_enclosure import (  # noqa: F401
+    TranscendentalEnclosureEmitter, transcendental_enclosure_certificate,
+    transcendental_enclosure_family, certify_transcendental_enclosure_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
