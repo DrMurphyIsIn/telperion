@@ -127,6 +127,9 @@ from .emit_scale_invariance import (  # noqa: F401
 from .emit_concave_stationary_max import (  # noqa: F401
     ConcaveStationaryMaxEmitter, concave_stationary_max_certificate, concave_stationary_max_family,
 )
+from .emit_symmetric_quad_d2 import (  # noqa: F401
+    SymmetricQuadD2Emitter, symmetric_quad_d2_certificate, symmetric_quad_d2_family,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
