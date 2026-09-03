@@ -134,6 +134,22 @@ from .emit_tight_cap_enclosure import (  # noqa: F401
     TightCapEnclosureEmitter, tight_cap_enclosure_certificate,
     tight_cap_enclosure_family, certify_tight_cap_enclosure_point,
 )
+from .emit_affine_param_endpoint import (  # noqa: F401
+    AffineParamEndpointEmitter, affine_param_endpoint_certificate,
+    affine_param_endpoint_family, certify_affine_param_endpoint_point,
+)
+from .emit_recursion_closure import (  # noqa: F401
+    RecursionClosureEmitter, recursion_closure_certificate,
+    recursion_closure_family, certify_recursion_closure_point,
+)
+from .emit_cavity_exchange import (  # noqa: F401
+    CavityExchangeEmitter, cavity_exchange_certificate,
+    cavity_exchange_family, certify_cavity_exchange_point,
+)
+from .emit_per_size_dominance_sweep import (  # noqa: F401
+    PerSizeDominanceSweepEmitter, per_size_dominance_sweep_certificate,
+    per_size_dominance_sweep_family, certify_per_size_dominance_sweep_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )

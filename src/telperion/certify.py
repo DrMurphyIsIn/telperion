@@ -169,6 +169,13 @@ _SPECIAL_KINDS = (
     # concrete or single symbolic child. Models the proven single_child_le_one /
     # two_child_le_one; NOT the general-arity g-lemma open core.
     "tight_cap_enclosure",
+    # BG remaining-core shapes (2026-09-02): affine-in-parameter interval->endpoints
+    # (collapses SCLStep's price interval I), node tangent+ceiling assembly, Kelmans
+    # de-branch bilinear-corner exchange, and per-size dominance sweep.
+    "affine_param_endpoint",
+    "recursion_closure",
+    "cavity_exchange",
+    "per_size_dominance_sweep",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -223,6 +230,10 @@ _SPECIAL_DISPATCH = {
     "concave_stationary_max": ("emit_concave_stationary_max", "certify_concave_stationary_max_point"),
     "symmetric_quad_d2": ("emit_symmetric_quad_d2", "certify_symmetric_quad_d2_point"),
     "tight_cap_enclosure": ("emit_tight_cap_enclosure", "certify_tight_cap_enclosure_point"),
+    "affine_param_endpoint": ("emit_affine_param_endpoint", "certify_affine_param_endpoint_point"),
+    "recursion_closure": ("emit_recursion_closure", "certify_recursion_closure_point"),
+    "cavity_exchange": ("emit_cavity_exchange", "certify_cavity_exchange_point"),
+    "per_size_dominance_sweep": ("emit_per_size_dominance_sweep", "certify_per_size_dominance_sweep_point"),
 }
 
 
