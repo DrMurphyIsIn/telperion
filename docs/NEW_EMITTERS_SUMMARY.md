@@ -94,7 +94,7 @@ Grouped by the front that motivated them. All kernel-green (local `lake build`),
 ### F\*-fold (cross-front dogfood)
 | Emitter | kind | Certifies | Scope note |
 |---|---|---|---|
-| `LogCombinationEmitter` | `log_combination` | `Σ cᵢ·log(rᵢ) ≤ q` by folding into a single `log(∏ rᵢ^{cᵢ})` — **tight at the tie**, no separate F\* lower bound; monotone + tangent routes | **dogfooded**: regenerates the BG `log74_le_4fstar` / `log54_sub_fstar_le` in `BGSCLSubaction.lean` byte-for-byte (modulo ascriptions) |
+| `LogCombinationEmitter` | `log_combination` | `Σ cᵢ·log(rᵢ) ≤ q` by folding into a single `log(∏ rᵢ^{cᵢ})` — **tight at the tie**, no separate F\* lower bound. **Three routes**: monotone (`q=0`, `∏≤1`), tangent (`log x ≤ x−1`, any-sign `q`, any `k`), and **tight** (degree-3 exp, `log X ≤ Q ⟺ X ≤ exp Q` via `Real.exp_bound'` — for cells where the tangent overshoots). Handles negative fstar coefficient (`+F*`) | **dogfooded live**: regenerates the BG `log74_le_4fstar` / `log54_sub_fstar_le` byte-for-byte, AND the round-trip generated `log54_sub_fstar_le_40`, `log74_le_4fstar_broom`, `log119_sub_fstar`, `log79_add_fstar` — each built GREEN against the real `R3Cert.BGSCLInduction` |
 
 ## Where to look / follow-ups
 - **Shape reference:** `README.md` "Certificate shapes" table.
