@@ -198,10 +198,14 @@ def log_combination_certificate(
             q=q, route="monotone", fold_value=fold,
         )
 
-    # tangent route: q > 0.
-    if not (q > 0):
-        raise ValueError(f"REFUSED: tangent route requires q > 0, got q = {q}")
+    # tangent route: valid for ANY sign of q. `log x ≤ x − 1` holds for all
+    # x > 0, so the only real gate is the norm_num fact `fold − 1 ≤ N·q` below.
+    # A negative q is legitimate when the folded product is < 1 — e.g. a parent
+    # ρ term tightening the bound, as in the corrected BG broom cell
+    # (`log(7/4) − 4·FSTAR ≤ −1/2688`, fold ≈ 0.053 < 1).
     fold = sp.nsimplify(rat ** (coeff * N) * B ** (-k))
+    if not (fold > 0):
+        raise ValueError(f"REFUSED: tangent route needs fold > 0, got fold = {fold}")
     tb = sp.nsimplify(fold - 1)
     if not (tb <= N * q):
         raise ValueError(
@@ -348,6 +352,32 @@ class LogCombinationEmitter(Emitter):
         # folded argument (5/4)^cN * (Binv) with k folded (k==1 assumed for tangent BG).
         split_lhs = f"{cN} * Real.log ({r} : ℝ)" if c == 1 \
             else f"{cN} * ({c} * Real.log ({r} : ℝ))"
+        if k != 1:
+            # General-k tangent: fold (r)^cN · ((B)^k)⁻¹, so the split carries the
+            # matching k·log(B) coefficient (the k==1 path below hardcodes k=1 and
+            # is kept byte-identical for the BG dogfood).  No log(B) ≥ 0 needed —
+            # the coefficient matches exactly, so `linarith` closes for any q sign.
+            return (
+                f"-- ===== F*-folding, TANGENT route (general k={k}): {c}·log({r}) − "
+                f"{k}·FSTAR ≤ {q} (FSTAR = log({B})/{N}) =====\n"
+                f"-- Fold: {N}·({c}·log {r} − {k}·FSTAR) = log(({r})^{cN}·(({B})^{k})⁻¹)\n"
+                f"-- ≤ ({r})^{cN}·(({B})^{k})⁻¹ − 1  (Real.log_le_sub_one_of_pos); the fold − 1\n"
+                f"-- ≤ {Nq} is a rational norm_num fact.  TIGHT AT THE TIE (no F* lower bound).\n"
+                f"theorem {name} : {lhs} - ({fstar_term} : ℝ) ≤ ({q} : ℝ) := by\n"
+                f"  rw [FSTAR]\n"
+                f"  have hpos : (0 : ℝ) < ({r} : ℝ) ^ ({cN} : ℕ) * ((({B} : ℝ) ^ ({k} : ℕ))⁻¹) "
+                f":= by positivity\n"
+                f"  have hr := Real.log_le_sub_one_of_pos hpos\n"
+                f"  have hsplit : Real.log (({r} : ℝ) ^ ({cN} : ℕ) * ((({B} : ℝ) ^ ({k} : ℕ))⁻¹))\n"
+                f"      = {split_lhs} - {k} * Real.log ({B} : ℝ) := by\n"
+                f"    rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,\n"
+                f"        Real.log_inv, Real.log_pow]\n"
+                f"    push_cast; ring\n"
+                f"  rw [hsplit] at hr\n"
+                f"  have hnum : ({r} : ℝ) ^ ({cN} : ℕ) * ((({B} : ℝ) ^ ({k} : ℕ))⁻¹) - 1 ≤ {Nq} "
+                f":= by norm_num\n"
+                f"  linarith\n"
+            )
         return (
             f"-- ===== F*-folding, TANGENT route: {c}·log({r}) − {k}·FSTAR ≤ {q} "
             f"(FSTAR = log({B})/{N}) =====\n"

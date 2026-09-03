@@ -61,15 +61,22 @@ _SPECS = {
     1: {"terms": [(1, "5/4"), (-1, "621/64")], "q": "1/20", "route": "tangent"},
     2: {"terms": [(2, "3/2"), (-1, "9/4")], "q": "0", "route": "monotone",
         "fstar_base": "9/4", "fstar_den": 1},
+    # Corrected-witness cells (2026-09-03): a tighter k=1 tangent and a GENERAL-k
+    # tangent with a NEGATIVE threshold — the capability the corrected BG 5-case
+    # witness (ρ(4)≠0) surfaced. Both build GREEN against R3Cert.BGSCLInduction
+    # (proof/formalization/R3Cert/BGSCLSubactionCells.lean).
+    3: {"terms": [(1, "5/4"), (-1, "621/64")], "q": "1/40", "route": "tangent"},
+    4: {"terms": [(1, "7/4"), (-4, "621/64")], "q": "-1/2688", "route": "tangent"},
 }
-_NAMES = {0: "log74_le_4fstar", 1: "log54_sub_fstar_le", 2: "log32_sq_le_log94"}
+_NAMES = {0: "log74_le_4fstar", 1: "log54_sub_fstar_le", 2: "log32_sq_le_log94",
+          3: "log54_sub_fstar_le_40", 4: "log74_le_4fstar_broom"}
 _OUT = Path(__file__).resolve().parent / "lean" / "LogCombination.lean"
 
 
 def build() -> str:
     fam = log_combination_family(
         "LogCombination",
-        GridSpec([("case", [0, 1, 2])]),
+        GridSpec([("case", [0, 1, 2, 3, 4])]),
         lambda pt: _NAMES[pt["case"]],
         spec=lambda pt: _SPECS[pt["case"]],
     )
