@@ -72,10 +72,36 @@ class EnclosureSpec:
     fstar_den: int = 11
 
 
-def extract_gaps(content: str):
-    """All ``:= by sorry`` theorems/lemmas in ``content`` as :class:`Gap`s."""
-    return [Gap(name=m.group(1), statement=" ".join(m.group(2).split()))
+# have <name> : <statement> := by sorry   (an explicit-typed subgoal inside a proof)
+_SORRY_HAVE = re.compile(
+    r"\bhave\s+([A-Za-z_][\w']*)\s*:\s*((?:(?!:=)[\s\S])+?)\s*:=\s*by\s+sorry",
+)
+_GOAL = re.compile(r"⊢\s*(.+)")
+
+
+def extract_gaps(content: str, *, include_haves: bool = False):
+    """All ``:= by sorry`` gaps in ``content`` as :class:`Gap`s — standalone
+    theorems/lemmas, and (with ``include_haves``) explicit-typed ``have h : T := by
+    sorry`` subgoals inside proofs (the AXLE ``have2lemma`` case; the ``have``'s type
+    IS the goal, so no elaboration is needed to recover it)."""
+    gaps = [Gap(name=m.group(1), statement=" ".join(m.group(2).split()))
             for m in _SORRY_THM.finditer(content)]
+    if include_haves:
+        gaps += [Gap(name=m.group(1), statement=" ".join(m.group(2).split()))
+                 for m in _SORRY_HAVE.finditer(content)]
+    return gaps
+
+
+def extract_sorry_goals(content: str, *, env_dir):
+    """Recover the GOAL at each *bare* ``sorry`` (no explicit type) by elaborating a
+    copy with every ``sorry`` replaced by ``?_`` and parsing Lean's ``unsolved
+    goals`` report — the AXLE ``extract_proof_states`` lesson, Lean-backed (needs a
+    built ``env_dir``).  Returns the list of goal strings (the RHS of each ``⊢``).
+    For standalone/`have` gaps with explicit types, prefer ``extract_gaps`` (no build)."""
+    from .verify import verify_lean
+    probed = re.sub(r"\bsorry\b", "?_", content)
+    r = verify_lean(probed, env_dir=env_dir)
+    return [m.strip() for m in _GOAL.findall(r.raw)]
 
 
 def match_log_enclosure(statement: str, *, fstar_base="621/64", fstar_den=11):

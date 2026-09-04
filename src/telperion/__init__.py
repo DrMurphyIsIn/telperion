@@ -322,8 +322,14 @@ from .tie_regime import (  # noqa: F401
 from .verify import VerifyResult, verify_lean  # noqa: F401
 from .repair import repair_lean, verify_with_repair  # noqa: F401
 from .gap_fill import (  # noqa: F401
-    Gap, EnclosureSpec, FillResult, extract_gaps, match_log_enclosure, pick_route,
-    fill_gap, register_matcher,
+    Gap, EnclosureSpec, FillResult, extract_gaps, extract_sorry_goals,
+    match_log_enclosure, pick_route, fill_gap, register_matcher,
+)
+from .bundle import parse_theorems, merge_bundle, bundle_stats  # noqa: F401
+from .normalize import normalize_lean, canonical_statement, theorem2sorry  # noqa: F401
+from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeats  # noqa: F401
+from .negative_control import (  # noqa: F401
+    NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
 )
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules

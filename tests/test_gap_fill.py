@@ -83,6 +83,20 @@ def test_non_enclosure_gap_is_refused():
         pass
 
 
+def test_extract_gaps_includes_haves():
+    content = (
+        "theorem cell : True := by\n"
+        "  have henc : Real.log (7/9 : ℝ) + FSTAR + 1/24 ≤ 0 := by sorry\n"
+        "  trivial\n"
+    )
+    # without include_haves: no standalone `:= by sorry` theorem -> no gaps
+    assert extract_gaps(content) == []
+    # with include_haves: the explicit-typed `have` is a gap (AXLE have2lemma)
+    haves = extract_gaps(content, include_haves=True)
+    assert len(haves) == 1 and haves[0].name == "henc"
+    assert "Real.log" in haves[0].statement
+
+
 def test_repair_lean_mathlib_renames():
     from telperion.repair import repair_lean
     src = "rw [div_le_iff hx]; exact le_div_iff hy"
