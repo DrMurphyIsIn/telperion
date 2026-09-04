@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-import os
-import shutil
+import sys
+from pathlib import Path
+
 import pytest
 import sympy as sp
 
-from telperion import InequalityFamily, GridSpec
-from telperion.evolve.config import EvolveConfig
-from telperion.evolve.kernel import kernel_check_family
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # for the shared lean_env guard
+
+from telperion import InequalityFamily, GridSpec  # noqa: E402
+from telperion.evolve.config import EvolveConfig  # noqa: E402
+from telperion.evolve.kernel import kernel_check_family  # noqa: E402
+from lean_env import lean_env_ready  # noqa: E402
 
 u = sp.Symbol("u", nonnegative=True)
 _LEAN = EvolveConfig.default().lean_project
 pytestmark = pytest.mark.skipif(
-    not shutil.which("lake") or not os.path.isdir(os.path.join(_LEAN, ".lake")),
-    reason="no lake / no prebuilt Mathlib",
+    not lean_env_ready(_LEAN),
+    reason="no lake / no prebuilt Mathlib (guard skips instead of triggering a rebuild)",
 )
 
 

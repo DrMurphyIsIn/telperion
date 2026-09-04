@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the shared lean_env guard
 
 from telperion.cert_meta import (  # noqa: E402
     CertIndex,
@@ -10,6 +11,7 @@ from telperion.cert_meta import (  # noqa: E402
     extract_cert_meta,
     measure_heartbeats,
 )
+from lean_env import lean_env_ready  # noqa: E402
 
 # A real emitted block (from examples/log_combination/lean/LogCombination.lean).
 LOG74 = """theorem log74_le_4fstar : Real.log (7/4 : ℝ) ≤ (4 * FSTAR : ℝ) := by
@@ -110,8 +112,10 @@ def test_measure_heartbeats_int_or_none():
     hb = measure_heartbeats(trivial, env_dir=ENV_DIR, name="cert_meta_hb_probe")
     # Must never raise; either a positive int (env available + parsed) or None.
     assert hb is None or (isinstance(hb, int) and hb > 0)
-    # When the built env is present, `#count_heartbeats in` should parse a positive int.
-    if ENV_DIR.exists() and (ENV_DIR / ".lake").exists():
+    # When the env is actually BUILT (not merely a `.lake` dir present), `#count_heartbeats
+    # in` must parse a positive int. `lean_env_ready` gates on the built Mathlib.olean, so
+    # this never fires against an unbuilt env (which would return None without a rebuild).
+    if lean_env_ready(ENV_DIR):
         assert isinstance(hb, int) and hb > 0, hb
 
 

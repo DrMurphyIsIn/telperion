@@ -13,8 +13,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the shared lean_env guard
 
 from telperion.bundle import parse_theorems, merge_bundle, bundle_stats  # noqa: E402
+from lean_env import lean_env_ready  # noqa: E402
 
 # --- Small hardcoded theorem strings (BG-flavoured enclosure atoms) -----------
 
@@ -140,12 +142,12 @@ def test_merged_file_verifies_optional():
     or lake toolchain is unavailable — the pure-text merge above is the load-bearing
     contract; this pins that the ASSEMBLED file is a real, elaborable Lean source.
     """
-    import shutil
     import pytest
 
     env_dir = Path(__file__).resolve().parents[1] / "examples" / "log_combination" / "lean"
-    if not env_dir.exists() or shutil.which("lake") is None:
-        pytest.skip("log_combination lean env / lake toolchain unavailable")
+    if not lean_env_ready(env_dir):
+        pytest.skip("log_combination Mathlib env not built "
+                    "(guard must not let the test trigger a from-scratch rebuild)")
 
     from telperion.verify import verify_lean
 
