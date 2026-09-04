@@ -36,8 +36,11 @@ from telperion.emitter_sensitivity import (  # noqa: E402
 from telperion.emitter_sensitivity import (  # noqa: E402  — neg-control layer
     NEG_CONTROL_ADAPTER,
     NEG_CONTROL_NOT_APPLICABLE,
+    NEG_CONTROL_DECLARED_UNWIRED,
+    _NEG_CONTROL_KINDS,
     undeclared_neg_control_emitters,
     neg_control_adapter_gap,
+    neg_control_unwired_emitters,
 )
 from telperion.negative_control_harness import (  # noqa: E402
     ADAPTERS,
@@ -106,10 +109,26 @@ def test_neg_control_stances_are_well_formed():
         nc = stance.neg_control
         if nc is None:
             continue  # caught by the completeness gate above
-        assert nc.kind in (NEG_CONTROL_ADAPTER, NEG_CONTROL_NOT_APPLICABLE), name
-        if nc.kind == NEG_CONTROL_NOT_APPLICABLE:
+        assert nc.kind in _NEG_CONTROL_KINDS, f"{name}: bad neg_control kind {nc.kind!r}"
+        # not_applicable and declared_unwired must carry a reason; adapter need not.
+        if nc.kind in (NEG_CONTROL_NOT_APPLICABLE, NEG_CONTROL_DECLARED_UNWIRED):
             assert nc.reason.strip(), (
-                f"{name} declares neg_control not_applicable with no reason")
+                f"{name} declares neg_control {nc.kind} with no reason")
+
+
+def test_unwired_neg_control_emitters_are_named_honestly():
+    """Certificate-sensitive emitters WITHOUT an adapter are declared-unwired (the
+    honest gap) rather than mislabelled not_applicable or claiming a missing adapter.
+    This test NAMES that gap so it stays visible until adapters are built."""
+    unwired = neg_control_unwired_emitters()
+    # Every unwired emitter is certificate-sensitive with no registered adapter.
+    for name in unwired:
+        assert REGISTRY[name].stance == CERTIFICATE_SENSITIVE, name
+        assert name not in registered_adapters(), name
+    # The 7 newly-classified CS emitters with no adapter yet are the current gap;
+    # the 18 already-adapted CS emitters (+ LogCombination) must NOT appear here.
+    assert "LogCombinationEmitter" not in unwired
+    assert "WZEmitter" not in unwired
 
 
 def test_declared_adapters_are_actually_registered():
