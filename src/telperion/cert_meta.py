@@ -6,14 +6,18 @@ have we seen its statement before?".  Two capabilities:
 
 1.  :func:`extract_cert_meta` parses ONE emitted ``theorem <name> : <stmt> := by <proof>``
     block into a :class:`CertMeta` record — normalized statement, a stable content
-    hash (so cosmetically-different-but-equal statements collide), proof length/lines,
-    and per-tactic counts.  This lets Telperion regression-track proof COMPLEXITY over
-    time (did a route get longer/heavier after an edit?).
+    hash (so cosmetically-different-but-equal statements collide), a stable PROOF-body
+    hash (so cosmetic churn in the proof doesn't move it but a real tactic change does),
+    proof length/lines, and per-tactic counts.  This lets Telperion regression-track proof
+    COMPLEXITY over time (did a route get longer/heavier after an edit?).
 
 2.  :class:`CertIndex` is a content-addressed index keyed by ``type_hash``.  Its
     :meth:`~CertIndex.duplicates` surfaces SHARED ATOMS — the same statement proved
     under different names across cells/families — which is the dedup target for a future
-    ``merge`` (prove once, reuse everywhere).
+    ``merge`` (prove once, reuse everywhere).  Its :meth:`~CertIndex.proof_regressions`
+    surfaces the complementary signal: the SAME statement (``type_hash``) now carrying a
+    DIFFERENT proof body (``proof_hash``) — e.g. a route that got rewritten / heavier
+    after a Mathlib bump.
 
 Optionally, :func:`measure_heartbeats` runs Mathlib's ``count_heartbeats in`` against a
 built environment (cf. :func:`telperion.verify.verify_lean`) to attach a real elaboration
@@ -49,6 +53,12 @@ _THEOREM_RE = re.compile(
     re.DOTALL,
 )
 
+# Lean block comment `/- ... -/` (non-greedy, DOTALL so it spans lines) and a line
+# comment `-- ... <eol>`.  Block comments are stripped FIRST so a `--` inside a block
+# comment is not mistaken for a line comment.
+_BLOCK_COMMENT_RE = re.compile(r"/-.*?-/", re.DOTALL)
+_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+
 
 def _normalize_statement(stmt: str) -> str:
     """Normalize a statement for content hashing.
@@ -71,6 +81,35 @@ def _type_hash(stmt: str) -> str:
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
 
 
+def _normalize_proof_body(proof_body: str) -> str:
+    """Conservatively normalize a PROOF body for content hashing.
+
+    Unlike :func:`_normalize_statement` (which deletes *all* whitespace — fine for a
+    single expression, but catastrophic for a proof, where it would fuse adjacent
+    tactic tokens such as ``rw`` and ``exact`` into ``rwexact`` and thereby erase the
+    very structure we want to track), this keeps token boundaries intact.  It:
+
+    1. strips Lean block comments ``/- ... -/`` (first, so an inner ``--`` is safe),
+    2. strips Lean line comments ``-- ... <eol>``,
+    3. collapses every run of whitespace to a SINGLE space, and
+    4. trims leading/trailing whitespace.
+
+    The result is: cosmetic churn (reindentation, added/removed comments, blank
+    lines, a trailing newline) does NOT change the hash, but any real proof change
+    (a different tactic, a changed lemma name, an extra step) DOES.
+    """
+    s = proof_body
+    s = _BLOCK_COMMENT_RE.sub(" ", s)
+    s = _LINE_COMMENT_RE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _proof_hash(proof_body: str) -> str:
+    norm = _normalize_proof_body(proof_body)
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
 def _tactic_counts(proof_body: str) -> dict:
     counts = {}
     for tac in _TACTICS:
@@ -89,6 +128,7 @@ class CertMeta:
     n_lines: int              # lines spanned by the theorem block
     tactic_counts: dict       # tactic -> word-boundary count in the proof body
     heartbeats: object = None  # int | None — elaboration cost if measured
+    proof_hash: object = None  # str | None — stable content hash of the normalized proof body (16 hex)
 
     def to_dict(self) -> dict:
         return {
@@ -99,6 +139,7 @@ class CertMeta:
             "n_lines": self.n_lines,
             "tactic_counts": dict(self.tactic_counts),
             "heartbeats": self.heartbeats,
+            "proof_hash": self.proof_hash,
         }
 
     @classmethod
@@ -111,6 +152,9 @@ class CertMeta:
             n_lines=d["n_lines"],
             tactic_counts=dict(d.get("tactic_counts", {})),
             heartbeats=d.get("heartbeats"),
+            # `d.get` (not `d[...]`) so OLD records written before proof_hash existed
+            # still load — they simply come back with proof_hash=None.
+            proof_hash=d.get("proof_hash"),
         )
 
 
@@ -120,7 +164,8 @@ def extract_cert_meta(theorem_text: str, *, heartbeats=None) -> CertMeta:
     The statement is everything between the name and the first ``:=`` (leading binders
     and the ``:`` colon are stripped so ``statement`` is the bare type).  All fields
     except ``heartbeats`` are computed from the text; ``heartbeats`` is attached if
-    measured (see :func:`measure_heartbeats`).
+    measured (see :func:`measure_heartbeats`).  ``proof_hash`` is a stable hash of the
+    conservatively-normalized proof body (see :func:`_normalize_proof_body`).
     """
     m = _THEOREM_RE.search(theorem_text)
     if not m:
@@ -143,6 +188,7 @@ def extract_cert_meta(theorem_text: str, *, heartbeats=None) -> CertMeta:
         n_lines=n_lines,
         tactic_counts=_tactic_counts(proof_body),
         heartbeats=heartbeats,
+        proof_hash=_proof_hash(proof_body),
     )
 
 
@@ -241,7 +287,9 @@ class CertIndex:
     """A content-addressed index of :class:`CertMeta` records.
 
     Keyed by ``type_hash``: :meth:`duplicates` surfaces the shared atoms (one statement
-    proved under >1 name), which a future ``merge`` can dedup.
+    proved under >1 name), which a future ``merge`` can dedup.  :meth:`proof_regressions`
+    surfaces the complementary signal — the SAME statement now carrying a DIFFERENT proof
+    body (e.g. a route rewritten / made heavier after a Mathlib bump).
     """
 
     def __init__(self):
@@ -257,6 +305,28 @@ class CertIndex:
     def duplicates(self) -> dict:
         """Return ``{type_hash: [names]}`` for every type_hash with >1 distinct name."""
         return {h: list(ns) for h, ns in self.by_type_hash.items() if len(ns) > 1}
+
+    def proof_regressions(self) -> dict:
+        """Flag same-statement / different-proof drift.
+
+        For each ``type_hash`` whose records carry MORE THAN ONE distinct ``proof_hash``,
+        return ``{type_hash: [(name, proof_hash), ...]}``.  This is the real regression
+        signal: an identical statement (``type_hash`` collides) proved by two different
+        proof bodies — the classic "same theorem, heavier/rewritten proof after a Mathlib
+        bump" case, or two cells that ought to share one atom but currently don't.
+
+        Records with ``proof_hash is None`` (old records lacking the field) are IGNORED
+        for the distinct-count so an old+new pair for the same statement is not mistaken
+        for drift on the strength of a missing hash alone; if a group has fewer than two
+        distinct non-None proof hashes it is not reported.
+        """
+        out: dict = {}
+        for h, names in self.by_type_hash.items():
+            pairs = [(n, self.metas[n].proof_hash) for n in names]
+            distinct = {ph for (_, ph) in pairs if ph is not None}
+            if len(distinct) > 1:
+                out[h] = [(n, ph) for (n, ph) in pairs]
+        return out
 
     def to_json(self) -> str:
         return json.dumps(

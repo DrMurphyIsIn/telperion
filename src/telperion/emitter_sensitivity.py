@@ -37,6 +37,27 @@ from .workflow import Emitter
 CERTIFICATE_SENSITIVE = "certificate_sensitive"
 STRUCTURALLY_NONVACUOUS = "structurally_nonvacuous"
 
+# Negative-control declaration (the AXLE `disprove` layer): every emitter must
+# declare whether it carries a Lean-backed generic negative control (an ADAPTER
+# in negative_control_harness.ADAPTERS) or is NOT_APPLICABLE with a reason.
+NEG_CONTROL_ADAPTER = "adapter"
+NEG_CONTROL_NOT_APPLICABLE = "not_applicable"
+
+
+@dataclass(frozen=True)
+class NegControlStance:
+    """One emitter's declared negative-control stance.
+
+    ``kind`` is ``NEG_CONTROL_ADAPTER`` (a two-sided kernel control exists, keyed
+    by the emitter name in ``negative_control_harness.ADAPTERS``) or
+    ``NEG_CONTROL_NOT_APPLICABLE`` (no independent numeric fact to falsify at the
+    emission layer — a glue/positivity/decidable shape). ``reason`` is required
+    for the not-applicable case.
+    """
+
+    kind: str
+    reason: str = ""
+
 
 @dataclass(frozen=True)
 class SensitivityStance:
@@ -45,11 +66,17 @@ class SensitivityStance:
     ``checked_in`` is the module basename (e.g. ``emit_wz``) that invokes
     ``assert_certificate_sensitive`` for this emitter, or None when the semantic
     check is not (yet) wired through the generic primitive.
+
+    ``neg_control`` is the negative-control declaration; when left None it is
+    DERIVED from ``stance`` after the registry is built (see ``_derive_neg_control``):
+    CERTIFICATE_SENSITIVE emitters carry an adapter, STRUCTURALLY_NONVACUOUS ones
+    are not-applicable (their own ``reason`` is the not-applicable reason).
     """
 
     stance: str
     reason: str
     checked_in: str | None = None
+    neg_control: "NegControlStance | None" = None
 
 
 _S = SensitivityStance
@@ -196,6 +223,62 @@ REGISTRY: dict[str, SensitivityStance] = {
                                "strict-interval positivity with a Sturm sequence "
                                "as the exact decision oracle (root exclusion)"),
 }
+
+
+def _derive_neg_control(stance: SensitivityStance) -> NegControlStance:
+    """Derive an emitter's negative-control stance from its sensitivity stance when
+    it did not declare one explicitly.
+
+    A CERTIFICATE_SENSITIVE emitter carries a corruptible identity/fact, so a
+    forged FALSE instance is kernel-rejectable — it must have an ADAPTER (the
+    ``neg_control_adapter_gap`` check then enforces one is actually registered).
+    A STRUCTURALLY_NONVACUOUS emitter (positivity / decidable / finite / glue /
+    adapter) has no independent numeric fact to falsify at the emission layer, so
+    it is NOT_APPLICABLE and its own ``reason`` is the honest not-applicable reason.
+    """
+    if stance.neg_control is not None:
+        return stance.neg_control
+    if stance.stance == CERTIFICATE_SENSITIVE:
+        return NegControlStance(NEG_CONTROL_ADAPTER)
+    return NegControlStance(NEG_CONTROL_NOT_APPLICABLE, reason=stance.reason)
+
+
+# Fill in the neg_control declaration for every entry (derive when unspecified).
+REGISTRY = {
+    name: SensitivityStance(
+        stance=s.stance, reason=s.reason, checked_in=s.checked_in,
+        neg_control=_derive_neg_control(s),
+    )
+    for name, s in REGISTRY.items()
+}
+
+
+def undeclared_neg_control_emitters() -> list[str]:
+    """Registry emitters with no negative-control declaration — the completeness
+    gate. (After derivation every entry is declared, so a stray None means a bug.)"""
+    return sorted(n for n, s in REGISTRY.items() if s.neg_control is None)
+
+
+def neg_control_adapter_gap() -> list[str]:
+    """Emitters that DECLARE a neg-control adapter but have none registered in
+    ``negative_control_harness.ADAPTERS`` — the registry cannot claim a control
+    that does not exist (the analogue of ``wired_sensitive_emitters``' honesty)."""
+    try:
+        import telperion.negctrl_adapters  # noqa: F401  (import triggers register())
+        from .negative_control_harness import registered_adapters
+    except Exception:
+        # Harness/adapters unavailable — report every declared adapter as a gap so
+        # the honesty check fails loudly rather than silently passing.
+        return sorted(
+            n for n, s in REGISTRY.items()
+            if s.neg_control and s.neg_control.kind == NEG_CONTROL_ADAPTER
+        )
+    live = set(registered_adapters())
+    return sorted(
+        n for n, s in REGISTRY.items()
+        if s.neg_control and s.neg_control.kind == NEG_CONTROL_ADAPTER
+        and n not in live
+    )
 
 
 def discover_emitters() -> list[type]:

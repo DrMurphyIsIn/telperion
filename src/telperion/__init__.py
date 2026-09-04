@@ -331,6 +331,16 @@ from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeat
 from .negative_control import (  # noqa: F401
     NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
 )
+# Generic kernel-gated negative control (AXLE `disprove`, generalized to every
+# emitter): the engine + the per-emitter adapter registry.  Importing the adapters
+# package runs each adapter's register(...) so ADAPTERS is populated on `import
+# telperion` (the emitter-sensitivity gate relies on this).  See docs.
+from .negative_control_harness import (  # noqa: F401
+    NegativeControlAdapter, GenericNegativeControlResult, generic_negative_control,
+    assert_kernel_accepts, build_single_instance_family, emit_via_single_instance_family,
+    register, registered_adapters, ADAPTERS,
+)
+from . import negctrl_adapters  # noqa: F401  (registers all first-party adapters)
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules
 # `bg_bulk_discharge` and `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them
