@@ -316,6 +316,14 @@ from .tie_regime import (  # noqa: F401
     mixed_lambda, slack_g, slack_hub_bound, slack_linobj, small_degree_threshold, uniform_hub_ell,
     y_floor,
 )
+# AXLE-inspired infrastructure (2026-09-03): structured Lean verification against a
+# persistent pre-built environment, and a gap-driven emitter loop (sorry -> extract
+# goal -> route-match -> fill).  See docs/VERIFY_AND_GAPFILL.md.
+from .verify import VerifyResult, verify_lean  # noqa: F401
+from .gap_fill import (  # noqa: F401
+    Gap, EnclosureSpec, extract_gaps, match_log_enclosure, pick_route, fill_gap,
+)
+
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules
 # `bg_bulk_discharge` and `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them
 # directly (`from telperion.bg_upper_bound import UpperBoundReduction`), not via `import telperion`, so the
