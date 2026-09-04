@@ -510,10 +510,9 @@ class LogCombinationEmitter(Emitter):
         #      exp(−Q) ≤ U           (Real.exp_bound', degree-3 Taylor upper);
         #      X·U ≤ 1               (norm_num).
         c = cert.coeff
-        k = cert.fstar_coeff       # < 0 for the ADDED +|k|·FSTAR blocker
+        k = cert.fstar_coeff
         N = cert.fstar_den
         cN = int(c * N)
-        ak = -int(k)               # |k|, the POSITIVE power of B in the fold
         r = _lean_rat(cert.rat)
         B = _lean_rat(cert.fstar_base)
         q = _lean_rat(cert.q)
@@ -523,26 +522,38 @@ class LogCombinationEmitter(Emitter):
         U = _lean_rat(cert.tangent_bound)          # rational Taylor upper bound on exp(−Q)
         lhs = f"Real.log ({r} : ℝ)" if c == 1 else f"({c} : ℝ) * Real.log ({r} : ℝ)"
         fstar_term = f"FSTAR" if k == 1 else f"{k} * FSTAR"
-        # split of log X = cN·log r + |k|·log B  (positive power, no log_inv).
         split_lhs = f"{cN} * Real.log ({r} : ℝ)" if c == 1 \
             else f"{cN} * ({c} * Real.log ({r} : ℝ))"
-        # The exp_bound' RHS at n=3 (evaluated by norm_num to a rational ≤ U).
+        # The fold X = r^{cN}·B^{-k}.  For k > 0 (standard −FSTAR) the B factor is an
+        # INVERSE `(B^k)⁻¹` (a negative Nat exponent `B^(-k:ℕ)` is invalid — this is the
+        # k>0 bug the BG crosscheck surfaced on log76_gap); for k < 0 (ADDED +|k|·FSTAR)
+        # it is the positive power `B^{|k|}`.  The split sign / log_inv follow suit.
+        if k >= 0:
+            foldB = f"(({B} : ℝ) ^ ({k} : ℕ))⁻¹"
+            split_rhs = f"{split_lhs} - {k} * Real.log ({B} : ℝ)"
+            split_rw = ("rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,\n"
+                        "        Real.log_inv, Real.log_pow]")
+        else:
+            ak = -int(k)
+            foldB = f"(({B} : ℝ) ^ ({ak} : ℕ))"
+            split_rhs = f"{split_lhs} + {ak} * Real.log ({B} : ℝ)"
+            split_rw = ("rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,\n"
+                        "        Real.log_pow]")
+        X = f"({r} : ℝ) ^ ({cN} : ℕ) * {foldB}"
         return (
-            f"-- ===== F*-folding, TIGHT route (k={k}, ADDED FSTAR): {c}·log({r}) − "
+            f"-- ===== F*-folding, TIGHT route (k={k}): {c}·log({r}) − "
             f"{k}·FSTAR ≤ {q} (FSTAR = log({B})/{N}) =====\n"
-            f"-- Fold X = ({r})^{cN}·({B})^{ak} (≈ {float(cert.fold_value):.4f}); goal ⟺ "
+            f"-- Fold X = ({r})^{cN}·({B})^(−{k}) (≈ {float(cert.fold_value):.4f}); goal ⟺ "
             f"log X ≤ Q = {Qs}.\n"
             f"-- Degree-1 tangent (log x ≤ x−1) is TOO LOOSE here (X−1 > Q); use the TIGHT\n"
             f"-- route: log X ≤ Q ⟺ X ≤ exp Q (Real.log_le_iff_le_exp), exp Q = (exp(−Q))⁻¹\n"
             f"-- (Real.exp_neg), exp(−Q) ≤ U via degree-3 Taylor (Real.exp_bound'), X·U ≤ 1.\n"
             f"theorem {name} : {lhs} - ({fstar_term} : ℝ) ≤ ({q} : ℝ) := by\n"
             f"  rw [FSTAR]\n"
-            f"  have hXpos : (0 : ℝ) < ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
-            f":= by positivity\n"
-            f"  have hsplit : Real.log (({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)))\n"
-            f"      = {split_lhs} + {ak} * Real.log ({B} : ℝ) := by\n"
-            f"    rw [Real.log_mul (by positivity) (by positivity), Real.log_pow,\n"
-            f"        Real.log_pow]\n"
+            f"  have hXpos : (0 : ℝ) < {X} := by positivity\n"
+            f"  have hsplit : Real.log ({X})\n"
+            f"      = {split_rhs} := by\n"
+            f"    {split_rw}\n"
             f"    push_cast; ring\n"
             f"  have hexp := Real.exp_bound' (x := ({negQ} : ℝ)) (by norm_num) (by norm_num)\n"
             f"    (n := 3) (by norm_num)\n"
@@ -551,22 +562,19 @@ class LogCombinationEmitter(Emitter):
             f"    norm_num [Finset.sum_range_succ, Nat.factorial]\n"
             f"  have hexpU : Real.exp ({negQ} : ℝ) ≤ ({U} : ℝ) := le_trans hexp hU\n"
             f"  have hexppos : (0 : ℝ) < Real.exp ({negQ} : ℝ) := Real.exp_pos _\n"
-            f"  have hprod : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
-            f"* Real.exp ({negQ} : ℝ) ≤ 1 := by\n"
-            f"    have hmono : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
-            f"* Real.exp ({negQ} : ℝ)\n"
-            f"        ≤ ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) * ({U} : ℝ) :=\n"
+            f"  have hprod : {X} * Real.exp ({negQ} : ℝ) ≤ 1 := by\n"
+            f"    have hmono : {X} * Real.exp ({negQ} : ℝ)\n"
+            f"        ≤ {X} * ({U} : ℝ) :=\n"
             f"      mul_le_mul_of_nonneg_left hexpU (le_of_lt hXpos)\n"
-            f"    have hXU : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
-            f"* ({U} : ℝ) ≤ 1 := by norm_num\n"
+            f"    have hXU : {X} * ({U} : ℝ) ≤ 1 := by norm_num\n"
             f"    linarith\n"
-            f"  have hXle : ({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ)) "
-            f"≤ Real.exp (-({negQ}) : ℝ) := by\n"
-            f"    rw [Real.exp_neg, ← one_div]\n"
-            f"    rw [le_div_iff₀ hexppos]\n"
+            f"  have hXle : {X} ≤ Real.exp (-({negQ}) : ℝ) := by\n"
+            # target the exp inverse explicitly: X may itself contain `(B^k)⁻¹`
+            # (k>0 fold), so a bare `← one_div` would rewrite the wrong inverse.
+            f"    rw [Real.exp_neg, inv_eq_one_div (Real.exp ({negQ}) : ℝ), "
+            f"le_div_iff₀ hexppos]\n"
             f"    linarith [hprod]\n"
-            f"  have hlogle : Real.log (({r} : ℝ) ^ ({cN} : ℕ) * (({B} : ℝ) ^ ({ak} : ℕ))) "
-            f"≤ ({Qs} : ℝ) := by\n"
+            f"  have hlogle : Real.log ({X}) ≤ ({Qs} : ℝ) := by\n"
             f"    rw [Real.log_le_iff_le_exp hXpos]\n"
             f"    have hEq : (-({negQ}) : ℝ) = ({Qs} : ℝ) := by norm_num\n"
             f"    rw [hEq] at hXle; exact hXle\n"
