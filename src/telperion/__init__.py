@@ -328,6 +328,9 @@ from .gap_fill import (  # noqa: F401
 from .bundle import parse_theorems, merge_bundle, bundle_stats  # noqa: F401
 from .normalize import normalize_lean, canonical_statement, theorem2sorry  # noqa: F401
 from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeats  # noqa: F401
+from .statement_match import (  # noqa: F401
+    StatementMatchResult, statement_match_check, def_identity_check,
+)
 from .negative_control import (  # noqa: F401
     NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
 )
