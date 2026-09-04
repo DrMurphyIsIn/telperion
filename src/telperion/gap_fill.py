@@ -156,27 +156,96 @@ def pick_route(spec: EnclosureSpec) -> str:
     raise ValueError(f"no route fills {spec.terms} ≤ {spec.q}: {last}")
 
 
-def fill_gap(gap: Gap, *, prelude=None) -> str:
-    """Extract -> match -> route-select -> emit.  Returns the filled theorem Lean
-    (name : statement := by <generated proof>), or raises if unmatchable."""
-    spec = match_log_enclosure(gap.statement)
+@dataclass
+class FillResult:
+    """Outcome of filling one gap.  ``verified``/``axioms_clean`` are ``None`` when
+    no ``env_dir`` was supplied (fill-only)."""
+
+    name: str
+    proof: str
+    matcher: str
+    route: str = ""
+    verified: object = None       # bool | None
+    axioms_clean: object = None   # bool | None
+    repaired: list = None         # list of repair records (from telperion.repair)
+
+
+# --- extensible matcher registry ------------------------------------------------
+# A matcher is a (name, recognizer, filler) triple:
+#   recognizer(statement) -> spec | None   (None = not this family; may RAISE
+#       ValueError if the family shape matches but is unfillable, e.g. no route)
+#   filler(gap, spec) -> (proof: str, route: str)
+_MATCHERS: list = []
+
+
+def register_matcher(name, recognizer, filler):
+    """Register a gap-family matcher.  Other emitter families plug in here behind
+    the same extract -> match -> fill interface (cf. AXLE's family-agnostic loop)."""
+    _MATCHERS.append((name, recognizer, filler))
+
+
+def _extract_theorem(text: str, name: str) -> str:
+    """Pull the full ``theorem <name> … := by …`` block out of an emitted file."""
+    start = text.index(f"theorem {name}")
+    end = text.find("\nend ", start)
+    return (text[start:end] if end != -1 else text[start:]).rstrip()
+
+
+def _log_enclosure_recognizer(statement: str):
+    spec = match_log_enclosure(statement)
     if spec is None:
-        raise ValueError(f"gap {gap.name!r} is not a recognized log-enclosure: {gap.statement}")
-    spec.route = pick_route(spec)
+        return None
+    spec.route = pick_route(spec)   # raises ValueError if no route fills it
+    return spec
+
+
+def _log_enclosure_filler(gap: Gap, spec: EnclosureSpec):
     fam = log_combination_family(
         "Gap", GridSpec([("case", [0])]), lambda pt: gap.name,
         spec=lambda pt: {"terms": spec.terms, "q": spec.q, "route": spec.route,
                          "fstar_base": spec.fstar_base, "fstar_den": spec.fstar_den})
     rep = emit(certify(fam),
-               LeanProfile(namespace=("Gap",), prelude=prelude or ""),
+               LeanProfile(namespace=("Gap",), prelude=""),
                [LogCombinationEmitter()],
                ValidationReport(checks=(("log_combination", True),)))
     text = next(iter(rep.files.values()))
-    # extract the full theorem block: from `theorem <name>` to the `end <ns>` marker.
-    start = text.index(f"theorem {gap.name}")
-    end = text.find("\nend ", start)
-    proof = (text[start:end] if end != -1 else text[start:]).rstrip()
-    return proof, spec.route
+    return _extract_theorem(text, gap.name), spec.route
+
+
+register_matcher("log_enclosure", _log_enclosure_recognizer, _log_enclosure_filler)
+
+
+def fill_gap(gap: Gap, *, env_dir=None, prelude=None, repair=True,
+             allow_axioms=()) -> FillResult:
+    """Extract -> match (registry) -> route-select -> emit, then optionally VERIFY
+    (and repair) against a built Lean env.  Returns a :class:`FillResult`.  Raises
+    ``ValueError`` if no registered family matches (or a matched family cannot fill).
+    """
+    for name, recognizer, filler in _MATCHERS:
+        spec = recognizer(gap.statement)   # may raise ValueError (matched-but-unfillable)
+        if spec is None:
+            continue
+        proof, route = filler(gap, spec)
+        res = FillResult(name=gap.name, proof=proof, matcher=name, route=route,
+                         repaired=[])
+        if env_dir is not None:
+            pre = _FSTAR_PRELUDE if prelude is None else prelude
+            content = f"import Mathlib\n{pre}\n{proof}\n"
+            if repair:
+                from .repair import verify_with_repair
+                r, final, applied = verify_with_repair(
+                    content, env_dir=env_dir, decls=[gap.name], allow_axioms=allow_axioms)
+                res.repaired = applied
+                if applied and r.okay and r.axioms_clean:
+                    res.proof = _extract_theorem(final, gap.name)
+            else:
+                from .verify import verify_lean
+                r = verify_lean(content, env_dir=env_dir, decls=[gap.name],
+                                allow_axioms=allow_axioms)
+            res.verified = r.okay
+            res.axioms_clean = r.axioms_clean
+        return res
+    raise ValueError(f"gap {gap.name!r} matched no registered family: {gap.statement}")
 
 
 def _main(argv=None) -> int:
@@ -191,22 +260,23 @@ def _main(argv=None) -> int:
     if not gaps:
         print("no `:= by sorry` gaps found")
         return 0
+    ok = True
     for g in gaps:
         try:
-            proof, route = fill_gap(g)
+            res = fill_gap(g, env_dir=a.env)
         except ValueError as e:
             print(f"[skip] {g.name}: {e}")
             continue
-        print(f"[fill] {g.name}  (route={route})")
-        print(proof)
+        vtag = "" if res.verified is None else (
+            f"  [verified, axioms {'clean' if res.axioms_clean else 'DIRTY'}]"
+            if res.verified else "  [VERIFY FAILED]")
+        rep = f"  (repaired: {[r[1] + '->' + r[2] for r in res.repaired]})" if res.repaired else ""
+        print(f"[fill] {g.name}  (matcher={res.matcher}, route={res.route}){vtag}{rep}")
+        print(res.proof)
         print()
-        if a.env:
-            from telperion.verify import verify_lean
-            r = verify_lean(_FSTAR_PRELUDE + "\nimport Mathlib\n" + proof
-                            if False else "import Mathlib\n" + _FSTAR_PRELUDE + "\n" + proof,
-                            env_dir=a.env, decls=[g.name])
-            print(f"  verify: {r.summary()}")
-    return 0
+        if res.verified is False or res.axioms_clean is False:
+            ok = False
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

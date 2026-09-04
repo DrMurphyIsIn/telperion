@@ -67,6 +67,21 @@ Each fill was checked end-to-end: emitted proof → `verify_lean` → `[OK] axio
 against the built env in ~4–5s. CLI:
 `python -m telperion.gap_fill <cell_file.lean> [--env <built_dir>]`.
 
+### Maturation (2026-09-03): registry, verify-loop, repair
+
+- **Extensible matcher registry.** `fill_gap` iterates a registry of
+  `(name, recognizer, filler)` triples; `register_matcher(...)` plugs a new emitter
+  family in behind the same `extract → match → route → fill` interface (AXLE's
+  family-agnostic loop). The log-enclosure family is one registered matcher.
+- **Verify-loop integration.** `fill_gap(gap, env_dir=…)` returns a `FillResult`
+  with `verified` / `axioms_clean` / `repaired` set — fill *and* kernel-check in one
+  call. `verified is None` when no env is given (fill-only).
+- **Mechanical repair (`telperion.repair`, AXLE `repair_proofs`).** A small, SAFE set
+  of Mathlib-rename passes (`div_le_iff → div_le_iff₀`, …), applied *only as a
+  fallback* after a verification failure, then re-verified. `verify_with_repair(...)`
+  is the loop; `fill_gap(..., repair=True)` (default) uses it. Conservative and
+  idempotent — never speculative, no semantic change.
+
 **Scope.** The current matcher handles the FSTAR-normalized single-log family
 `c·log(r) − k·FSTAR (+ const) ≤ q` (`FSTAR = log(B)/N`, default BG `B=621/64, N=11`)
 — exactly the atoms the BG subaction cells need, all three routes, incl. the `+F*`

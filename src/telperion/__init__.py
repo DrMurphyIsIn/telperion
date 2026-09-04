@@ -320,8 +320,10 @@ from .tie_regime import (  # noqa: F401
 # persistent pre-built environment, and a gap-driven emitter loop (sorry -> extract
 # goal -> route-match -> fill).  See docs/VERIFY_AND_GAPFILL.md.
 from .verify import VerifyResult, verify_lean  # noqa: F401
+from .repair import repair_lean, verify_with_repair  # noqa: F401
 from .gap_fill import (  # noqa: F401
-    Gap, EnclosureSpec, extract_gaps, match_log_enclosure, pick_route, fill_gap,
+    Gap, EnclosureSpec, FillResult, extract_gaps, match_log_enclosure, pick_route,
+    fill_gap, register_matcher,
 )
 
 # The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules

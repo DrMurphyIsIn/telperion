@@ -61,9 +61,11 @@ def test_extract_gaps_finds_sorry_lemmas():
 
 
 def test_fill_emits_full_theorem_block():
-    proof, route = fill_gap(Gap("log79_add_fstar",
-                                "Real.log (7/9 : ℝ) + FSTAR + 1/24 ≤ 0"))
-    assert route == "tight"
+    res = fill_gap(Gap("log79_add_fstar",
+                       "Real.log (7/9 : ℝ) + FSTAR + 1/24 ≤ 0"))
+    assert res.matcher == "log_enclosure" and res.route == "tight"
+    assert res.verified is None  # no env_dir -> fill-only
+    proof = res.proof
     assert proof.startswith("theorem log79_add_fstar")
     # a truncation bug once cut the block at the first inner `linarith`; the tight
     # route's proof has several `have`s AFTER it, so guard the tail is present.
@@ -79,3 +81,25 @@ def test_non_enclosure_gap_is_refused():
         assert False, "should have refused a non-enclosure gap"
     except ValueError:
         pass
+
+
+def test_repair_lean_mathlib_renames():
+    from telperion.repair import repair_lean
+    src = "rw [div_le_iff hx]; exact le_div_iff hy"
+    fixed, applied = repair_lean(src)
+    assert "div_le_iff₀" in fixed and "le_div_iff₀" in fixed
+    assert len(applied) == 2
+    # idempotent: an already-renamed lemma is not double-renamed.
+    again, applied2 = repair_lean(fixed)
+    assert again == fixed and applied2 == []
+
+
+def test_registry_is_extensible():
+    from telperion.gap_fill import register_matcher, _MATCHERS
+    before = len(_MATCHERS)
+    register_matcher("dummy", lambda s: None, lambda g, spec: ("", ""))
+    assert len(_MATCHERS) == before + 1
+    # a None-returning recognizer is skipped; the log_enclosure matcher still wins.
+    res = fill_gap(Gap("log74_le_4fstar", "Real.log (7/4 : ℝ) ≤ 4 * FSTAR"))
+    assert res.matcher == "log_enclosure"
+    _MATCHERS.pop()  # cleanup
