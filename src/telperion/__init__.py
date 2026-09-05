@@ -332,6 +332,17 @@ from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeat
 from .statement_match import (  # noqa: F401
     StatementMatchResult, statement_match_check, def_identity_check,
 )
+# AXLE third-tour #5/#6 (parallel-integration): the first-class environment registry
+# and the mechanical verify-guarded proof simplifier.  Additive new modules.
+from .environment import (  # noqa: F401
+    Environment, UnknownEnvironmentError, discover_environments, get_environment,
+    list_environments, clear_environments, register_environment, resolve,
+    mathlib_built, default_examples_root,
+)
+from .simplify import (  # noqa: F401
+    HaveStep, SimplifyResult, SimplifyStep, simplify_proof, remove_unused_haves,
+    find_have_steps, unused_have_steps,
+)
 from .negative_control import (  # noqa: F401
     NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
 )
