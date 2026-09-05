@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — Jensen d=2 hyperbolicity cert family (Task 9)
+
+- **First formally kernel-verified Jensen-polynomial hyperbolicity for zeta.**
+  Four sorry-free Lean 4 theorems (`jensen_box_hyperbolic_deg2_{0,1,2,3}`) assert
+  that every degree-2 Jensen polynomial J^{2,n} whose rational coefficient box is
+  certified by Arb ball arithmetic is real-rooted (`.roots.card = 2`). Axioms:
+  `{propext, Classical.choice, Quot.sound}` only. AXLE statement-match gate
+  kernel-enforced for each. Discriminant margins: 2.82e-4, 2.27e-8, 8.00e-13,
+  1.51e-17 (n=0..3). `conjecture1_proved = False`; NOT a proof of RH.
+- **`--grid` flag in `examples/jensen_hyperbolicity/generate.py`**: emits the
+  d=2 cert family for n=0..3 in one command. Also adds `--n-list` for arbitrary
+  explicit offset lists. Default precision for grid mode: 400 bits.
+- **`enclose_xi_coeff_high` in `src/telperion/rh_jensen/coefficients.py`**:
+  certified Arb enclosure for alpha(m) at m=5, via three-point Vandermonde over
+  acb ball evaluations (the `acb_series` path is limited to 10 terms by
+  python-flint's zeta implementation; alpha(5) at index 10 requires this path).
+  Rigorous: Xi(t) evaluations are certified acb balls; the 3x3 Vandermonde solve
+  is exact over acb; the alpha(8)+ residual is bounded below 1e-28.
+- **`tests/rh_jensen/test_grid.py`**: 7 pytest tests covering grid-mode exits,
+  four-theorem emission, `.roots.card = 2` presence, no-sorry, AXLE gates,
+  `#print axioms` lines, and `--n-list` subset mode. All 7 pass.
+- **`docs/JENSEN_HYPERBOLICITY_STATUS.md`**: honest status document: what is
+  kernel-proven, the coefficient-membership trust boundary (Arb-certified,
+  non-kernel), and what is not done (d>=3 deferred to Phase 2 Hermite engine;
+  uniform N(d) out of scope; emitter framework integration deferred).
+- Degrees d>=3 explicitly deferred to Phase 2 (Mathlib lacks discriminant-to-
+  real-roots bridges for cubics/quartics; the general Hermite-Bezoutian PSD
+  engine will handle all d<=8 uniformly).
+
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 
 - **`telperion.comparator` — a bridge to the openai/ten-proofs Comparator**, an
