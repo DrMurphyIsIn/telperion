@@ -328,7 +328,9 @@ from .gap_fill import (  # noqa: F401
 from .bundle import parse_theorems, merge_bundle, bundle_stats, topo_sort_blocks  # noqa: F401
 from .cert_deps import extract_deps, DepGraph, minimal_snippet  # noqa: F401
 from .normalize import normalize_lean, canonical_statement, theorem2sorry  # noqa: F401
-from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeats  # noqa: F401
+from .cert_meta import (  # noqa: F401
+    CertIndex, CertMeta, extract_cert_meta, measure_heartbeats, type_hash,
+)
 from .statement_match import (  # noqa: F401
     StatementMatchResult, statement_match_check, def_identity_check,
 )
@@ -345,6 +347,10 @@ from .simplify import (  # noqa: F401
 )
 from .negative_control import (  # noqa: F401
     NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
+)
+from .signature_gate import (  # noqa: F401
+    SignatureMatch, SignatureResult, build_sig_guards, check_signatures,
+    forall_type, sig_guard_name,
 )
 # Generic kernel-gated negative control (AXLE `disprove`, generalized to every
 # emitter): the engine + the per-emitter adapter registry.  Importing the adapters

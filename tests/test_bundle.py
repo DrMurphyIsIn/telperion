@@ -263,3 +263,9 @@ def test_merged_file_verifies_optional():
                            "BundleCheck.bundle_b"])
     assert r.okay, r.summary()
     assert r.axioms_clean, r.summary()
+
+
+# NOTE: this session's redundant topo/merge_duplicates/type_hash-dedup tests were
+# dropped in the parallel-session merge — the canonical bundle.py (topo_sort_blocks
+# + `topo=` kwarg + `_type_hash` dedup) covers the same ground and is tested above
+# (test_topo_sort_*, test_merge_topo_*, test_type_hash_dedup_collapses_*).

@@ -50,8 +50,12 @@ _FSTAR_PRELUDE = "noncomputable def FSTAR : ℝ := Real.log (621 / 64) / 11"
 # theorem <name> : <statement> := by sorry   (statement may span lines but must not
 # itself contain `:=` -- else the non-greedy match leaps across an intervening
 # non-sorry declaration into the next `:= by sorry`).
+# Binder groups before the `:` may be explicit `(...)`, implicit `{...}`,
+# instance `[...]`, or strict-implicit `⦃...⦄` — RH/Mathlib-idiom lemmas lead with
+# implicit binders (`{s : ℂ} {N : ℕ}`), which the original `(...)`-only skip missed
+# (silently returning zero gaps on such lemmas).
 _SORRY_THM = re.compile(
-    r"(?:theorem|lemma)\s+([A-Za-z_][\w']*)\s*(?:\([^)]*\)\s*)*:\s*"
+    r"(?:theorem|lemma)\s+([A-Za-z_][\w']*)\s*(?:[(\[{⦃][^)\]}⦄]*[)\]}⦄]\s*)*:\s*"
     r"((?:(?!:=)[\s\S])+?)\s*:=\s*by\s+sorry",
 )
 _LOG = re.compile(r"Real\.log\s*\(?\s*([0-9]+\s*/\s*[0-9]+|[0-9]+)\s*(?::\s*ℝ)?\s*\)?")

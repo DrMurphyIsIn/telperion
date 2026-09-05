@@ -60,6 +60,20 @@ def test_extract_gaps_finds_sorry_lemmas():
     assert names == {"foo", "baz"}, names
 
 
+def test_extract_gaps_handles_implicit_and_instance_binders():
+    # RH/Mathlib-idiom lemmas lead with implicit `{...}` / instance `[...]` binders;
+    # the original `(...)`-only binder skip returned ZERO gaps on these (found by
+    # applying the AXLE gap_fill port to the RH zeta-log-bound sorry-skeleton).
+    content = (
+        "theorem norm_partial_sum_le {s : ℂ} (hs : 1 ≤ s.re) {N : ℕ} (hN : 1 ≤ N) : "
+        "‖∑ n ∈ Finset.Icc 1 N, (n : ℂ) ^ (-s)‖ ≤ 1 + Real.log N := by sorry\n"
+        "lemma inst_binder [Fintype α] (x : α) : True := by sorry\n"
+    )
+    gaps = extract_gaps(content)
+    names = {g.name for g in gaps}
+    assert names == {"norm_partial_sum_le", "inst_binder"}, names
+
+
 def test_fill_emits_full_theorem_block():
     res = fill_gap(Gap("log79_add_fstar",
                        "Real.log (7/9 : ℝ) + FSTAR + 1/24 ≤ 0"))

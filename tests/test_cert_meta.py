@@ -249,3 +249,48 @@ def test_measure_heartbeats_missing_env_returns_none():
         name="t",
     )
     assert hb is None
+
+
+# --- AXLE per-cert dependency extraction (extract_decls dependency set) --------------
+
+def test_refs_captures_referenced_identifiers():
+    m = extract_cert_meta(
+        "theorem t (x : ℝ) (hx : 0 ≤ x) : Real.log (1 + x) ≤ x := by\n"
+        "  have h := Real.log_le_sub_one_of_pos (by linarith)\n  linarith\n"
+    )
+    assert "Real.log_le_sub_one_of_pos" in m.refs
+    assert "t" not in m.refs                       # own name excluded
+
+
+def test_index_dependencies_only_indexed_certs():
+    base = extract_cert_meta("theorem base : (0:ℝ) < 1 := by norm_num\n")
+    user = extract_cert_meta(
+        "theorem user : (0:ℝ) < 2 := by\n  have := base\n  linarith [base]\n")
+    idx = CertIndex()
+    idx.add(base); idx.add(user)
+    # `user` references `base` (indexed) plus tactic/Mathlib tokens (not indexed).
+    assert idx.dependencies("user") == {"base"}
+    assert idx.dependencies("base") == set()
+    assert idx.dependents("base") == {"user"}
+
+
+def test_index_dead_atoms_and_impact():
+    a = extract_cert_meta("theorem a : (0:ℝ) < 1 := by norm_num\n")
+    b = extract_cert_meta("theorem b : (0:ℝ) < 2 := by\n  have := a\n  linarith\n")
+    root = extract_cert_meta("theorem root : (0:ℝ) < 3 := by\n  have := b\n  linarith\n")
+    dead = extract_cert_meta("theorem dead : (0:ℝ) < 9 := by norm_num\n")
+    idx = CertIndex()
+    for m in (a, b, root, dead):
+        idx.add(m)
+    # `root` is a top-level goal; `dead` is referenced by nobody.
+    assert idx.dead_atoms(roots=["root"]) == ["dead"]
+    # changing `a` impacts everything transitively above it.
+    assert idx.impacted_by("a") == {"b", "root"}
+
+
+def test_refs_survive_json_roundtrip():
+    idx = CertIndex()
+    idx.add(extract_cert_meta(
+        "theorem t : True := by\n  have := helper\n  trivial\n"))
+    idx2 = CertIndex.from_json(idx.to_json())
+    assert "helper" in idx2.metas["t"].refs
