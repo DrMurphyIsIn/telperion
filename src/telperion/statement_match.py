@@ -37,7 +37,7 @@ class StatementMatchResult:
 
 
 def statement_match_check(intended, *, env_dir, imports=("import Mathlib",),
-                          prelude="", allow_axioms=()):
+                          prelude="", allow_axioms=(), batch=True):
     """Check each declaration states its INTENDED proposition.
 
     ``intended``: ``{fully_qualified_decl_name -> intended_type_str}``.  For each, emit
@@ -46,17 +46,36 @@ def statement_match_check(intended, *, env_dir, imports=("import Mathlib",),
     to its intended type passes; otherwise the type mismatch is recorded.  Returns a
     :class:`StatementMatchResult`.
 
-    Checks are run one-per-decl so a mismatch is attributable to the exact declaration.
+    ``batch`` (default) runs ALL checks in ONE ``lake env lean`` invocation — a single
+    ``import Mathlib`` load instead of one per decl.  Measured ~N× faster (3 checks:
+    4.3s batched vs 14.4s separate), the practical warm-tier win for an audit of many
+    statements (`lean --stdin` is single-shot, so a persistent server is the only way
+    to amortise the load across *separate* calls — that is the LSP path, deferred).  On
+    an all-match batch this returns immediately; on ANY failure it re-runs per-decl to
+    ATTRIBUTE the mismatch to the exact declaration.  ``batch=False`` forces per-decl.
     """
     import time
     from .verify import verify_lean
 
     head = "\n".join(imports) + ("\n" + prelude if prelude else "") + "\n"
-    matched, mismatched = [], {}
+    items = list(intended.items())
     t0 = time.time()
-    for i, (name, typ) in enumerate(intended.items()):
-        safe = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in name)
-        check = head + f"theorem __sigmatch_{i}_{safe} : {typ} := @{name}\n"
+
+    if batch and len(items) > 1:
+        body = head + "".join(
+            f"theorem __sigmatch_{i}_{_safe(name)} : {typ} := @{name}\n"
+            for i, (name, typ) in enumerate(items))
+        r = verify_lean(body, env_dir=env_dir, allow_axioms=allow_axioms)
+        if r.okay:
+            return StatementMatchResult(
+                all_match=True, matched=[n for n, _ in items], mismatched={},
+                elapsed_s=time.time() - t0)
+        # a mismatch is present but not attributable from the batch — fall through
+        # to the per-decl pass (correctness over speed once something is wrong).
+
+    matched, mismatched = [], {}
+    for i, (name, typ) in enumerate(items):
+        check = head + f"theorem __sigmatch_{i}_{_safe(name)} : {typ} := @{name}\n"
         r = verify_lean(check, env_dir=env_dir, allow_axioms=allow_axioms)
         if r.okay:
             matched.append(name)
@@ -66,6 +85,10 @@ def statement_match_check(intended, *, env_dir, imports=("import Mathlib",),
         all_match=(len(mismatched) == 0), matched=matched, mismatched=mismatched,
         elapsed_s=time.time() - t0,
     )
+
+
+def _safe(name: str) -> str:
+    return "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in name)
 
 
 def def_identity_check(name, binder, intended_body, *, env_dir,

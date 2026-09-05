@@ -325,7 +325,8 @@ from .gap_fill import (  # noqa: F401
     Gap, EnclosureSpec, FillResult, extract_gaps, extract_sorry_goals,
     match_log_enclosure, pick_route, fill_gap, register_matcher,
 )
-from .bundle import parse_theorems, merge_bundle, bundle_stats  # noqa: F401
+from .bundle import parse_theorems, merge_bundle, bundle_stats, topo_sort_blocks  # noqa: F401
+from .cert_deps import extract_deps, DepGraph, minimal_snippet  # noqa: F401
 from .normalize import normalize_lean, canonical_statement, theorem2sorry  # noqa: F401
 from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeats  # noqa: F401
 from .statement_match import (  # noqa: F401

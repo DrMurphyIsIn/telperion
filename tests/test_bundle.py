@@ -15,7 +15,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the shared lean_env guard
 
-from telperion.bundle import parse_theorems, merge_bundle, bundle_stats  # noqa: E402
+from telperion.bundle import (  # noqa: E402
+    parse_theorems,
+    merge_bundle,
+    bundle_stats,
+    topo_sort_blocks,
+)
 from lean_env import lean_env_ready  # noqa: E402
 
 # --- Small hardcoded theorem strings (BG-flavoured enclosure atoms) -----------
@@ -134,6 +139,96 @@ def test_bundle_stats_shape():
     stats = bundle_stats(merge_bundle([_CELL_A]))
     assert set(stats) == {"n_theorems", "n_unique", "n_deduped", "names"}
     assert stats["names"] == ["log54_sub_fstar_le", "cellA_bound"]
+
+
+# --- topo sort + structural dedup (AXLE merge/extract_decls extensions) -------
+
+# A -> uses shared atom; B -> uses A. So order must be: shared, A, B.
+_ATOM = (
+    "theorem base_atom : (1:ℝ) = 1 := by norm_num\n"
+)
+_USES_ATOM = (
+    "theorem mid_lemma : (2:ℝ) = 2 := by\n"
+    "  have := base_atom\n"
+    "  norm_num\n"
+)
+_USES_MID = (
+    "theorem top_goal : (3:ℝ) = 3 := by\n"
+    "  have := mid_lemma\n"
+    "  norm_num\n"
+)
+
+
+def test_topo_sort_orders_dep_before_use():
+    # Present them OUT of dependency order: top, mid, base.
+    blocks = parse_theorems(_USES_MID + _USES_ATOM + _ATOM)
+    ordered, cycles = topo_sort_blocks(blocks)
+    names = [b["name"] for b in ordered]
+    assert cycles == []
+    # base before mid before top
+    assert names.index("base_atom") < names.index("mid_lemma")
+    assert names.index("mid_lemma") < names.index("top_goal")
+
+
+def test_topo_sort_cycle_does_not_crash():
+    # p references q, q references p -> a 2-cycle. Must not crash / drop.
+    src = (
+        "theorem p_thm : (1:ℝ) = 1 := by\n"
+        "  have := q_thm\n"
+        "  norm_num\n"
+        "theorem q_thm : (2:ℝ) = 2 := by\n"
+        "  have := p_thm\n"
+        "  norm_num\n"
+    )
+    blocks = parse_theorems(src)
+    ordered, cycles = topo_sort_blocks(blocks)
+    names = [b["name"] for b in ordered]
+    assert set(names) == {"p_thm", "q_thm"}  # nothing dropped
+    assert len(cycles) == 1
+    assert set(cycles[0]) == {"p_thm", "q_thm"}
+
+
+def test_merge_topo_produces_dependency_order():
+    merged = merge_bundle([_USES_MID, _USES_ATOM, _ATOM], topo=True)
+    # In the merged text, base_atom is defined before mid_lemma before top_goal.
+    assert merged.index("theorem base_atom") < merged.index("theorem mid_lemma")
+    assert merged.index("theorem mid_lemma") < merged.index("theorem top_goal")
+
+
+def test_merge_topo_false_keeps_first_seen_order():
+    merged = merge_bundle([_USES_MID, _USES_ATOM, _ATOM], topo=False)
+    # default order preserved: top, mid, base as supplied
+    assert merged.index("theorem top_goal") < merged.index("theorem mid_lemma")
+    assert merged.index("theorem mid_lemma") < merged.index("theorem base_atom")
+
+
+# Two DIFFERENT names, SAME statement -> structural (type_hash) dedup collapses them.
+_STRUCT_ONE = (
+    "theorem alpha_bound : Real.log (5/4 : ℝ) - FSTAR ≤ (1/20 : ℝ) := by sorry\n"
+)
+_STRUCT_TWO = (
+    "theorem beta_bound : Real.log (5/4 : ℝ) - FSTAR ≤ (1/20 : ℝ) := by sorry\n"
+)
+
+
+def test_type_hash_dedup_collapses_identical_statements():
+    # name dedup keeps both (different names); type_hash collapses to one.
+    name_merged = merge_bundle([_STRUCT_ONE, _STRUCT_TWO], dedup="name")
+    assert bundle_stats(name_merged)["n_theorems"] == 2
+
+    struct_merged = merge_bundle([_STRUCT_ONE, _STRUCT_TWO], dedup="type_hash")
+    stats = bundle_stats(struct_merged)
+    assert stats["n_theorems"] == 1
+    # first-seen name survives
+    assert stats["names"] == ["alpha_bound"]
+    assert "beta_bound" not in struct_merged
+
+
+def test_dedup_both_name_conflict_still_raises():
+    import pytest
+    # dedup="both" must still surface same-name/different-statement conflicts.
+    with pytest.raises(ValueError):
+        merge_bundle([_CELL_A, _CELL_CONFLICT], dedup="both")
 
 
 def test_merged_file_verifies_optional():

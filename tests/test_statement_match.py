@@ -49,6 +49,16 @@ def test_signature_gate_accepts_exact():
     assert res.all_match and res.matched == ["exact_thm"]
 
 
+def test_batch_fast_path_all_match():
+    # two exact matches -> the batched path (one Mathlib load) returns all_match.
+    prelude = ("theorem a1 (x : ℝ) : 0 ≤ x^2 := by positivity\n"
+               "theorem a2 (x : ℝ) : 0 ≤ x^2 + 1 := by positivity")
+    res = statement_match_check(
+        intended={"a1": "∀ (x : ℝ), 0 ≤ x^2", "a2": "∀ (x : ℝ), 0 ≤ x^2 + 1"},
+        env_dir=str(_ENV), imports=("import Mathlib",), prelude=prelude, batch=True)
+    assert res.all_match and set(res.matched) == {"a1", "a2"}
+
+
 def test_def_identity_catches_divergence():
     prelude = "def myprop (x : ℝ) : Prop := 0 ≤ x^2 + 1"
     # correct body -> MATCH
