@@ -232,6 +232,9 @@ class HyperbolicityEmitter(Emitter):
             gate = self.emit_gate(inst.lean_name, thm_type)
             if gate:
                 lines.append(gate)
+            # Blank-line separator between emitted units (theorem+gate blocks),
+            # so consecutive theorems/examples are visually separated.
+            lines.append("\n")
             nthm += 1
         return "".join(lines), nthm
 

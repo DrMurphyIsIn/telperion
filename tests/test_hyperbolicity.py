@@ -12,9 +12,12 @@ import sys
 from fractions import Fraction as F
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion import certify  # noqa: E402
+from telperion.certify import CertificationError  # noqa: E402
 from telperion.emit_hyperbolicity import (  # noqa: E402
     HyperbolicityEmitter,
     hyperbolicity_family,
@@ -35,35 +38,28 @@ def _profile() -> LeanProfile:
 
 
 def test_refuses_negative_discriminant():
-    # box for a=c2, b=c1, c=c0 with c1^2 - 4 c0 c2 < 0 must refuse.
+    # box for a=c2, b=c1, c=c0 with c1^2 - 4 c0 c2 < 0 must refuse.  Precise:
+    # certify() wraps the arm's ValueError refusal in a CertificationError; assert
+    # on the exact type + reason so an unrelated crash cannot pass this gate.
     fam = hyperbolicity_family("H", (), _grid_one(), lambda pt: "h0",
         lambda pt: ([(F(1), F(1)), (F(1), F(1)), (F(1), F(1))], 2))  # disc = 1-4 = -3
-    try:
+    with pytest.raises(CertificationError, match="discriminant lower bound"):
         certify(fam)
-        assert False
-    except Exception:
-        pass
 
 
 def test_refuses_leading_straddles_zero():
     # a2 box straddles 0 -> cannot prove a ≠ 0 -> refuse (even if disc ok).
     fam = hyperbolicity_family("H", (), _grid_one(), lambda pt: "h0",
         lambda pt: ([(F(-1), F(-1)), (F(0), F(0)), (F(-1), F(1))], 2))
-    try:
+    with pytest.raises(CertificationError, match="straddles 0"):
         certify(fam)
-        assert False
-    except Exception:
-        pass
 
 
 def test_refuses_non_deg2():
     fam = hyperbolicity_family("H", (), _grid_one(), lambda pt: "h0",
         lambda pt: ([(F(-1), F(-1)), (F(0), F(0)), (F(0), F(0)), (F(1), F(1))], 3))
-    try:
+    with pytest.raises(CertificationError, match="only degree d=2 is supported"):
         certify(fam)
-        assert False
-    except Exception:
-        pass
 
 
 def test_emit_real_rooted_quadratic():
