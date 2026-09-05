@@ -14,14 +14,19 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from telperion.statement_match import (  # noqa: E402
     statement_match_check, def_identity_check,
 )
+from lean_env import lean_env_ready  # noqa: E402
 
 _ENV = Path(__file__).resolve().parents[1] / "examples" / "log_combination" / "lean"
-_HAS_ENV = (_ENV / "lake-manifest.json").exists()
-pytestmark = pytest.mark.skipif(not _HAS_ENV, reason="needs a built Lean env")
+# A checked-in lake-manifest.json is NOT proof the env is usable: the runner also
+# needs `lake` on PATH and a built Mathlib cache. `lean_env_ready` checks both, so
+# this suite skips cleanly on the no-toolchain unit job (and never rebuilds).
+_HAS_ENV = lean_env_ready(_ENV)
+pytestmark = pytest.mark.skipif(not _HAS_ENV, reason="needs a built Lean env (lake + Mathlib)")
 
 
 def test_signature_gate_catches_weakening():

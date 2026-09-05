@@ -248,15 +248,26 @@ def test_lean_server_construction_never_raises_and_defaults_unavailable(tmp_path
     srv.close()
 
 
-def test_lean_server_start_failure_is_recorded(monkeypatch, tmp_path):
+def test_lean_server_start_is_pure_env_capability_check(tmp_path):
+    # start() no longer spawns a worker (single-shot/LSP redesign): it is a pure
+    # capability check on env_dir existence. It must never raise.
+    from telperion.lean_server import LeanServer
+    assert LeanServer(tmp_path).start() is True
+    assert LeanServer(tmp_path / "does_not_exist").start() is False
+
+
+def test_lean_server_spawn_failure_is_recorded(monkeypatch, tmp_path):
+    # When the toolchain cannot be spawned (e.g. lake absent), the failure is
+    # RECORDED (via probe/elaborate — both the LSP Popen and the single-shot
+    # subprocess.run paths) and the server reports unavailable, never raising.
     from telperion import lean_server as LS
 
     def _boom(*a, **k):
         raise OSError("no lake here")
 
-    monkeypatch.setattr(LS.subprocess, "Popen", _boom)
+    monkeypatch.setattr(LS.subprocess, "Popen", _boom)     # LSP warm path
+    monkeypatch.setattr(LS.subprocess, "run", _boom)       # single-shot fallback
     srv = LS.LeanServer(tmp_path)
-    assert srv.start() is False
     assert srv.probe() is False
     assert srv.available() is False
     assert srv._start_error is not None
