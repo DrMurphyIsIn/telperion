@@ -122,3 +122,27 @@ plus `examples/<name>/{generate.py, lean/*}`, a README row, a CI job, and a
 the corpus, then verify with one local `lake build`** — that near-eliminated build
 failures. Gotcha: ℝ-ascribe bare rational literals in emitted Lean (`(0:ℝ)`,
 `(<rat>:ℝ)`) or they default to ℤ and won't unify with ℝ lemmas.
+
+---
+
+## Session 2026-09-04..05 — direct-function emitters + pipelines (Kelmans/RH)
+
+A separate style from the `<name>_family`/`certify` framework above: these are **direct
+`str`-emitting functions** (no `CertifiedFamily`/`_SPECIAL_DISPATCH` registration) — call them,
+get Lean text, kernel-check it. All in `src/telperion/`, all with unit tests. Landed on `main`.
+
+| Capability | Entry point | Discharges / does |
+|---|---|---|
+| `emit_nonneg_orthant` | `nonneg_orthant_cert(name, poly, syms)` | `0 < p` on the nonneg orthant for an all-nonneg-coeff poly + positive constant; **auto-generates** per-monomial `mul_nonneg` hint chains (any arity). A specialized/optimized `emit_handelman`. |
+| `emit_domain_to_orthant` | `domain_to_orthant_cert(name, poly, constraints)` | positivity on a **simplicial cone** (`var_i ≥ lower_i`, e.g. `pA ≥ pB ≥ 1`) via slack reparametrization; theorem stated in ORIGINAL vars, handles bodies with negative coeffs (positive only on the cone). |
+| `emit_mt_cosine` | `fejer_riesz_sos(b)`, `mt_cosine_cert_lean(name, b)` | nonneg trig poly → exact **Fejér–Riesz constrained-SOS** `A²+(1−x²)B²` (a Putinar cert on `{1−x²≥0}`); flagship `MT_DEG4` beats the VP zero-free slice by 7.4% (F-functional). |
+| `emit_spectral_factorization` | `spectral_factor(a)`, `emit_spectral_sos_cert(name, a)` | the `a→b` front-end (palindromic assoc-poly root-find) so ANY nonneg trig poly (given the tuple) gets the Fejér–Riesz SOS; `target='exact'` for perfect squares (VP), `'nearby'` otherwise. |
+| `emit_order_residue` | `emit_order_residue_cert(name, n)` | packages the PROVEN `residue_logDeriv` — "residue of `f'/f` at an order-`n` point = `n`" — as a re-export at a fixed integer order (complex-analysis, upstreamable). |
+| `cert_leaf` (pipeline) | `positivity_leaf(prefix, specs, module_doc, namespace)` | a family of cert specs (`kind=orthant/domain/rational`) → one **hazard-safe self-building Lean leaf**; `scan_hazards` RAISES on a `-/` in docstring prose (the `3-/4` bug, via stray-`-/`-in-code detection) or leaked `**`. Reproduces `R47R7KelmansTwoHubCert` byte-for-byte. |
+| `mt_optimize` (pipeline) | `optimize_cosine(d, denom=…)` | discovers a VP-beating admissible cosine polynomial at any degree (scipy F-max over the Fejér cone with `a_k≥0, a₁≥a₀`, then robust rationalization); scipy lazy-imported. The F-functional saturates ~0.0286 by degree 4–6. |
+
+**Applications (kernel-verified leaves on `main`):** the full Kelmans local merge table —
+`R47R7Kelmans{TwoHub, AssistedMerge, GenEnv(100), Dichotomy(44)}Cert` (156 certs, all via
+`emit_nonneg_orthant`) — plus the RH cosine leaves `mt_cosine_deg4_nonneg` / `vp_cosine_deg4_nonneg`
+in `EmittedShapes.lean`. Exact-arithmetic BG probes use `python-flint` `fmpq` (~20× over `Fraction`);
+`residual_flint_probe.pi_flint` is validated against `pi_loaded`.
