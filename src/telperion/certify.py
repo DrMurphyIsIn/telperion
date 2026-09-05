@@ -198,6 +198,10 @@ _SPECIAL_KINDS = (
     "max_modulus",
     "bc_deriv_re",
     "entire_part_bound",
+    # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
+    # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
+    # rational lower bound over a rational box, emitted via nlinarith.
+    "box_robust",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -265,6 +269,7 @@ _SPECIAL_DISPATCH = {
     "max_modulus": ("emit_max_modulus", "certify_max_modulus_point"),
     "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point"),
     "entire_part_bound": ("emit_entire_part_bound", "certify_entire_part_bound_point"),
+    "box_robust": ("emit_box_robust", "certify_box_robust_point"),
 }
 
 
