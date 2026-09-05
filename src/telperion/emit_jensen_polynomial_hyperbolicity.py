@@ -48,6 +48,17 @@ THEOREM_TEMPLATE = """theorem {name} :
                (by norm_num : (0:Real) ≤ {margin})]
   have hcard := hyperbolic_deg2_of_discrim_nonneg c2 c1 c0 ha hdisc
   simpa using hcard
+
+-- AXLE statement-match gate: the kernel checks that {name} has EXACTLY the
+-- intended type. This `example` compiles only if the emitted Prop is literally
+-- the box-hyperbolicity statement ending in .roots.card = 2.
+-- conjecture1_proved = False. This certifies J^{{2,{n_offset}}} only.
+example : forall c0 c1 c2 : Real,
+      {lo0} <= c0 -> c0 <= {hi0} ->
+      {lo1} <= c1 -> c1 <= {hi1} ->
+      {lo2} <= c2 -> c2 <= {hi2} ->
+      (Polynomial.C c2 * Polynomial.X^2 + Polynomial.C c1 * Polynomial.X + Polynomial.C c0).roots.card = 2 :=
+  {name}
 """
 
 
@@ -121,6 +132,7 @@ class JensenPolynomialHyperbolicityEmitter(Emitter):
         name = f"jensen_box_hyperbolic_deg2_{n}"
         text = THEOREM_TEMPLATE.format(
             name=name,
+            n_offset=n,
             lo0=rat_lean(lo0), hi0=rat_lean(hi0),
             lo1=rat_lean(lo1), hi1=rat_lean(hi1),
             lo2=rat_lean(lo2), hi2=rat_lean(hi2),
