@@ -325,10 +325,25 @@ from .gap_fill import (  # noqa: F401
     Gap, EnclosureSpec, FillResult, extract_gaps, extract_sorry_goals,
     match_log_enclosure, pick_route, fill_gap, register_matcher,
 )
-from .bundle import parse_theorems, merge_bundle, bundle_stats  # noqa: F401
+from .bundle import parse_theorems, merge_bundle, bundle_stats, topo_sort_blocks  # noqa: F401
+from .cert_deps import extract_deps, DepGraph, minimal_snippet  # noqa: F401
 from .normalize import normalize_lean, canonical_statement, theorem2sorry  # noqa: F401
 from .cert_meta import (  # noqa: F401
     CertIndex, CertMeta, extract_cert_meta, measure_heartbeats, type_hash,
+)
+from .statement_match import (  # noqa: F401
+    StatementMatchResult, statement_match_check, def_identity_check,
+)
+# AXLE third-tour #5/#6 (parallel-integration): the first-class environment registry
+# and the mechanical verify-guarded proof simplifier.  Additive new modules.
+from .environment import (  # noqa: F401
+    Environment, UnknownEnvironmentError, discover_environments, get_environment,
+    list_environments, clear_environments, register_environment, resolve,
+    mathlib_built, default_examples_root,
+)
+from .simplify import (  # noqa: F401
+    HaveStep, SimplifyResult, SimplifyStep, simplify_proof, remove_unused_haves,
+    find_have_steps, unused_have_steps,
 )
 from .negative_control import (  # noqa: F401
     NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
