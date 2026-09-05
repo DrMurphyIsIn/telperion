@@ -24,20 +24,22 @@ the pinned toolchain):
   * :meth:`probe` does a one-shot capability check (can the worker start and echo
     a trivial elaboration?) and CACHES the verdict.
 
-VALIDATED vs UNVALIDATED ON LEAN 4.32.0 (read before trusting this):
+VALIDATED ON LEAN 4.32.0 (empirical, 2026-09-04 — the earlier "unvalidated" note
+is now resolved):
 
-  * VALIDATED (by construction / offline): the fallback contract -- an
-    unavailable or misbehaving server never changes a verification's verdict
-    versus the cold path; the framing/parse round-trip against synthetic output;
-    process lifecycle (spawn/terminate/context-manager).
-  * UNVALIDATED on 4.32.0 (REQUIRES a built env to confirm): that
-    ``lake env lean --stdin`` on this exact toolchain (a) accepts a whole file on
-    stdin, (b) emits the ``:L:C: error:`` diagnostics we parse, and (c) can be
-    driven snippet-by-snippet without a per-snippet re-elaboration of the import
-    graph.  Lean 4.32.0 ships an LSP server (``lean --server``, JSON-RPC over
-    stdio) which is the ROBUST alternative if ``--stdin`` proves single-shot; the
-    LSP path is sketched in :meth:`_start_lsp` but left un-wired pending a live
-    env.  Because of this uncertainty the server DEFAULTS to unavailable unless a
+  * ``lake env lean --stdin`` (a) accepts a whole file on stdin and (b) emits the
+    ``<file>:L:C: error:`` diagnostics the cold path already parses.  BUT (c) it is
+    SINGLE-SHOT: it emits nothing until stdin EOF, elaborates the whole input once,
+    then exits — it CANNOT be driven snippet-by-snippet, and each call re-imports
+    Mathlib (no warm benefit).  The earlier sentinel-framed persistent-worker design
+    would have HUNG on the read.  :meth:`elaborate` now uses the correct single-shot
+    contract (write, close stdin, read all) — safe and correct, but not faster than
+    the cold path.
+  * The genuine warm tier is the LSP server (``lean --server``, JSON-RPC over
+    stdio), whose environment IS resident across ``didOpen`` calls.  Its concrete,
+    now-empirically-grounded implementation plan is in :meth:`_start_lsp` — the
+    scoped next unit.  Because the single-shot path yields no latency win, the
+    server still DEFAULTS to unavailable unless a
     successful :meth:`probe` (or ``force_probe=True``) confirms it, so enabling it
     is an explicit, evidence-gated opt-in -- never a silent behaviour change.
 
@@ -50,7 +52,6 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -92,55 +93,51 @@ class LeanServer:
         return env
 
     def start(self) -> bool:
-        """Attempt to spawn the persistent worker.  Never raises.
+        """Capability check: is ``lake env lean`` invokable in ``env_dir``?  Never
+        raises.  (There is no persistent worker under the ``--stdin`` contract — see
+        the EMPIRICAL FINDING in :meth:`elaborate`; each call spawns a fresh
+        single-shot process.)  Returns ``False`` on a missing env dir."""
+        return Path(self.env_dir).exists()
 
-        Returns ``True`` if a live process was created (NOT that it is proven
-        usable -- that is :meth:`probe`'s job).  On any OS-level failure records
-        the error and returns ``False``.
+    def _start_lsp(self):  # pragma: no cover - the real warm path, scoped next unit
+        """The genuine warm path: the Lean 4 LSP server (``lean --server``).
+
+        EMPIRICALLY GROUNDED PLAN (the ``--stdin`` contract is single-shot — see
+        :meth:`elaborate` — so residency requires the LSP).  ``lean --server`` speaks
+        JSON-RPC over stdio, ``Content-Length``-framed.  Concrete steps for 4.32.0:
+
+        1. spawn ``lake env lean --server`` (inherits the built env / oleans);
+        2. send ``initialize`` (rootUri = env_dir) then ``initialized``;
+        3. per snippet: ``textDocument/didOpen`` a virtual ``file://`` doc whose text
+           is ``import Mathlib\n<snippet>`` — the FIRST didOpen pays the Mathlib load,
+           subsequent ones reuse the resident environment (the win);
+        4. read ``textDocument/publishDiagnostics`` for that uri; completion is
+           signalled by ``$/lean/fileProgress`` reaching an empty processing set, so
+           wait on that before taking diagnostics as final;
+        5. map each diagnostic ``{range:{start:{line,character}}, severity, message}``
+           to the shared ``<file>:L:C: error:`` text so
+           :func:`telperion.verify._parse_output` is reused verbatim;
+        6. ``textDocument/didClose`` (or bump the version via ``didChange``) between
+           snippets to avoid unbounded doc accumulation.
+
+        Deferred as its own unit: robust async-diagnostic completion detection
+        (steps 4-5) is the finicky part and must be validated against real 4.32.0
+        output before it can replace the cold path.
         """
-        with self._lock:
-            if self._proc is not None and self._proc.poll() is None:
-                return True
-            try:
-                self._proc = subprocess.Popen(
-                    ["lake", "env", "lean", "--root=.", "--stdin"],
-                    cwd=str(self.env_dir),
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    env=self._env(),
-                    bufsize=1,
-                )
-                return True
-            except (OSError, ValueError) as e:  # pragma: no cover - env dependent
-                self._start_error = repr(e)
-                self._proc = None
-                return False
-
-    def _start_lsp(self):  # pragma: no cover - unwired, needs a live env
-        """Sketch of the ROBUST alternative: the Lean 4 LSP server.
-
-        ``lean --server`` speaks JSON-RPC over stdio (``Content-Length`` framed).
-        A production warm path would: spawn it, send ``initialize`` /
-        ``initialized``, then per snippet ``textDocument/didOpen`` a virtual doc
-        importing Mathlib and read ``textDocument/publishDiagnostics``.  Left
-        un-wired here because the diagnostic-to-``:L:C: error:`` mapping and the
-        didOpen re-elaboration cost cannot be confirmed without a built 4.32.0
-        env; :meth:`elaborate` uses the simpler ``--stdin`` contract instead.
-        """
-        raise NotImplementedError("LSP warm path is a documented sketch only")
+        raise NotImplementedError("LSP warm path — scoped next unit (see docstring)")
 
     def probe(self, *, timeout: float = 60.0) -> bool:
         """One-shot capability check; result CACHED in ``_probed``.
 
-        Considers the server usable iff a trivial snippet elaborates and the
-        worker echoes SOMETHING back (even empty output at rc 0 counts as a
-        healthy no-diagnostics elaboration).  Any exception -> not available.
+        Elaborates a trivial snippet via the single-shot contract; usable iff it
+        exits 0 with no ``error:``.  NOTE: a ``True`` here means the single-shot path
+        WORKS, not that it is warm — see :meth:`elaborate`.  ``available()`` still
+        gates enabling it; the latency win requires :meth:`_start_lsp`.
         """
         if self._probed is not None:
             return bool(self._probed)
         if not self.start():
+            self._start_error = f"env_dir does not exist: {self.env_dir!r}"
             self._probed = False
             return False
         try:
@@ -155,66 +152,55 @@ class LeanServer:
         return bool(self._probed)
 
     def available(self) -> bool:
-        """True iff a prior :meth:`probe` confirmed the worker usable.
+        """True iff a prior :meth:`probe` confirmed elaboration works.
 
-        Deliberately does NOT auto-probe: enabling the warm path is an explicit,
-        evidence-gated step (call :meth:`probe` first).  This keeps
-        ``verify_lean(server=...)`` on the cold path by default until proven.
+        Deliberately does NOT auto-probe: enabling the ``server=`` path is an
+        explicit, evidence-gated step.  Under the single-shot contract this path is
+        correct but NOT faster than the cold path; the true warm tier is the LSP
+        path (:meth:`_start_lsp`), which is the scoped next unit.
         """
-        return self._probed is True and self._proc is not None and self._proc.poll() is None
+        return self._probed is True
 
     def elaborate(self, body: str, *, env_dir=None, timeout: float = 600.0):
-        """Feed ``body`` to the warm worker; return ``(combined_output, returncode)``.
+        """Elaborate ``body`` against the built env; return ``(combined_output, rc)``.
 
-        The snippet is framed with a unique sentinel so a single long-lived
-        worker's outputs can be demarcated per call.  ``returncode`` is ``0`` for a
-        completed elaboration and non-zero if the worker has died (surfacing the
-        backstop in :func:`telperion.verify._parse_output`).  Raises on protocol
-        failure so ``verify_lean``'s guarded fallback engages.
+        EMPIRICAL FINDING (validated on Lean 4.32.0, 2026-09-04): ``lake env lean
+        --stdin`` is SINGLE-SHOT — it reads the whole of stdin as one file until EOF,
+        elaborates once, emits ``<file>:L:C: error:`` diagnostics (the same textual
+        format the cold path parses), then EXITS.  It emits NOTHING before EOF, so it
+        CANNOT be driven snippet-by-snippet with a resident environment: the earlier
+        sentinel-framed read loop would hang, and even correctly driven it re-imports
+        Mathlib each call (no warm benefit).  This method therefore uses the honest
+        single-shot contract — write ``body``, close stdin, read all — spawning a
+        fresh process per call.  The residency win lives in :meth:`_start_lsp`.
+
+        ``returncode`` is the process exit code; raises on OS/timeout failure so
+        ``verify_lean``'s guarded fallback engages.
         """
-        if self._proc is None or self._proc.poll() is not None:
-            if not self.start():
-                raise RuntimeError(f"lean worker not running: {self._start_error!r}")
-        proc = self._proc
-        sentinel = f"--#telperion-eot-{uuid.uuid4().hex}\n"
-        with self._lock:
-            if proc.stdin is None or proc.stdout is None:  # pragma: no cover
-                raise RuntimeError("lean worker has no stdio pipes")
-            # NOTE: the exact stdin framing that 4.32.0's --stdin accepts is the
-            # UNVALIDATED piece (see module docstring).  We write the body then a
-            # comment sentinel; a real worker would echo diagnostics up to EOF.
-            proc.stdin.write(body)
-            if not body.endswith("\n"):
-                proc.stdin.write("\n")
-            proc.stdin.write(sentinel)
-            proc.stdin.flush()
-            lines: list = []
-            for line in proc.stdout:
-                if line.strip() == sentinel.strip():
-                    break
-                lines.append(line.rstrip("\n"))
-            rc = 0 if proc.poll() is None else (proc.returncode or 1)
-        return "\n".join(lines), rc
+        try:
+            proc = subprocess.run(
+                ["lake", "env", "lean", "--stdin"],
+                cwd=str(self.env_dir),
+                input=body if body.endswith("\n") else body + "\n",
+                capture_output=True, text=True, env=self._env(), timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"lean --stdin timed out after {timeout}s") from e
+        out = (proc.stdout or "") + (proc.stderr or "")
+        return out, proc.returncode
 
     def close(self) -> None:
-        """Terminate the worker if running.  Idempotent and non-raising."""
+        """No persistent process under the single-shot contract; idempotent no-op
+        (kept for the context-manager API and the future LSP worker)."""
         with self._lock:
             proc = self._proc
             self._proc = None
         if proc is None:
             return
-        try:
-            if proc.stdin is not None:
-                try:
-                    proc.stdin.close()
-                except Exception:
-                    pass
+        try:  # pragma: no cover - only exercised once the LSP worker lands
             proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:  # pragma: no cover
-                proc.kill()
-        except Exception:  # pragma: no cover - best effort teardown
+            proc.wait(timeout=5)
+        except Exception:
             pass
 
     # -- context manager -----------------------------------------------------
