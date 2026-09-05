@@ -191,6 +191,13 @@ _SPECIAL_KINDS = (
     "bc_split",
     "jensen_zero_count",
     "sphere_bound",
+    # dVP entire-part (i-b') atoms (2026-09-05, distilled from DlvpMaxMod/DlvpBCDeriv/
+    # DlvpEntireBound): max_modulus (sphere norm bound -> disk, maximum-modulus principle),
+    # bc_deriv_re (real-part -> derivative bound, Borel-Caratheodory + Cauchy), entire_part_bound
+    # (‖logDeriv g c‖ from log‖g‖ oscillation; self-contained 3-lemma preamble). All import Mathlib.
+    "max_modulus",
+    "bc_deriv_re",
+    "entire_part_bound",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -255,6 +262,9 @@ _SPECIAL_DISPATCH = {
     "bc_split": ("emit_bc_split", "certify_bc_split_point"),
     "jensen_zero_count": ("emit_jensen_zero_count", "certify_jensen_zero_count_point"),
     "sphere_bound": ("emit_sphere_bound", "certify_sphere_bound_point"),
+    "max_modulus": ("emit_max_modulus", "certify_max_modulus_point"),
+    "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point"),
+    "entire_part_bound": ("emit_entire_part_bound", "certify_entire_part_bound_point"),
 }
 
 
