@@ -81,6 +81,27 @@ def _type_hash(stmt: str) -> str:
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
 
 
+def type_hash(stmt: str) -> str:
+    """Public content hash of a statement (16 hex).  Two statements that differ only
+    cosmetically (whitespace, ``: ℝ``/``: Real`` ascriptions) hash equal — the
+    structural key ``bundle`` uses to dedup shared atoms (AXLE ``merge`` by
+    type_hash, not text)."""
+    return _type_hash(stmt)
+
+
+# A Lean identifier reference (dotted / primed allowed: `Real.log_le_sub_one_of_pos`,
+# `foo'`, `R3Cert.BGSCL.log74`).  Used to recover which OTHER indexed certs a proof
+# references — the AXLE ``extract_decls`` dependency set, offline: an identifier only
+# counts as a DEP when it matches another cert's NAME in the index, so Mathlib lemmas
+# and tactic keywords are filtered out naturally by the intersection.
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
+
+
+def _refs(text: str) -> frozenset:
+    """The set of identifier tokens appearing in ``text`` (proof body + statement)."""
+    return frozenset(_IDENT_RE.findall(text))
+
+
 def _normalize_proof_body(proof_body: str) -> str:
     """Conservatively normalize a PROOF body for content hashing.
 
@@ -129,6 +150,7 @@ class CertMeta:
     tactic_counts: dict       # tactic -> word-boundary count in the proof body
     heartbeats: object = None  # int | None — elaboration cost if measured
     proof_hash: object = None  # str | None — stable content hash of the normalized proof body (16 hex)
+    refs: frozenset = field(default_factory=frozenset)  # identifier tokens referenced (deps candidates)
 
     def to_dict(self) -> dict:
         return {
@@ -140,6 +162,7 @@ class CertMeta:
             "tactic_counts": dict(self.tactic_counts),
             "heartbeats": self.heartbeats,
             "proof_hash": self.proof_hash,
+            "refs": sorted(self.refs),
         }
 
     @classmethod
@@ -155,6 +178,7 @@ class CertMeta:
             # `d.get` (not `d[...]`) so OLD records written before proof_hash existed
             # still load — they simply come back with proof_hash=None.
             proof_hash=d.get("proof_hash"),
+            refs=frozenset(d.get("refs", ())),
         )
 
 
@@ -180,6 +204,9 @@ def extract_cert_meta(theorem_text: str, *, heartbeats=None) -> CertMeta:
     statement = _strip_to_type(raw_type)
 
     n_lines = theorem_text.strip().count("\n") + 1
+    # Referenced identifiers (statement + proof), minus the theorem's own name — the
+    # raw dependency candidates; the index narrows these to OTHER indexed certs.
+    refs = _refs(statement + " " + proof_body) - {name}
     return CertMeta(
         name=name,
         statement=statement,
@@ -189,6 +216,7 @@ def extract_cert_meta(theorem_text: str, *, heartbeats=None) -> CertMeta:
         tactic_counts=_tactic_counts(proof_body),
         heartbeats=heartbeats,
         proof_hash=_proof_hash(proof_body),
+        refs=refs,
     )
 
 
@@ -326,6 +354,41 @@ class CertIndex:
             distinct = {ph for (_, ph) in pairs if ph is not None}
             if len(distinct) > 1:
                 out[h] = [(n, ph) for (n, ph) in pairs]
+        return out
+
+    def dependencies(self, name: str) -> set:
+        """The set of OTHER indexed cert names that ``name``'s block references — the
+        AXLE ``extract_decls`` dependency set restricted to the cert graph (a ref only
+        counts when it is another cert's name, so Mathlib lemmas/tactics are filtered).
+        """
+        if name not in self.metas:
+            return set()
+        return {r for r in self.metas[name].refs if r in self.metas and r != name}
+
+    def dependents(self, name: str) -> set:
+        """The set of indexed certs whose block references ``name`` (reverse edges)."""
+        return {n for n in self.metas if name in self.dependencies(n)}
+
+    def dead_atoms(self, roots=()) -> list:
+        """Indexed certs that NO other indexed cert references and are not in ``roots``
+        — atoms safe to drop (or that should be wired up).  ``roots`` are the
+        top-level goals you keep regardless (e.g. the assembled theorem)."""
+        roots = set(roots)
+        return sorted(n for n in self.metas
+                      if n not in roots and not self.dependents(n))
+
+    def impacted_by(self, name: str) -> set:
+        """Transitive dependents of ``name`` — every cert to RE-VERIFY when the shared
+        atom ``name`` changes (impact analysis).  Excludes ``name`` itself."""
+        out: set = set()
+        frontier = {name}
+        while frontier:
+            cur = frontier.pop()
+            for d in self.dependents(cur):
+                if d not in out:
+                    out.add(d)
+                    frontier.add(d)
+        out.discard(name)
         return out
 
     def to_json(self) -> str:

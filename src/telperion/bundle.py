@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import re
 
+from .cert_meta import type_hash as _stmt_type_hash
+
 # A theorem/lemma header: `theorem <name>` or `lemma <name>` at line start (allowing
 # a leading `@[...]` attribute or `private`/`noncomputable` etc. is out of scope — the
 # emitted certificate blocks start plainly with the keyword).
@@ -120,10 +122,56 @@ def _normalize_statement(stmt: str) -> str:
     return " ".join(s.split())
 
 
+def _ident_boundary(name: str) -> re.Pattern:
+    """Whole-identifier matcher for a (possibly dotted/primed) Lean name — not preceded
+    or followed by an identifier character, so ``foo`` does not match inside ``foobar``
+    or ``foo.bar``."""
+    return re.compile(r"(?<![A-Za-z0-9_'.])" + re.escape(name) + r"(?![A-Za-z0-9_'.])")
+
+
+def _references(block_text: str, name: str, self_name: str) -> bool:
+    """Does ``block_text`` (a theorem block whose own name is ``self_name``) reference
+    the identifier ``name`` other than as its own header?"""
+    if name == self_name:
+        return False
+    return bool(_ident_boundary(name).search(block_text))
+
+
+def _topo_order(kept: list) -> list:
+    """Stable topological sort of theorem blocks so a block that references another
+    kept block's NAME comes AFTER it (dependencies first).  Kahn's algorithm with
+    original order as the tie-break; any cycle is left in original relative order
+    (never drops a block)."""
+    names = [b["name"] for b in kept]
+    by_name = {b["name"]: b for b in kept}
+    # edges: dep -> {dependents}; indeg[b] = # of kept names b references.
+    deps = {b["name"]: {a for a in names
+                        if a != b["name"] and _references(b["block"], a, b["name"])}
+            for b in kept}
+    indeg = {n: len(deps[n]) for n in names}
+    ready = [n for n in names if indeg[n] == 0]        # order preserved
+    out: list = []
+    while ready:
+        n = ready.pop(0)
+        out.append(n)
+        for m in names:                                 # dependents of n, in order
+            if n in deps[m] and indeg[m] > 0:
+                deps[m].discard(n)
+                indeg[m] -= 1
+                if indeg[m] == 0:
+                    ready.append(m)
+    # append any cycle remainder in original order.
+    if len(out) < len(names):
+        out += [n for n in names if n not in out]
+    return [by_name[n] for n in out]
+
+
 def merge_bundle(
     blocks_or_files: list,
     *,
     dedup: bool = True,
+    merge_duplicates: bool = False,
+    topo_sort: bool = False,
     imports=("import Mathlib",),
     prelude: str = "",
     namespace=None,
@@ -135,11 +183,19 @@ def merge_bundle(
 
     - Collects every theorem block (via :func:`parse_theorems`).
     - If ``dedup``: the first occurrence of each ``name`` is kept; a later theorem
-      with the SAME name and (normalized) SAME statement is dropped.  A later
-      theorem with the same name but a DIFFERENT statement is a CONFLICT and raises
-      :class:`ValueError`.
+      with the SAME name and the SAME statement (compared by ``cert_meta.type_hash``,
+      so cosmetic ``: ℝ``/``: Real``/whitespace differences are ignored) is dropped.
+      A later theorem with the same name but a STRUCTURALLY DIFFERENT statement is a
+      CONFLICT and raises :class:`ValueError`.
+    - If ``merge_duplicates`` (AXLE ``merge_duplicates``): after name dedup, atoms
+      that share a ``type_hash`` under DIFFERENT names are collapsed to the FIRST
+      name, and references to the dropped names are rewritten to it throughout the
+      surviving blocks (prove once, reuse everywhere).
+    - If ``topo_sort`` (AXLE dependency-ordered ``merge``): the kept blocks are
+      reordered so a block that references another kept block's name comes AFTER it,
+      so the merged file elaborates regardless of source order.
     - Emits: the ``imports``, the ``prelude``, an optional ``namespace <ns>`` /
-      ``end <ns>`` wrapper, then the (deduped) blocks in first-seen order.
+      ``end <ns>`` wrapper, then the (deduped) blocks.
 
     Returns the merged Lean source string.
     """
@@ -148,20 +204,42 @@ def merge_bundle(
         all_blocks.extend(parse_theorems(src))
 
     kept: list = []
-    seen: dict = {}  # name -> normalized statement of the kept copy
+    seen: dict = {}  # name -> type_hash of the kept copy
     for b in all_blocks:
         name = b["name"]
         if dedup and name in seen:
-            if _normalize_statement(b["statement"]) != seen[name]:
+            if _stmt_type_hash(b["statement"]) != seen[name]:
                 raise ValueError(
                     f"merge conflict: theorem {name!r} appears with two different "
-                    f"statements:\n  first: {seen[name]!r}\n  later: "
+                    f"statements:\n  first hash: {seen[name]!r}\n  later: "
                     f"{_normalize_statement(b['statement'])!r}"
                 )
             # identical duplicate -> drop
             continue
-        seen[name] = _normalize_statement(b["statement"])
+        seen[name] = _stmt_type_hash(b["statement"])
         kept.append(b)
+
+    # Cross-name structural dedup: collapse same-type_hash atoms with DIFFERENT names
+    # to the first, rewriting references in surviving blocks.
+    if merge_duplicates:
+        canonical: dict = {}  # type_hash -> first name
+        rename: dict = {}     # dropped name -> canonical name
+        deduped: list = []
+        for b in kept:
+            h = _stmt_type_hash(b["statement"])
+            if h in canonical and canonical[h] != b["name"]:
+                rename[b["name"]] = canonical[h]
+                continue
+            canonical.setdefault(h, b["name"])
+            deduped.append(b)
+        if rename:
+            for b in deduped:
+                for old, new in rename.items():
+                    b["block"] = _ident_boundary(old).sub(new, b["block"])
+            kept = deduped
+
+    if topo_sort:
+        kept = _topo_order(kept)
 
     parts: list = []
     for imp in imports:

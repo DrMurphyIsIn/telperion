@@ -168,3 +168,44 @@ def test_merged_file_verifies_optional():
                            "BundleCheck.bundle_b"])
     assert r.okay, r.summary()
     assert r.axioms_clean, r.summary()
+
+
+# --- AXLE upgrades: topological sort + cross-name (type_hash) structural dedup -------
+
+def test_topo_sort_orders_dependency_before_dependent():
+    # `user` references atom `base`; source order is user-first (would fail to
+    # elaborate). topo_sort must place `base` before `user`.
+    user = ("theorem user : True := by\n  have := base\n  trivial\n")
+    base = ("theorem base : (1:ℝ) = 1 := by norm_num\n")
+    merged = merge_bundle([user, base], topo_sort=True)
+    names = [b["name"] for b in parse_theorems(merged)]
+    assert names.index("base") < names.index("user"), names
+
+
+def test_topo_sort_leaves_independent_blocks_in_order():
+    a = "theorem a_ind : True := by trivial\n"
+    b = "theorem b_ind : True := by trivial\n"
+    merged = merge_bundle([a, b], topo_sort=True)
+    assert [x["name"] for x in parse_theorems(merged)] == ["a_ind", "b_ind"]
+
+
+def test_merge_duplicates_collapses_same_statement_different_name():
+    # Two differently-named atoms with the SAME statement, and a consumer that uses
+    # the second. merge_duplicates keeps the first and rewrites the reference.
+    atom1 = "theorem atom_one : (1:ℝ) = 1 := by norm_num\n"
+    atom2 = "theorem atom_two : (1:ℝ) = 1 := by norm_num\n"
+    consumer = "theorem consumer : True := by\n  have := atom_two\n  trivial\n"
+    merged = merge_bundle([atom1, atom2, consumer], merge_duplicates=True, topo_sort=True)
+    names = {b["name"] for b in parse_theorems(merged)}
+    assert "atom_two" not in names and "atom_one" in names, names
+    # the consumer's reference was rewritten to the canonical name.
+    assert "atom_one" in dict((b["name"], b["block"]) for b in parse_theorems(merged))["consumer"]
+
+
+def test_type_hash_dedup_ignores_cosmetic_difference():
+    # Same name, statement differs only by `: ℝ` ascription + whitespace -> NOT a
+    # conflict (structural type_hash equal), silently deduped.
+    a = "theorem t : (1:ℝ) = 1 := by norm_num\n"
+    b = "theorem t : (1 : ℝ) = 1 := by norm_num\n"
+    merged = merge_bundle([a, b])
+    assert bundle_stats(merged)["n_theorems"] == 1
