@@ -185,6 +185,12 @@ _SPECIAL_KINDS = (
     # by folding to log(prod r_i^c_i); tight-at-tie (no separate F* lower bound). Dogfooded
     # against BG BGSCLSubaction.lean (regenerates log74_le_4fstar / log54_sub_fstar_le).
     "log_combination",
+    # dVP zero-free-region frontier atoms (2026-09-05, distilled from DlvpBCSum/DlvpZetaDisk):
+    # bc_split (log-derivative combine), jensen_zero_count (Jensen zero-count for any analytic
+    # f), sphere_bound (strip-type growth -> uniform sphere bound). All self-contained.
+    "bc_split",
+    "jensen_zero_count",
+    "sphere_bound",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -246,6 +252,9 @@ _SPECIAL_DISPATCH = {
     "curvature_boundary": ("emit_curvature_boundary", "certify_curvature_boundary_point"),
     "transcendental_enclosure": ("emit_transcendental_enclosure", "certify_transcendental_enclosure_point"),
     "log_combination": ("emit_log_combination", "certify_log_combination_point"),
+    "bc_split": ("emit_bc_split", "certify_bc_split_point"),
+    "jensen_zero_count": ("emit_jensen_zero_count", "certify_jensen_zero_count_point"),
+    "sphere_bound": ("emit_sphere_bound", "certify_sphere_bound_point"),
 }
 
 

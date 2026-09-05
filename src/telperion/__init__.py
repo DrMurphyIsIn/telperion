@@ -162,6 +162,18 @@ from .emit_log_combination import (  # noqa: F401
     LogCombinationEmitter, log_combination_certificate,
     log_combination_family, certify_log_combination_point,
 )
+# dVP zero-free-region frontier atoms (2026-09-05).
+from .emit_bc_split import (  # noqa: F401
+    BCSplitEmitter, bc_split_certificate, bc_split_family, certify_bc_split_point,
+)
+from .emit_jensen_zero_count import (  # noqa: F401
+    JensenZeroCountEmitter, jensen_zero_count_certificate,
+    jensen_zero_count_family, certify_jensen_zero_count_point,
+)
+from .emit_sphere_bound import (  # noqa: F401
+    SphereBoundEmitter, sphere_bound_certificate,
+    sphere_bound_family, certify_sphere_bound_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
