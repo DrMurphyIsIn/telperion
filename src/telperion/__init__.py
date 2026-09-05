@@ -331,6 +331,10 @@ from .cert_meta import CertIndex, CertMeta, extract_cert_meta, measure_heartbeat
 from .negative_control import (  # noqa: F401
     NegativeControlResult, assert_kernel_rejects, log_combination_negative_control,
 )
+from .signature_gate import (  # noqa: F401
+    SignatureMatch, SignatureResult, build_sig_guards, check_signatures,
+    forall_type, sig_guard_name,
+)
 # Generic kernel-gated negative control (AXLE `disprove`, generalized to every
 # emitter): the engine + the per-emitter adapter registry.  Importing the adapters
 # package runs each adapter's register(...) so ADAPTERS is populated on `import
