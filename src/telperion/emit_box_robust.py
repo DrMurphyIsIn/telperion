@@ -289,12 +289,18 @@ class BoxRobustEmitter(Emitter):
             hint_s = ", ".join(hints)
 
             arrow = "".join(f"{h} → " for h in hyps)
+            # Build the theorem type string ONCE and reuse for both the theorem
+            # signature and the statement-match gate -- single-sourcing guarantees
+            # the gate ascribes exactly the theorem's type (no drift possible).
+            thm_type = f"∀ {binder} : ℝ, {arrow}(0:ℝ) ≤ {target_s}"
             lines.append(
-                f"theorem {inst.lean_name} : ∀ {binder} : ℝ,\n"
-                f"    {arrow}(0:ℝ) ≤ {target_s} := by\n"
+                f"theorem {inst.lean_name} : {thm_type} := by\n"
                 f"  intro {binder} {' '.join(hyp_names)}\n"
                 f"  nlinarith [{hint_s}]\n"
             )
+            gate = self.emit_gate(inst.lean_name, thm_type)
+            if gate:
+                lines.append(gate)
             nthm += 1
         return "".join(lines), nthm
 
