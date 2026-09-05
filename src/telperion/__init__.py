@@ -191,6 +191,11 @@ from .emit_box_robust import (  # noqa: F401
     BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,
     box_robust_family, certify_box_robust_point,
 )
+# Analytic-cert-structures build (2026-09-05): hyperbolicity emitter (#3, d=2).
+from .emit_hyperbolicity import (  # noqa: F401
+    HyperbolicityEmitter, HyperbolicityPayload,
+    hyperbolicity_family, certify_hyperbolicity_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
