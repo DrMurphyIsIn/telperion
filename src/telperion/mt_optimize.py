@@ -90,7 +90,12 @@ def optimize_cosine(d: int, *, trials: int = 120, denom: int = 8):
     # on a poor rational.  Search every floor/ceil rounding of b·denom and keep the admissible
     # one with the largest exact F (this is how the MT_DEG4 flagship rounds nicely).
     import itertools
-    lo = [int(sp.floor(v * denom)) for v in b]
+    # b comes from scipy.optimize as a numpy array. Coerce each entry to a Python
+    # float before it reaches sympy: under numpy>=2 the repr is "np.float64(...)"
+    # and sympy 1.12 converts numpy scalars by stringifying, so sp.floor(np.float64)
+    # raises "invalid literal for int()". float(v) is an exact, value-preserving
+    # conversion; newer sympy masks the bug but this keeps both matrix legs green.
+    lo = [int(sp.floor(float(v) * denom)) for v in b]
     b_rat, a_exact, F = None, None, None
     for bump in itertools.product((0, 1), repeat=d + 1):
         cand = [sp.Rational(lo[j] + bump[j], denom) for j in range(d + 1)]
