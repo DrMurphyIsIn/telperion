@@ -38,15 +38,20 @@ def extract_deps(theorem_block: str, known_names) -> set:
     for cand in known:
         if cand == own:
             continue
+        # Unicode-aware identifier boundary: Lean names contain Greek letters
+        # (e.g. `ρwit`), primes, dots.  `\w` matches Unicode word chars in Py3, so
+        # an ASCII-only boundary mis-splits `ρwit` and drops such deps entirely.
         if re.search(
-            r"(?<![A-Za-z0-9_'.])" + re.escape(cand) + r"(?![A-Za-z0-9_'.])",
+            r"(?<![\w'.])" + re.escape(cand) + r"(?![\w'.])",
             theorem_block,
         ):
             refs.add(cand)
     return refs
 
 
-_HEADER = re.compile(r"^\s*(?:noncomputable\s+)?(?:theorem|lemma|def|abbrev)\s+([A-Za-z_][A-Za-z0-9_'.]*)", re.M)
+# Name starts with a Unicode letter or `_` (not a digit), then word-chars / prime / dot.
+_HEADER = re.compile(
+    r"^\s*(?:noncomputable\s+)?(?:theorem|lemma|def|abbrev)\s+((?![0-9])[\w'.]+)", re.M)
 
 
 def _own_name(block: str):

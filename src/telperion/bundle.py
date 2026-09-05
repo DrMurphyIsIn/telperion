@@ -27,7 +27,9 @@ from .normalize import canonical_statement
 # A theorem/lemma header: `theorem <name>` or `lemma <name>` at line start (allowing
 # a leading `@[...]` attribute or `private`/`noncomputable` etc. is out of scope — the
 # emitted certificate blocks start plainly with the keyword).
-_THM_HEADER = re.compile(r"^(theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_'.]*)")
+# Unicode-aware: Lean names contain Greek letters (e.g. `isSubaction_ρwit`), primes,
+# dots.  `\w` matches Unicode word chars in Py3; an ASCII class truncates the name.
+_THM_HEADER = re.compile(r"^(theorem|lemma)\s+((?![0-9])[\w'.]+)")
 
 # Lines that terminate a block WITHOUT being part of it (top-level structural lines).
 _STRUCTURAL = re.compile(r"^(namespace|open|import|end|#)")
@@ -136,7 +138,7 @@ def _referenced_names(block: str, own_name: str, universe: set) -> set:
     for cand in universe:
         if cand == own_name:
             continue
-        if re.search(r"(?<![A-Za-z0-9_'.])" + re.escape(cand) + r"(?![A-Za-z0-9_'.])", block):
+        if re.search(r"(?<![\w'.])" + re.escape(cand) + r"(?![\w'.])", block):
             refs.add(cand)
     return refs
 
