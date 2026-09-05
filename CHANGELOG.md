@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased — Analytic cert structures (Tasks 1–5)
+
+- **`telperion.arb_enclosure.enclose_constant`** (#1, Task 1) — Arb ball
+  arithmetic provider yielding outward-rounded exact `Fraction` enclosures for
+  transcendental constants (`pi`, `e`, `zeta(q)`, `gamma(q)`, or any callable).
+  Non-kernel-input trust boundary: Arb is the oracle; Lean does not verify the
+  constant's value.
+- **`telperion.emit_box_robust.BoxRobustEmitter`** (#2, Task 2) — first-class
+  emitter certifying `0 <= target` for separable-quadratic targets over rational
+  boxes via monomial-wise margin (`box_min_lower_bound`), emitting nlinarith atoms.
+  Sorry-free, axiom-clean. CI: `box-robust-compiles`.
+- **`telperion.emit_hyperbolicity.HyperbolicityEmitter`** (#3, Task 4) — real-
+  rootedness emitter (d=2) chaining a box-robust discriminant bound with the
+  freshly-proven `HyperbolicityBridge.hyperbolic_deg2_of_discrim_nonneg` bridge
+  lemma to emit `roots.card = 2`. Hyperbolicity at degree >= 3 is deferred
+  (Mathlib lacks cubic/quartic discriminant bridges). CI: `hyperbolicity-compiles`.
+- **`telperion.statement_match.statement_match_example`** + **`Emitter.emit_gate`**
+  (#4, Task 3) — statement-match gate: emits `example : <type> := <thm_name>` so
+  statement drift is a kernel-level compile error, not a silent divergence.
+  Single-sourced type string wired into `BoxRobustEmitter` and inherited by
+  `TuranBoxEmitter`.
+- **`telperion.emit_turan_box.turan_box_family`** (#5, Task 5) — thin delegation
+  to `box_robust_family` certifying `a1^2 - a0*a2 > 0` (log-concavity of a Turan
+  triple) over a rational box. No new emitter class; full #2 pipeline applies
+  end-to-end. CI: `turan-box-compiles`.
+- **Hygiene (Task 6):** `lake-manifest.json` root `name` corrected from `"Toy"` to
+  `"BoxRobust"` / `"Hyperbolicity"` / `"TuranBox"` in the three new example dirs.
+  `.superpowers/` added to `.gitignore`; SDD scratch untracked from the branch.
+  conjecture1_proved = False.
+
 ## Unreleased — BG: part (i) extended to n=15; it does not factor via obvious moves
 
 - **Broom-dominance part (i)** (every rich-exchange local max of `rho` is the
