@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased -- MILESTONE: first kernel-verified on-line nontrivial-zero count for zeta
+
+- **`XiLineZeros.lambda_five_zeros_10_35`** (`examples/zeta_zero_localization/`) --
+  Lean theorem asserting 5 strictly increasing zeros of `completedRiemannZeta` on
+  `Re s = 1/2` in `[10, 35]`, matching the 5 known nontrivial zeros
+  (t ~ 14.1347, 21.0220, 25.0109, 30.4249, 32.9351).  Certified N = 5 via
+  alternating-sign Arb enclosures + IVT.  Axioms: `{propext, Classical.choice,
+  Quot.sound}` -- no `sorryAx`.  `conjecture1_proved = False`: this is a lower
+  bound on-line zero count, not a proof of RH; Stages 2-3 (exact count via
+  argument principle; RH-in-a-box) are deferred.
+- **`generate.py` interval driver** -- extended with `--a --b --n-samples --prec`
+  flags; prints certified N without writing Lean; `--check` byte-compares the
+  frozen output.  Non-adjacent sign-change intervals now handled by `hgap{m}`
+  norm_num lemmas in `emit_xi_line_zeros.py` (removed the back-to-back `assert`).
+- **`tests/test_zeroloc_end_to_end.py`** -- TDD gate: `sign_change_count >= 5` on
+  `[10, 35]` at 0.5 spacing, 300-bit Arb precision.
+- **`docs/ZETA_ZERO_LOCALIZATION_STATUS.md`** -- honest status: kernel-proven scope,
+  Arb non-kernel boundary, what is NOT proved (RH, exact count, off-line zeros).
+- **CI: `zeta-zero-localization-compiles`** -- `generate.py --check` + `lake build`
+  in `.github/workflows/telperion-lean-e2e.yml`.
+
 ## Unreleased — Attribution: emitters ported from AxiomMath/ZetaZeros
 
 - **`CurvatureBoundaryEmitter`** (`examples/curvature_boundary/`) and

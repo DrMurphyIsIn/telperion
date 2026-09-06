@@ -245,6 +245,11 @@ from .emit_hyperbolicity import (  # noqa: F401
     HyperbolicityEmitter, HyperbolicityPayload,
     hyperbolicity_family, certify_hyperbolicity_point,
 )
+# Zeta-zero-localization Stage 1 core (2026-09-06): xi_line_zeros emitter.
+from .emit_xi_line_zeros import (  # noqa: F401
+    XiLineZerosEmitter, XiLineZerosPayload, sign_change_count,
+    xi_line_zeros_family, certify_xi_line_zeros_point,
+)
 # Analytic-cert-structures build (2026-09-05): turan-box log-concavity emitter (#5).
 from .emit_turan_box import turan_box_family  # noqa: F401
 from .emit_unimodal import (  # noqa: F401
