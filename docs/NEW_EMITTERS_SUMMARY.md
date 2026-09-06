@@ -141,6 +141,9 @@ get Lean text, kernel-check it. All in `src/telperion/`, all with unit tests. La
 | `cert_leaf` (pipeline) | `positivity_leaf(prefix, specs, module_doc, namespace)` | a family of cert specs (`kind=orthant/domain/rational`) → one **hazard-safe self-building Lean leaf**; `scan_hazards` RAISES on a `-/` in docstring prose (the `3-/4` bug, via stray-`-/`-in-code detection) or leaked `**`. Reproduces `R47R7KelmansTwoHubCert` byte-for-byte. |
 | `mt_optimize` (pipeline) | `optimize_cosine(d, denom=…)` | discovers a VP-beating admissible cosine polynomial at any degree (scipy F-max over the Fejér cone with `a_k≥0, a₁≥a₀`, then robust rationalization); scipy lazy-imported. The F-functional saturates ~0.0286 by degree 4–6. |
 
+| `emit_borel_caratheodory` | `emit_borel_caratheodory_cert(name, form=)` | wraps Mathlib's `Complex.borelCaratheodory`/`_zero` (value form is UPSTREAM as of v4.32) — packaging re-export; region gate gone. |
+| `emit_reexport` | `reexport_cert(name, lemma, binders=, hyps=, conclusion=, args=)` | the general wrapper-emitter shape: package ANY proven/upstream theorem as a named re-export; reproduces `emit_order_residue` + `emit_borel_caratheodory`. |
+
 **Applications (kernel-verified leaves on `main`):** the full Kelmans local merge table —
 `R47R7Kelmans{TwoHub, AssistedMerge, GenEnv(100), Dichotomy(44)}Cert` (156 certs, all via
 `emit_nonneg_orthant`) — plus the RH cosine leaves `mt_cosine_deg4_nonneg` / `vp_cosine_deg4_nonneg`

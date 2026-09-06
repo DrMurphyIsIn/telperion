@@ -13,6 +13,7 @@ from .certify import (  # noqa: F401
     CertifiedFamily,
     PolyaCertificate,
     certify,
+    emitter_for,
     polya_certify,
 )
 from .emit import BilinearBoxEmitter, DirectPolyaEmitter  # noqa: F401
@@ -173,6 +174,18 @@ from .emit_jensen_zero_count import (  # noqa: F401
 from .emit_sphere_bound import (  # noqa: F401
     SphereBoundEmitter, sphere_bound_certificate,
     sphere_bound_family, certify_sphere_bound_point,
+)
+from .emit_max_modulus import (  # noqa: F401
+    MaxModulusEmitter, max_modulus_certificate,
+    max_modulus_family, certify_max_modulus_point,
+)
+from .emit_bc_deriv_re import (  # noqa: F401
+    BCDerivReEmitter, bc_deriv_re_certificate,
+    bc_deriv_re_family, certify_bc_deriv_re_point,
+)
+from .emit_entire_part_bound import (  # noqa: F401
+    EntirePartBoundEmitter, entire_part_bound_certificate,
+    entire_part_bound_family, certify_entire_part_bound_point,
 )
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
