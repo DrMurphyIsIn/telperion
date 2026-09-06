@@ -207,6 +207,13 @@ _SPECIAL_KINDS = (
     # Argument-principle residue/winding bridge (2026-09-06, shared with the RH
     # zeta-zero-localization session): ∮ Σ m/(z-ρ) = 2πi·Σ m.
     "argument_principle",
+    # Argument-principle companion atoms (2026-09-06, same RH session): full_argument_principle
+    # (residue-sum + analytic-vanishing ⟹ ∮ f = 2πi·Σ m, the completing half via Cauchy),
+    # rect_argument_principle (box-boundary Cauchy vanishing ∮_∂rect E = 0, strip counterpart),
+    # annulus_count (∮_R − ∮_r = 2πi·Σ_shell m, zero-density shell count).
+    "full_argument_principle",
+    "rect_argument_principle",
+    "annulus_count",
     # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
     # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
     # rational lower bound over a rational box, emitted via nlinarith.
@@ -292,6 +299,14 @@ _SPECIAL_DISPATCH = {
     "herglotz_lower": ("emit_herglotz_lower", "certify_herglotz_lower_point", "HerglotzLowerEmitter"),
     "argument_principle":
         ("emit_argument_principle", "certify_argument_principle_point", "ArgumentPrincipleEmitter"),
+    "full_argument_principle":
+        ("emit_full_argument_principle", "certify_full_argument_principle_point",
+         "FullArgumentPrincipleEmitter"),
+    "rect_argument_principle":
+        ("emit_rect_argument_principle", "certify_rect_argument_principle_point",
+         "RectArgumentPrincipleEmitter"),
+    "annulus_count":
+        ("emit_annulus_count", "certify_annulus_count_point", "AnnulusCountEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }

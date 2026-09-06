@@ -351,6 +351,12 @@ REGISTRY: dict[str, SensitivityStance] = {
         "drop nonneg rest (re_inv_sub_nonneg via normSq_nonneg) over Finset.add_sum_erase; no corruptible cofactor"),
     "ArgumentPrincipleEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Argument principle ∮ Σ m/(z-ρ) = 2πi·Σ m: circleIntegral linearity (integral_fun_sum + integral_const_mul) over Mathlib per-pole residue integral_sub_inv_of_mem_ball; no separately-supplied witness"),
+    "FullArgumentPrincipleEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Full argument principle ∮ (Σ m/(z-ρ) + E) = 2πi·Σ m: residue side (integral_sub_inv_of_mem_ball) + analytic side E vanishes by Cauchy (DiffContOnCl.circleIntegral_eq_zero); linearity via integral_add; no separately-supplied witness"),
+    "RectArgumentPrincipleEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Rectangle Cauchy vanishing ∮_∂rect E = 0: direct over Mathlib integral_boundary_rect_eq_zero_of_differentiableOn with .re/.im reduction; no separately-supplied witness"),
+    "AnnulusCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Annulus count ∮_R − ∮_r = 2πi·Σ_shell m: outer residue sum (integral_sub_inv_of_mem_ball) minus inner Cauchy-zero (poles outside ⟹ DiffContOnCl.circleIntegral_eq_zero); no separately-supplied witness"),
 }
 
 
