@@ -203,6 +203,19 @@ from .emit_argument_principle import (  # noqa: F401
     ArgumentPrincipleEmitter, argument_principle_certificate,
     argument_principle_family, certify_argument_principle_point,
 )
+# Argument-principle companion atoms (2026-09-06): full (residue+Cauchy), rect (box), annulus (shell).
+from .emit_full_argument_principle import (  # noqa: F401
+    FullArgumentPrincipleEmitter, full_argument_principle_certificate,
+    full_argument_principle_family, certify_full_argument_principle_point,
+)
+from .emit_rect_argument_principle import (  # noqa: F401
+    RectArgumentPrincipleEmitter, rect_argument_principle_certificate,
+    rect_argument_principle_family, certify_rect_argument_principle_point,
+)
+from .emit_annulus_count import (  # noqa: F401
+    AnnulusCountEmitter, annulus_count_certificate,
+    annulus_count_family, certify_annulus_count_point,
+)
 # Analytic-cert-structures build (2026-09-05): box-robust emitter (#2).
 from .emit_box_robust import (  # noqa: F401
     BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,
