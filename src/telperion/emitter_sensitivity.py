@@ -264,6 +264,12 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Emits supplied concrete integer facts p_i*q_w < p_w*q_i (and p_w<q_w) closed by norm_num; the winner/competitor rationals are a separately-supplied payload (spec callback) whose"),
     "HalfPlaneDiskEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Payload carries only positive-rational B + 2 bools; the core 4B(B-Re w)>=0 is a product-of-nonnegatives closed by nlinarith from B>0 and Re w<=B"),
+    "BCSplitEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Log-derivative split+entire-bound combine: w=Z+E, ‖E‖≤B enter as hypotheses; the emitted -Re w ≤ B-Re Z+slack is structural (|Re E|≤‖E‖). Payload is only the nonneg-rational slack; a negative slack is refused at cert time (no corruptible witness in the Lean)"),
+    "JensenZeroCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Wraps Mathlib AnalyticOnNhd.sum_divisor_le; the analyticity/norm bounds are hypotheses and the only payload is the ordered rational radius pair 0<r<R (side goals by norm_num). A non-ordered pair is refused at cert time"),
+    "SphereBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Strip-type pointwise bound -> uniform sphere bound; fully general, the growth bound enters as a hypothesis and the uniformization is structural glue (self-contained import Mathlib). No separately-supplied corruptible identity"),
     "IntegralityGateEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "All emitted goals are concrete ℤ/ℕ literals: divisibility norm_num + per-row norm_num + a decide over a literal List(ℤ×ℤ). No separate multiplier/Gram/cofactor is consumed"),
     "LFunctionProductEmitter": _S(STRUCTURALLY_NONVACUOUS,
@@ -302,6 +308,31 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Both modes discharge structurally on exact ℚ: concrete = norm_num over unfolded W/Bcap/baseOf/prodBcap defs on a literal config (goal is a concrete rational)"),
     "TranscendentalEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
         "Consumes payload cert's supplied rational L (and U): _lower_box closes L≤log(1+x0) via Real.le_log_iff_exp_le reduced to concrete exp(L)≤1+x0 discharged by exp_bound' Taylor +"),
+    # --- 2026-09-05: dVP zero-free-region atom emitters (bc_split/jensen_zero_count/
+    #     sphere_bound from the 2026-09-02 batch, left unclassified there; and the
+    #     2026-09-05 entire-part batch max_modulus/bc_deriv_re/entire_part_bound). All
+    #     are wrapper / glue / disk-geometry shapes: the payload (radii, bounds) is
+    #     substituted into BOTH hypotheses and goal, never a separately-supplied
+    #     corruptible identity certificate — same stance as CauchyDerivBoundEmitter. ---
+    "BCSplitEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Log-derivative combine w=Z+E, ‖E‖≤B ⟹ (-w).re ≤ B - Z.re (+ nonneg slack literal): "
+        "linarith glue over Mathlib Complex.abs_re_le_norm + the theorem's own hyps; no supplied witness"),
+    "JensenZeroCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Jensen zero-count for any analytic f: a concrete-(r,R) wrapper of Mathlib's "
+        "AnalyticOnNhd.sum_divisor_le, r<R side-goals closed by norm_num on literals; the count IS the statement"),
+    "SphereBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Strip-type growth ⟹ uniform sphere bound: disk-geometry gcongr/linarith from the hypotheses "
+        "(‖z-c‖=R, |Re| ≤ ‖·‖), (c,R) parameterize the statement; no corruptible cofactor"),
+    "MaxModulusEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Maximum-modulus propagation: a concrete-R wrapper of Mathlib's "
+        "Complex.norm_le_of_forall_mem_frontier_norm_le (frontier_ball R≠0 via norm_num on a literal); "
+        "the bound B is substituted into both hypothesis and goal"),
+    "BCDerivReEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Real-part → derivative bound (Borel-Caratheodory + Cauchy): inline structural proof; (R,r,M') "
+        "live in both hyps and goal, side-goals norm_num on literals, constant collapse by field_simp; no supplied identity"),
+    "EntirePartBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Entire-part bound ‖logDeriv g c‖ ≤ 2M'/(R-r): self-contained 3-lemma preamble (log branch + "
+        "BC-Cauchy + composition), wrapper feeds (R,r,M') via norm_num; the parameters parameterize the statement"),
 }
 
 

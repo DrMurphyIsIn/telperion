@@ -14,14 +14,19 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from telperion.statement_match import (  # noqa: E402
     statement_match_check, def_identity_check,
 )
+from lean_env import lean_env_ready  # noqa: E402
 
 _ENV = Path(__file__).resolve().parents[1] / "examples" / "log_combination" / "lean"
-_HAS_ENV = (_ENV / "lake-manifest.json").exists()
-pytestmark = pytest.mark.skipif(not _HAS_ENV, reason="needs a built Lean env")
+# Guard on lean_env_ready (lake on PATH AND Mathlib actually built), NOT just the tracked
+# lake-manifest.json: the manifest is checked in, so a manifest-only check runs these Lean-
+# backed tests in the pip-only CI unit job (no lake) — where they fail. lean_env_ready skips
+# cleanly there and still runs them wherever a real built env exists (e.g. telperion-lean-e2e).
+pytestmark = pytest.mark.skipif(not lean_env_ready(_ENV), reason="needs a built Lean env")
 
 
 def test_signature_gate_catches_weakening():
