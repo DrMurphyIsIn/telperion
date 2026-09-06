@@ -1,4 +1,7 @@
 # tests/test_arb_enclosure.py
+import pytest
+pytest.importorskip("flint")
+
 from fractions import Fraction
 import mpmath
 from telperion.arb_enclosure import enclose_constant, EnclosureRecord
