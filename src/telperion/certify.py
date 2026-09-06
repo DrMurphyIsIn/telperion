@@ -198,6 +198,12 @@ _SPECIAL_KINDS = (
     "max_modulus",
     "bc_deriv_re",
     "entire_part_bound",
+    # dVP Blaschke/two-scale atoms (2026-09-06, distilled from DlvpZeroFactor/DlvpCorrectionBound/
+    # DlvpHerglotzLower): two_scale_separation (inner-disk vs outer-sphere geometry), far_pole_sum
+    # (rational sum with poles outside the disk), herglotz_lower (keep equal-height zero, drop rest).
+    "two_scale_separation",
+    "far_pole_sum",
+    "herglotz_lower",
     # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
     # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
     # rational lower bound over a rational box, emitted via nlinarith.
@@ -277,6 +283,10 @@ _SPECIAL_DISPATCH = {
     "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point", "BCDerivReEmitter"),
     "entire_part_bound":
         ("emit_entire_part_bound", "certify_entire_part_bound_point", "EntirePartBoundEmitter"),
+    "two_scale_separation":
+        ("emit_two_scale_separation", "certify_two_scale_separation_point", "TwoScaleSeparationEmitter"),
+    "far_pole_sum": ("emit_far_pole_sum", "certify_far_pole_sum_point", "FarPoleSumEmitter"),
+    "herglotz_lower": ("emit_herglotz_lower", "certify_herglotz_lower_point", "HerglotzLowerEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }

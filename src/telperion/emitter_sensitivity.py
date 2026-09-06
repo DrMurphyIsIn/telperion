@@ -337,6 +337,18 @@ REGISTRY: dict[str, SensitivityStance] = {
     "EntirePartBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Entire-part bound ‖logDeriv g c‖ ≤ 2M'/(R-r): self-contained 3-lemma preamble (log branch + "
         "BC-Cauchy + composition), wrapper feeds (R,r,M') via norm_num; the parameters parameterize the statement"),
+    # --- 2026-09-06: dVP Blaschke/two-scale atoms. All wrapper/glue/geometry shapes: the numeric data
+    #     (radii R,R₀; σ,β,k) is substituted into BOTH hypotheses and goal, never a separately-supplied
+    #     corruptible identity certificate — same stance as CauchyDerivBoundEmitter / TwoScale geometry. ---
+    "TwoScaleSeparationEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Two-scale separation R-R₀ ≤ ‖z-ρ‖: reverse-triangle calc (norm_sub_norm_le + "
+        "sub_sub_sub_cancel_right) from the sphere/closedBall membership hyps; radii parameterize the statement"),
+    "FarPoleSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Far-pole sum ‖Σ (n u)conj u/(R²-conj u z)‖ ≤ (Σ|n u|)/(R-‖z‖): per-term reverse-triangle "
+        "denom bound R²-‖u‖‖z‖ ≥ R(R-‖z‖) + norm_sum_le/Finset.sum_div; concrete R via norm_num, no supplied witness"),
+    "HerglotzLowerEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Herglotz lower bound k/(σ-β) ≤ Re(Σ m/(z-ρ)): keep equal-height term (re_smul_inv_sub, real) + "
+        "drop nonneg rest (re_inv_sub_nonneg via normSq_nonneg) over Finset.add_sum_erase; no corruptible cofactor"),
 }
 
 
