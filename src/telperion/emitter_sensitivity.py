@@ -357,6 +357,10 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Rectangle Cauchy vanishing ∮_∂rect E = 0: direct over Mathlib integral_boundary_rect_eq_zero_of_differentiableOn with .re/.im reduction; no separately-supplied witness"),
     "AnnulusCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Annulus count ∮_R − ∮_r = 2πi·Σ_shell m: outer residue sum (integral_sub_inv_of_mem_ball) minus inner Cauchy-zero (poles outside ⟹ DiffContOnCl.circleIntegral_eq_zero); no separately-supplied witness"),
+    "SlitLoopWindingZeroEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Winding-zero (Rouché heart) ∮ w'/w = 0 for a closed loop in ‖·-1‖<r≤1: w'/w = (log∘w)' via HasDerivAt.clog_real (slitPlane from Re>0) + FTC-2 integral_eq_sub_of_hasDerivAt collapsing to log(w b)-log(w a)=0; no separately-supplied witness"),
+    "BoxResidueSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Box residue-sum Bd(Σ m/(z-ρ)) = 2πi·Σ m: Finset linearity (intervalIntegral.integral_finsetSum + integral_const_mul) over the four sides, conditional on the per-pole winding primitive Bd((z-ρ)⁻¹)=2πi (explicit hypothesis, the Mathlib gap); no separately-supplied witness"),
 }
 
 

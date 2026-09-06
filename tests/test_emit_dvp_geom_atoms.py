@@ -29,6 +29,14 @@ from telperion.emit_annulus_count import (
     AnnulusCountEmitter, annulus_count_certificate, annulus_count_family,
     certify_annulus_count_point,
 )
+from telperion.emit_slit_loop_winding_zero import (
+    SlitLoopWindingZeroEmitter, certify_slit_loop_winding_zero_point,
+    slit_loop_winding_zero_certificate, slit_loop_winding_zero_family,
+)
+from telperion.emit_box_residue_sum import (
+    BoxResidueSumEmitter, box_residue_sum_certificate, box_residue_sum_family,
+    certify_box_residue_sum_point,
+)
 from telperion.emit_two_scale_separation import (
     TwoScaleSeparationEmitter, certify_two_scale_separation_point, two_scale_certificate,
     two_scale_separation_family,
@@ -44,6 +52,8 @@ _CERT = {
     "full_argument_principle": certify_full_argument_principle_point,
     "rect_argument_principle": certify_rect_argument_principle_point,
     "annulus_count": certify_annulus_count_point,
+    "slit_loop_winding_zero": certify_slit_loop_winding_zero_point,
+    "box_residue_sum": certify_box_residue_sum_point,
 }
 
 
@@ -175,3 +185,43 @@ def test_annulus_count_negative_control():
         annulus_count_certificate(0, 2)
     with pytest.raises(ValueError, match="outer radius R > r"):
         annulus_count_certificate(2, 1)
+
+
+def test_slit_loop_winding_zero_certificate_and_shape():
+    c = slit_loop_winding_zero_certificate(Fraction(1, 2))
+    assert c.r == Fraction(1, 2)
+    body, nthm = _emit_one(slit_loop_winding_zero_family, SlitLoopWindingZeroEmitter,
+                           {"r": "1"}, "slw")
+    assert nthm == 1
+    # clog_real antiderivative + FTC-2 + closed-loop cancellation
+    assert "clog_real" in body
+    assert "integral_eq_sub_of_hasDerivAt hd hint" in body
+    assert "hclosed, sub_self" in body
+    assert "Complex.mem_slitPlane_iff" in body
+
+
+def test_slit_loop_winding_zero_negative_control():
+    with pytest.raises(ValueError, match="positive leash radius"):
+        slit_loop_winding_zero_certificate(0)
+    with pytest.raises(ValueError, match=r"r ≤ 1"):
+        slit_loop_winding_zero_certificate(2)
+
+
+def test_box_residue_sum_certificate_and_shape():
+    c = box_residue_sum_certificate(0, 2, 0, 1)
+    assert (c.x0, c.x1, c.y0, c.y1) == (0, 2, 0, 1)
+    body, nthm = _emit_one(box_residue_sum_family, BoxResidueSumEmitter,
+                           {"x0": "0", "x1": "2", "y0": "0", "y1": "1"}, "brs")
+    assert nthm == 1
+    # Finset-linearity plumbing conditional on the per-pole winding hypothesis
+    assert "intervalIntegral.integral_finsetSum" in body
+    assert "hwind" in body
+    assert "linear_combination (m ρ : ℂ) * hw" in body
+    assert "= 2 * π * I * ∑ ρ ∈ s, (m ρ : ℂ)" in body
+
+
+def test_box_residue_sum_negative_control():
+    with pytest.raises(ValueError, match="x0 < x1"):
+        box_residue_sum_certificate(2, 0, 0, 1)
+    with pytest.raises(ValueError, match="y0 < y1"):
+        box_residue_sum_certificate(0, 1, 1, 0)
