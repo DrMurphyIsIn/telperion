@@ -349,6 +349,8 @@ REGISTRY: dict[str, SensitivityStance] = {
     "HerglotzLowerEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Herglotz lower bound k/(σ-β) ≤ Re(Σ m/(z-ρ)): keep equal-height term (re_smul_inv_sub, real) + "
         "drop nonneg rest (re_inv_sub_nonneg via normSq_nonneg) over Finset.add_sum_erase; no corruptible cofactor"),
+    "ArgumentPrincipleEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Argument principle ∮ Σ m/(z-ρ) = 2πi·Σ m: circleIntegral linearity (integral_fun_sum + integral_const_mul) over Mathlib per-pole residue integral_sub_inv_of_mem_ball; no separately-supplied witness"),
 }
 
 
