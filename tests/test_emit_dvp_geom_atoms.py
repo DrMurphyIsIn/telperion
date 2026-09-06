@@ -41,6 +41,10 @@ from telperion.emit_rect_winding import (
     RectWindingEmitter, certify_rect_winding_point, rect_winding_certificate,
     rect_winding_family,
 )
+from telperion.emit_log_product_bound import (
+    LogProductBoundEmitter, certify_log_product_bound_point,
+    log_product_bound_certificate, log_product_bound_family,
+)
 from telperion.emit_two_scale_separation import (
     TwoScaleSeparationEmitter, certify_two_scale_separation_point, two_scale_certificate,
     two_scale_separation_family,
@@ -59,6 +63,7 @@ _CERT = {
     "slit_loop_winding_zero": certify_slit_loop_winding_zero_point,
     "box_residue_sum": certify_box_residue_sum_point,
     "rect_winding": certify_rect_winding_point,
+    "log_product_bound": certify_log_product_bound_point,
 }
 
 
@@ -251,3 +256,23 @@ def test_rect_winding_negative_control():
         rect_winding_certificate(2, 2, 0, 1)
     with pytest.raises(ValueError, match="y0 < y1"):
         rect_winding_certificate(0, 1, 1, 1)
+
+
+def test_log_product_bound_certificate_and_shape():
+    c = log_product_bound_certificate(2, 5)
+    assert (c.R0, c.R) == (2, 5)
+    body, nthm = _emit_one(log_product_bound_family, LogProductBoundEmitter,
+                           {"R0": "2", "R": "5"}, "lpb")
+    assert nthm == 1
+    # two-scale separation + log-of-product + monotone log + Finset assembly
+    assert "norm_sub_norm_le" in body
+    assert "Real.log_prod" in body
+    assert "Real.log_le_log" in body
+    assert "Finset.sum_le_sum" in body
+
+
+def test_log_product_bound_negative_control():
+    with pytest.raises(ValueError, match="inner radius R₀ ≥ 1"):
+        log_product_bound_certificate(Fraction(1, 2), 5)
+    with pytest.raises(ValueError, match="outer radius R > R₀"):
+        log_product_bound_certificate(3, 2)

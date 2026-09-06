@@ -224,6 +224,9 @@ _SPECIAL_KINDS = (
     # strictly inside — from-scratch segment/log branch-split proof, closes the Mathlib gap that
     # blocked box_residue_sum's hwind hypothesis and Rouché.
     "rect_winding",
+    # dVP zero-factor magnitude bound (2026-09-06): two-scale log-product boundary bound
+    # log‖P c‖ - log‖P z‖ ≤ (Σ m)·(log R₀ - log(R-R₀)) — the recurring AP shape.
+    "log_product_bound",
     # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
     # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
     # rational lower bound over a rational box, emitted via nlinarith.
@@ -324,6 +327,8 @@ _SPECIAL_DISPATCH = {
         ("emit_box_residue_sum", "certify_box_residue_sum_point", "BoxResidueSumEmitter"),
     "rect_winding":
         ("emit_rect_winding", "certify_rect_winding_point", "RectWindingEmitter"),
+    "log_product_bound":
+        ("emit_log_product_bound", "certify_log_product_bound_point", "LogProductBoundEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }
