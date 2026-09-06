@@ -37,8 +37,14 @@ from telperion.emit_log_combination import (  # noqa: E402
     LogCombinationCertificate,
     LogCombinationEmitter,
 )
+from lean_env import lean_env_ready  # noqa: E402
 
 _ENV = Path(__file__).resolve().parents[1] / "examples" / "log_combination" / "lean"
+# Layer-2 (kernel) controls need a usable Lean env — lake on PATH AND a built
+# Mathlib cache; skip cleanly on the no-toolchain unit job. The Layer-1 offline
+# self-check test below stays unguarded so it always runs.
+requires_env = pytest.mark.skipif(
+    not lean_env_ready(_ENV), reason="needs a built Lean env (lake + Mathlib)")
 
 
 def test_false_monotone_layer1_refuses():
@@ -52,6 +58,7 @@ def test_false_monotone_layer1_refuses():
         )
 
 
+@requires_env
 def test_false_monotone_negative_control_both_layers():
     """The full two-layer control on the FALSE instance ``log(3) − 4·FSTAR ≤ 0``.
 
@@ -69,6 +76,7 @@ def test_false_monotone_negative_control_both_layers():
     assert res.okay is True, res.detail
 
 
+@requires_env
 def test_assert_kernel_rejects_no_false_positive_on_true_theorem():
     """``assert_kernel_rejects`` must NOT flag a VALID proof of a TRUE statement.
 
