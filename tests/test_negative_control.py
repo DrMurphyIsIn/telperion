@@ -21,9 +21,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pytest  # noqa: E402
 import sympy as sp  # noqa: E402
+from lean_env import lean_env_ready  # noqa: E402
 
 from telperion.negative_control import (  # noqa: E402
     FSTAR_PRELUDE,
@@ -55,6 +57,8 @@ def test_false_monotone_negative_control_both_layers():
 
     Layer 1 fires (self-check refuses) AND Layer 2 fires (the forged proof's
     ``norm_num`` fact ``3^11 ≤ (621/64)^4`` is false, so it will not compile)."""
+    if not lean_env_ready(_ENV):
+        pytest.skip("log_combination Mathlib env not built (Layer-2 needs the Lean kernel)")
     res = log_combination_negative_control(
         terms=[(1, "3"), (-4, "621/64")], q="0", route="monotone",
         env_dir=str(_ENV),
@@ -71,6 +75,8 @@ def test_assert_kernel_rejects_no_false_positive_on_true_theorem():
     Emit the (true) monotone proof of ``log(7/4) ≤ 4·FSTAR`` directly and confirm
     the kernel accepts it, so ``assert_kernel_rejects`` returns ``False`` — i.e.
     this is NOT a negative-control case."""
+    if not lean_env_ready(_ENV):
+        pytest.skip("log_combination Mathlib env not built (needs the Lean kernel)")
     B = sp.Rational(621, 64)
     N = sp.Integer(11)
     fold = sp.nsimplify(sp.Rational(7, 4) ** (1 * N) / B ** 4)   # ≈ 0.053 ≤ 1

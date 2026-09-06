@@ -306,6 +306,31 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Both modes discharge structurally on exact ℚ: concrete = norm_num over unfolded W/Bcap/baseOf/prodBcap defs on a literal config (goal is a concrete rational)"),
     "TranscendentalEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
         "Consumes payload cert's supplied rational L (and U): _lower_box closes L≤log(1+x0) via Real.le_log_iff_exp_le reduced to concrete exp(L)≤1+x0 discharged by exp_bound' Taylor +"),
+    # --- 2026-09-05: dVP zero-free-region atom emitters (bc_split/jensen_zero_count/
+    #     sphere_bound from the 2026-09-02 batch, left unclassified there; and the
+    #     2026-09-05 entire-part batch max_modulus/bc_deriv_re/entire_part_bound). All
+    #     are wrapper / glue / disk-geometry shapes: the payload (radii, bounds) is
+    #     substituted into BOTH hypotheses and goal, never a separately-supplied
+    #     corruptible identity certificate — same stance as CauchyDerivBoundEmitter. ---
+    "BCSplitEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Log-derivative combine w=Z+E, ‖E‖≤B ⟹ (-w).re ≤ B - Z.re (+ nonneg slack literal): "
+        "linarith glue over Mathlib Complex.abs_re_le_norm + the theorem's own hyps; no supplied witness"),
+    "JensenZeroCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Jensen zero-count for any analytic f: a concrete-(r,R) wrapper of Mathlib's "
+        "AnalyticOnNhd.sum_divisor_le, r<R side-goals closed by norm_num on literals; the count IS the statement"),
+    "SphereBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Strip-type growth ⟹ uniform sphere bound: disk-geometry gcongr/linarith from the hypotheses "
+        "(‖z-c‖=R, |Re| ≤ ‖·‖), (c,R) parameterize the statement; no corruptible cofactor"),
+    "MaxModulusEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Maximum-modulus propagation: a concrete-R wrapper of Mathlib's "
+        "Complex.norm_le_of_forall_mem_frontier_norm_le (frontier_ball R≠0 via norm_num on a literal); "
+        "the bound B is substituted into both hypothesis and goal"),
+    "BCDerivReEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Real-part → derivative bound (Borel-Caratheodory + Cauchy): inline structural proof; (R,r,M') "
+        "live in both hyps and goal, side-goals norm_num on literals, constant collapse by field_simp; no supplied identity"),
+    "EntirePartBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Entire-part bound ‖logDeriv g c‖ ≤ 2M'/(R-r): self-contained 3-lemma preamble (log branch + "
+        "BC-Cauchy + composition), wrapper feeds (R,r,M') via norm_num; the parameters parameterize the statement"),
 }
 
 

@@ -271,9 +271,12 @@ _SPECIAL_DISPATCH = {
     "bc_split": ("emit_bc_split", "certify_bc_split_point"),
     "jensen_zero_count": ("emit_jensen_zero_count", "certify_jensen_zero_count_point"),
     "sphere_bound": ("emit_sphere_bound", "certify_sphere_bound_point"),
-    "max_modulus": ("emit_max_modulus", "certify_max_modulus_point"),
-    "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point"),
-    "entire_part_bound": ("emit_entire_part_bound", "certify_entire_part_bound_point"),
+    # Length-3 entries carry the emitter class name too, enabling `emitter_for(kind)`
+    # (the certify()/emit() symmetry). Length-2 entries remain valid (certify-only).
+    "max_modulus": ("emit_max_modulus", "certify_max_modulus_point", "MaxModulusEmitter"),
+    "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point", "BCDerivReEmitter"),
+    "entire_part_bound":
+        ("emit_entire_part_bound", "certify_entire_part_bound_point", "EntirePartBoundEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }
@@ -291,11 +294,36 @@ def _certify_special_point(family, pt, name):
     elif kind == "valuation":
         from .emit_padic import certify_valuation_point as _cp
     elif kind in _SPECIAL_DISPATCH:
-        mod_name, fn_name = _SPECIAL_DISPATCH[kind]
+        mod_name, fn_name = _SPECIAL_DISPATCH[kind][:2]
         _cp = getattr(importlib.import_module(f".{mod_name}", __package__), fn_name)
     else:  # pragma: no cover — guarded by caller
         raise ValueError(f"not a first-class-emitter kind: {kind}")
     return _cp(family, pt, name)
+
+
+def emitter_for(kind: str):
+    """Lazily resolve and instantiate the Emitter for a first-class ``kind``.
+
+    Closes the certify()/emit() asymmetry: `certify` already auto-dispatches a
+    kind to its ``certify_*_point`` via ``_SPECIAL_DISPATCH``; this does the same
+    for the emitter class, so a driver can `emit` a family without hardcoding the
+    emitter.  Requires the ``_SPECIAL_DISPATCH[kind]`` entry to carry an optional
+    THIRD element — the emitter class name in the arm module.  Uses the same lazy
+    local import as ``_certify_special_point`` (no eager arm-module imports, so no
+    import cycles).  Raises ``KeyError`` if the kind is unknown and ``ValueError``
+    if it has no registered emitter class.
+    """
+    import importlib
+
+    entry = _SPECIAL_DISPATCH[kind]
+    if len(entry) < 3 or not entry[2]:
+        raise ValueError(
+            f"kind {kind!r} has no registered emitter class in _SPECIAL_DISPATCH "
+            f"(add a third tuple element to enable emitter_for)"
+        )
+    mod_name, _fn_name, cls_name = entry[:3]
+    cls = getattr(importlib.import_module(f".{mod_name}", __package__), cls_name)
+    return cls()
 
 
 def polya_certify(

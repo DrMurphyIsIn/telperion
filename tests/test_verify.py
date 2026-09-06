@@ -254,9 +254,16 @@ def test_lean_server_start_failure_is_recorded(monkeypatch, tmp_path):
     def _boom(*a, **k):
         raise OSError("no lake here")
 
+    # Block BOTH subprocess entry points: the resident LSP worker (Popen) AND the
+    # single-shot fallback (run), so no elaboration path can spawn `lake`.
     monkeypatch.setattr(LS.subprocess, "Popen", _boom)
+    monkeypatch.setattr(LS.subprocess, "run", _boom)
     srv = LS.LeanServer(tmp_path)
-    assert srv.start() is False
+    # `start()` is now only a capability check that env_dir exists (tmp_path does) — the
+    # actual process spawn moved into `probe()`/`elaborate()`.
+    assert srv.start() is True
+    # With every spawn path failing, the probe cannot elaborate: the server is
+    # unavailable and the launch error is recorded.
     assert srv.probe() is False
     assert srv.available() is False
     assert srv._start_error is not None
