@@ -214,6 +214,12 @@ _SPECIAL_KINDS = (
     "full_argument_principle",
     "rect_argument_principle",
     "annulus_count",
+    # Winding-number frontier (2026-09-06, same RH session): slit_loop_winding_zero (Rouché heart —
+    # closed loop in ‖·-1‖<r≤1 ⟹ ∮ w'/w = 0, winding 0, via clog_real + FTC-2) and box_residue_sum
+    # (box analogue of full_argument_principle, Finset-linearity plumbing conditional on the per-pole
+    # non-circular winding primitive — a genuine Mathlib gap).
+    "slit_loop_winding_zero",
+    "box_residue_sum",
     # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
     # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
     # rational lower bound over a rational box, emitted via nlinarith.
@@ -307,6 +313,11 @@ _SPECIAL_DISPATCH = {
          "RectArgumentPrincipleEmitter"),
     "annulus_count":
         ("emit_annulus_count", "certify_annulus_count_point", "AnnulusCountEmitter"),
+    "slit_loop_winding_zero":
+        ("emit_slit_loop_winding_zero", "certify_slit_loop_winding_zero_point",
+         "SlitLoopWindingZeroEmitter"),
+    "box_residue_sum":
+        ("emit_box_residue_sum", "certify_box_residue_sum_point", "BoxResidueSumEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }

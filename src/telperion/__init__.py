@@ -216,6 +216,15 @@ from .emit_annulus_count import (  # noqa: F401
     AnnulusCountEmitter, annulus_count_certificate,
     annulus_count_family, certify_annulus_count_point,
 )
+# Winding-number frontier (2026-09-06): Rouché heart (winding 0) + conditional box residue-sum.
+from .emit_slit_loop_winding_zero import (  # noqa: F401
+    SlitLoopWindingZeroEmitter, certify_slit_loop_winding_zero_point,
+    slit_loop_winding_zero_certificate, slit_loop_winding_zero_family,
+)
+from .emit_box_residue_sum import (  # noqa: F401
+    BoxResidueSumEmitter, box_residue_sum_certificate,
+    box_residue_sum_family, certify_box_residue_sum_point,
+)
 # Analytic-cert-structures build (2026-09-05): box-robust emitter (#2).
 from .emit_box_robust import (  # noqa: F401
     BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,
