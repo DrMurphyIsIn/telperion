@@ -29,12 +29,11 @@ def _autocorr(b):
 def test_spectral_factor_roundtrips(a):
     b = spectral_factor(a)
     ar = _autocorr(b)
-    # `b` is a NUMERIC intermediate from np.roots (double-precision companion-matrix
-    # root-finding); on clustered-root cases (VP deg-4) the residual is ~1e-4 and its
-    # exact size shifts with the BLAS/root-ordering path across environments. The
-    # shipped certificate uses the RATIONALIZED exact factor, whose correctness is
-    # gated by the exact SOS identity in test_rationalize_gives_exact_nonneg_sos; this
-    # roundtrip only guards against gross breakage, so 1e-3 is the principled bound.
+    # `spectral_factor` uses `np.roots` (companion-matrix eigenvalues). The VP deg-4 poly
+    # touches zero, so its spectral factor has roots ON the unit circle, where `np.roots` is
+    # ill-conditioned and the float round-trip error is BLAS/platform-dependent (~5e-7 on macOS,
+    # ~1e-4 on Linux CI). 1e-3 is the meaningful cross-platform bar for the FLOAT round-trip;
+    # exact rational work is covered by `test_rationalize_gives_exact_nonneg_sos`.
     assert max(abs(ar[k] - float(a[k])) for k in range(len(a))) < 1e-3
 
 

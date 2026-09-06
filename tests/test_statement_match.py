@@ -22,11 +22,11 @@ from telperion.statement_match import (  # noqa: E402
 from lean_env import lean_env_ready  # noqa: E402
 
 _ENV = Path(__file__).resolve().parents[1] / "examples" / "log_combination" / "lean"
-# A checked-in lake-manifest.json is NOT proof the env is usable: the runner also
-# needs `lake` on PATH and a built Mathlib cache. `lean_env_ready` checks both, so
-# this suite skips cleanly on the no-toolchain unit job (and never rebuilds).
-_HAS_ENV = lean_env_ready(_ENV)
-pytestmark = pytest.mark.skipif(not _HAS_ENV, reason="needs a built Lean env (lake + Mathlib)")
+# Guard on lean_env_ready (lake on PATH AND Mathlib actually built), NOT just the tracked
+# lake-manifest.json: the manifest is checked in, so a manifest-only check runs these Lean-
+# backed tests in the pip-only CI unit job (no lake) — where they fail. lean_env_ready skips
+# cleanly there and still runs them wherever a real built env exists (e.g. telperion-lean-e2e).
+pytestmark = pytest.mark.skipif(not lean_env_ready(_ENV), reason="needs a built Lean env")
 
 
 def test_signature_gate_catches_weakening():
