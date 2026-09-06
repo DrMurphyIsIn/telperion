@@ -302,6 +302,18 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Both modes discharge structurally on exact ℚ: concrete = norm_num over unfolded W/Bcap/baseOf/prodBcap defs on a literal config (goal is a concrete rational)"),
     "TranscendentalEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
         "Consumes payload cert's supplied rational L (and U): _lower_box closes L≤log(1+x0) via Real.le_log_iff_exp_le reduced to concrete exp(L)≤1+x0 discharged by exp_bound' Taylor +"),
+    "BCSplitEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "The COMBINE step -Re(w) ≤ B - Re(Z) + slack from w=Z+E, ‖E‖≤B is the pure triangle "
+        "inequality |Re E|≤‖E‖; no separate corruptible identity. Nonvacuity is structural "
+        "(slack≥0 enforced; a negative slack would strengthen the tight bound and is refused)"),
+    "JensenZeroCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Wraps Mathlib's AnalyticOnNhd.sum_divisor_le (Jensen zero-count bound) for a rational "
+        "radius pair; the only side goals (0<r<R) are decidable order facts closed by norm_num — "
+        "a library bound + decidable conditions, not a corruptible algebraic certificate"),
+    "SphereBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Turns a strip-type pointwise growth bound into a uniform sphere bound purely by disk "
+        "geometry inequalities (‖z‖≤‖c‖+R, Re z≥Re c-R, ‖z-1‖≥Re c-R-1); the only side goal "
+        "(R>0, nondegenerate sphere) is decided by norm_num — a structural bound, no identity"),
 }
 
 
