@@ -37,6 +37,10 @@ from telperion.emit_box_residue_sum import (
     BoxResidueSumEmitter, box_residue_sum_certificate, box_residue_sum_family,
     certify_box_residue_sum_point,
 )
+from telperion.emit_rect_winding import (
+    RectWindingEmitter, certify_rect_winding_point, rect_winding_certificate,
+    rect_winding_family,
+)
 from telperion.emit_two_scale_separation import (
     TwoScaleSeparationEmitter, certify_two_scale_separation_point, two_scale_certificate,
     two_scale_separation_family,
@@ -54,6 +58,7 @@ _CERT = {
     "annulus_count": certify_annulus_count_point,
     "slit_loop_winding_zero": certify_slit_loop_winding_zero_point,
     "box_residue_sum": certify_box_residue_sum_point,
+    "rect_winding": certify_rect_winding_point,
 }
 
 
@@ -225,3 +230,24 @@ def test_box_residue_sum_negative_control():
         box_residue_sum_certificate(2, 0, 0, 1)
     with pytest.raises(ValueError, match="y0 < y1"):
         box_residue_sum_certificate(0, 1, 1, 0)
+
+
+def test_rect_winding_certificate_and_shape():
+    c = rect_winding_certificate(0, 2, 0, 1)
+    assert (c.x0, c.x1, c.y0, c.y1) == (0, 2, 0, 1)
+    body, nthm = _emit_one(rect_winding_family, RectWindingEmitter,
+                           {"x0": "0", "x1": "2", "y0": "0", "y1": "1"}, "rw")
+    assert nthm == 3  # 2 monodromy helpers + 1 winding theorem
+    # the branch-split proof: clog_real antiderivative, the ρ-(·) left branch, monodromy jumps
+    assert "log_neg_sub_im_neg" in body
+    assert "log_neg_sub_im_pos" in body
+    assert "clog_real" in body
+    assert "arg_neg_eq_arg_add_pi_of_im_neg" in body
+    assert "= 2 * ↑π * I := by" in body
+
+
+def test_rect_winding_negative_control():
+    with pytest.raises(ValueError, match="x0 < x1"):
+        rect_winding_certificate(2, 2, 0, 1)
+    with pytest.raises(ValueError, match="y0 < y1"):
+        rect_winding_certificate(0, 1, 1, 1)

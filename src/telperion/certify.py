@@ -220,6 +220,10 @@ _SPECIAL_KINDS = (
     # non-circular winding primitive — a genuine Mathlib gap).
     "slit_loop_winding_zero",
     "box_residue_sum",
+    # The winding-NONZERO primitive (2026-09-06, same RH session): ∮_∂rect (z-ρ)⁻¹ = 2πi for ρ
+    # strictly inside — from-scratch segment/log branch-split proof, closes the Mathlib gap that
+    # blocked box_residue_sum's hwind hypothesis and Rouché.
+    "rect_winding",
     # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
     # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
     # rational lower bound over a rational box, emitted via nlinarith.
@@ -318,6 +322,8 @@ _SPECIAL_DISPATCH = {
          "SlitLoopWindingZeroEmitter"),
     "box_residue_sum":
         ("emit_box_residue_sum", "certify_box_residue_sum_point", "BoxResidueSumEmitter"),
+    "rect_winding":
+        ("emit_rect_winding", "certify_rect_winding_point", "RectWindingEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }
