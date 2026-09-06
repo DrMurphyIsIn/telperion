@@ -371,6 +371,8 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Box residue-sum Bd(Σ m/(z-ρ)) = 2πi·Σ m: Finset linearity (intervalIntegral.integral_finsetSum + integral_const_mul) over the four sides, conditional on the per-pole winding primitive Bd((z-ρ)⁻¹)=2πi (explicit hypothesis, the Mathlib gap); no separately-supplied witness"),
     "RectWindingEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Winding-nonzero primitive Bd((z-ρ)⁻¹)=2πi for ρ strictly inside: from-scratch segment/Complex.log branch-split — 3 sides in slitPlane via clog_real+FTC-2, left side via ρ-(·) branch, two log(-w)-log(w)=±iπ monodromy jumps (arg_neg_eq_arg_±pi) sum to 2πi; no separately-supplied witness"),
+    "LogProductBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Two-scale log-product bound log‖P c‖-log‖P z‖ ≤ (Σ m)·(log R₀-log(R-R₀)): reverse-triangle separation ‖z-ρ‖≥R-R₀ (norm_sub_norm_le) + monotone Real.log_le_log + log-of-product (norm_prod/Real.log_prod/log_zpow) + Finset.sum_le_sum; geometry is the certificate, no separately-supplied witness"),
 }
 
 

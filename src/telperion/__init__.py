@@ -230,6 +230,11 @@ from .emit_rect_winding import (  # noqa: F401
     RectWindingEmitter, certify_rect_winding_point,
     rect_winding_certificate, rect_winding_family,
 )
+# dVP zero-factor magnitude bound (2026-09-06): two-scale log-product boundary bound.
+from .emit_log_product_bound import (  # noqa: F401
+    LogProductBoundEmitter, certify_log_product_bound_point,
+    log_product_bound_certificate, log_product_bound_family,
+)
 # Analytic-cert-structures build (2026-09-05): box-robust emitter (#2).
 from .emit_box_robust import (  # noqa: F401
     BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,
