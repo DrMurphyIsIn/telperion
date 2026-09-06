@@ -225,6 +225,11 @@ from .emit_box_residue_sum import (  # noqa: F401
     BoxResidueSumEmitter, box_residue_sum_certificate,
     box_residue_sum_family, certify_box_residue_sum_point,
 )
+# The winding-NONZERO primitive (2026-09-06): ∮_∂rect (z-ρ)⁻¹ = 2πi, from scratch.
+from .emit_rect_winding import (  # noqa: F401
+    RectWindingEmitter, certify_rect_winding_point,
+    rect_winding_certificate, rect_winding_family,
+)
 # Analytic-cert-structures build (2026-09-05): box-robust emitter (#2).
 from .emit_box_robust import (  # noqa: F401
     BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,

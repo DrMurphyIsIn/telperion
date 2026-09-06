@@ -361,6 +361,8 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Winding-zero (Rouché heart) ∮ w'/w = 0 for a closed loop in ‖·-1‖<r≤1: w'/w = (log∘w)' via HasDerivAt.clog_real (slitPlane from Re>0) + FTC-2 integral_eq_sub_of_hasDerivAt collapsing to log(w b)-log(w a)=0; no separately-supplied witness"),
     "BoxResidueSumEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Box residue-sum Bd(Σ m/(z-ρ)) = 2πi·Σ m: Finset linearity (intervalIntegral.integral_finsetSum + integral_const_mul) over the four sides, conditional on the per-pole winding primitive Bd((z-ρ)⁻¹)=2πi (explicit hypothesis, the Mathlib gap); no separately-supplied witness"),
+    "RectWindingEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Winding-nonzero primitive Bd((z-ρ)⁻¹)=2πi for ρ strictly inside: from-scratch segment/Complex.log branch-split — 3 sides in slitPlane via clog_real+FTC-2, left side via ρ-(·) branch, two log(-w)-log(w)=±iπ monodromy jumps (arg_neg_eq_arg_±pi) sum to 2πi; no separately-supplied witness"),
 }
 
 
