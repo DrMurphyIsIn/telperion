@@ -337,6 +337,14 @@ REGISTRY: dict[str, SensitivityStance] = {
     "EntirePartBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Entire-part bound ‖logDeriv g c‖ ≤ 2M'/(R-r): self-contained 3-lemma preamble (log branch + "
         "BC-Cauchy + composition), wrapper feeds (R,r,M') via norm_num; the parameters parameterize the statement"),
+    # --- 2026-09-06: zeta zero-localization (Stage 1) on-line zero-count emitter. ---
+    "XiLineZerosEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "On-line nontrivial-zero existence for completedRiemannZeta: sign-change (lo>0 / hi<0 rational "
+        "literals closed by norm_num) + Mathlib intermediate_value_Icc/Icc' through the kernel lemma "
+        "ZetaZeroLocalization.completedZeta_im_eq_zero (Lambda real on the line). The enclosure boxes are "
+        "carried as theorem HYPOTHESES (the documented Arb non-kernel input), not a baked-in corruptible "
+        "fact -- a forged enclosure falsifies the hypothesis, leaving the IVT implication kernel-valid; "
+        "no separately-supplied witness. conjecture1_proved = False"),
     # --- 2026-09-06: dVP Blaschke/two-scale atoms. All wrapper/glue/geometry shapes: the numeric data
     #     (radii R,R₀; σ,β,k) is substituted into BOTH hypotheses and goal, never a separately-supplied
     #     corruptible identity certificate — same stance as CauchyDerivBoundEmitter / TwoScale geometry. ---

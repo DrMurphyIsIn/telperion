@@ -233,6 +233,10 @@ _SPECIAL_KINDS = (
     # fact + a2 != 0 chained into the d=2 bridge lemma
     # `hyperbolic_deg2_of_discrim_nonneg`.
     "hyperbolicity",
+    # Zeta-zero-localization Stage 1 core (2026-09-06): on-line zero count via
+    # alternating-sign real enclosures of Lambda(1/2+it) + IVT.  Emits ">= N zeros
+    # of completedRiemannZeta on the critical line in [a,b]" (N sign changes).
+    "xi_line_zeros",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -326,6 +330,8 @@ _SPECIAL_DISPATCH = {
         ("emit_rect_winding", "certify_rect_winding_point", "RectWindingEmitter"),
     "box_robust": ("emit_box_robust", "certify_box_robust_point"),
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
+    "xi_line_zeros":
+        ("emit_xi_line_zeros", "certify_xi_line_zeros_point", "XiLineZerosEmitter"),
 }
 
 
