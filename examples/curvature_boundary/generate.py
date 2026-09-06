@@ -67,7 +67,15 @@ def build() -> str:
     )
     report = emit(
         certify(fam),
-        LeanProfile(namespace=("CurvatureBoundary",)),
+        LeanProfile(
+            namespace=("CurvatureBoundary",),
+            prelude=(
+                "-- Provenance: ports a proof idea (not code) from AxiomMath/ZetaZeros\n"
+                "-- (arXiv:2609.02882; Montgomery-Taylor kernel, `extremalG_const`),\n"
+                "-- generalized here to the curvature-sign setting. Independently\n"
+                "-- re-implemented; see NOTICE.md for full attribution."
+            ),
+        ),
         [CurvatureBoundaryEmitter()],
         ValidationReport(checks=(("curvature_boundary", True),)),
     )

@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased — Attribution: emitters ported from AxiomMath/ZetaZeros
+
+- **`CurvatureBoundaryEmitter`** (`examples/curvature_boundary/`) and
+  **`TranscendentalEnclosureEmitter`** (`examples/transcendental_enclosure/`)
+  port *proof ideas* (not code) from the Lean formalization associated with
+  **arXiv:2609.02882** / **`AxiomMath/ZetaZeros`** (the Montgomery–Taylor
+  extremal-kernel `extremalG_const` move), independently re-implemented in the
+  Telperion idiom. The curvature-boundary emitter generalizes `extremalG_const`
+  to the curvature-sign setting; the transcendental-enclosure emitter ships the
+  rational log face only (the trig/`C₀` face is deferred, refused at cert time).
+  Attribution now appears in the emitted `.lean` headers, the generator
+  docstrings, and the top-level [`NOTICE.md`](../NOTICE.md). This is *not* the
+  same project as AXLE (arXiv:2606.26442, an engineering-patterns source);
+  `conjecture1_proved = False`.
+## Unreleased — Analytic cert structures (Tasks 1–5)
+
+- **`telperion.arb_enclosure.enclose_constant`** (#1, Task 1) — Arb ball
+  arithmetic provider yielding outward-rounded exact `Fraction` enclosures for
+  transcendental constants (`pi`, `e`, `zeta(q)`, `gamma(q)`, or any callable).
+  Non-kernel-input trust boundary: Arb is the oracle; Lean does not verify the
+  constant's value.
+- **`telperion.emit_box_robust.BoxRobustEmitter`** (#2, Task 2) — first-class
+  emitter certifying `0 <= target` for separable-quadratic targets over rational
+  boxes via monomial-wise margin (`box_min_lower_bound`), emitting nlinarith atoms.
+  Sorry-free, axiom-clean. CI: `box-robust-compiles`.
+- **`telperion.emit_hyperbolicity.HyperbolicityEmitter`** (#3, Task 4) — real-
+  rootedness emitter (d=2) chaining a box-robust discriminant bound with the
+  freshly-proven `HyperbolicityBridge.hyperbolic_deg2_of_discrim_nonneg` bridge
+  lemma to emit `roots.card = 2`. Hyperbolicity at degree >= 3 is deferred
+  (Mathlib lacks cubic/quartic discriminant bridges). CI: `hyperbolicity-compiles`.
+- **`telperion.statement_match.statement_match_example`** + **`Emitter.emit_gate`**
+  (#4, Task 3) — statement-match gate: emits `example : <type> := <thm_name>` so
+  statement drift is a kernel-level compile error, not a silent divergence.
+  Single-sourced type string wired into `BoxRobustEmitter` and inherited by
+  `TuranBoxEmitter`.
+- **`telperion.emit_turan_box.turan_box_family`** (#5, Task 5) — thin delegation
+  to `box_robust_family` certifying `a1^2 - a0*a2 > 0` (log-concavity of a Turan
+  triple) over a rational box. No new emitter class; full #2 pipeline applies
+  end-to-end. CI: `turan-box-compiles`.
+- **Hygiene (Task 6):** `lake-manifest.json` root `name` corrected from `"Toy"` to
+  `"BoxRobust"` / `"Hyperbolicity"` / `"TuranBox"` in the three new example dirs.
+  `.superpowers/` added to `.gitignore`; SDD scratch untracked from the branch.
+  conjecture1_proved = False.
+
 ## Unreleased — BG: part (i) extended to n=15; it does not factor via obvious moves
 
 - **Broom-dominance part (i)** (every rich-exchange local max of `rho` is the
@@ -179,6 +223,42 @@
   `conjecture_proved` is `False` while it stands. The honest "one lemma away"
   ledger in code (`test_bg_upper_bound.py`, docs
   `BG_UPPER_BOUND_REDUCTION_20260831.md`). `conjecture1_proved = False`.
+
+## Unreleased — Jensen d=2 hyperbolicity cert family (Task 9)
+
+- **First formally kernel-verified Jensen-polynomial hyperbolicity for zeta.**
+  Three sorry-free Lean 4 theorems (`jensen_box_hyperbolic_deg2_{0,1,2}`) assert
+  that every degree-2 Jensen polynomial J^{2,n} whose rational coefficient box is
+  certified by Arb ball arithmetic is real-rooted (`.roots.card = 2`). Axioms:
+  `{propext, Classical.choice, Quot.sound}` only. AXLE statement-match gate
+  kernel-enforced for each. Discriminant margins: 2.82e-4, 2.27e-8, 8.00e-13
+  (n=0,1,2). `conjecture1_proved = False`; NOT a proof of RH.
+- **`--grid` flag in `examples/jensen_hyperbolicity/generate.py`**: emits the
+  d=2 cert family for n=0,1,2 in one command. Also adds `--n-list` for arbitrary
+  explicit offset lists. Default precision for grid mode: 400 bits.
+- **`enclose_coeff_box` uses ONLY the rigorous acb_series path.** Coefficients
+  alpha(m) for m >= 5 (needed for n >= 3) are refused with `NotImplementedError`:
+  python-flint's acb_series zeta caps at 10 terms, and a finite-evaluation
+  (Vandermonde) extraction drops the alpha(m+3)+ Taylor tail (~1e-28), which is
+  far larger than the acb input-ball radius (~1e-169) and would make the
+  enclosure UNSOUND. Rigorous high-m coefficients require a Cauchy tail bound
+  `|alpha(k)| <= max_{|t|=R}|Xi(t)| / R^{2k}`, deferred to Phase 2. (An earlier
+  draft's `enclose_xi_coeff_high` Vandermonde method was UNSOUND for exactly this
+  reason and has been removed from all cert paths.)
+- **`tests/rh_jensen/test_grid.py`**: 9 pytest tests covering grid-mode exits,
+  three-theorem emission (and n=3 absence), `.roots.card = 2` presence, no-sorry,
+  AXLE gates, `#print axioms` lines, `--n-list` subset mode, and the rigor
+  guards (`enclose_coeff_box` raises NotImplementedError for alpha(m>=5);
+  `generate.py --n-list 3` fails). All 9 pass.
+- **`docs/JENSEN_HYPERBOLICITY_STATUS.md`**: honest status document: what is
+  kernel-proven (n=0,1,2), the coefficient-membership trust boundary
+  (Arb-certified, non-kernel), and what is not done (alpha(m>=5) needs a Cauchy
+  tail bound; d>=3 needs the Hermite engine; uniform N(d) out of scope; emitter
+  framework integration deferred).
+- n >= 3 (needs alpha(m>=5)) and degrees d >= 3 explicitly deferred to Phase 2
+  (Mathlib lacks discriminant-to-real-roots bridges for cubics/quartics; the
+  general Hermite-Bezoutian PSD engine will handle all d<=8 uniformly, and the
+  Cauchy tail bound will close the high-m coefficient extraction).
 
 ## Unreleased — Comparator: independent verification (axiom whitelist + 2nd kernel)
 

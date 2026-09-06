@@ -4,6 +4,11 @@
 claims into kernel-checked Mathlib proofs by exact-arithmetic witness, not by
 trust.**
 
+> **New to Telperion?** → [Getting Started](docs/GETTING_STARTED.md) (install →
+> generate → verify a proof locally) · [Architecture](docs/ARCHITECTURE.md) (how it
+> works; engine vs. research lab) · [Contributing](CONTRIBUTING.md) (add a
+> certificate shape).
+
 You describe your problem as a parameterized *family* of statements. Telperion
 certifies each instance in exact rational arithmetic, then emits Lean 4 that
 Mathlib's kernel re-proves from scratch. **The generator is untrusted by

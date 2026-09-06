@@ -204,6 +204,15 @@ _SPECIAL_KINDS = (
     "two_scale_separation",
     "far_pole_sum",
     "herglotz_lower",
+    # Analytic-cert-structures build (2026-09-05): box-robust separable-quadratic
+    # forall-box nonnegativity (#2, foundational) -- rigorous monomial-wise
+    # rational lower bound over a rational box, emitted via nlinarith.
+    "box_robust",
+    # Analytic-cert-structures build (2026-09-05): hyperbolicity / real-rootedness
+    # (#3, d=2) -- forall-box `roots.card = 2` via a box-robust discriminant-nonneg
+    # fact + a2 != 0 chained into the d=2 bridge lemma
+    # `hyperbolic_deg2_of_discrim_nonneg`.
+    "hyperbolicity",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -278,6 +287,8 @@ _SPECIAL_DISPATCH = {
         ("emit_two_scale_separation", "certify_two_scale_separation_point", "TwoScaleSeparationEmitter"),
     "far_pole_sum": ("emit_far_pole_sum", "certify_far_pole_sum_point", "FarPoleSumEmitter"),
     "herglotz_lower": ("emit_herglotz_lower", "certify_herglotz_lower_point", "HerglotzLowerEmitter"),
+    "box_robust": ("emit_box_robust", "certify_box_robust_point"),
+    "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
 }
 
 

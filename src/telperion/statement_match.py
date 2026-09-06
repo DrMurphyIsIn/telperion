@@ -87,6 +87,27 @@ def statement_match_check(intended, *, env_dir, imports=("import Mathlib",),
     )
 
 
+def statement_match_example(theorem_name: str, explicit_type: str) -> str:
+    """Return a Lean `example` line that kernel-enforces the theorem's statement.
+
+    Emits exactly::
+
+        example : <explicit_type> := <theorem_name>\\n
+
+    When this line is compiled alongside the theorem, Lean's kernel checks that
+    ``theorem_name``'s type is definitionally equal to ``explicit_type``.  Any
+    statement drift -- a weakening, a different type, a wrong arity -- is a
+    compile error rather than a silent divergence.
+
+    The caller is responsible for passing the SAME type string used in the
+    theorem's own signature (single-sourced); that identity is what makes this
+    a drift net, not just a comment.
+
+    conjecture1_proved = False.
+    """
+    return f"example : {explicit_type} := {theorem_name}\n"
+
+
 def _safe(name: str) -> str:
     return "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in name)
 

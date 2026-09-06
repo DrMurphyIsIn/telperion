@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family CurvatureBoundary | input-hash e7edfb1106627a65
+/- telperion 0.1.6 | family CurvatureBoundary | input-hash c14f3a61a290c1b7
    7 theorems, 4 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
@@ -6,6 +6,11 @@
 import Mathlib
 
 namespace CurvatureBoundary
+
+-- Provenance: ports a proof idea (not code) from AxiomMath/ZetaZeros
+-- (arXiv:2609.02882; Montgomery-Taylor kernel, `extremalG_const`),
+-- generalized here to the curvature-sign setting. Independently
+-- re-implemented; see NOTICE.md for full attribution.
 
 -- (1) ABSTRACT CONCAVE→ENDPOINTS.  A function concave on `[a,b]` dominates the
 -- MIN of its two endpoint values everywhere on `[a,b]`: the extremum (here the

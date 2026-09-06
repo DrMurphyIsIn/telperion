@@ -99,6 +99,27 @@ class Emitter:
             heartbeat(f"render {fam.family.name} [{self.kind}]", i + 1, n, t0)
         return units
 
+    #: When True (default), ``emit_gate`` appends a kernel-enforced statement-match
+    #: ``example`` after each emitted theorem.  Set to False to suppress gates
+    #: (e.g. for emitters whose type strings cannot be round-tripped as Lean text).
+    emit_statement_gate: bool = field(default=True, init=True)
+
+    def emit_gate(self, name: str, type_str: str) -> str:
+        """Return a Lean ``example : <type_str> := <name>`` gate line, or "" if disabled.
+
+        When ``emit_statement_gate`` is True (the default), calls
+        ``statement_match_example`` and returns the gate text.  The caller must
+        pass the SAME ``type_str`` used in the theorem's own signature so that the
+        ascribed type is identical -- single-sourcing is what makes the gate a
+        genuine drift detector rather than a redundant comment.
+
+        conjecture1_proved = False.
+        """
+        if not self.emit_statement_gate:
+            return ""
+        from .statement_match import statement_match_example
+        return statement_match_example(name, type_str)
+
     def code_fingerprint(self) -> str:
         """Version-stable hash of this emitter's own source — its class and every
         telperion base up the MRO.
