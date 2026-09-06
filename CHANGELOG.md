@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Attribution: emitters ported from AxiomMath/ZetaZeros
+
+- **`CurvatureBoundaryEmitter`** (`examples/curvature_boundary/`) and
+  **`TranscendentalEnclosureEmitter`** (`examples/transcendental_enclosure/`)
+  port *proof ideas* (not code) from the Lean formalization associated with
+  **arXiv:2609.02882** / **`AxiomMath/ZetaZeros`** (the Montgomery–Taylor
+  extremal-kernel `extremalG_const` move), independently re-implemented in the
+  Telperion idiom. The curvature-boundary emitter generalizes `extremalG_const`
+  to the curvature-sign setting; the transcendental-enclosure emitter ships the
+  rational log face only (the trig/`C₀` face is deferred, refused at cert time).
+  Attribution now appears in the emitted `.lean` headers, the generator
+  docstrings, and the top-level [`NOTICE.md`](../NOTICE.md). This is *not* the
+  same project as AXLE (arXiv:2606.26442, an engineering-patterns source);
+  `conjecture1_proved = False`.
 ## Unreleased — Analytic cert structures (Tasks 1–5)
 
 - **`telperion.arb_enclosure.enclose_constant`** (#1, Task 1) — Arb ball
