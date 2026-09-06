@@ -86,16 +86,23 @@ def optimize_cosine(d: int, *, trials: int = 120, denom: int = 8):
     b = best[1]
     if b[0] < 0:
         b = -b
+    # Normalize to a canonical scale before rationalizing. The objective F is
+    # SCALE-INVARIANT (numerator and `tail` both scale by lambda^2), so different
+    # BLAS/LAPACK backends (e.g. macOS Accelerate vs a Linux CI runner's OpenBLAS)
+    # return the SAME optimum shape at wildly different magnitudes. A small-magnitude
+    # b floors to the zero polynomial -> exact F=0 -> spurious "does not beat VP" on
+    # some runners. Rescaling so max|b|=1 makes the rationalization deterministic and
+    # platform-independent. This also converts each entry to a Python float, which
+    # avoids the sympy-1.12 `sp.floor(np.float64)` "invalid literal for int()" crash
+    # (numpy>=2 reprs numpy scalars as "np.float64(...)", which sympy 1.12 str-parses).
+    scale = max(abs(float(v)) for v in b)
+    if scale > 0:
+        b = [float(v) / scale for v in b]
     # Robust rationalization: the numeric optimum is a continuum, so a single round() can land
     # on a poor rational.  Search every floor/ceil rounding of b·denom and keep the admissible
     # one with the largest exact F (this is how the MT_DEG4 flagship rounds nicely).
     import itertools
-    # b comes from scipy.optimize as a numpy array. Coerce each entry to a Python
-    # float before it reaches sympy: under numpy>=2 the repr is "np.float64(...)"
-    # and sympy 1.12 converts numpy scalars by stringifying, so sp.floor(np.float64)
-    # raises "invalid literal for int()". float(v) is an exact, value-preserving
-    # conversion; newer sympy masks the bug but this keeps both matrix legs green.
-    lo = [int(sp.floor(float(v) * denom)) for v in b]
+    lo = [int(sp.floor(v * denom)) for v in b]
     b_rat, a_exact, F = None, None, None
     for bump in itertools.product((0, 1), repeat=d + 1):
         cand = [sp.Rational(lo[j] + bump[j], denom) for j in range(d + 1)]
