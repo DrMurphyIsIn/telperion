@@ -18,6 +18,7 @@ conjecture1_proved = False.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,6 +26,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # noqa: E402
 from lean_env import lean_env_ready  # noqa: E402
+
+# This test drives `simplify_proof`, which shells out to `lake env lean` to decide
+# verifiability — it needs the `lake` binary (but NOT a built Mathlib, since it runs
+# against an empty tmp env). Skip cleanly when no toolchain is present.
+_HAVE_LAKE = shutil.which("lake") is not None or (Path.home() / ".elan" / "bin" / "lake").exists()
 
 from telperion.simplify import (  # noqa: E402
     HaveStep,
@@ -206,6 +212,7 @@ def test_leading_width():
 #  unchanged -- this exercises the "input does not verify -> no-op" branch.)   #
 # --------------------------------------------------------------------------- #
 
+@pytest.mark.skipif(not _HAVE_LAKE, reason="needs the lake toolchain to run the verifier")
 def test_simplify_returns_input_unchanged_when_not_verifiable(tmp_path):
     # Content that does NOT verify (an unknown identifier) must be a strict no-op:
     # the minimizer never attempts a deletion on a proof it cannot first confirm

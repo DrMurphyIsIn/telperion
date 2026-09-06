@@ -13,6 +13,7 @@ from .certify import (  # noqa: F401
     CertifiedFamily,
     PolyaCertificate,
     certify,
+    emitter_for,
     polya_certify,
 )
 from .emit import BilinearBoxEmitter, DirectPolyaEmitter  # noqa: F401
