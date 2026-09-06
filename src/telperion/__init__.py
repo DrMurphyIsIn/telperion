@@ -187,6 +187,18 @@ from .emit_entire_part_bound import (  # noqa: F401
     EntirePartBoundEmitter, entire_part_bound_certificate,
     entire_part_bound_family, certify_entire_part_bound_point,
 )
+# Analytic-cert-structures build (2026-09-05): box-robust emitter (#2).
+from .emit_box_robust import (  # noqa: F401
+    BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,
+    box_robust_family, certify_box_robust_point,
+)
+# Analytic-cert-structures build (2026-09-05): hyperbolicity emitter (#3, d=2).
+from .emit_hyperbolicity import (  # noqa: F401
+    HyperbolicityEmitter, HyperbolicityPayload,
+    hyperbolicity_family, certify_hyperbolicity_point,
+)
+# Analytic-cert-structures build (2026-09-05): turan-box log-concavity emitter (#5).
+from .emit_turan_box import turan_box_family  # noqa: F401
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
