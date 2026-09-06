@@ -187,6 +187,18 @@ from .emit_entire_part_bound import (  # noqa: F401
     EntirePartBoundEmitter, entire_part_bound_certificate,
     entire_part_bound_family, certify_entire_part_bound_point,
 )
+from .emit_two_scale_separation import (  # noqa: F401
+    TwoScaleSeparationEmitter, two_scale_certificate,
+    two_scale_separation_family, certify_two_scale_separation_point,
+)
+from .emit_far_pole_sum import (  # noqa: F401
+    FarPoleSumEmitter, far_pole_sum_certificate,
+    far_pole_sum_family, certify_far_pole_sum_point,
+)
+from .emit_herglotz_lower import (  # noqa: F401
+    HerglotzLowerEmitter, herglotz_lower_certificate,
+    herglotz_lower_family, certify_herglotz_lower_point,
+)
 from .emit_unimodal import (  # noqa: F401
     UNIMODAL_PRELUDE, UnimodalMaxEmitter, unimodal_max_family,
 )
