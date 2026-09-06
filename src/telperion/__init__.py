@@ -199,6 +199,10 @@ from .emit_herglotz_lower import (  # noqa: F401
     HerglotzLowerEmitter, herglotz_lower_certificate,
     herglotz_lower_family, certify_herglotz_lower_point,
 )
+from .emit_argument_principle import (  # noqa: F401
+    ArgumentPrincipleEmitter, argument_principle_certificate,
+    argument_principle_family, certify_argument_principle_point,
+)
 # Analytic-cert-structures build (2026-09-05): box-robust emitter (#2).
 from .emit_box_robust import (  # noqa: F401
     BoxRobustEmitter, BoxRobustPayload, box_min_lower_bound,

@@ -13,6 +13,10 @@ from telperion.emit_herglotz_lower import (
     HerglotzLowerEmitter, certify_herglotz_lower_point, herglotz_lower_certificate,
     herglotz_lower_family,
 )
+from telperion.emit_argument_principle import (
+    ArgumentPrincipleEmitter, argument_principle_certificate, argument_principle_family,
+    certify_argument_principle_point,
+)
 from telperion.emit_two_scale_separation import (
     TwoScaleSeparationEmitter, certify_two_scale_separation_point, two_scale_certificate,
     two_scale_separation_family,
@@ -24,6 +28,7 @@ _CERT = {
     "two_scale_separation": certify_two_scale_separation_point,
     "far_pole_sum": certify_far_pole_sum_point,
     "herglotz_lower": certify_herglotz_lower_point,
+    "argument_principle": certify_argument_principle_point,
 }
 
 
@@ -86,3 +91,18 @@ def test_herglotz_negative_controls():
         herglotz_lower_certificate(1, 2, 1)
     with pytest.raises(ValueError, match="k ≥ 1"):
         herglotz_lower_certificate(2, 1, 0)
+
+
+def test_argument_principle_certificate_and_shape():
+    c = argument_principle_certificate(Fraction(3, 2))
+    assert c.R == Fraction(3, 2)
+    body, nthm = _emit_one(argument_principle_family, ArgumentPrincipleEmitter, {"R": "3/2"}, "ap")
+    assert nthm == 1
+    assert "circleIntegral.integral_sub_inv_of_mem_ball" in body
+    assert "circleIntegral.integral_fun_sum" in body
+    assert "= 2 * π * I * ∑ ρ ∈ s, (m ρ : ℂ)" in body
+
+
+def test_argument_principle_negative_control():
+    with pytest.raises(ValueError, match="strictly positive contour radius"):
+        argument_principle_certificate(0)
