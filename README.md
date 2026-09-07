@@ -27,7 +27,12 @@ across three very different campaigns:
   CI-green Mathlib theorems (`g1_floors` alone: 3,084).
 - **Analytic number theory** — an *unconditional* Riemann-ζ zero-free region,
   the Borel–Carathéodory machinery, and sharp near-line growth bounds, all
-  sorry-free (classical-analysis formalization, not a claim on RH itself).
+  sorry-free (classical-analysis formalization, not a claim on RH itself).  Plus a
+  **Turing-style RH-in-a-box capstone** (`examples/zeta_zero_localization/`):
+  `BoxLocalization.all_nontrivial_zeros_in_box_on_critical_line` kernel-verifies
+  that *every* nontrivial ζ zero in `[2/5,3/5]×[10,35]` lies on `Re s = 1/2` — RH
+  VERIFIED IN THIS BOX (the winding integer 5, edge non-vanishing, and enclosures
+  are Arb-certified non-kernel input), which is **not** a proof of RH.
 - **Proof complexity** — sum-of-squares refutations of unsatisfiable systems and
   their pseudo-expectation-duality complement (no low-degree refutation exists).
 

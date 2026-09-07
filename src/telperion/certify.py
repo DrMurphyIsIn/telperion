@@ -214,6 +214,10 @@ _SPECIAL_KINDS = (
     "full_argument_principle",
     "rect_argument_principle",
     "annulus_count",
+    # RH-in-a-box localization capstone (Stage 3, 2026-09-06): the counting exhaustion step —
+    # total divisor = on-line count ⟹ every zero in the box is on Re=1/2 (Turing-style verification,
+    # NOT a proof of RH).  Refuses n_line > n_total and n_line != n_total.
+    "box_localization",
     # Winding-number frontier (2026-09-06, same RH session): slit_loop_winding_zero (Rouché heart —
     # closed loop in ‖·-1‖<r≤1 ⟹ ∮ w'/w = 0, winding 0, via clog_real + FTC-2) and box_residue_sum
     # (box analogue of full_argument_principle, Finset-linearity plumbing conditional on the per-pole
@@ -240,6 +244,10 @@ _SPECIAL_KINDS = (
     # alternating-sign real enclosures of Lambda(1/2+it) + IVT.  Emits ">= N zeros
     # of completedRiemannZeta on the critical line in [a,b]" (N sign changes).
     "xi_line_zeros",
+    # Zeta-box-localization Stage 2A (2026-09-06): boundary winding count via enclosures.
+    # Emits "Bd(Lambda'/Lambda) = 2*pi*i*N" -- toy z^2 (N=2, from-scratch winding) and
+    # the Lambda [2/5,3/5]x[10,35] instance (N=5, argument-principle + per-pole primitive).
+    "winding_count",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -324,6 +332,8 @@ _SPECIAL_DISPATCH = {
          "RectArgumentPrincipleEmitter"),
     "annulus_count":
         ("emit_annulus_count", "certify_annulus_count_point", "AnnulusCountEmitter"),
+    "box_localization":
+        ("emit_box_localization", "certify_box_localization_point", "BoxLocalizationEmitter"),
     "slit_loop_winding_zero":
         ("emit_slit_loop_winding_zero", "certify_slit_loop_winding_zero_point",
          "SlitLoopWindingZeroEmitter"),
@@ -337,6 +347,8 @@ _SPECIAL_DISPATCH = {
     "hyperbolicity": ("emit_hyperbolicity", "certify_hyperbolicity_point"),
     "xi_line_zeros":
         ("emit_xi_line_zeros", "certify_xi_line_zeros_point", "XiLineZerosEmitter"),
+    "winding_count":
+        ("emit_winding_count", "certify_winding_count_point", "WindingCountEmitter"),
 }
 
 

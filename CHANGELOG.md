@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased -- STAGE 3 CAPSTONE: RH VERIFIED IN A BOX (Turing-style, NOT a proof of RH)
+
+- **`BoxLocalization.all_nontrivial_zeros_in_box_on_critical_line`**
+  (`examples/zeta_zero_localization/lean/BoxLocalization.lean`) -- kernel-verified
+  capstone: EVERY nontrivial zero of `riemannZeta` in `B = [2/5,3/5] x [10,35]`
+  lies on `Re s = 1/2` and is simple.  Proof: total divisor = 5 (box argument
+  principle) and 5 distinct on-line zeros (Stage 1, via the kernel
+  `completedRiemannZeta <-> riemannZeta` bridge) force a Finset counting
+  exhaustion (`exhaustion_by_count`) -- the on-line zeros ARE the whole divisor.
+  The winding integer (= 5), edge non-vanishing, and value enclosures are
+  Arb-certified NON-KERNEL input; the kernel proves every implication.  Axioms:
+  `{propext, Classical.choice, Quot.sound}` -- no `sorryAx`.
+  `conjecture1_proved = False`: this VERIFIES RH inside the box; it is NOT a proof
+  of RH.  `BlaschkeBox.zeta_blaschke_split_box` gained kernel conjuncts `d rho >=
+  1` and "every zeta zero in the ball is in the support".
+- **`emit_box_localization.py` (kind `box_localization`, STRUCTURALLY_NONVACUOUS)**
+  -- certificate + `BoxLocalizationEmitter` for the counting step; NEGATIVE
+  CONTROL refuses `n_line > n_total` and `n_line != n_total` (no exhaustion
+  without equality).  Registered in `certify.py`, `__init__.py`,
+  `emitter_sensitivity.py`; `tests/test_box_localization.py`; negative control
+  also runs in `generate.py --check`.
+- **CI: `zeta-box-localization-compiles`** -- warm `lake exe cache get` then
+  `lake build BoxLocalization BoxArgPrincipleZeta BlaschkeBox RigorousWinding`.
+
 ## Unreleased -- MILESTONE: first kernel-verified on-line nontrivial-zero count for zeta
 
 - **`XiLineZeros.lambda_five_zeros_10_35`** (`examples/zeta_zero_localization/`) --

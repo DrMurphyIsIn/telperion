@@ -216,6 +216,11 @@ from .emit_annulus_count import (  # noqa: F401
     AnnulusCountEmitter, annulus_count_certificate,
     annulus_count_family, certify_annulus_count_point,
 )
+# RH-in-a-box localization capstone (Stage 3, 2026-09-06): every zeta-zero in the box is on Re=1/2.
+from .emit_box_localization import (  # noqa: F401
+    BoxLocalizationEmitter, box_localization_certificate,
+    box_localization_family, certify_box_localization_point,
+)
 # Winding-number frontier (2026-09-06): Rouché heart (winding 0) + conditional box residue-sum.
 from .emit_slit_loop_winding_zero import (  # noqa: F401
     SlitLoopWindingZeroEmitter, certify_slit_loop_winding_zero_point,
@@ -249,6 +254,17 @@ from .emit_hyperbolicity import (  # noqa: F401
 from .emit_xi_line_zeros import (  # noqa: F401
     XiLineZerosEmitter, XiLineZerosPayload, sign_change_count,
     xi_line_zeros_family, certify_xi_line_zeros_point,
+)
+# Zeta-box-localization Stage 2A (2026-09-06): winding_count emitter (kernel).
+from .emit_winding_count import (  # noqa: F401
+    WindingCountEmitter, winding_count_certificate, winding_count_family,
+    certify_winding_count_point,
+    SegmentWindingCertificate, segment_winding_certificate,
+)
+# Zeta-box-localization Stage 2/3 (2026-09-06): segment (ball) enclosures.
+from .arb_enclosure import (  # noqa: F401
+    enclose_lambda_segment, enclose_lambda_segments,
+    enclose_zeta_segment, enclose_zeta_segments,
 )
 # Analytic-cert-structures build (2026-09-05): turan-box log-concavity emitter (#5).
 from .emit_turan_box import turan_box_family  # noqa: F401
