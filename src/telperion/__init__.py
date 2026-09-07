@@ -191,6 +191,10 @@ from .emit_two_scale_separation import (  # noqa: F401
     TwoScaleSeparationEmitter, two_scale_certificate,
     two_scale_separation_family, certify_two_scale_separation_point,
 )
+from .emit_endpoint_geom_cap import (  # noqa: F401
+    EndpointGeomCapEmitter, endpoint_geom_cap_certificate,
+    endpoint_geom_cap_family, certify_endpoint_geom_cap_point,
+)
 from .emit_far_pole_sum import (  # noqa: F401
     FarPoleSumEmitter, far_pole_sum_certificate,
     far_pole_sum_family, certify_far_pole_sum_point,

@@ -204,6 +204,10 @@ _SPECIAL_KINDS = (
     "two_scale_separation",
     "far_pole_sum",
     "herglotz_lower",
+    # dVP numeric-coupling cap (2026-09-07, distilled from DlvpZetaConcreteClose:hBg1_le): the
+    # entire-part geometric factor (R+z)/(R-z)² is maximised at the endpoint z=1 — the σ-independent
+    # cap ((R+1)/(R-1)²) that breaks the σ↔L fixpoint in the dVP closing.
+    "endpoint_geom_cap",
     # Argument-principle residue/winding bridge (2026-09-06, shared with the RH
     # zeta-zero-localization session): ∮ Σ m/(z-ρ) = 2πi·Σ m.
     "argument_principle",
@@ -312,6 +316,8 @@ _SPECIAL_DISPATCH = {
         ("emit_entire_part_bound", "certify_entire_part_bound_point", "EntirePartBoundEmitter"),
     "two_scale_separation":
         ("emit_two_scale_separation", "certify_two_scale_separation_point", "TwoScaleSeparationEmitter"),
+    "endpoint_geom_cap":
+        ("emit_endpoint_geom_cap", "certify_endpoint_geom_cap_point", "EndpointGeomCapEmitter"),
     "far_pole_sum": ("emit_far_pole_sum", "certify_far_pole_sum_point", "FarPoleSumEmitter"),
     "herglotz_lower": ("emit_herglotz_lower", "certify_herglotz_lower_point", "HerglotzLowerEmitter"),
     "argument_principle":
