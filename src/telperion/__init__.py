@@ -224,6 +224,7 @@ from .emit_annulus_count import (  # noqa: F401
 from .emit_box_localization import (  # noqa: F401
     BoxLocalizationEmitter, box_localization_certificate,
     box_localization_family, certify_box_localization_point,
+    choose_ball, emit_per_box_instantiation,
 )
 # Winding-number frontier (2026-09-06): Rouché heart (winding 0) + conditional box residue-sum.
 from .emit_slit_loop_winding_zero import (  # noqa: F401

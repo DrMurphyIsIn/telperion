@@ -17,6 +17,7 @@ may be emitted.  conjecture1_proved = False (this VERIFIES RH inside the box; it
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -62,7 +63,10 @@ def box_localization_certificate(
 
     Refuses `n_line > n_total` (impossible: more on-line zeros than total count), `n_line != n_total`
     (no exhaustion without equality — cannot emit a localization claim), and `n_line < 1` (vacuous).
-    These are the negative controls.
+    Also refuses an INVALID box: the sigma-range must STRADDLE the critical line `1/2`
+    (`re_lo < 1/2 < re_hi`) and the box must EXCLUDE the pole `s = 1` (either `re_hi < 1`, i.e. the
+    whole box is left of `Re = 1`, or `im_lo > 0`, i.e. the box is above the real axis so `1` — with
+    `im = 0` — is not in it).  These are the negative controls.
     """
     if not (isinstance(n_line, int) and isinstance(n_total, int)):
         raise ValueError(f"box_localization counts must be ints; got n_line={n_line!r}, n_total={n_total!r}")
@@ -83,6 +87,24 @@ def box_localization_certificate(
         raise ValueError("box_localization box corners must be rational")
     if not (rl < rh and il < ih):
         raise ValueError(f"box_localization needs a non-degenerate box; got [{rl},{rh}]x[{il},{ih}]")
+    half = sp.Rational(1, 2)
+    if not (rl < half < rh):
+        raise ValueError(
+            f"box_localization: invalid box — the sigma-range [{rl},{rh}] must straddle the critical "
+            f"line 1/2 (re_lo < 1/2 < re_hi); a box whose real-range excludes 1/2 cannot localize RH; "
+            f"refused"
+        )
+    # The box must exclude the pole s = 1 (= 1 + 0*i).  Excluded iff 1 is not in [re_lo,re_hi] OR
+    # 0 is not in [im_lo,im_hi].
+    one = sp.Integer(1)
+    zero = sp.Integer(0)
+    one_in_re = rl <= one <= rh
+    zero_in_im = il <= zero <= ih
+    if one_in_re and zero_in_im:
+        raise ValueError(
+            f"box_localization: invalid box — the pole s = 1 lies in [{rl},{rh}]x[{il},{ih}]; the box "
+            f"must exclude s = 1 (need re_hi < 1 or im_lo > 0 or im_hi < 0); refused"
+        )
     return BoxLocalizationCertificate(re_lo=rl, re_hi=rh, im_lo=il, im_hi=ih, n=n_line)
 
 
@@ -160,6 +182,378 @@ class BoxLocalizationEmitter(Emitter):
             )
             nthm += 1
         return "".join(lines), nthm
+
+
+def _rat_lean(x: sp.Rational) -> str:
+    """Render a rational as a Lean numeric literal (integer or `a / b`)."""
+    return rat_lean(sp.Rational(x))
+
+
+def choose_ball(re_lo, re_hi, im_lo, im_hi):
+    """Choose a Blaschke ball (center c = cx + cy*i, radius^2 = Rsq) for the box.
+
+    Center = box center.  Rsq is the midpoint between the corner-distance-squared `dc2`
+    (max distance from center to any corner) and the pole-distance-squared `d12 = |1 - c|^2`,
+    so the box is STRICTLY inside `ball c (sqrt Rsq)` and the pole `s = 1` is STRICTLY outside.
+    All values are exact `sympy.Rational`.  Raises ValueError if the box's corners reach past
+    the pole (no separating ball exists), which the certificate's invalid-box refusal precludes.
+    """
+    rl, rh, il, ih = (sp.Rational(v) for v in (re_lo, re_hi, im_lo, im_hi))
+    cx = (rl + rh) / 2
+    cy = (il + ih) / 2
+    dc2 = ((rh - rl) / 2) ** 2 + ((ih - il) / 2) ** 2       # center->corner squared
+    d12 = (1 - cx) ** 2 + cy ** 2                            # center->pole(1) squared
+    if not (dc2 < d12):
+        raise ValueError(
+            f"choose_ball: no separating ball — corner-distance^2 ({dc2}) >= pole-distance^2 "
+            f"({d12}); the box reaches the pole s = 1"
+        )
+    rsq = (dc2 + d12) / 2
+    return cx, cy, rsq
+
+
+# ---------------------------------------------------------------------------
+# Per-box instantiation emitter: INSTANTIATE `RHInBox.rh_in_box_of_certificate`.
+# ---------------------------------------------------------------------------
+
+def _build_full_instantiation(
+    *, name, namespace, header, n, s0, s1, t0, t1, cx_s, cy_s, rsq_s,
+    xs, zs, hline_type, conj, winding,
+):
+    """Assemble the full per-box instantiation theorem (arbitrary N).  See
+    emit_per_box_instantiation for the contract."""
+    box_set = f"Set.Icc (({s0}) : ℝ) ({s1}) ×ℂ Set.Icc (({t0}) : ℝ) ({t1})"
+    # Ball center / radius are TOP-LEVEL defs so the signature (hArb, hs1) and body reference
+    # the SAME term (avoids auto-bound `c✝`/`R✝` divergence between signature and body).
+    ball = "Metric.ball cPB RPB"
+    # ---- hArb hypothesis type (17 conjuncts: the 16 bundle + the winding) -----------
+    conj_join = " ∧\n      ".join(conj)
+    harb_hyp = (
+        f"    (hArb : ∀ (E : ℂ → ℂ) (s : Finset ℂ) (d : ℂ → ℤ),\n"
+        f"      DifferentiableOn ℂ E ({box_set}) →\n"
+        f"      (∀ z ∈ {ball}, riemannZeta z ≠ 0 →\n"
+        f"        logDeriv riemannZeta z = (∑ ρ ∈ s, (d ρ : ℂ) / (z - ρ)) + E z) →\n"
+        f"      {conj_join} ∧\n"
+        f"      {winding})"
+    )
+    # conclusion type
+    concl = (
+        f"    (∀ ρ, ((({s0}) : ℝ) ≤ ρ.re ∧ ρ.re ≤ ({s1})) → ((({t0}) : ℝ) ≤ ρ.im ∧ ρ.im ≤ ({t1})) →\n"
+        f"      riemannZeta ρ = 0 → ρ.re = 1 / 2)"
+    )
+
+    lines: list[str] = []
+    A = lines.append
+
+    A(header)
+    # Top-level ball center + radius definitions (shared by signature and body).
+    A(f"/-- Chosen Blaschke ball center for the box `[{s0},{s1}] x [{t0},{t1}]`. -/\n")
+    A(f"noncomputable def cPB : ℂ := ⟨({cx_s}), ({cy_s})⟩\n\n")
+    A(f"/-- Chosen Blaschke ball radius (squared radius `{rsq_s}`). -/\n")
+    A(f"noncomputable def RPB : ℝ := Real.sqrt ({rsq_s})\n\n")
+    A(f"theorem RPB_pos : (0 : ℝ) < RPB := Real.sqrt_pos.mpr (by norm_num)\n\n")
+    A(f"/-- **RH-in-a-box on `[{s0},{s1}] x [{t0},{t1}]` with `N = {n}`.**  Instantiates the generic\n"
+      f"    `RHInBox.rh_in_box_of_certificate` at this box's corners, chosen Blaschke ball\n"
+      f"    `c = ({cx_s}) + ({cy_s})*I`, `R = Real.sqrt ({rsq_s})`, and count `N = {n}`.  Takes the\n"
+      f"    documented Arb inputs `hLine` (the {n} on-line zeros) and `hArb` (boundary bundle +\n"
+      f"    winding `= 2*pi*I*{n}`).  conjecture1_proved = False. -/\n")
+    A(f"theorem {name}\n")
+    A(hline_type + "\n")
+    A(harb_hyp + " :\n")
+    A(concl + " := by\n")
+
+    # ---- geometry: hRpos, hsig, hT, hbox_ball, hs1 (all at the top-level cPB/RPB) -----
+    A(f"  have hRpos : (0 : ℝ) < RPB := RPB_pos\n")
+    A(f"  have hsig : (({s0}) : ℝ) ≤ ({s1}) := by norm_num\n")
+    A(f"  have hTle : (({t0}) : ℝ) ≤ ({t1}) := by norm_num\n")
+    # hbox_ball: any ρ with re,im in the box is in ball cPB RPB.
+    A(f"  have hbox_ball : ∀ ρ : ℂ, ((({s0}) : ℝ) ≤ ρ.re ∧ ρ.re ≤ ({s1})) →\n")
+    A(f"      ((({t0}) : ℝ) ≤ ρ.im ∧ ρ.im ≤ ({t1})) → ρ ∈ Metric.ball cPB RPB := by\n")
+    A(f"    intro ρ hre him\n")
+    A(f"    rw [Metric.mem_ball, Complex.dist_eq_re_im]\n")
+    A(f"    unfold cPB RPB\n")
+    A(f"    apply Real.sqrt_lt_sqrt (by positivity)\n")
+    A(f"    have h1 := hre.1; have h2 := hre.2; have h3 := him.1; have h4 := him.2\n")
+    A(f"    nlinarith [h1, h2, h3, h4, sq_nonneg (ρ.re - ({cx_s})), sq_nonneg (ρ.im - ({cy_s}))]\n")
+    # hs1: 1 not in ball cPB RPB.  dist 1 cPB = sqrt d12 >= RPB = sqrt rsq  (rsq <= d12).
+    A(f"  have hs1 : (1 : ℂ) ∉ Metric.ball cPB RPB := by\n")
+    A(f"    rw [Metric.mem_ball, Complex.dist_eq_re_im]\n")
+    A(f"    unfold cPB RPB\n")
+    A(f"    intro hlt\n")
+    A(f"    simp only [Complex.one_re, Complex.one_im] at hlt\n")
+    A(f"    have hle : Real.sqrt ({rsq_s}) ≤\n")
+    A(f"        Real.sqrt (((1 : ℝ) - ({cx_s})) ^ 2 + ((0 : ℝ) - ({cy_s})) ^ 2) :=\n")
+    A(f"      Real.sqrt_le_sqrt (by norm_num)\n")
+    A(f"    linarith [hlt, hle]\n")
+
+    # ---- bridge on-line completed zeros, build T ------------------------------------
+    obtain_ord = ", ".join([f"hx{i}" for i in range(1, n + 1)]) if False else None
+    # order chain binder names: hlo (T0<=x1), h12, h23, ..., hhi (xn<=T1)
+    ord_names = ["hlo"] + [f"hc{i}{i+1}" for i in range(1, n)] + ["hhi"]
+    zero_names = [f"hΛ{i}" for i in range(1, n + 1)]
+    A(f"  obtain ⟨{', '.join(xs)}, ⟨{', '.join(ord_names)}⟩, {', '.join(zero_names)}⟩ := hLine\n")
+    for i in range(1, n + 1):
+        A(f"  set z{i} : ℂ := 1 / 2 + (x{i} : ℂ) * Complex.I with hz{i}def\n")
+    A(f"  have hre_line : ∀ (t : ℝ), (1 / 2 + (t : ℂ) * Complex.I).re = 1 / 2 := by\n")
+    A(f"    intro t\n")
+    A(f"    simp only [Complex.add_re, Complex.mul_re, Complex.I_re, Complex.I_im, Complex.ofReal_re,\n")
+    A(f"      Complex.ofReal_im]; norm_num\n")
+    A(f"  have him_line : ∀ (t : ℝ), (1 / 2 + (t : ℂ) * Complex.I).im = t := by\n")
+    A(f"    intro t\n")
+    A(f"    simp only [Complex.add_im, Complex.mul_im, Complex.I_re, Complex.I_im, Complex.ofReal_re,\n")
+    A(f"      Complex.ofReal_im]; norm_num\n")
+    A(f"  have hzeta : ∀ (t : ℝ), completedRiemannZeta (1 / 2 + (t : ℂ) * Complex.I) = 0 →\n")
+    A(f"      riemannZeta (1 / 2 + (t : ℂ) * Complex.I) = 0 :=\n")
+    A(f"    fun t h => BoxLocalization.line_zeta_zero_of_completed h\n")
+    A(f"  have distinct : ∀ (s' t : ℝ), s' < t →\n")
+    A(f"      (1 / 2 + (s' : ℂ) * Complex.I) ≠ (1 / 2 + (t : ℂ) * Complex.I) := by\n")
+    A(f"    intro s' t hst hEq\n")
+    A(f"    have := congrArg Complex.im hEq\n")
+    A(f"    rw [him_line s', him_line t] at this\n")
+    A(f"    linarith\n")
+
+    # strict chain among x1<...<xn: derive from ord_names (hlo, hc..,hhi).  We need x_i < x_j
+    # for i<j.  From the chain hc12: x1<x2, etc.  linarith can derive all.
+    # pairwise distinctness of z_i, z_j (i<j)
+    for i in range(1, n + 1):
+        for j in range(i + 1, n + 1):
+            A(f"  have n{i}{j} : z{i} ≠ z{j} := distinct x{i} x{j} (by linarith)\n")
+
+    # set T = {z1, ..., zn}
+    A(f"  set T : Finset ℂ := {{{', '.join(zs)}}} with hTdef\n")
+    # card proof: peel each insert
+    A(f"  have hTcard : T.card = {n} := by\n")
+    A(f"    rw [hTdef]\n")
+    for i in range(1, n):
+        # z_i not in {z_{i+1},...,z_n}
+        neqs = " ⟨" + ", ".join(f"n{i}{j}" for j in range(i + 1, n + 1)) + "⟩"
+        if n - i == 1:
+            # single-element remainder -> mem_singleton, single neq
+            A(f"    rw [Finset.card_insert_of_notMem (by\n")
+            A(f"        simp only [Finset.mem_singleton]; exact n{i}{n})]\n")
+        else:
+            A(f"    rw [Finset.card_insert_of_notMem (by\n")
+            A(f"        simp only [Finset.mem_insert, Finset.mem_singleton]\n")
+            A(f"        push_neg; exact{neqs})]\n")
+    A(f"    simp\n")
+
+    # membership facts
+    zdefs_simp = ", ".join(f"hz{i}def" for i in range(1, n + 1))
+    A(f"  have hmem_iff : ∀ z ∈ T, {' ∨ '.join(f'z = z{i}' for i in range(1, n + 1))} := by\n")
+    A(f"    intro z hz\n")
+    A(f"    rw [hTdef] at hz\n")
+    A(f"    simpa only [Finset.mem_insert, Finset.mem_singleton] using hz\n")
+    rcases_pat = " | ".join("h" for _ in range(n))
+    A(f"  have hTline : ∀ z ∈ T, z.re = 1 / 2 := by\n")
+    A(f"    intro z hz\n")
+    A(f"    rcases hmem_iff z hz with {rcases_pat} <;> subst h <;>\n")
+    A(f"      simp only [{zdefs_simp}] <;> exact hre_line _\n")
+    A(f"  have hTzero : ∀ z ∈ T, riemannZeta z = 0 := by\n")
+    A(f"    intro z hz\n")
+    A(f"    rcases hmem_iff z hz with {rcases_pat} <;> subst h <;>\n")
+    A(f"      simp only [{zdefs_simp}]\n")
+    for i in range(1, n + 1):
+        A(f"    · exact hzeta x{i} hΛ{i}\n")
+    A(f"  have hTbox : ∀ z ∈ T, ((({s0}) : ℝ) ≤ z.re ∧ z.re ≤ ({s1})) ∧ ((({t0}) : ℝ) ≤ z.im ∧ z.im ≤ ({t1})) := by\n")
+    A(f"    intro z hz\n")
+    A(f"    rcases hmem_iff z hz with {rcases_pat} <;> subst h <;>\n")
+    A(f"      simp only [{zdefs_simp}] <;>\n")
+    A(f"      refine ⟨⟨?_, ?_⟩, ?_, ?_⟩ <;>\n")
+    A(f"      first\n")
+    A(f"        | (rw [hre_line]; norm_num)\n")
+    A(f"        | (rw [him_line]; linarith)\n")
+
+    # ---- extract hwind + reassemble harb from hArb ----------------------------------
+    A(f"  set s0f : Finset ℂ := RHInBoxAnalytic.zeroFinset cPB RPB hs1 with hs0def\n")
+    A(f"  set d0 : ℂ → ℤ := (MeromorphicOn.divisor riemannZeta (Metric.ball cPB RPB) : ℂ → ℤ) with hd0def\n")
+    # We need an E0 witness + kernel split so that hArb can be applied at (E0, s0f, d0).
+    A(f"  obtain ⟨E0, hE0holo, hd1', hzero_in', hker0⟩ :=\n")
+    A(f"    RHInBoxAnalytic.zeta_blaschke_split_ball (({s0}) : ℝ) ({s1}) ({t0}) ({t1}) cPB RPB hRpos hbox_ball hs1\n")
+    A(f"  have hE0box : DifferentiableOn ℂ E0 ({box_set}) := hE0holo\n")
+    A(f"  have hker0' : ∀ z ∈ Metric.ball cPB RPB, riemannZeta z ≠ 0 →\n")
+    A(f"      logDeriv riemannZeta z = (∑ ρ ∈ s0f, (d0 ρ : ℂ) / (z - ρ)) + E0 z := by\n")
+    A(f"    intro z hz hnz\n")
+    A(f"    have := hker0 z hz hnz\n")
+    A(f"    rw [hs0def, hd0def]; exact this\n")
+    # destructure the full bundle from hArb: 17 conjuncts + winding = 18 components.
+    ncbundle = len(conj)
+    dnames = [f"hA{i}" for i in range(ncbundle)] + ["hwindA"]
+    dpat = ", ".join(dnames)
+    A(f"  obtain ⟨{dpat}⟩ := hArb E0 s0f d0 hE0box hker0'\n")
+    # winding
+    A(f"  have hwind : (∫ x in (({s0}) : ℝ)..({s1}), logDeriv riemannZeta (↑x + ((({t0}) : ℝ) : ℂ) * I))\n")
+    A(f"        - (∫ x in (({s0}) : ℝ)..({s1}), logDeriv riemannZeta (↑x + ((({t1}) : ℝ) : ℂ) * I))\n")
+    A(f"        + I • (∫ y in (({t0}) : ℝ)..({t1}), logDeriv riemannZeta (((({s1}) : ℝ) : ℂ) + ↑y * I))\n")
+    A(f"        - I • (∫ y in (({t0}) : ℝ)..({t1}), logDeriv riemannZeta (((({s0}) : ℝ) : ℂ) + ↑y * I))\n")
+    A(f"      = 2 * π * I * (({n} : ℤ) : ℂ) := by\n")
+    A(f"    rw [show ((({n} : ℤ) : ℂ)) = ({n} : ℂ) by norm_num]; exact hwindA\n")
+    # reassemble harb: for arbitrary E s d, apply hArb and drop the last (winding) conjunct.
+    A(f"  have harb : ∀ (E : ℂ → ℂ),\n")
+    A(f"      let s := RHInBoxAnalytic.zeroFinset cPB RPB hs1\n")
+    A(f"      let d := (MeromorphicOn.divisor riemannZeta (Metric.ball cPB RPB) : ℂ → ℤ)\n")
+    A(f"      DifferentiableOn ℂ E ({box_set}) →\n")
+    A(f"      (∀ z ∈ Metric.ball cPB RPB, riemannZeta z ≠ 0 →\n")
+    A(f"        logDeriv riemannZeta z = (∑ ρ ∈ s, (d ρ : ℂ) / (z - ρ)) + E z) →\n")
+    A(f"      {conj_join} := by\n")
+    A(f"    intro E s d hEholo hkerE\n")
+    A(f"    have hfull := hArb E s d hEholo hkerE\n")
+    # hfull is a (ncbundle + winding)-conjunct right-nested tuple; project the first ncbundle
+    # (dropping the trailing winding conjunct).
+    proj = ["hfull" + ".2" * k + ".1" for k in range(ncbundle)]
+    A(f"    exact ⟨{', '.join(proj)}⟩\n")
+
+    # ---- final call -----------------------------------------------------------------
+    A(f"  have hcountN : ({n} : ℤ) = (T.card : ℤ) := by rw [hTcard]; norm_num\n")
+    A(f"  exact RHInBox.rh_in_box_of_certificate (({s0}) : ℝ) ({s1}) ({t0}) ({t1}) cPB RPB {n}\n")
+    A(f"    hRpos hsig hTle hbox_ball hs1 T hTline hTzero hTbox hwind harb hcountN\n")
+    A(f"\nend {namespace}\n")
+    return "".join(lines)
+
+
+def _heartbeats_for(n: int) -> int:
+    """Heartbeat budget for the per-box instantiation proof.
+
+    The proof cost is dominated by the O(N^2) pairwise-distinctness block (N*(N-1)/2
+    `distinct` haves, each closed by `linarith`).  The default 200000-heartbeat budget
+    suffices for small N (n <= 10, e.g. T=35 -> N=5) but overflows for large N
+    (T=100 -> N=29).  The dominant cost is the O(N^2) pairwise `linarith` block, and each
+    `linarith` also gets SLOWER as the local context grows (more `set`/`have` in scope),
+    so the total is super-quadratic.  Keep the default for n <= 10; for larger n scale the
+    budget as default * ceil(n^2 / 20).  Empirically at n=29 the block-plus-assembly
+    completes just under this budget (4.4M reached the final `simp`; ~8.6M finishes with
+    headroom): n = 29 -> ceil(42.05) = 43 -> 43 * 200000 = 8600000."""
+    base = 200000
+    if n <= 10:
+        return base
+    factor = math.ceil((n * n) / 20.0)
+    return base * factor
+
+
+def emit_per_box_instantiation(
+    cert: BoxLocalizationCertificate,
+    tag: str,
+    *,
+    theorem_name: str | None = None,
+    namespace: str = "RHInBoxPerBox",
+) -> str:
+    """Emit a complete standalone Lean file instantiating `RHInBox.rh_in_box_of_certificate`.
+
+    The emitted theorem `rh_in_box_<tag>` takes the SAME two documented inputs as the regression
+    `RHInBox.rh_in_box_10_35`:
+
+    * `hLine` — an existential of `N = cert.n` strictly-`Im`-increasing on-line completed-zeta zeros
+      in `[T0, T1]` (Stage 1 / Arb non-kernel input);
+    * `hArb` — the honest boundary Arb bundle + the winding value `= 2*pi*I*N` at THIS box's corners.
+
+    It discharges the geometry (`hRpos`/`hsig`/`hT`/`hbox_ball`/`hs1`) by real `norm_num`/`sqrt`
+    reasoning at the CHOSEN ball `c = cx + cy*i`, `R = Real.sqrt Rsq` (via `choose_ball`), builds the
+    on-line Finset `T` with a strict-chain distinctness proof for arbitrary `N`, reassembles the
+    generic `harb` (dropping the winding conjunct) and extracts `hwind`, and closes with
+    `rh_in_box_of_certificate`.  conjecture1_proved = False.
+    """
+    n = cert.n
+    if n < 1:
+        raise ValueError("emit_per_box_instantiation needs n >= 1")
+    name = theorem_name or f"rh_in_box_{tag}"
+    s0 = _rat_lean(cert.re_lo)
+    s1 = _rat_lean(cert.re_hi)
+    t0 = _rat_lean(cert.im_lo)
+    t1 = _rat_lean(cert.im_hi)
+    cx, cy, rsq = choose_ball(cert.re_lo, cert.re_hi, cert.im_lo, cert.im_hi)
+    cx_s = _rat_lean(cx)
+    cy_s = _rat_lean(cy)
+    rsq_s = _rat_lean(rsq)
+
+    # ---- header + geometry-local `c`, `R` abbreviations -----------------------------
+    header = (
+        f"/-  Per-box instantiation of `RHInBox.rh_in_box_of_certificate` on the box\n"
+        f"    `[{s0},{s1}] x [{t0},{t1}]` with `N = {n}` on-line zeros.\n\n"
+        f"    Emitted by telperion `emit_per_box_instantiation` (Task 4 driver `--box`/`--height`).\n"
+        f"    Geometry: ball center `c = ({cx_s}) + ({cy_s})*I`, radius `R = Real.sqrt ({rsq_s})`,\n"
+        f"    chosen so the box is STRICTLY inside the ball and the pole `s = 1` is STRICTLY outside.\n"
+        f"    The winding count `N` and on-line zeros are the documented Arb non-kernel inputs\n"
+        f"    (supplied as the `hArb`/`hLine` hypotheses).  conjecture1_proved = False. -/\n"
+        f"import Mathlib\n"
+        f"import RHInBox\n"
+        f"import RHInBoxAnalytic\n"
+        f"import BoxLocalization\n\n"
+        f"open Complex MeasureTheory Real\n"
+        f"open scoped Topology\n\n"
+        # The instantiation proof is O(N^2) in the pairwise-distinctness block (N*(N-1)/2
+        # `distinct` haves, each a `linarith`).  For large N (e.g. the T=100 milestone,
+        # N=29 -> 406 pairs) this exceeds Lean's default 200000-heartbeat budget in `whnf`.
+        # Scale the limit with N (default * (1 + n^2 / 100), rounded up to a multiple of
+        # 200000) so small boxes keep the default and large boxes build sorry-free.
+        f"set_option maxHeartbeats {_heartbeats_for(n)}\n\n"
+        f"namespace {namespace}\n\n"
+    )
+
+    # xs / zs indices are 1-based.
+    xs = [f"x{i}" for i in range(1, n + 1)]
+    zs = [f"z{i}" for i in range(1, n + 1)]
+
+    # ---- hLine existential type ------------------------------------------------------
+    order_parts = [f"{t0} ≤ x1"] + [f"x{i} < x{i + 1}" for i in range(1, n)] + [f"x{n} ≤ {t1}"]
+    order_chain = " ∧ ".join(order_parts)
+    zero_parts = [
+        f"completedRiemannZeta (1 / 2 + ({x} : ℂ) * Complex.I) = 0" for x in xs
+    ]
+    zeros_conj = " ∧\n       ".join(zero_parts)
+    exists_binder = " ".join(xs)
+    hline_type = (
+        f"    (hLine : ∃ {exists_binder} : ℝ,\n"
+        f"      ({order_chain}) ∧\n"
+        f"      ({zeros_conj}))"
+    )
+
+    # ---- the full generic Arb bundle at these corners --------------------------------
+    # 16 non-vanishing/interior/integrability conjuncts (used by rh_in_box_of_certificate's harb)
+    # + the winding value (17th, `= 2*pi*I*N`).  Rendered as a list of conjunct strings so both
+    # the `hArb` hypothesis type (all 17) and the reassembled `harb` (first 16) are single-sourced.
+    def _c(re_expr, im_expr):
+        return f"({re_expr} + ({im_expr}) * I)"
+
+    conj = [
+        f"(∀ x ∈ Set.uIcc (({s0}) : ℝ) ({s1}), riemannZeta (↑x + ((({t0}) : ℝ) : ℂ) * I) ≠ 0)",
+        f"(∀ x ∈ Set.uIcc (({s0}) : ℝ) ({s1}), riemannZeta (↑x + ((({t1}) : ℝ) : ℂ) * I) ≠ 0)",
+        f"(∀ y ∈ Set.uIcc (({t0}) : ℝ) ({t1}), riemannZeta (((({s1}) : ℝ) : ℂ) + ↑y * I) ≠ 0)",
+        f"(∀ y ∈ Set.uIcc (({t0}) : ℝ) ({t1}), riemannZeta (((({s0}) : ℝ) : ℂ) + ↑y * I) ≠ 0)",
+        f"(∀ ρ ∈ s, (({s0}) : ℝ) < ρ.re ∧ ρ.re < ({s1}) ∧ (({t0}) : ℝ) < ρ.im ∧ ρ.im < ({t1}))",
+        (f"(∀ ρ ∈ s, IntervalIntegrable\n"
+         f"        (fun x : ℝ => ((↑x + ((({t0}) : ℝ) : ℂ) * I) - ρ)⁻¹) volume (({s0})) (({s1})))"),
+        (f"(∀ ρ ∈ s, IntervalIntegrable\n"
+         f"        (fun x : ℝ => ((↑x + ((({t1}) : ℝ) : ℂ) * I) - ρ)⁻¹) volume (({s0})) (({s1})))"),
+        (f"(∀ ρ ∈ s, IntervalIntegrable\n"
+         f"        (fun y : ℝ => ((((({s1}) : ℝ) : ℂ) + ↑y * I) - ρ)⁻¹) volume (({t0})) (({t1})))"),
+        (f"(∀ ρ ∈ s, IntervalIntegrable\n"
+         f"        (fun y : ℝ => ((((({s0}) : ℝ) : ℂ) + ↑y * I) - ρ)⁻¹) volume (({t0})) (({t1})))"),
+        (f"(IntervalIntegrable\n"
+         f"        (fun x : ℝ => ∑ ρ ∈ s, (d ρ : ℂ) * ((↑x + ((({t0}) : ℝ) : ℂ) * I) - ρ)⁻¹) volume (({s0})) (({s1})))"),
+        (f"(IntervalIntegrable\n"
+         f"        (fun x : ℝ => ∑ ρ ∈ s, (d ρ : ℂ) * ((↑x + ((({t1}) : ℝ) : ℂ) * I) - ρ)⁻¹) volume (({s0})) (({s1})))"),
+        (f"(IntervalIntegrable\n"
+         f"        (fun y : ℝ => ∑ ρ ∈ s, (d ρ : ℂ) * ((((({s1}) : ℝ) : ℂ) + ↑y * I) - ρ)⁻¹) volume (({t0})) (({t1})))"),
+        (f"(IntervalIntegrable\n"
+         f"        (fun y : ℝ => ∑ ρ ∈ s, (d ρ : ℂ) * ((((({s0}) : ℝ) : ℂ) + ↑y * I) - ρ)⁻¹) volume (({t0})) (({t1})))"),
+        f"(IntervalIntegrable (fun x : ℝ => E (↑x + ((({t0}) : ℝ) : ℂ) * I)) volume (({s0})) (({s1})))",
+        f"(IntervalIntegrable (fun x : ℝ => E (↑x + ((({t1}) : ℝ) : ℂ) * I)) volume (({s0})) (({s1})))",
+        f"(IntervalIntegrable (fun y : ℝ => E (((({s1}) : ℝ) : ℂ) + ↑y * I)) volume (({t0})) (({t1})))",
+        f"(IntervalIntegrable (fun y : ℝ => E (((({s0}) : ℝ) : ℂ) + ↑y * I)) volume (({t0})) (({t1})))",
+    ]
+    winding = (
+        f"((∫ x in (({s0}) : ℝ)..({s1}), logDeriv riemannZeta (↑x + ((({t0}) : ℝ) : ℂ) * I))\n"
+        f"          - (∫ x in (({s0}) : ℝ)..({s1}), logDeriv riemannZeta (↑x + ((({t1}) : ℝ) : ℂ) * I))\n"
+        f"          + I • (∫ y in (({t0}) : ℝ)..({t1}), logDeriv riemannZeta (((({s1}) : ℝ) : ℂ) + ↑y * I))\n"
+        f"          - I • (∫ y in (({t0}) : ℝ)..({t1}), logDeriv riemannZeta (((({s0}) : ℝ) : ℂ) + ↑y * I))\n"
+        f"        = 2 * π * I * ({n} : ℂ))"
+    )
+    _ = _c
+
+    return _build_full_instantiation(
+        name=name, namespace=namespace, header=header, n=n,
+        s0=s0, s1=s1, t0=t0, t1=t1, cx_s=cx_s, cy_s=cy_s, rsq_s=rsq_s,
+        xs=xs, zs=zs, hline_type=hline_type, conj=conj, winding=winding,
+    )
 
 
 def box_localization_family(

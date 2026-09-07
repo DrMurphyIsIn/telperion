@@ -2,6 +2,22 @@
 
 ## Unreleased -- STAGE 3 CAPSTONE: RH VERIFIED IN A BOX (Turing-style, NOT a proof of RH)
 
+- **Parameterized generic theorem + T=100 milestone (Tasks 3-5).**
+  `RHInBox.rh_in_box_of_certificate` (`lean/RHInBox.lean` over
+  `RHInBoxCore.lean`/`RHInBoxAnalytic.lean`) is the box-generic RH-in-box
+  implication.  `generate.py --box s0,s1,t0,t1` (and `--height T` for
+  `[2/5,3/5]x[0,T]`) computes the boundary winding `N`, the on-line count
+  `N_line`, and edge non-vanishing, refuses any invalid/under-resolved box or
+  `N_line != N`, and emits a per-box instantiation.  The committed **T=100
+  milestone** `lean/RHInBox_2d5_3d5_0_100.lean` (theorem `rh_in_box_2d5_3d5_0_100`,
+  registered as a permanent `lean_lib`) certifies `[2/5,3/5]x[0,100]` with winding
+  `N == N_line == N(100) = 29` on-line zeros -- RH VERIFIED IN `[2/5,3/5]x[0,100]`,
+  extending the verified RANGE (Turing's method), NOT a proof of RH.  Builds
+  sorry-free with axioms `{propext, Classical.choice, Quot.sound}`.  The emitter
+  scales `set_option maxHeartbeats` with `N` (the instantiation proof is
+  super-quadratic in `N`).  `conjecture1_proved = False`.  Tests:
+  `tests/test_rhinbox.py::test_height_100_winding_equals_online` (Arb agreement)
+  and `::test_height_100_milestone_builds_sorry_free` (build + clean axioms).
 - **`BoxLocalization.all_nontrivial_zeros_in_box_on_critical_line`**
   (`examples/zeta_zero_localization/lean/BoxLocalization.lean`) -- kernel-verified
   capstone: EVERY nontrivial zero of `riemannZeta` in `B = [2/5,3/5] x [10,35]`

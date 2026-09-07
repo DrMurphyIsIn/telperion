@@ -32,7 +32,12 @@ across three very different campaigns:
   `BoxLocalization.all_nontrivial_zeros_in_box_on_critical_line` kernel-verifies
   that *every* nontrivial ζ zero in `[2/5,3/5]×[10,35]` lies on `Re s = 1/2` — RH
   VERIFIED IN THIS BOX (the winding integer 5, edge non-vanishing, and enclosures
-  are Arb-certified non-kernel input), which is **not** a proof of RH.
+  are Arb-certified non-kernel input), which is **not** a proof of RH.  This is now
+  a *parameterized* generic theorem (`RHInBox.rh_in_box_of_certificate`) driven by
+  `generate.py --box`/`--height`; the committed **T=100 milestone**
+  (`RHInBox_2d5_3d5_0_100.lean`) extends the verified RANGE to
+  `[2/5,3/5]×[0,100]`, kernel-certifying all `N(100) = 29` on-line zeros (winding
+  `N` = on-line count) — still Turing's method, still **not** a proof of RH.
 - **Proof complexity** — sum-of-squares refutations of unsatisfiable systems and
   their pseudo-expectation-duality complement (no low-degree refutation exists).
 
