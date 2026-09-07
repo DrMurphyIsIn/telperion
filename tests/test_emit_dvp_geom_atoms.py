@@ -49,6 +49,10 @@ from telperion.emit_two_scale_separation import (
     TwoScaleSeparationEmitter, certify_two_scale_separation_point, two_scale_certificate,
     two_scale_separation_family,
 )
+from telperion.emit_endpoint_geom_cap import (
+    EndpointGeomCapEmitter, certify_endpoint_geom_cap_point, endpoint_geom_cap_certificate,
+    endpoint_geom_cap_family,
+)
 from telperion.family import GridSpec
 from telperion.lean import LeanProfile
 
@@ -64,6 +68,7 @@ _CERT = {
     "box_residue_sum": certify_box_residue_sum_point,
     "rect_winding": certify_rect_winding_point,
     "log_product_bound": certify_log_product_bound_point,
+    "endpoint_geom_cap": certify_endpoint_geom_cap_point,
 }
 
 
@@ -93,6 +98,24 @@ def test_two_scale_certificate_and_shape():
 def test_two_scale_negative_control():
     with pytest.raises(ValueError, match="R₀ < R"):
         two_scale_certificate(1, 2)
+
+
+def test_endpoint_geom_cap_certificate_and_shape():
+    c = endpoint_geom_cap_certificate(Fraction(3, 2))
+    assert c.R == Fraction(3, 2)
+    body, nthm = _emit_one(endpoint_geom_cap_family, EndpointGeomCapEmitter, {"R": "3/2"}, "egc")
+    assert nthm == 1
+    assert "(z : ℝ) (hz : z ≤ 1)" in body
+    assert "((3 / 2) + z) / ((3 / 2) - z) ^ 2 ≤ ((3 / 2) + 1) / ((3 / 2) - 1) ^ 2" in body
+    assert "gcongr" in body
+
+
+def test_endpoint_geom_cap_negative_control():
+    # R = 1 degenerates the cap denominator (R-1)²; R < 1 likewise. Both refused.
+    with pytest.raises(ValueError, match="R > 1"):
+        endpoint_geom_cap_certificate(1)
+    with pytest.raises(ValueError, match="R > 1"):
+        endpoint_geom_cap_certificate(Fraction(1, 2))
 
 
 def test_far_pole_certificate_and_shape():
