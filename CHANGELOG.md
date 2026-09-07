@@ -1,6 +1,33 @@
 # Changelog
 
-## Unreleased -- STAGE 3 CAPSTONE: RH VERIFIED IN A BOX (Turing-style, NOT a proof of RH)
+## Unreleased -- ALL NONTRIVIAL ZEROS UP TO HEIGHT 100 ON THE LINE (Turing verification, NOT a proof of RH)
+
+- **CONCRETE T=100 certificate (dVP + box combination).**
+  `AllZeros_h100.all_nontrivial_zeros_up_to_height_100`
+  (`examples/zeta_zero_localization/lean/AllZeros_h100.lean`, committed `lean_lib`)
+  is kernel-verified: **ALL nontrivial zeros of the Riemann zeta function up to
+  height 100 lie on `Re s = 1/2`** -- a complete finite Turing verification,
+  kernel-checked.  Builds sorry-free with axioms
+  `{propext, Classical.choice, Quot.sound}`.  It composes, at the concrete instance
+  `a = 1/10^6`, `T = 100`: (1) `ZetaZeroConfinement.zero_in_band` (every nontrivial
+  zero up to 100 lies in the band `[1/10^6, 1-1/10^6]`, from the SELF-CONTAINED
+  **effective** dVP zero-free region PR #316/#318 + the functional equation -- the
+  earlier non-effective-c caveat is REMOVED, `dlvpRateC` is a concrete closed-form
+  constant), and (2) the emitted wide-box atom
+  `RHInBox_1d1000000_999999d1000000_0_100` (box `[1/10^6, 1-1/10^6] x [0,100]`,
+  winding `N == N_line == 29`).  The effective-rate edge
+  `1/10^6 <= dlvpRateC / log 100` is discharged in-kernel (`haC_100`) via explicit
+  rational `Real.exp`/`Real.log` enclosures.  Trust boundary: KERNEL = dVP region +
+  FE + argument principle + winding algebra + rate inequality; ARB NON-KERNEL INPUT
+  = winding `N = 29`, on-line zeros (`hLine`), edge/integrability bundle (`hArb`),
+  and the height floor `55/16 <= |Im|` (`hγ`, route c: no nontrivial zeros below
+  height 55/16 -- a classical Arb-certifiable fact carried as a documented
+  hypothesis; the sweep places all 29 zeros at height >= 14).  `conjecture1_proved
+  = False`.  NOT a proof of RH.  Tests:
+  `tests/test_dvp_box.py::test_all_zeros_up_to_height_100_builds` (build + clean
+  axioms) and `::test_wide_box_winding_agrees_29` (Arb `N == N_line == 29`).
+
+## Earlier -- STAGE 3 CAPSTONE: RH VERIFIED IN A BOX (Turing-style, NOT a proof of RH)
 
 - **Parameterized generic theorem + T=100 milestone (Tasks 3-5).**
   `RHInBox.rh_in_box_of_certificate` (`lean/RHInBox.lean` over
