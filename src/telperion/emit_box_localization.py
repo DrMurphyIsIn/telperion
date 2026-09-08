@@ -327,7 +327,7 @@ def _arb_bundle_conjuncts(s0: str, s1: str, t0: str, t1: str) -> list[str]:
 
 def _build_full_instantiation(
     *, name, namespace, header, n, s0, s1, t0, t1, cx_s, cy_s, rsq_s,
-    xs, zs, hline_type, conj, winding,
+    xs, hline_type, conj, winding,
 ):
     """Assemble the full per-box instantiation theorem (arbitrary N).  See
     emit_per_box_instantiation for the contract."""
@@ -396,13 +396,10 @@ def _build_full_instantiation(
     A(f"    linarith [hlt, hle]\n")
 
     # ---- bridge on-line completed zeros, build T ------------------------------------
-    obtain_ord = ", ".join([f"hx{i}" for i in range(1, n + 1)]) if False else None
     # order chain binder names: hlo (T0<=x1), h12, h23, ..., hhi (xn<=T1)
     ord_names = ["hlo"] + [f"hc{i}{i+1}" for i in range(1, n)] + ["hhi"]
     zero_names = [f"hΛ{i}" for i in range(1, n + 1)]
     A(f"  obtain ⟨{', '.join(xs)}, ⟨{', '.join(ord_names)}⟩, {', '.join(zero_names)}⟩ := hLine\n")
-    for i in range(1, n + 1):
-        A(f"  set z{i} : ℂ := 1 / 2 + (x{i} : ℂ) * Complex.I with hz{i}def\n")
     A(f"  have hre_line : ∀ (t : ℝ), (1 / 2 + (t : ℂ) * Complex.I).re = 1 / 2 := by\n")
     A(f"    intro t\n")
     A(f"    simp only [Complex.add_re, Complex.mul_re, Complex.I_re, Complex.I_im, Complex.ofReal_re,\n")
@@ -414,63 +411,53 @@ def _build_full_instantiation(
     A(f"  have hzeta : ∀ (t : ℝ), completedRiemannZeta (1 / 2 + (t : ℂ) * Complex.I) = 0 →\n")
     A(f"      riemannZeta (1 / 2 + (t : ℂ) * Complex.I) = 0 :=\n")
     A(f"    fun t h => BoxLocalization.line_zeta_zero_of_completed h\n")
-    A(f"  have distinct : ∀ (s' t : ℝ), s' < t →\n")
-    A(f"      (1 / 2 + (s' : ℂ) * Complex.I) ≠ (1 / 2 + (t : ℂ) * Complex.I) := by\n")
-    A(f"    intro s' t hst hEq\n")
-    A(f"    have := congrArg Complex.im hEq\n")
-    A(f"    rw [him_line s', him_line t] at this\n")
-    A(f"    linarith\n")
 
-    # strict chain among x1<...<xn: derive from ord_names (hlo, hc..,hhi).  We need x_i < x_j
-    # for i<j.  From the chain hc12: x1<x2, etc.  linarith can derive all.
-    # pairwise distinctness of z_i, z_j (i<j)
-    for i in range(1, n + 1):
-        for j in range(i + 1, n + 1):
-            A(f"  have n{i}{j} : z{i} ≠ z{j} := distinct x{i} x{j} (by linarith)\n")
-
-    # set T = {z1, ..., zn}
-    A(f"  set T : Finset ℂ := {{{', '.join(zs)}}} with hTdef\n")
-    # card proof: peel each insert
+    # ---- O(N) on-line Finset via sorted list (RHInBox.line_toFinset_card) ------------
+    # The emitted proof supplies only the O(N) consecutive chain x1 < ... < xn; the
+    # hand-written lemmas in RHInBox.lean (Part A0) convert chain -> Nodup -> card.
+    # This replaces the old O(N^2) pairwise-distinctness + insert-peeling block.
+    A(f"  set xsL : List ℝ := [{', '.join(xs)}] with hxsdef\n")
+    A(f"  have hchain : xsL.IsChain (· < ·) := by\n")
+    A(f"    rw [hxsdef]\n")
+    if n == 1:
+        A(f"    exact List.IsChain.singleton _\n")
+    else:
+        chain_haves = ", ".join(f"hc{i}{i+1}" for i in range(1, n))
+        A(f"    simp only [List.isChain_cons_cons]\n")
+        A(f"    exact ⟨{chain_haves}, List.IsChain.singleton _⟩\n")
+    A(f"  set T : Finset ℂ :=\n")
+    A(f"    (xsL.map fun t : ℝ => (1 / 2 : ℂ) + (t : ℂ) * Complex.I).toFinset with hTdef\n")
     A(f"  have hTcard : T.card = {n} := by\n")
-    A(f"    rw [hTdef]\n")
-    for i in range(1, n):
-        # z_i not in {z_{i+1},...,z_n}
-        neqs = " ⟨" + ", ".join(f"n{i}{j}" for j in range(i + 1, n + 1)) + "⟩"
-        if n - i == 1:
-            # single-element remainder -> mem_singleton, single neq
-            A(f"    rw [Finset.card_insert_of_notMem (by\n")
-            A(f"        simp only [Finset.mem_singleton]; exact n{i}{n})]\n")
-        else:
-            A(f"    rw [Finset.card_insert_of_notMem (by\n")
-            A(f"        simp only [Finset.mem_insert, Finset.mem_singleton]\n")
-            A(f"        push_neg; exact{neqs})]\n")
-    A(f"    simp\n")
-
-    # membership facts
-    zdefs_simp = ", ".join(f"hz{i}def" for i in range(1, n + 1))
-    A(f"  have hmem_iff : ∀ z ∈ T, {' ∨ '.join(f'z = z{i}' for i in range(1, n + 1))} := by\n")
-    A(f"    intro z hz\n")
-    A(f"    rw [hTdef] at hz\n")
-    A(f"    simpa only [Finset.mem_insert, Finset.mem_singleton] using hz\n")
-    rcases_pat = " | ".join("h" for _ in range(n))
+    A(f"    rw [hTdef, RHInBox.line_toFinset_card xsL hchain, hxsdef]\n")
+    A(f"    rfl\n")
+    A(f"  have hmem_list : ∀ t ∈ xsL, {' ∨ '.join(f't = x{i}' for i in range(1, n + 1))} := by\n")
+    A(f"    intro t ht\n")
+    A(f"    rw [hxsdef] at ht\n")
+    A(f"    simpa using ht\n")
+    rfl_pat = " | ".join("rfl" for _ in range(n))
     A(f"  have hTline : ∀ z ∈ T, z.re = 1 / 2 := by\n")
-    A(f"    intro z hz\n")
-    A(f"    rcases hmem_iff z hz with {rcases_pat} <;> subst h <;>\n")
-    A(f"      simp only [{zdefs_simp}] <;> exact hre_line _\n")
+    A(f"    rw [hTdef]\n")
+    A(f"    exact RHInBox.line_toFinset_forall xsL (fun t _ => hre_line t)\n")
     A(f"  have hTzero : ∀ z ∈ T, riemannZeta z = 0 := by\n")
-    A(f"    intro z hz\n")
-    A(f"    rcases hmem_iff z hz with {rcases_pat} <;> subst h <;>\n")
-    A(f"      simp only [{zdefs_simp}]\n")
+    A(f"    rw [hTdef]\n")
+    A(f"    refine RHInBox.line_toFinset_forall xsL ?_\n")
+    A(f"    intro t ht\n")
+    A(f"    rcases hmem_list t ht with {rfl_pat}\n")
     for i in range(1, n + 1):
-        A(f"    · exact hzeta x{i} hΛ{i}\n")
+        # NOTE: the rcases rfl pattern substitutes x_i := t (x_i leaves scope), so the
+        # point is pinned by the goal; hΛ{i} was rewritten along with the substitution.
+        A(f"    · exact hzeta _ hΛ{i}\n")
     A(f"  have hTbox : ∀ z ∈ T, ((({s0}) : ℝ) ≤ z.re ∧ z.re ≤ ({s1})) ∧ ((({t0}) : ℝ) ≤ z.im ∧ z.im ≤ ({t1})) := by\n")
-    A(f"    intro z hz\n")
-    A(f"    rcases hmem_iff z hz with {rcases_pat} <;> subst h <;>\n")
-    A(f"      simp only [{zdefs_simp}] <;>\n")
-    A(f"      refine ⟨⟨?_, ?_⟩, ?_, ?_⟩ <;>\n")
-    A(f"      first\n")
-    A(f"        | (rw [hre_line]; norm_num)\n")
-    A(f"        | (rw [him_line]; linarith)\n")
+    A(f"    rw [hTdef]\n")
+    A(f"    refine RHInBox.line_toFinset_forall xsL ?_\n")
+    A(f"    intro t ht\n")
+    A(f"    refine ⟨⟨?_, ?_⟩, ?_, ?_⟩\n")
+    A(f"    · rw [hre_line]; norm_num\n")
+    A(f"    · rw [hre_line]; norm_num\n")
+    A(f"    · rw [him_line]\n")
+    A(f"      rcases hmem_list t ht with {rfl_pat} <;> linarith\n")
+    A(f"    · rw [him_line]\n")
+    A(f"      rcases hmem_list t ht with {rfl_pat} <;> linarith\n")
 
     # ---- extract hwind + reassemble harb from hArb ----------------------------------
     A(f"  set s0f : Finset ℂ := RHInBoxAnalytic.zeroFinset cPB RPB hs1 with hs0def\n")
@@ -522,20 +509,16 @@ def _build_full_instantiation(
 def _heartbeats_for(n: int) -> int:
     """Heartbeat budget for the per-box instantiation proof.
 
-    The proof cost is dominated by the O(N^2) pairwise-distinctness block (N*(N-1)/2
-    `distinct` haves, each closed by `linarith`).  The default 200000-heartbeat budget
-    suffices for small N (n <= 10, e.g. T=35 -> N=5) but overflows for large N
-    (T=100 -> N=29).  The dominant cost is the O(N^2) pairwise `linarith` block, and each
-    `linarith` also gets SLOWER as the local context grows (more `set`/`have` in scope),
-    so the total is super-quadratic.  Keep the default for n <= 10; for larger n scale the
-    budget as default * ceil(n^2 / 20).  Empirically at n=29 the block-plus-assembly
-    completes just under this budget (4.4M reached the final `simp`; ~8.6M finishes with
-    headroom): n = 29 -> ceil(42.05) = 43 -> 43 * 200000 = 8600000."""
+    Since the O(N) list-based construction (RHInBox Part A0: chain -> Nodup -> card via
+    `line_toFinset_card`) replaced the old O(N^2) pairwise-distinctness + insert-peeling
+    block, the emitted proof's N-dependent cost is the 2N `linarith` calls in hTbox and
+    the N-branch rcases in hTzero -- linear with small constants (empirically N=29 builds
+    in ~30s well inside a 400000 budget).  Scale linearly with generous headroom:
+    default for n <= 25, then base * ceil(n / 25)."""
     base = 200000
-    if n <= 10:
+    if n <= 25:
         return base
-    factor = math.ceil((n * n) / 20.0)
-    return base * factor
+    return base * math.ceil(n / 25.0)
 
 
 def emit_per_box_instantiation(
@@ -588,18 +571,16 @@ def emit_per_box_instantiation(
         f"import BoxLocalization\n\n"
         f"open Complex MeasureTheory Real\n"
         f"open scoped Topology\n\n"
-        # The instantiation proof is O(N^2) in the pairwise-distinctness block (N*(N-1)/2
-        # `distinct` haves, each a `linarith`).  For large N (e.g. the T=100 milestone,
-        # N=29 -> 406 pairs) this exceeds Lean's default 200000-heartbeat budget in `whnf`.
-        # Scale the limit with N (default * (1 + n^2 / 100), rounded up to a multiple of
-        # 200000) so small boxes keep the default and large boxes build sorry-free.
+        # The instantiation proof is O(N): the on-line Finset is built from a sorted LIST
+        # via RHInBox.line_toFinset_card (chain -> Nodup -> card, proved once), so the
+        # emitted N-dependent work is just the consecutive chain + 2N linarith bound
+        # checks.  Budget scales linearly with generous headroom (_heartbeats_for).
         f"set_option maxHeartbeats {_heartbeats_for(n)}\n\n"
         f"namespace {namespace}\n\n"
     )
 
-    # xs / zs indices are 1-based.
+    # xs indices are 1-based.
     xs = [f"x{i}" for i in range(1, n + 1)]
-    zs = [f"z{i}" for i in range(1, n + 1)]
 
     # ---- hLine existential type ------------------------------------------------------
     order_parts = [f"{t0} ≤ x1"] + [f"x{i} < x{i + 1}" for i in range(1, n)] + [f"x{n} ≤ {t1}"]
@@ -631,7 +612,7 @@ def emit_per_box_instantiation(
     return _build_full_instantiation(
         name=name, namespace=namespace, header=header, n=n,
         s0=s0, s1=s1, t0=t0, t1=t1, cx_s=cx_s, cy_s=cy_s, rsq_s=rsq_s,
-        xs=xs, zs=zs, hline_type=hline_type, conj=conj, winding=winding,
+        xs=xs, hline_type=hline_type, conj=conj, winding=winding,
     )
 
 
