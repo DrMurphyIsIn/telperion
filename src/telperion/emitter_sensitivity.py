@@ -433,6 +433,28 @@ REGISTRY: dict[str, SensitivityStance] = {
         "eventually-bounded -> globally-bounded with the explicit Finset-sum "
         "witness C = A + sum |f n|/w n; a single fully-generic fixed atom, no "
         "per-instance data and no corruptible cofactor"),
+    "MultilinearPerturbationEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Leibniz telescoping product-perturbation envelope |prod F - prod G| <= C*eta: "
+        "the arity and rational bounds ARE the statement; the envelope C = sum prod_{j!=i} M_j "
+        "is recomputed in-kernel by the ring telescoping identity + mul_le_mul chains + linarith; "
+        "no separately-supplied corruptible cofactor"),
+    "PolyGeomClosureEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "exact-invariant weighted-geometric closure: the SYNTHESIZED remainder polynomial q "
+        "(solving q(N) = p(N) + rho*q(N+1)) is the load-bearing certificate -- a corrupted q "
+        "breaks the induction's push_cast/ring step (and is refused at certify time by the "
+        "exact sympy recurrence check)",
+        neg_control=NegControlStance(
+            NEG_CONTROL_DECLARED_UNWIRED,
+            reason="certificate-sensitive (a forged remainder is kernel-rejectable via the "
+                   "induction ring identity) but no adapter is registered in "
+                   "negative_control_harness.ADAPTERS yet -- the honestly-named gap"),
+    ),
+    "TwoPointMomentEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "two-point moment feasibility: a FIXED explicit-witness calculus (symmetricPair / "
+        "oneSidedPair, field_simp/ring/linarith) with per-instance rational (p1,p2,m,V) that "
+        "ARE the statement, margin re-decided by norm_num; violated margin refused at certify "
+        "time (negative control); no corruptible cofactor"),
     "CoefficientMassEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "l1-coefficient sup-envelope |p(x)| <= ||p||_1 * T^deg: the coefficient "
         "list and radius ARE the statement; the mass M and per-term |a_i| facts "

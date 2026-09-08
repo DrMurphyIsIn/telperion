@@ -104,6 +104,16 @@ from .emit_finite_prefix_absorption import (  # noqa: F401
 from .emit_coefficient_mass import (  # noqa: F401
     CoefficientMassEmitter, coefficient_mass_certificate, coefficient_mass_family,
 )
+from .emit_multilinear_perturbation import (  # noqa: F401
+    MultilinearPerturbationEmitter, multilinear_perturbation_certificate,
+    multilinear_perturbation_family,
+)
+from .emit_poly_geom_closure import (  # noqa: F401
+    PolyGeomClosureEmitter, poly_geom_closure_certificate, poly_geom_closure_family,
+)
+from .emit_twopoint_moment import (  # noqa: F401
+    TwoPointMomentEmitter, twopoint_moment_certificate, twopoint_moment_family,
+)
 from .emit_bilinear_corner import (  # noqa: F401
     BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
 )
