@@ -47,10 +47,18 @@ def test_empty_band_certificate_refuses_pole_box():
         empty_band_certificate("0", "1", "0", "55/16", n_total=0)
 
 
-def test_empty_band_certificate_refuses_non_straddle():
-    # A box whose real range excludes 1/2 cannot participate in the RH-in-box localization.
-    with pytest.raises(ValueError, match="straddle"):
-        empty_band_certificate("3/5", "4/5", "0", "1", n_total=0)
+def test_empty_band_certificate_accepts_non_straddle_sliver():
+    # A ZERO-FREE box makes no critical-line claim, so it need NOT straddle 1/2.  The left
+    # sliver [0, 1/1000] x [0, 55/16] is the strip-clear piece the band cert cannot cover
+    # (dVP is silent below 55/16); reflection rho -> 1 - conj rho carries it to the right sliver.
+    cert = empty_band_certificate("0", "1/1000", "0", "55/16", n_total=0)
+    assert cert.n == 0
+
+
+def test_empty_band_certificate_still_refuses_pole_reach():
+    # Pole exclusion is NOT relaxed: a sliver reaching Re=1 at Im=0 must still refuse.
+    with pytest.raises(ValueError, match="pole|separating"):
+        empty_band_certificate("999/1000", "1", "0", "55/16", n_total=0)
 
 
 # --- emitter: Lean shape ---------------------------------------------------------
@@ -98,6 +106,19 @@ def test_run_empty_band_winding_zero(tmp_path):
     assert "zeta_count_eq_winding_generic" in text
     # The driver asserts N == 0 internally; a nonzero winding would have raised.
     assert (tmp_path / "NoZerosInBox_1d100_99d100_0_55d16.lean").exists()
+
+
+@requires_flint
+def test_run_empty_band_per_tag_namespace(tmp_path):
+    # REGRESSION (post-#329): two certs imported together must not collide on cPB/RPB, and
+    # AxiomGuardRHInBox references NoZerosInBox_<tag>.no_zeros_in_box_<tag> -- so the driver
+    # must emit a PER-TAG namespace, not the shared default "NoZerosInBox".
+    from telperion.driver_empty_band import run_empty_band  # noqa: E402
+
+    text = run_empty_band("0", "1/1000", "0", "55/16", winding_prec=160,
+                          out_dir=tmp_path, write=False)
+    assert "namespace NoZerosInBox_0_1d1000_0_55d16" in text
+    assert "namespace NoZerosInBox\n" not in text
 
 
 @requires_flint

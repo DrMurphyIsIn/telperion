@@ -71,17 +71,22 @@ class EmptyBandCertificate:
     n: int = 0
 
 
-def _validate_localization_box(re_lo, re_hi, im_lo, im_hi):
-    """Shared box validation for the RH-in-box emitters: rational, non-degenerate, straddles the
-    critical line `1/2`, and excludes the pole `s = 1`.  Returns the four sympy Rationals.  Raises
-    ValueError (with the words "straddle" / "pole" in the message) on the negative controls."""
+def _validate_localization_box(re_lo, re_hi, im_lo, im_hi, *, require_straddle: bool = True):
+    """Shared box validation for the RH-in-box emitters: rational, non-degenerate, excludes the
+    pole `s = 1`, and (when ``require_straddle``) straddles the critical line `1/2`.
+
+    The straddle requirement applies to the LOCALIZATION path (an "all box zeros on Re = 1/2"
+    claim over a box missing the line would be vacuous-by-construction).  A ZERO-FREE box
+    (empty-band path) makes no critical-line claim, so slivers like `[0, a]` are valid there —
+    pass ``require_straddle=False``.  Returns the four sympy Rationals.  Raises ValueError (with
+    the words "straddle" / "pole" in the message) on the negative controls."""
     rl, rh, il, ih = (sp.nsimplify(x) for x in (re_lo, re_hi, im_lo, im_hi))
     if not all(v.is_rational for v in (rl, rh, il, ih)):
         raise ValueError("box corners must be rational")
     if not (rl < rh and il < ih):
         raise ValueError(f"needs a non-degenerate box; got [{rl},{rh}]x[{il},{ih}]")
     half = sp.Rational(1, 2)
-    if not (rl < half < rh):
+    if require_straddle and not (rl < half < rh):
         raise ValueError(
             f"invalid box — the sigma-range [{rl},{rh}] must straddle the critical line 1/2 "
             f"(re_lo < 1/2 < re_hi); refused"
@@ -103,9 +108,10 @@ def empty_band_certificate(
     The localization hypothesis is `n_total == 0` (the boundary winding is zero, so the box holds
     no zeros).  NEGATIVE CONTROL: any `n_total != 0` is REFUSED — a nonzero winding means there IS
     a zero to exhibit, which is the count-matching path (`emit_per_box_instantiation`), not the
-    empty band.  The box must also STRADDLE `1/2` and EXCLUDE the pole `s = 1` (same invalid-box
-    refusals as the localization certificate; `choose_ball` additionally guarantees a separating
-    ball exists).  conjecture1_proved = False."""
+    empty band.  The box need NOT straddle `1/2` (a zero-free claim makes no critical-line
+    statement — slivers like `[0, a]` are valid) but must EXCLUDE the pole `s = 1`
+    (`choose_ball` additionally guarantees a separating ball exists).
+    conjecture1_proved = False."""
     if not isinstance(n_total, int):
         raise ValueError(f"empty_band n_total must be an int; got {n_total!r}")
     if n_total != 0:
@@ -114,7 +120,8 @@ def empty_band_certificate(
             f"the box contains a zero to exhibit (use the count-matching localization path); the "
             f"empty band requires winding N == 0; refused"
         )
-    rl, rh, il, ih = _validate_localization_box(re_lo, re_hi, im_lo, im_hi)
+    rl, rh, il, ih = _validate_localization_box(re_lo, re_hi, im_lo, im_hi,
+                                                require_straddle=False)
     # Confirm a separating Blaschke ball exists (raises if the box reaches the pole).
     choose_ball(rl, rh, il, ih)
     return EmptyBandCertificate(re_lo=rl, re_hi=rh, im_lo=il, im_hi=ih, n=0)

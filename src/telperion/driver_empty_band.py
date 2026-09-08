@@ -62,7 +62,9 @@ def run_empty_band(re_lo, re_hi, im_lo, im_hi, *, winding_prec: int = 160, n_see
     # 3. Certificate (refuses invalid box AND n_total != 0) + emit.
     cert = empty_band_certificate(str(rl), str(rh), str(il), str(ih), n_total=n_total)
     tag = _box_tag(rl, rh, il, ih)
-    text = emit_empty_band_instantiation(cert, tag)
+    # Per-tag namespace (mirrors run_box's RHInBox_<tag>): two certs imported together must not
+    # collide on cPB/RPB, and the axiom guard references NoZerosInBox_<tag>.no_zeros_in_box_<tag>.
+    text = emit_empty_band_instantiation(cert, tag, namespace=f"NoZerosInBox_{tag}")
     print(f"run_empty_band [{rl},{rh}]x[{il},{ih}]: winding N=0 (zero-free); emitted no_zeros_in_box_{tag}")
 
     if write:
