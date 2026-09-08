@@ -65,6 +65,13 @@ from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_fa
 from .emit_cs import CauchySchwarzEmitter, cauchy_schwarz_family, cs_certificate  # noqa: F401
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
+from .emit_ns_ledger import (  # noqa: F401
+    AffineLedgerEmitter, affine_ledger_certificate, affine_ledger_family,
+)
+from .emit_quadratic_irrational import (  # noqa: F401
+    QuadraticIrrationalEmitter, quadratic_irrational_certificate,
+    quadratic_irrational_family,
+)
 from .emit_bilinear_corner import (  # noqa: F401
     BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
 )

@@ -252,6 +252,16 @@ _SPECIAL_KINDS = (
     # Emits "Bd(Lambda'/Lambda) = 2*pi*i*N" -- toy z^2 (N=2, from-scratch winding) and
     # the Lambda [2/5,3/5]x[10,35] instance (N=5, argument-principle + per-pole primitive).
     "winding_count",
+    # NS/Euler-derived emitters (2026-09-08), mined from OpenAI's finite-time
+    # blowup formalization (github.com/openai/NavierStokesAndEuler):
+    #   affine_ledger        -- ExponentLedger.lean: multi-parameter affine
+    #                           gain/increment bookkeeping over a box (linarith);
+    #                           margin + min-of-list (distinct from the single-
+    #                           parameter affine_param_endpoint interval collapse).
+    #   quadratic_irrational -- DiophantineGraph.lean: ℤ[√d] conjugate-norm
+    #                           lower bound 1 ≤ |p+√d q||p−√d q| (nlinarith).
+    "affine_ledger",
+    "quadratic_irrational",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -355,6 +365,13 @@ _SPECIAL_DISPATCH = {
         ("emit_xi_line_zeros", "certify_xi_line_zeros_point", "XiLineZerosEmitter"),
     "winding_count":
         ("emit_winding_count", "certify_winding_count_point", "WindingCountEmitter"),
+    # NS/Euler-derived emitters (2026-09-08), mined from OpenAI's finite-time
+    # blowup formalization (github.com/openai/NavierStokesAndEuler).
+    "affine_ledger":
+        ("emit_ns_ledger", "certify_affine_ledger_point", "AffineLedgerEmitter"),
+    "quadratic_irrational":
+        ("emit_quadratic_irrational", "certify_quadratic_irrational_point",
+         "QuadraticIrrationalEmitter"),
 }
 
 

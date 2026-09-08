@@ -387,6 +387,11 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Winding-nonzero primitive Bd((z-ρ)⁻¹)=2πi for ρ strictly inside: from-scratch segment/Complex.log branch-split — 3 sides in slitPlane via clog_real+FTC-2, left side via ρ-(·) branch, two log(-w)-log(w)=±iπ monodromy jumps (arg_neg_eq_arg_±pi) sum to 2πi; no separately-supplied witness"),
     "LogProductBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Two-scale log-product bound log‖P c‖-log‖P z‖ ≤ (Σ m)·(log R₀-log(R-R₀)): reverse-triangle separation ‖z-ρ‖≥R-R₀ (norm_sub_norm_le) + monotone Real.log_le_log + log-of-product (norm_prod/Real.log_prod/log_zpow) + Finset.sum_le_sum; geometry is the certificate, no separately-supplied witness"),
+    # --- NS/Euler-derived emitters (2026-09-08) ---
+    "AffineLedgerEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "threshold ≤/< affine form (or min of forms) on a parameter box via linarith (+ lt_min_iff/le_min_iff); the worst-corner margin is recomputed by linarith as the nonneg combination of the box hyps — no separately-supplied corruptible cofactor (cf. AffineParamEndpointEmitter/BoxRobustEmitter)"),
+    "QuadraticIrrationalEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "ℤ[√d] conjugate-product identity + norm≥1 bound: the radicand d IS the statement (not a separate cofactor); the identity is recomputed by nlinarith off Real.sq_sqrt and the lower bound by Int.one_le_abs on the integer norm (cf. AlgebraicBracketEmitter)"),
 }
 
 
