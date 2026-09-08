@@ -67,6 +67,10 @@ from .emit_hermitian_moment import (  # noqa: F401
     TwoMomentCountEmitter, two_moment_count_certificate, two_moment_count_family,
     RankTraceScalarEmitter, rank_trace_scalar_certificate, rank_trace_scalar_family,
 )
+from .palomar_mine import (  # noqa: F401
+    classify_entry, mine, mining_report, poll, fetch_registry,
+    parse_feed, fetch_feed, MiningCandidate, TOPIC_KEYWORDS, SHAPE_RULES,
+)
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
 from .emit_bilinear_corner import (  # noqa: F401
