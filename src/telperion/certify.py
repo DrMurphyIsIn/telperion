@@ -288,6 +288,13 @@ _SPECIAL_KINDS = (
     # EdgeWeightJets.lean: |p(x)| <= ||p||_1 * T^deg (generic Polynomial R atom
     # + concrete scalar instances with exact mass/degree certification).
     "coefficient_mass",
+    # NS/Euler wave-3 (2026-09-08): Leibniz multilinear perturbation envelope,
+    # exact-invariant polynomially-weighted geometric closure (remainder
+    # synthesis), two-point moment feasibility witness (rank-2 pseudo-
+    # expectation, dual of the SOS shapes).
+    "multilinear_perturbation",
+    "poly_geom_closure",
+    "twopoint_moment",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -424,6 +431,15 @@ _SPECIAL_DISPATCH = {
     "coefficient_mass":
         ("emit_coefficient_mass", "certify_coefficient_mass_point",
          "CoefficientMassEmitter"),
+    "multilinear_perturbation":
+        ("emit_multilinear_perturbation", "certify_multilinear_perturbation_point",
+         "MultilinearPerturbationEmitter"),
+    "poly_geom_closure":
+        ("emit_poly_geom_closure", "certify_poly_geom_closure_point",
+         "PolyGeomClosureEmitter"),
+    "twopoint_moment":
+        ("emit_twopoint_moment", "certify_twopoint_moment_point",
+         "TwoPointMomentEmitter"),
 }
 
 
