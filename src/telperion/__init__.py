@@ -63,6 +63,14 @@ from .emit_padic import PadicValuationEmitter, valuation_family  # noqa: F401
 from .emit_cone import ConeFarkasEmitter, cone_family  # noqa: F401
 from .emit_tangent import TangentSumEmitter, tangent_certificate, tangent_sum_family  # noqa: F401
 from .emit_cs import CauchySchwarzEmitter, cauchy_schwarz_family, cs_certificate  # noqa: F401
+from .emit_hermitian_moment import (  # noqa: F401
+    TwoMomentCountEmitter, two_moment_count_certificate, two_moment_count_family,
+    RankTraceScalarEmitter, rank_trace_scalar_certificate, rank_trace_scalar_family,
+)
+from .palomar_mine import (  # noqa: F401
+    classify_entry, mine, mining_report, poll, fetch_registry,
+    parse_feed, fetch_feed, MiningCandidate, TOPIC_KEYWORDS, SHAPE_RULES,
+)
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
 from .emit_ns_ledger import (  # noqa: F401
@@ -225,6 +233,13 @@ from .emit_two_scale_separation import (  # noqa: F401
 from .emit_endpoint_geom_cap import (  # noqa: F401
     EndpointGeomCapEmitter, endpoint_geom_cap_certificate,
     endpoint_geom_cap_family, certify_endpoint_geom_cap_point,
+)
+# Flint-free emitter previously only imported via the flint-gated rh_jensen
+# modules, making sensitivity-registry discovery depend on whether python-flint
+# was installed.  Imported here unconditionally so the completeness/stray gates
+# see the same emitter set on every environment.
+from .emit_jensen_polynomial_hyperbolicity import (  # noqa: F401
+    JensenPolynomialHyperbolicityEmitter,
 )
 from .emit_far_pole_sum import (  # noqa: F401
     FarPoleSumEmitter, far_pole_sum_certificate,

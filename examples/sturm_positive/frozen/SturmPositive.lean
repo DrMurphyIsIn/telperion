@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family SturmPositive | input-hash bae20970da47d413
+/- telperion 0.1.6 | family SturmPositive | input-hash f9a57afc759e6fb4
    3 theorems, 22 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

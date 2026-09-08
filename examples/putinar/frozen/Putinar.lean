@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family Putinar | input-hash 4a222859548f121e
+/- telperion 0.1.6 | family Putinar | input-hash 81b51a918d6dbb03
    2 theorems, 6 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

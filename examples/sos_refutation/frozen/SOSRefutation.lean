@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family SOSRef | input-hash c4c423b0e702f9b3
+/- telperion 0.1.6 | family SOSRef | input-hash 8252c7ad6939983e
    2 theorems, 4 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

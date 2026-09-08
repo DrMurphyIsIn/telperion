@@ -222,6 +222,12 @@ _SPECIAL_KINDS = (
     # total divisor = on-line count ⟹ every zero in the box is on Re=1/2 (Turing-style verification,
     # NOT a proof of RH).  Refuses n_line > n_total and n_line != n_total.
     "box_localization",
+    # HermitianMomentInertia family (2026-09-08, ported from anthropics/zeta-23-lean,
+    # arXiv:2608.13637): two_moment_count (§6 scalar count certificate (2−κ)N−err ≤ count,
+    # H(λ) / H_d(λ) via nlinarith off Real.sqrt_le_sqrt) and rank_trace_scalar (integrality
+    # atom 2c·x−c² ≤ x²). Positive-proportion machinery; NOT a step toward RH.
+    "two_moment_count",
+    "rank_trace_scalar",
     # Winding-number frontier (2026-09-06, same RH session): slit_loop_winding_zero (Rouché heart —
     # closed loop in ‖·-1‖<r≤1 ⟹ ∮ w'/w = 0, winding 0, via clog_real + FTC-2) and box_residue_sum
     # (box analogue of full_argument_principle, Finset-linearity plumbing conditional on the per-pole
@@ -348,6 +354,11 @@ _SPECIAL_DISPATCH = {
     "sphere_bound": ("emit_sphere_bound", "certify_sphere_bound_point"),
     # Length-3 entries carry the emitter class name too, enabling `emitter_for(kind)`
     # (the certify()/emit() symmetry). Length-2 entries remain valid (certify-only).
+    # HermitianMomentInertia family (ported from anthropics/zeta-23-lean, §6 + §3).
+    "two_moment_count":
+        ("emit_hermitian_moment", "certify_two_moment_count_point", "TwoMomentCountEmitter"),
+    "rank_trace_scalar":
+        ("emit_hermitian_moment", "certify_rank_trace_scalar_point", "RankTraceScalarEmitter"),
     "max_modulus": ("emit_max_modulus", "certify_max_modulus_point", "MaxModulusEmitter"),
     "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point", "BCDerivReEmitter"),
     "entire_part_bound":

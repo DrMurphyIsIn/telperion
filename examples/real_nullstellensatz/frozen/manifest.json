@@ -1,6 +1,6 @@
 {
   "family": "RealNSS",
-  "input_hash": "c00813faf60241d419df9ae800d1cbb92415a6137639220876ee6a394261af4d",
+  "input_hash": "41e656f017549ed1b59d9e6d6b38692c7ebd5b36b3e961930f17d1ccdea4fc63",
   "tool_version": "0.1.6",
   "files": [
     "RealNullstellensatz.lean"

@@ -663,6 +663,40 @@ def cmd_evolve(args) -> int:
     return run_evolve(argv)
 
 
+def cmd_palomar_mine(args) -> int:
+    """Mine the Palomar registry for candidate Telperion emitter shapes.
+
+    Default: fetch the live registry, classify by topic, print the mining report.
+    `--poll` runs the incremental subroutine against a seen-state file (only NEW
+    entries are surfaced) — the shape a scheduler calls on an interval.
+    `--file` reads a local registry JSON instead of the network (offline)."""
+    import json as _json
+
+    from .palomar_mine import fetch_feed, fetch_registry, mine, mining_report, parse_feed, poll
+
+    topics = args.topic.split(",") if args.topic else None
+    fetch = fetch_feed if args.source == "feed" else fetch_registry
+    if args.poll:
+        cands = poll(args.state, topics=topics, fetch=fetch, min_score=args.min_score)
+    else:
+        if args.file:
+            raw = Path(args.file).read_text()
+            if args.source == "feed":
+                entries = parse_feed(raw)
+            else:
+                data = _json.loads(raw)
+                entries = data.get("entries", data) if isinstance(data, dict) else data
+        else:
+            entries = fetch()
+        cands = mine(entries, topics=topics, min_score=args.min_score)
+    if args.json:
+        from dataclasses import asdict
+        print(_json.dumps([asdict(c) for c in cands], indent=2))
+    else:
+        print(mining_report(cands))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -680,6 +714,22 @@ def main(argv=None) -> int:
     p.add_argument("directory")
     p.add_argument("--namespace", default="MyProof")
     p.set_defaults(fn=cmd_init)
+
+    p = sub.add_parser("palomar-mine",
+                       help="mine the Palomar registry for candidate emitter shapes")
+    p.add_argument("--topic", default=None,
+                   help="comma-separated topics to scope to: rh, bg, pvsnp (default: all)")
+    p.add_argument("--poll", action="store_true",
+                   help="incremental: surface only entries new since the last run")
+    p.add_argument("--state", default="palomar-seen.json",
+                   help="seen-state file for --poll")
+    p.add_argument("--file", default=None,
+                   help="read a local registry file instead of the network (JSON, or RSS with --source feed)")
+    p.add_argument("--source", choices=("recent", "feed"), default="recent",
+                   help="registry source: recent.json (structured, default) or the RSS feed.xml")
+    p.add_argument("--min-score", type=int, default=1)
+    p.add_argument("--json", action="store_true", help="emit candidates as JSON")
+    p.set_defaults(fn=cmd_palomar_mine)
 
     for name, fn, extra in (
         ("emit", cmd_emit, True),

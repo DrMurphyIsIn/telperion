@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family RationalIdentity | input-hash d644f51895cb9aee
+/- telperion 0.1.6 | family RationalIdentity | input-hash 7360ada79d0ec8f5
    2 theorems, 9 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

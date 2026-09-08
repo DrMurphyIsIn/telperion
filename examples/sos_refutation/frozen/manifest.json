@@ -1,6 +1,6 @@
 {
   "family": "SOSRef",
-  "input_hash": "c4c423b0e702f9b371904dd78256126c81de0f8134368f33075ed033303a2bec",
+  "input_hash": "8252c7ad6939983e7b356fec2d566f2edda0fbedc14bac62f15d82a8d4d3f19a",
   "tool_version": "0.1.6",
   "files": [
     "SOSRefutation.lean"

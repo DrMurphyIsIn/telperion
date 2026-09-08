@@ -1,6 +1,6 @@
 {
   "family": "SturmPositive",
-  "input_hash": "bae20970da47d4131dae5ab61c9a05fe1bcbdf78180955879978848b9c9fe2bd",
+  "input_hash": "f9a57afc759e6fb4d6e63ff6f445688f8375fc3dd6e385b809743b387a18bdcc",
   "tool_version": "0.1.6",
   "files": [
     "SturmPositive.lean"

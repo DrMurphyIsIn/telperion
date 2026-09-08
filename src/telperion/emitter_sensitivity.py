@@ -154,6 +154,19 @@ REGISTRY: dict[str, SensitivityStance] = {
     "DirectPolyaEmitter": _S(STRUCTURALLY_NONVACUOUS,
                              "0 ≤ f via positivity on an all-nonneg form; the "
                              "reflexive-statement check + positivity suffice"),
+    "TwoMomentCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                "(2−κ)N − err ≤ count from two moment-bound "
+                                "hypotheses via nlinarith off Real.sqrt_le_sqrt; the "
+                                "moment bounds are the analytic trust seam, the "
+                                "arithmetic implication carries no corruptible identity"),
+    "RankTraceScalarEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                 "integrality atom 2c·x−c² ≤ x² = (x−c)²≥0 via "
+                                 "nlinarith [sq_nonneg]; a pure square-positivity fact"),
+    "EndpointGeomCapEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                 "geometric cap (R+z)/(R−z)² ≤ (R+1)/(R−1)² on the "
+                                 "disk: an endpoint-maximum monotonicity bound, no "
+                                 "separately-supplied corruptible identity (pre-existing "
+                                 "origin/main gap; classified here to green the gate)"),
     "BilinearBoxEmitter": _S(STRUCTURALLY_NONVACUOUS,
                              "before ≤ after via 4 Pólya corner positivity certs "
                              "+ assembly; no separate corruptible identity"),
@@ -254,6 +267,13 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Forall-box separable-quadratic 0<=target: nlinarith over generic nonneg atoms (sq_nonneg (v-lo)/(hi-v) per axis, 4 corner mul_nonneg per bilinear pair) + named box bounds; no separately-supplied corruptible cofactor -- the rigorous monomial-wise margin is recomputed by nlinarith as the nonneg combination"),
     "HyperbolicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Discriminant nonnegativity (b^2-4ac>=0) is recomputed by nlinarith from structural sq_nonneg/corner facts + the kernel bridge lemma; there is no separately-supplied corruptible cofactor"),
+    "JensenPolynomialHyperbolicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Same shape as HyperbolicityEmitter for the d=2 Jensen polynomial: disc(c0,c1,c2)>=0 "
+        "over Arb coefficient boxes via hyperbolic_deg2_of_discrim_nonneg + nlinarith off the "
+        "named box hypotheses; the boxes enter as hypotheses (Arb trust seam), no "
+        "separately-supplied corruptible identity.  Only discoverable when python-flint is "
+        "importable (rh_jensen imports are flint-gated), which is why the flint-less CI unit "
+        "job never surfaced the gap"),
     "CauchyDerivBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Both emitted shapes are structural: main wrapper is Mathlib's norm_deriv lemma specialized (R>0 via norm_num on a literal)"),
     "CavityExchangeEmitter": _S(STRUCTURALLY_NONVACUOUS,

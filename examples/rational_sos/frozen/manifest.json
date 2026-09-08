@@ -1,6 +1,6 @@
 {
   "family": "RationalSOS",
-  "input_hash": "f250aa242d69845d1ee6794ac8df74e9175c4abec1034ee8efbfdcdeab8e2886",
+  "input_hash": "08d202d7a7a24df378ca80a208c217fb441d7a39fee9527a993d6392c0239579",
   "tool_version": "0.1.6",
   "files": [
     "RationalSOS.lean"
