@@ -271,6 +271,17 @@ _SPECIAL_KINDS = (
     #                           <-> (v < E and 0 < Q), certificate = the exact ring
     #                           identity (E-v)^2 - u^2*rad = Q.
     "sqrt_root_elimination",
+    # NS/Euler round-2 build-out (2026-09-08): open-closed barrier bootstrap
+    # (first topological shape), log-eps cutoff witness optimization (any
+    # rational theta in (0,1]), zero-tolerant log-convexity interpolation,
+    # finite-prefix absorption (eventually-bounded -> globally, explicit C).
+    "continuous_barrier",
+    "log_eps_optimize",
+    "logconvex_interp",
+    "finite_prefix_absorption",
+    # EdgeWeightJets.lean: |p(x)| <= ||p||_1 * T^deg (generic Polynomial R atom
+    # + concrete scalar instances with exact mass/degree certification).
+    "coefficient_mass",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -387,6 +398,21 @@ _SPECIAL_DISPATCH = {
     "sqrt_root_elimination":
         ("emit_sqrt_root_elimination", "certify_sqrt_root_elim_point",
          "SqrtRootEliminationEmitter"),
+    "continuous_barrier":
+        ("emit_continuous_barrier", "certify_continuous_barrier_point",
+         "ContinuousBarrierEmitter"),
+    "log_eps_optimize":
+        ("emit_log_eps_optimize", "certify_log_eps_optimize_point",
+         "LogEpsOptimizeEmitter"),
+    "logconvex_interp":
+        ("emit_logconvex_interp", "certify_logconvex_interp_point",
+         "LogConvexInterpEmitter"),
+    "finite_prefix_absorption":
+        ("emit_finite_prefix_absorption", "certify_finite_prefix_absorption_point",
+         "FinitePrefixAbsorptionEmitter"),
+    "coefficient_mass":
+        ("emit_coefficient_mass", "certify_coefficient_mass_point",
+         "CoefficientMassEmitter"),
 }
 
 

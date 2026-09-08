@@ -394,6 +394,30 @@ REGISTRY: dict[str, SensitivityStance] = {
         "ℤ[√d] conjugate-product identity + norm≥1 bound: the radicand d IS the statement (not a separate cofactor); the identity is recomputed by nlinarith off Real.sq_sqrt and the lower bound by Int.one_le_abs on the integer norm (cf. AlgebraicBracketEmitter)"),
     "GevreyMajorantEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Gevrey-2 factorial-majorant calculus: a FIXED self-contained lemma chain (Nat.choose/factorial + majorant laws + triangular-recurrence closure) with per-instance rational budget parameters that ARE the statement (side conditions re-decided by norm_num in-kernel); no separately-supplied corruptible cofactor — a violated budget is refused at certify time (negative control)"),
+    "ContinuousBarrierEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "open-closed barrier bootstrap: fixed topological atom (compact least-hit + "
+        "IVT from Mathlib) with per-instance rational budget (T,B,a) that IS the "
+        "statement, side conditions re-decided by norm_num; violated budget B*T >= a "
+        "refused at certify time (negative control); no corruptible cofactor"),
+    "LogEpsOptimizeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "log-eps cutoff witness optimization: the rational exponent theta and "
+        "multiplier m=1/theta ARE the statement; the coefficient arithmetic "
+        "(-m*log A)*theta = -log A is re-proved by ring in-kernel and theta out of "
+        "(0,1] is refused at certify time; no separately-supplied cofactor"),
+    "LogConvexInterpEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "zero-tolerant log-convexity interpolation: fixed cross/pair/between chain "
+        "(induction + nlinarith on the hypothesis law) with per-instance index "
+        "triples s<=a<=b re-decided by norm_num; violated ordering refused; no "
+        "corruptible cofactor"),
+    "FinitePrefixAbsorptionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "eventually-bounded -> globally-bounded with the explicit Finset-sum "
+        "witness C = A + sum |f n|/w n; a single fully-generic fixed atom, no "
+        "per-instance data and no corruptible cofactor"),
+    "CoefficientMassEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "l1-coefficient sup-envelope |p(x)| <= ||p||_1 * T^deg: the coefficient "
+        "list and radius ARE the statement; the mass M and per-term |a_i| facts "
+        "are re-decided in-kernel (sign-aware abs_of_nonneg/nonpos + norm_num + "
+        "linarith); T < 1 / zero leading coeff refused at certify time"),
     "SqrtRootEliminationEmitter": _S(
         CERTIFICATE_SENSITIVE,
         "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "
