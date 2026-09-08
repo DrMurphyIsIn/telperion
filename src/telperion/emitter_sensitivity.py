@@ -154,6 +154,14 @@ REGISTRY: dict[str, SensitivityStance] = {
     "DirectPolyaEmitter": _S(STRUCTURALLY_NONVACUOUS,
                              "0 ≤ f via positivity on an all-nonneg form; the "
                              "reflexive-statement check + positivity suffice"),
+    "TwoMomentCountEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                "(2−κ)N − err ≤ count from two moment-bound "
+                                "hypotheses via nlinarith off Real.sqrt_le_sqrt; the "
+                                "moment bounds are the analytic trust seam, the "
+                                "arithmetic implication carries no corruptible identity"),
+    "RankTraceScalarEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                 "integrality atom 2c·x−c² ≤ x² = (x−c)²≥0 via "
+                                 "nlinarith [sq_nonneg]; a pure square-positivity fact"),
     "EndpointGeomCapEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "geometric cap (R+z)/(R−z)² ≤ (R+1)/(R−1)² on the "
                                  "disk: an endpoint-maximum monotonicity bound, no "
