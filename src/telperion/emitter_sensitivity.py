@@ -394,6 +394,18 @@ REGISTRY: dict[str, SensitivityStance] = {
         "ℤ[√d] conjugate-product identity + norm≥1 bound: the radicand d IS the statement (not a separate cofactor); the identity is recomputed by nlinarith off Real.sq_sqrt and the lower bound by Int.one_le_abs on the integer norm (cf. AlgebraicBracketEmitter)"),
     "GevreyMajorantEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Gevrey-2 factorial-majorant calculus: a FIXED self-contained lemma chain (Nat.choose/factorial + majorant laws + triangular-recurrence closure) with per-instance rational budget parameters that ARE the statement (side conditions re-decided by norm_num in-kernel); no separately-supplied corruptible cofactor — a violated budget is refused at certify time (negative control)"),
+    "SqrtRootEliminationEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "
+        "separately-supplied eliminated form Q is the load-bearing certificate — "
+        "a corrupted Q breaks the emitted `ring` identity (E-v)^2 - u^2*rad = Q "
+        "(and is refused at certify time by the exact sympy identity check)",
+        neg_control=NegControlStance(
+            NEG_CONTROL_DECLARED_UNWIRED,
+            reason="certificate-sensitive (a forged Q is kernel-rejectable via the "
+                   "ring identity) but no adapter is registered in "
+                   "negative_control_harness.ADAPTERS yet — the honestly-named gap"),
+    ),
 }
 
 

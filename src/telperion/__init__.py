@@ -75,6 +75,10 @@ from .emit_quadratic_irrational import (  # noqa: F401
 from .emit_gevrey_majorant import (  # noqa: F401
     GevreyMajorantEmitter, gevrey_majorant_certificate, gevrey_majorant_family,
 )
+from .emit_sqrt_root_elimination import (  # noqa: F401
+    SqrtRootEliminationEmitter, sqrt_root_elim_certificate,
+    sqrt_root_elimination_family,
+)
 from .emit_bilinear_corner import (  # noqa: F401
     BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
 )

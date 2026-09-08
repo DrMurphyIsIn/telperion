@@ -267,6 +267,10 @@ _SPECIAL_KINDS = (
     #                           convolution-3 / geometric gain / triangular
     #                           recurrence closure), Nat.choose+factorial.
     "gevrey_majorant",
+    #   sqrt_root_elimination -- ConeAlgebra.lean true_cone_iff: v < E - u*sqrt(rad)
+    #                           <-> (v < E and 0 < Q), certificate = the exact ring
+    #                           identity (E-v)^2 - u^2*rad = Q.
+    "sqrt_root_elimination",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -380,6 +384,9 @@ _SPECIAL_DISPATCH = {
     "gevrey_majorant":
         ("emit_gevrey_majorant", "certify_gevrey_majorant_point",
          "GevreyMajorantEmitter"),
+    "sqrt_root_elimination":
+        ("emit_sqrt_root_elimination", "certify_sqrt_root_elim_point",
+         "SqrtRootEliminationEmitter"),
 }
 
 
