@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family Handelman | input-hash 032a2c55be92a402
+/- telperion 0.1.6 | family Handelman | input-hash e57fd9554ae7ce9a
    4 theorems, 9 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

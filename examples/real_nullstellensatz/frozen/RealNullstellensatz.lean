@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family RealNSS | input-hash c00813faf60241d4
+/- telperion 0.1.6 | family RealNSS | input-hash 41e656f017549ed1
    4 theorems, 8 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

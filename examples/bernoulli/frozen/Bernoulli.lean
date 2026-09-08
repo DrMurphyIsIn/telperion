@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family Bernoulli | input-hash 3aa1dbc96efb889c
+/- telperion 0.1.6 | family Bernoulli | input-hash c06e444ab3afb0bc
    5 theorems, 5 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

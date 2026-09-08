@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family CurvatureBoundary | input-hash c14f3a61a290c1b7
+/- telperion 0.1.6 | family CurvatureBoundary | input-hash dd332077681ddef6
    7 theorems, 4 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

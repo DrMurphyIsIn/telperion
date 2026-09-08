@@ -195,6 +195,13 @@ from .emit_endpoint_geom_cap import (  # noqa: F401
     EndpointGeomCapEmitter, endpoint_geom_cap_certificate,
     endpoint_geom_cap_family, certify_endpoint_geom_cap_point,
 )
+# Flint-free emitter previously only imported via the flint-gated rh_jensen
+# modules, making sensitivity-registry discovery depend on whether python-flint
+# was installed.  Imported here unconditionally so the completeness/stray gates
+# see the same emitter set on every environment.
+from .emit_jensen_polynomial_hyperbolicity import (  # noqa: F401
+    JensenPolynomialHyperbolicityEmitter,
+)
 from .emit_far_pole_sum import (  # noqa: F401
     FarPoleSumEmitter, far_pole_sum_certificate,
     far_pole_sum_family, certify_far_pole_sum_point,

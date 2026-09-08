@@ -1,6 +1,6 @@
 {
   "family": "Handelman",
-  "input_hash": "032a2c55be92a402d9b474cbcf413bc639caec9cbdff2959ccdec74bcc41684d",
+  "input_hash": "e57fd9554ae7ce9a66312376d1ac765339d04e21962c531cdeef273f8b401502",
   "tool_version": "0.1.6",
   "files": [
     "Handelman.lean"

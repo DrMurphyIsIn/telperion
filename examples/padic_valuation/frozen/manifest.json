@@ -1,6 +1,6 @@
 {
   "family": "PadicValuation",
-  "input_hash": "a692fba3e594527ac33c26ac4069058327b6b1a69e8e198476a88cbf9c381766",
+  "input_hash": "ef9dfc0e5048c40668873d07a4c20e1584e080d32f141bb6dd22e882229f5535",
   "tool_version": "0.1.6",
   "files": [
     "PadicValuation.lean"

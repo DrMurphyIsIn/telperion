@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family RationalSOS | input-hash f250aa242d69845d
+/- telperion 0.1.6 | family RationalSOS | input-hash 08d202d7a7a24df3
    1 theorems, 5 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
