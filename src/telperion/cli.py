@@ -697,6 +697,42 @@ def cmd_palomar_mine(args) -> int:
     return 0
 
 
+def cmd_source_mine(args) -> int:
+    """Mine a math source (or all) for candidate Telperion emitter/skill leads.
+
+    Generalizes `palomar-mine` across pluggable sources (palomar, arxiv, github,
+    zulip), tagging each lead by lead_type (formalized-certificate → port, vs
+    raw-math → formalize-first).  `--poll` is the recurring per-source form
+    (one seen-state file per source under `--state-dir`)."""
+    import json as _json
+
+    from .source_mining import ALL_SOURCES, build_source, mine_source, poll_source, source_report
+
+    names = list(ALL_SOURCES) if args.source == "all" else [args.source]
+    topics = args.topic.split(",") if args.topic else None
+    all_cands = []
+    for name in names:
+        try:
+            src = build_source(name)
+        except Exception as exc:
+            print(f"# source {name!r} unavailable: {type(exc).__name__}: {exc}")
+            continue
+        if args.poll:
+            sdir = Path(args.state_dir).expanduser()
+            sdir.mkdir(parents=True, exist_ok=True)
+            state = sdir / f"{name}-seen.json"
+            all_cands += poll_source(src, state, topics=topics, min_score=args.min_score)
+        else:
+            all_cands += mine_source(src, src.fetch(), topics=topics, min_score=args.min_score)
+    all_cands.sort(key=lambda c: (-c.score, c.source_name, c.entry_id))
+    if args.json:
+        from dataclasses import asdict
+        print(_json.dumps([asdict(c) for c in all_cands], indent=2))
+    else:
+        print(source_report(all_cands))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -730,6 +766,19 @@ def main(argv=None) -> int:
     p.add_argument("--min-score", type=int, default=1)
     p.add_argument("--json", action="store_true", help="emit candidates as JSON")
     p.set_defaults(fn=cmd_palomar_mine)
+
+    p = sub.add_parser("source-mine",
+                       help="mine a math source (palomar/arxiv/github/zulip/all) for emitter leads")
+    p.add_argument("--source", default="all",
+                   choices=("all", "palomar", "palomar-feed", "arxiv", "github", "zulip"))
+    p.add_argument("--topic", default=None, help="comma-separated: rh, bg, pvsnp (default: all)")
+    p.add_argument("--poll", action="store_true",
+                   help="incremental: surface only entries new since the last run")
+    p.add_argument("--state-dir", default="~/.telperion/source-seen",
+                   help="directory of per-source seen-state files for --poll")
+    p.add_argument("--min-score", type=int, default=1)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_source_mine)
 
     for name, fn, extra in (
         ("emit", cmd_emit, True),

@@ -71,6 +71,10 @@ from .palomar_mine import (  # noqa: F401
     classify_entry, mine, mining_report, poll, fetch_registry,
     parse_feed, fetch_feed, MiningCandidate, TOPIC_KEYWORDS, SHAPE_RULES,
 )
+from .source_mining import (  # noqa: F401
+    Source, LEAD_FORMALIZED, LEAD_RAW, mine_source, poll_source, source_report,
+    build_source, ALL_SOURCES, arxiv_source, parse_arxiv_atom,
+)
 from .emit_psd_form import PSDFormEmitter, psd_certificate, psd_form_family  # noqa: F401
 from .emit_xor3 import Xor3MomentPSDEmitter, xor3_certificate, xor3_family  # noqa: F401
 from .emit_ns_ledger import (  # noqa: F401

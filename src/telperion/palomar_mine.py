@@ -121,6 +121,11 @@ class MiningCandidate:
     msc: str
     score: int
     abstract_snippet: str = ""
+    source_name: str = "palomar"
+    # lead_type: how close this entry is to a buildable kernel certificate.
+    #   "formalized_certificate" = already Lean-verified (Palomar/Mathlib) -> direct port lead;
+    #   "raw_math" = unformalized (arXiv / Zulip discussion) -> formalize-first candidate.
+    lead_type: str = "formalized_certificate"
 
     @property
     def has_new_shape(self) -> bool:
