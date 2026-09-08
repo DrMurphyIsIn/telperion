@@ -262,6 +262,11 @@ _SPECIAL_KINDS = (
     #                           lower bound 1 ≤ |p+√d q||p−√d q| (nlinarith).
     "affine_ledger",
     "quadratic_irrational",
+    #   gevrey_majorant      -- Euler/EulerProof.lean: the Gevrey-2 factorial-
+    #                           majorant calculus R^(n+d)((n+d)!)^2 (shift /
+    #                           convolution-3 / geometric gain / triangular
+    #                           recurrence closure), Nat.choose+factorial.
+    "gevrey_majorant",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -372,6 +377,9 @@ _SPECIAL_DISPATCH = {
     "quadratic_irrational":
         ("emit_quadratic_irrational", "certify_quadratic_irrational_point",
          "QuadraticIrrationalEmitter"),
+    "gevrey_majorant":
+        ("emit_gevrey_majorant", "certify_gevrey_majorant_point",
+         "GevreyMajorantEmitter"),
 }
 
 

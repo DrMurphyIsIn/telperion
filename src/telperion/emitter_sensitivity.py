@@ -392,6 +392,8 @@ REGISTRY: dict[str, SensitivityStance] = {
         "threshold ≤/< affine form (or min of forms) on a parameter box via linarith (+ lt_min_iff/le_min_iff); the worst-corner margin is recomputed by linarith as the nonneg combination of the box hyps — no separately-supplied corruptible cofactor (cf. AffineParamEndpointEmitter/BoxRobustEmitter)"),
     "QuadraticIrrationalEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "ℤ[√d] conjugate-product identity + norm≥1 bound: the radicand d IS the statement (not a separate cofactor); the identity is recomputed by nlinarith off Real.sq_sqrt and the lower bound by Int.one_le_abs on the integer norm (cf. AlgebraicBracketEmitter)"),
+    "GevreyMajorantEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Gevrey-2 factorial-majorant calculus: a FIXED self-contained lemma chain (Nat.choose/factorial + majorant laws + triangular-recurrence closure) with per-instance rational budget parameters that ARE the statement (side conditions re-decided by norm_num in-kernel); no separately-supplied corruptible cofactor — a violated budget is refused at certify time (negative control)"),
 }
 
 

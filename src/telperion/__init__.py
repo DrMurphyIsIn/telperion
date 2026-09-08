@@ -72,6 +72,9 @@ from .emit_quadratic_irrational import (  # noqa: F401
     QuadraticIrrationalEmitter, quadratic_irrational_certificate,
     quadratic_irrational_family,
 )
+from .emit_gevrey_majorant import (  # noqa: F401
+    GevreyMajorantEmitter, gevrey_majorant_certificate, gevrey_majorant_family,
+)
 from .emit_bilinear_corner import (  # noqa: F401
     BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
 )
