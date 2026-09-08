@@ -258,6 +258,36 @@ _SPECIAL_KINDS = (
     # Emits "Bd(Lambda'/Lambda) = 2*pi*i*N" -- toy z^2 (N=2, from-scratch winding) and
     # the Lambda [2/5,3/5]x[10,35] instance (N=5, argument-principle + per-pole primitive).
     "winding_count",
+    # NS/Euler-derived emitters (2026-09-08), mined from OpenAI's finite-time
+    # blowup formalization (github.com/openai/NavierStokesAndEuler):
+    #   affine_ledger        -- ExponentLedger.lean: multi-parameter affine
+    #                           gain/increment bookkeeping over a box (linarith);
+    #                           margin + min-of-list (distinct from the single-
+    #                           parameter affine_param_endpoint interval collapse).
+    #   quadratic_irrational -- DiophantineGraph.lean: ℤ[√d] conjugate-norm
+    #                           lower bound 1 ≤ |p+√d q||p−√d q| (nlinarith).
+    "affine_ledger",
+    "quadratic_irrational",
+    #   gevrey_majorant      -- Euler/EulerProof.lean: the Gevrey-2 factorial-
+    #                           majorant calculus R^(n+d)((n+d)!)^2 (shift /
+    #                           convolution-3 / geometric gain / triangular
+    #                           recurrence closure), Nat.choose+factorial.
+    "gevrey_majorant",
+    #   sqrt_root_elimination -- ConeAlgebra.lean true_cone_iff: v < E - u*sqrt(rad)
+    #                           <-> (v < E and 0 < Q), certificate = the exact ring
+    #                           identity (E-v)^2 - u^2*rad = Q.
+    "sqrt_root_elimination",
+    # NS/Euler round-2 build-out (2026-09-08): open-closed barrier bootstrap
+    # (first topological shape), log-eps cutoff witness optimization (any
+    # rational theta in (0,1]), zero-tolerant log-convexity interpolation,
+    # finite-prefix absorption (eventually-bounded -> globally, explicit C).
+    "continuous_barrier",
+    "log_eps_optimize",
+    "logconvex_interp",
+    "finite_prefix_absorption",
+    # EdgeWeightJets.lean: |p(x)| <= ||p||_1 * T^deg (generic Polynomial R atom
+    # + concrete scalar instances with exact mass/degree certification).
+    "coefficient_mass",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -366,6 +396,34 @@ _SPECIAL_DISPATCH = {
         ("emit_xi_line_zeros", "certify_xi_line_zeros_point", "XiLineZerosEmitter"),
     "winding_count":
         ("emit_winding_count", "certify_winding_count_point", "WindingCountEmitter"),
+    # NS/Euler-derived emitters (2026-09-08), mined from OpenAI's finite-time
+    # blowup formalization (github.com/openai/NavierStokesAndEuler).
+    "affine_ledger":
+        ("emit_ns_ledger", "certify_affine_ledger_point", "AffineLedgerEmitter"),
+    "quadratic_irrational":
+        ("emit_quadratic_irrational", "certify_quadratic_irrational_point",
+         "QuadraticIrrationalEmitter"),
+    "gevrey_majorant":
+        ("emit_gevrey_majorant", "certify_gevrey_majorant_point",
+         "GevreyMajorantEmitter"),
+    "sqrt_root_elimination":
+        ("emit_sqrt_root_elimination", "certify_sqrt_root_elim_point",
+         "SqrtRootEliminationEmitter"),
+    "continuous_barrier":
+        ("emit_continuous_barrier", "certify_continuous_barrier_point",
+         "ContinuousBarrierEmitter"),
+    "log_eps_optimize":
+        ("emit_log_eps_optimize", "certify_log_eps_optimize_point",
+         "LogEpsOptimizeEmitter"),
+    "logconvex_interp":
+        ("emit_logconvex_interp", "certify_logconvex_interp_point",
+         "LogConvexInterpEmitter"),
+    "finite_prefix_absorption":
+        ("emit_finite_prefix_absorption", "certify_finite_prefix_absorption_point",
+         "FinitePrefixAbsorptionEmitter"),
+    "coefficient_mass":
+        ("emit_coefficient_mass", "certify_coefficient_mass_point",
+         "CoefficientMassEmitter"),
 }
 
 

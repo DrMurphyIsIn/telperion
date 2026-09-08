@@ -101,6 +101,7 @@ def certify_two_moment_count_point(family, pt, name):
     return inst, 2
 
 
+@dataclass
 class TwoMomentCountEmitter(Emitter):
     """Emit the §6 scalar count certificate ``(2 − κ)N − errors ≤ count`` (c = 2)
     / ``(3/2 − κ/2)N − errors ≤ count`` (c = 3).  The two moment bounds and the
@@ -205,6 +206,7 @@ def certify_rank_trace_scalar_point(family, pt, name):
     return inst, 1
 
 
+@dataclass
 class RankTraceScalarEmitter(Emitter):
     """Emit the integrality atom ``2c·x − c² ≤ x²`` (``= (x − c)² ≥ 0``), the
     scalar shadow of the rank–trace inequality.  Deterministic ``nlinarith
