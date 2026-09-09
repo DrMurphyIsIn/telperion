@@ -70,6 +70,19 @@ from .emit_hermitian_moment import (  # noqa: F401
 from .emit_li_positivity import (  # noqa: F401
     LiPositivityLadderEmitter, li_rung_certificate, li_positivity_family,
 )
+from .emit_enclosure_fold import (  # noqa: F401
+    EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
+    enclosure_interval_fold_family,
+)
+from .emit_reflection_halving import (  # noqa: F401
+    ReflectionHalvingEmitter, reflection_halving_certificate, reflection_halving_family,
+)
+from .emit_spacing_tail import (  # noqa: F401
+    SpacingTailBoundEmitter, spacing_tail_bound_certificate, spacing_tail_bound_family,
+)
+from .emit_autocorr_support import (  # noqa: F401
+    AutocorrSupportEmitter, autocorr_support_certificate, autocorr_support_family,
+)
 from .palomar_mine import (  # noqa: F401
     classify_entry, mine, mining_report, poll, fetch_registry,
     parse_feed, fetch_feed, MiningCandidate, TOPIC_KEYWORDS, SHAPE_RULES,

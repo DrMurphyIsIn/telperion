@@ -232,6 +232,14 @@ _SPECIAL_KINDS = (
     # 0 ≤ (taylorCoeff riemannXi n).re from a certified positive lower bound; feeds the
     # upstream LiCriterion.li_criterion_rh_iff. Finite prefix, NOT RH.
     "li_positivity",
+    # Second-pass zeta-23-lean catalog emitters (2026-09-09): enclosure_interval_fold
+    # (integer near-CUE row-band checker, decide), reflection_halving (finite N≤2·N_large
+    # symmetry fold, decide), spacing_tail_bound (concrete Σδ/(gap)²≤9/δ, norm_num),
+    # autocorr_support (concrete (v⋆v)≤triangle, norm_num). Self-contained; NOT toward RH.
+    "enclosure_interval_fold",
+    "reflection_halving",
+    "spacing_tail_bound",
+    "autocorr_support",
     # Winding-number frontier (2026-09-06, same RH session): slit_loop_winding_zero (Rouché heart —
     # closed loop in ‖·-1‖<r≤1 ⟹ ∮ w'/w = 0, winding 0, via clog_real + FTC-2) and box_residue_sum
     # (box analogue of full_argument_principle, Finset-linearity plumbing conditional on the per-pole
@@ -373,6 +381,15 @@ _SPECIAL_DISPATCH = {
     # Li positivity ladder (RH-roadmap Track 2, onto nicholasbulka/li-criterion-rh-equivalence-lean).
     "li_positivity":
         ("emit_li_positivity", "certify_li_positivity_point", "LiPositivityLadderEmitter"),
+    # Second-pass zeta-23-lean catalog emitters (2026-09-09).
+    "enclosure_interval_fold":
+        ("emit_enclosure_fold", "certify_enclosure_interval_fold_point", "EnclosureIntervalFoldEmitter"),
+    "reflection_halving":
+        ("emit_reflection_halving", "certify_reflection_halving_point", "ReflectionHalvingEmitter"),
+    "spacing_tail_bound":
+        ("emit_spacing_tail", "certify_spacing_tail_bound_point", "SpacingTailBoundEmitter"),
+    "autocorr_support":
+        ("emit_autocorr_support", "certify_autocorr_support_point", "AutocorrSupportEmitter"),
     "max_modulus": ("emit_max_modulus", "certify_max_modulus_point", "MaxModulusEmitter"),
     "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point", "BCDerivReEmitter"),
     "entire_part_bound":

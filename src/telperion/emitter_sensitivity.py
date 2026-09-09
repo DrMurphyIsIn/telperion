@@ -166,6 +166,19 @@ REGISTRY: dict[str, SensitivityStance] = {
                                     "0 ≤ (taylorCoeff riemannXi n).re from a certified "
                                     "positive lower bound (hypothesis hlo = the Arb enclosure, "
                                     "the trust seam) via le_trans; positivity, no corruptible identity"),
+    "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                       "integer near-CUE row-band check rowsOK…=true by decide; "
+                                       "the Arb enclosures are the input trust seam, the kernel "
+                                       "decides only the ℤ band membership"),
+    "ReflectionHalvingEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                   "finite symmetry-fold Σw ≤ 2·Σlarge by decide; a concrete ℤ "
+                                   "inequality (true iff small≤large, which certify enforces)"),
+    "SpacingTailBoundEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                  "concrete separated-config Σ δ/(gap)² ≤ 9/δ_s by norm_num; an "
+                                  "exact-rational inequality, refused unless it holds"),
+    "AutocorrSupportEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                 "concrete (v⋆v)(y) ≤ (2M−|y|)₊ support-geometry bound by "
+                                 "norm_num; exact-rational, no corruptible identity"),
     "EndpointGeomCapEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "geometric cap (R+z)/(R−z)² ≤ (R+1)/(R−1)² on the "
                                  "disk: an endpoint-maximum monotonicity bound, no "
