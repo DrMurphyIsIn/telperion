@@ -430,34 +430,43 @@ def _build_full_instantiation(
     A(f"  have hTcard : T.card = {n} := by\n")
     A(f"    rw [hTdef, RHInBox.line_toFinset_card xsL hchain, hxsdef]\n")
     A(f"    rfl\n")
-    A(f"  have hmem_list : ∀ t ∈ xsL, {' ∨ '.join(f't = x{i}' for i in range(1, n + 1))} := by\n")
-    A(f"    intro t ht\n")
-    A(f"    rw [hxsdef] at ht\n")
-    A(f"    simpa using ht\n")
-    rfl_pat = " | ".join("rfl" for _ in range(n))
+    # Forward-chained per-element bounds (pure term mode -- no linarith, no rcases, no
+    # membership disjunction; the N=50 band showed simp on a 50-disjunct blows the budget).
+    # hb{i} : t0 <= x{i} chains left-to-right; hu{i} : x{i} <= t1 chains right-to-left.
+    A(f"  have hb1 : (({t0}) : ℝ) ≤ x1 := hlo\n")
+    for i in range(2, n + 1):
+        A(f"  have hb{i} : (({t0}) : ℝ) ≤ x{i} := le_trans hb{i-1} (le_of_lt hc{i-1}{i})\n")
+    A(f"  have hu{n} : x{n} ≤ (({t1}) : ℝ) := hhi\n")
+    for i in range(n - 1, 0, -1):
+        A(f"  have hu{i} : x{i} ≤ (({t1}) : ℝ) := le_trans (le_of_lt hc{i}{i+1}) hu{i+1}\n")
+    A(f"  have hre_lo : (({s0}) : ℝ) ≤ 1 / 2 := by norm_num\n")
+    A(f"  have hre_hi : (1 / 2 : ℝ) ≤ ({s1}) := by norm_num\n")
     A(f"  have hTline : ∀ z ∈ T, z.re = 1 / 2 := by\n")
     A(f"    rw [hTdef]\n")
     A(f"    exact RHInBox.line_toFinset_forall xsL (fun t _ => hre_line t)\n")
+    # hTzero / hTbox: split `forall t in list` into a flat conjunction (List.forall_mem_cons
+    # is linear-cheap, unlike the mem-disjunction normalization) and close each component
+    # with an O(1) term: no substitution, so x{i}/hLambda{i} stay in scope.
+    # forall_mem_cons peels every cons INCLUDING the last ([xn] = xn :: []), leaving a
+    # trailing `∀ x ∈ [], P x` conjunct -- terminated by List.forall_mem_nil.  Uniform in n.
     A(f"  have hTzero : ∀ z ∈ T, riemannZeta z = 0 := by\n")
     A(f"    rw [hTdef]\n")
     A(f"    refine RHInBox.line_toFinset_forall xsL ?_\n")
-    A(f"    intro t ht\n")
-    A(f"    rcases hmem_list t ht with {rfl_pat}\n")
-    for i in range(1, n + 1):
-        # NOTE: the rcases rfl pattern substitutes x_i := t (x_i leaves scope), so the
-        # point is pinned by the goal; hΛ{i} was rewritten along with the substitution.
-        A(f"    · exact hzeta _ hΛ{i}\n")
+    A(f"    rw [hxsdef]\n")
+    A(f"    simp only [List.forall_mem_cons]\n")
+    zero_terms = ", ".join(f"hzeta x{i} hΛ{i}" for i in range(1, n + 1))
+    A(f"    exact ⟨{zero_terms}, List.forall_mem_nil _⟩\n")
     A(f"  have hTbox : ∀ z ∈ T, ((({s0}) : ℝ) ≤ z.re ∧ z.re ≤ ({s1})) ∧ ((({t0}) : ℝ) ≤ z.im ∧ z.im ≤ ({t1})) := by\n")
     A(f"    rw [hTdef]\n")
     A(f"    refine RHInBox.line_toFinset_forall xsL ?_\n")
-    A(f"    intro t ht\n")
-    A(f"    refine ⟨⟨?_, ?_⟩, ?_, ?_⟩\n")
-    A(f"    · rw [hre_line]; norm_num\n")
-    A(f"    · rw [hre_line]; norm_num\n")
-    A(f"    · rw [him_line]\n")
-    A(f"      rcases hmem_list t ht with {rfl_pat} <;> linarith\n")
-    A(f"    · rw [him_line]\n")
-    A(f"      rcases hmem_list t ht with {rfl_pat} <;> linarith\n")
+    A(f"    rw [hxsdef]\n")
+    A(f"    simp only [List.forall_mem_cons]\n")
+    box_terms = ", ".join(
+        f"⟨⟨by rw [hre_line]; exact hre_lo, by rw [hre_line]; exact hre_hi⟩,"
+        f" by rw [him_line]; exact hb{i}, by rw [him_line]; exact hu{i}⟩"
+        for i in range(1, n + 1)
+    )
+    A(f"    exact ⟨{box_terms}, List.forall_mem_nil _⟩\n")
 
     # ---- extract hwind + reassemble harb from hArb ----------------------------------
     A(f"  set s0f : Finset ℂ := RHInBoxAnalytic.zeroFinset cPB RPB hs1 with hs0def\n")
