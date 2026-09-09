@@ -325,6 +325,14 @@ _SPECIAL_KINDS = (
     "ratio_telescope",
     "monomial_ladder",
     "rpow_budget",
+    # NS/Euler wave-5 (2026-09-09): comparability/Lipschitz envelope atoms
+    # (rpow both-signs, sqrt conjugate-multiply, 1+x^2 denominator kill),
+    # discrete-moment atoms (simplex second moment + squareDecay convolution
+    # calculus incl. the reciprocal-square telescope), and parameterized
+    # poly-exp absorption exp(-1/(2lam))/lam^m <= (4m)^m exp(-1/(4lam)).
+    "comparability_envelope",
+    "discrete_moment",
+    "poly_exp_absorption",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -499,6 +507,15 @@ _SPECIAL_DISPATCH = {
         ("emit_monomial_ladder", "certify_monomial_ladder_point", "MonomialLadderEmitter"),
     "rpow_budget":
         ("emit_rpow_budget", "certify_rpow_budget_point", "RpowBudgetEmitter"),
+    "comparability_envelope":
+        ("emit_comparability_envelope", "certify_comparability_envelope_point",
+         "ComparabilityEnvelopeEmitter"),
+    "discrete_moment":
+        ("emit_discrete_moment", "certify_discrete_moment_point",
+         "DiscreteMomentEmitter"),
+    "poly_exp_absorption":
+        ("emit_poly_exp_absorption", "certify_poly_exp_absorption_point",
+         "PolyExpAbsorptionEmitter"),
 }
 
 
