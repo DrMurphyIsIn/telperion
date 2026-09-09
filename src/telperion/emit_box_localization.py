@@ -80,7 +80,7 @@ def _validate_localization_box(re_lo, re_hi, im_lo, im_hi, *, require_straddle: 
     (empty-band path) makes no critical-line claim, so slivers like `[0, a]` are valid there —
     pass ``require_straddle=False``.  Returns the four sympy Rationals.  Raises ValueError (with
     the words "straddle" / "pole" in the message) on the negative controls."""
-    rl, rh, il, ih = (sp.nsimplify(x) for x in (re_lo, re_hi, im_lo, im_hi))
+    rl, rh, il, ih = (sp.Rational(x) for x in (re_lo, re_hi, im_lo, im_hi))  # NOT nsimplify: its closed-form heuristic misfires on e.g. "3880" (returns a radical expression with is_rational=None)
     if not all(v.is_rational for v in (rl, rh, il, ih)):
         raise ValueError("box corners must be rational")
     if not (rl < rh and il < ih):
@@ -153,7 +153,7 @@ def box_localization_certificate(
         )
     if n_line < 1:
         raise ValueError(f"box_localization needs n_line >= 1 (non-vacuous); got n_line={n_line}")
-    rl, rh, il, ih = (sp.nsimplify(x) for x in (re_lo, re_hi, im_lo, im_hi))
+    rl, rh, il, ih = (sp.Rational(x) for x in (re_lo, re_hi, im_lo, im_hi))  # NOT nsimplify: its closed-form heuristic misfires on e.g. "3880" (returns a radical expression with is_rational=None)
     if not all(v.is_rational for v in (rl, rh, il, ih)):
         raise ValueError("box_localization box corners must be rational")
     if not (rl < rh and il < ih):
