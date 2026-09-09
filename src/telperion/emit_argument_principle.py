@@ -51,9 +51,12 @@ class ArgumentPrincipleCertificate:
 def argument_principle_certificate(R) -> ArgumentPrincipleCertificate:
     """Build and EXACTLY self-check an argument-principle certificate.  Refuses ``R ≤ 0`` (the
     negative control — no circle)."""
-    Rq = sp.nsimplify(R)
-    if not Rq.is_rational:
-        raise ValueError(f"argument_principle radius R must be rational; got {R!r}")
+    # NOT nsimplify: its closed-form heuristic can misfire on plain integers (e.g. "3880"
+    # yields a radical expression with is_rational=None), falsely refusing rational input.
+    try:
+        Rq = sp.Rational(R)
+    except (TypeError, ValueError):
+        raise ValueError(f"argument_principle radius R must be rational; got {R!r}") from None
     if Rq <= 0:
         raise ValueError(f"argument_principle needs a strictly positive contour radius R > 0; got R={Rq}")
     return ArgumentPrincipleCertificate(R=Rq)

@@ -50,9 +50,12 @@ class AnnulusCountCertificate:
 def annulus_count_certificate(r, R) -> AnnulusCountCertificate:
     """Build and EXACTLY self-check an annulus certificate.  Refuses `r ≤ 0` or `R ≤ r` (empty or
     degenerate annulus) — the negative control."""
-    rq, Rq = sp.nsimplify(r), sp.nsimplify(R)
-    if not (rq.is_rational and Rq.is_rational):
-        raise ValueError(f"annulus_count radii must be rational; got r={r!r}, R={R!r}")
+    # NOT nsimplify: its closed-form heuristic can misfire on plain integers (e.g. "3880"
+    # yields a radical expression with is_rational=None), falsely refusing rational input.
+    try:
+        rq, Rq = sp.Rational(r), sp.Rational(R)
+    except (TypeError, ValueError):
+        raise ValueError(f"annulus_count radii must be rational; got r={r!r}, R={R!r}") from None
     if rq <= 0:
         raise ValueError(f"annulus_count needs inner radius r > 0; got r={rq}")
     if not (Rq > rq):
