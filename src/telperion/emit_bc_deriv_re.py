@@ -72,10 +72,13 @@ def bc_deriv_re_certificate(R, r, Mp) -> BCDerivReCertificate:
     Refuses (``ValueError``): ``r ≤ 0`` / ``r ≥ R`` (empty geometry) or ``M' ≤ 0``
     (degenerate bound) — the negative controls.
     """
-    Rq, rq, Mq = sp.nsimplify(R), sp.nsimplify(r), sp.nsimplify(Mp)
-    for nm, v in (("R", Rq), ("r", rq), ("M'", Mq)):
-        if not v.is_rational:
-            raise ValueError(f"bc_deriv_re parameter {nm} must be rational; got {v!r}")
+    # NOT nsimplify: its closed-form heuristic can misfire on plain integers (e.g. "3880"
+    # yields a radical expression with is_rational=None), falsely refusing rational input.
+    try:
+        Rq, rq, Mq = sp.Rational(R), sp.Rational(r), sp.Rational(Mp)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"bc_deriv_re parameters R, r, M' must be rational; got "
+                         f"R={R!r}, r={r!r}, M'={Mp!r}") from None
     if rq <= 0:
         raise ValueError(f"bc_deriv_re needs r > 0 (Cauchy radius); got r={rq}")
     if rq >= Rq:
