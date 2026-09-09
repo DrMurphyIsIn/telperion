@@ -111,6 +111,30 @@ class LiPositivityLadderEmitter(Emitter):
         return "\n".join(lines), n_thm
 
 
+def li_refutation_atom_lean() -> str:
+    """The ladder's falsifiability face, emitted ONCE per generated file.
+
+    Through the upstream equivalence, a certified NEGATIVE upper bound on ANY
+    rung refutes RH outright: if ``(taylorCoeff riemannXi n).re ≤ hi < 0`` then
+    ``¬RiemannHypothesis``.  Term-mode (no tactic fragility): the upstream
+    ``li_criterion_rh_iff.mp`` hands ``0 ≤ coeff`` from RH, contradicted by
+    ``coeff ≤ hi < 0``.  This theorem is NEVER expected to fire (every computed
+    enclosure so far is positive); it is the honest contrapositive that makes
+    the ladder falsifiable rather than confirmation-only.  Its hypotheses carry
+    the same Arb trust seam as the rungs.  conjecture1_proved = False."""
+    return (
+        "-- li_neg_refutes_rh: the falsifiability face of the ladder.  A certified\n"
+        "-- NEGATIVE upper bound on any rung would refute RH via the upstream\n"
+        "-- equivalence.  Not expected to fire; emitted so the ladder is falsifiable,\n"
+        "-- not confirmation-only.  hhi carries the same Arb trust seam as hlo.\n"
+        "theorem li_neg_refutes_rh (n : ℕ) (hi : ℝ)\n"
+        "    (hhi : (taylorCoeff riemannXi n).re ≤ hi) (hneg : hi < 0) :\n"
+        "    ¬RiemannHypothesis :=\n"
+        "  fun hRH => absurd (li_criterion_rh_iff.mp hRH n)\n"
+        "    (not_le.mpr (lt_of_le_of_lt hhi hneg))\n"
+    )
+
+
 def li_positivity_family(
     name: str,
     grid: GridSpec,

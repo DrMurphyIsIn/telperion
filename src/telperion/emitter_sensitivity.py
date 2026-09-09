@@ -171,7 +171,11 @@ REGISTRY: dict[str, SensitivityStance] = {
     "LiPositivityLadderEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                     "0 ≤ (taylorCoeff riemannXi n).re from a certified "
                                     "positive lower bound (hypothesis hlo = the Arb enclosure, "
-                                    "the trust seam) via le_trans; positivity, no corruptible identity"),
+                                    "the trust seam) via le_trans; positivity, no corruptible identity",
+                                    # Structural, yet a kernel control exists: the in-proof
+                                    # norm_num gate 0 ≤ lo makes a sign-corrupted lower bound
+                                    # kernel-rejected.  See negctrl_adapters/adapter_li_positivity.py.
+                                    neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "

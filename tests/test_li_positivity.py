@@ -7,6 +7,7 @@ certified positive rational lower bound (the Arb enclosure = trust-seam hypothes
 import sys
 from pathlib import Path
 
+import pytest
 import sympy as sp
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -88,3 +89,39 @@ def test_emitter_is_classified():
     from telperion.emitter_sensitivity import REGISTRY, unclassified_emitters
     assert "LiPositivityLadderEmitter" in REGISTRY
     assert "LiPositivityLadderEmitter" not in set(unclassified_emitters())
+
+
+# --- ladder finish (2026-09-09): refutation atom + generated N=20 example ----
+
+def test_refutation_atom_shape():
+    """The falsifiability face: a certified NEGATIVE upper bound on any rung
+    refutes RH outright through the upstream equivalence.  Never expected to
+    fire; emitted once per generated file as the honest contrapositive."""
+    from telperion.emit_li_positivity import li_refutation_atom_lean
+
+    txt = li_refutation_atom_lean()
+    assert "theorem li_neg_refutes_rh" in txt
+    assert "¬RiemannHypothesis" in txt or "\\u00acRiemannHypothesis" in txt
+    # Proved through the upstream reduction, term-mode (no tactic fragility):
+    assert "li_criterion_rh_iff.mp" in txt
+    assert "not_le.mpr (lt_of_le_of_lt hhi hneg)" in txt
+    # Hypotheses: an upper enclosure endpoint and its negativity.
+    assert "(taylorCoeff riemannXi n).re ≤ hi" in txt
+    assert "hi < 0" in txt
+
+
+def test_generated_ladder_has_twenty_rungs_and_refutation_atom():
+    pytest.importorskip("flint")
+    import importlib.util as _u
+    gen_path = (Path(__file__).resolve().parents[1]
+                / "examples" / "li_positivity" / "generate.py")
+    spec = _u.spec_from_file_location("li_positivity_generate", gen_path)
+    mod = _u.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    text = mod.build()
+    assert text.count("theorem li_rung_") == 20
+    assert text.count("theorem li_neg_refutes_rh") == 1
+    assert "import Lc.LiCriterion.XiOrderBridge" in text
+    assert "open LiCriterion" in text
+    # Real enclosure endpoints, not the hand-picked 1/100 placeholder:
+    assert "(1 / 100 : ℝ)" not in text
