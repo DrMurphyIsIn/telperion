@@ -158,6 +158,17 @@ from .emit_monomial_ladder import (  # noqa: F401
 from .emit_rpow_budget import (  # noqa: F401
     RpowBudgetEmitter, rpow_budget_certificate, rpow_budget_family,
 )
+from .emit_comparability_envelope import (  # noqa: F401
+    ComparabilityEnvelopeEmitter, comparability_envelope_certificate,
+    comparability_envelope_family,
+)
+from .emit_discrete_moment import (  # noqa: F401
+    DiscreteMomentEmitter, discrete_moment_certificate, discrete_moment_family,
+)
+from .emit_poly_exp_absorption import (  # noqa: F401
+    PolyExpAbsorptionEmitter, poly_exp_absorption_certificate,
+    poly_exp_absorption_family,
+)
 from .emit_bilinear_corner import (  # noqa: F401
     BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
 )

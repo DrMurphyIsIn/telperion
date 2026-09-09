@@ -466,6 +466,19 @@ REGISTRY: dict[str, SensitivityStance] = {
         "eventually-bounded -> globally-bounded with the explicit Finset-sum "
         "witness C = A + sum |f n|/w n; a single fully-generic fixed atom, no "
         "per-instance data and no corruptible cofactor"),
+    "ComparabilityEnvelopeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "comparability/Lipschitz envelope atoms (rpow both-signs, sqrt "
+        "conjugate-multiply, 1+x^2 denominator kill): fully-generic fixed atoms, "
+        "no per-instance data and no corruptible cofactor"),
+    "DiscreteMomentEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "discrete-sum moment atoms (simplex second moment, squareDecay telescope + "
+        "antidiagonal convolution <= 8): fully-generic fixed atoms, no per-instance "
+        "data and no corruptible cofactor"),
+    "PolyExpAbsorptionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "poly-exp absorption exp(-1/(2lam))/lam^m <= (4m)^m exp(-1/(4lam)): the "
+        "power m and exact constant (4m)^m ARE the statement, re-decided in-kernel "
+        "(add_one_le_exp + pow + norm_num); m=0 refused at certify time (negative "
+        "control); no corruptible cofactor"),
     "TwoRowSolveEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "2x2 solution-entry bound from row-scale + ratio-gap hypotheses: a single "
         "fully-generic fixed atom (eq_div_iff/abs algebra + nlinarith), no per-instance "
