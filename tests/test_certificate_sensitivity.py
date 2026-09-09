@@ -193,3 +193,18 @@ def _env_for(emitter_name):
     if lean_env_ready(cand):
         return cand
     return _ENV
+
+
+def test_registry_source_has_no_duplicate_keys():
+    """A dict literal with a duplicated key silently drops the earlier entry
+    (last-wins), so a stance can be shadowed without any gate noticing — found
+    live 2026-09-09 with three shadowed entries (BCSplit/JensenZeroCount/
+    SphereBound).  Scan the SOURCE, where the duplication is visible."""
+    import re
+    from pathlib import Path as _P
+
+    src = (_P(__file__).resolve().parents[1] / "src" / "telperion"
+           / "emitter_sensitivity.py").read_text(encoding="utf-8")
+    keys = re.findall(r'^\s{4}"(\w+Emitter)": _S\(', src, re.M)
+    dups = sorted({k for k in keys if keys.count(k) > 1})
+    assert dups == [], f"duplicate REGISTRY keys (earlier entries shadowed): {dups}"
