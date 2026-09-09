@@ -317,6 +317,14 @@ _SPECIAL_KINDS = (
     "multilinear_perturbation",
     "poly_geom_closure",
     "twopoint_moment",
+    # NS/Euler wave-4 (2026-09-09): 2x2 solution-entry bound (scalar, no Matrix),
+    # ratio-recurrence telescoping (factorial/geometric/index normal forms),
+    # monomial budget ladder (symbolic-base exponent absorption), rpow exponent
+    # budget (k-power collapse, linarith at the exponent level).
+    "two_row_solve",
+    "ratio_telescope",
+    "monomial_ladder",
+    "rpow_budget",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -483,6 +491,14 @@ _SPECIAL_DISPATCH = {
     "twopoint_moment":
         ("emit_twopoint_moment", "certify_twopoint_moment_point",
          "TwoPointMomentEmitter"),
+    "two_row_solve":
+        ("emit_two_row_solve", "certify_two_row_solve_point", "TwoRowSolveEmitter"),
+    "ratio_telescope":
+        ("emit_ratio_telescope", "certify_ratio_telescope_point", "RatioTelescopeEmitter"),
+    "monomial_ladder":
+        ("emit_monomial_ladder", "certify_monomial_ladder_point", "MonomialLadderEmitter"),
+    "rpow_budget":
+        ("emit_rpow_budget", "certify_rpow_budget_point", "RpowBudgetEmitter"),
 }
 
 

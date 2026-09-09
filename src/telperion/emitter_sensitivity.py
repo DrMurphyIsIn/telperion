@@ -466,6 +466,24 @@ REGISTRY: dict[str, SensitivityStance] = {
         "eventually-bounded -> globally-bounded with the explicit Finset-sum "
         "witness C = A + sum |f n|/w n; a single fully-generic fixed atom, no "
         "per-instance data and no corruptible cofactor"),
+    "TwoRowSolveEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "2x2 solution-entry bound from row-scale + ratio-gap hypotheses: a single "
+        "fully-generic fixed atom (eq_div_iff/abs algebra + nlinarith), no per-instance "
+        "data and no corruptible cofactor"),
+    "RatioTelescopeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "ratio-recurrence telescoping (factorial/geometric/index normal forms): three "
+        "fully-generic fixed induction atoms over abstract sequences; no per-instance "
+        "data and no corruptible cofactor"),
+    "MonomialLadderEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "master-budget monomial rungs c*e*Theta^k <= b: the (Cm,Kmax,rung) rationals ARE "
+        "the statement; each rung is re-derived in-kernel by pow_le_pow_right0 + "
+        "mul_le_mul + linarith off the master hypothesis; violated rung budget refused "
+        "at certify time (negative control); no corruptible cofactor"),
+    "RpowBudgetEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "k-power product collapse with linarith at the exponent level: the exponent "
+        "rationals ARE the statement; the collapse identity is re-proved by "
+        "rpow_add/rpow_mul_natCast + ring and the margin by linarith; violated exponent "
+        "margin refused at certify time (negative control); no corruptible cofactor"),
     "MultilinearPerturbationEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Leibniz telescoping product-perturbation envelope |prod F - prod G| <= C*eta: "
         "the arity and rational bounds ARE the statement; the envelope C = sum prod_{j!=i} M_j "

@@ -76,6 +76,7 @@ def certify_li_positivity_point(family, pt, name):
     return inst, 1
 
 
+@dataclass
 class LiPositivityLadderEmitter(Emitter):
     """Emit the n-th Li-criterion rung `0 ≤ (taylorCoeff riemannXi n).re` from a
     positive rational lower bound (the Arb enclosure enters as hypothesis `hlo`).
