@@ -158,7 +158,13 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "(2−κ)N − err ≤ count from two moment-bound "
                                 "hypotheses via nlinarith off Real.sqrt_le_sqrt; the "
                                 "moment bounds are the analytic trust seam, the "
-                                "arithmetic implication carries no corruptible identity"),
+                                "arithmetic implication carries no corruptible identity",
+                                # Structural, yet a statement-level kernel control exists:
+                                # the Davenport–Heilbronn over-claim (concluded proportion
+                                # inflated past what the moments support) is genuinely
+                                # false and kernel-rejected.  See
+                                # negctrl_adapters/adapter_two_moment_count.py.
+                                neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "RankTraceScalarEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "integrality atom 2c·x−c² ≤ x² = (x−c)²≥0 via "
                                  "nlinarith [sq_nonneg]; a pure square-positivity fact"),
