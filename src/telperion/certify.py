@@ -240,6 +240,16 @@ _SPECIAL_KINDS = (
     "reflection_halving",
     "spacing_tail_bound",
     "autocorr_support",
+    # Axiom-Math bgp212 + Dyson-quasicrystal emitters (2026-09-09): rayleigh_gram
+    # (rational Gram generalized-eigenvalue cert cᵀJc−θ·cᵀIc>0, Thm 11.1 shape),
+    # polytope_moment (exact simplex-moment arithmetic, Lemma 10.1/(10.1) shape),
+    # admissible_tuple (prime-gaps k-tuple admissibility+diameter by decide, Lemma
+    # 12.1 shape), lee_yang_stable_pair (Schur–Cohn/Jury chain; KS zeros-on-line
+    # analogue BY CONSTRUCTION). Category-(b) certificates; NOT toward RH.
+    "rayleigh_gram",
+    "polytope_moment",
+    "admissible_tuple",
+    "lee_yang_stable_pair",
     # Winding-number frontier (2026-09-06, same RH session): slit_loop_winding_zero (Rouché heart —
     # closed loop in ‖·-1‖<r≤1 ⟹ ∮ w'/w = 0, winding 0, via clog_real + FTC-2) and box_residue_sum
     # (box analogue of full_argument_principle, Finset-linearity plumbing conditional on the per-pole
@@ -390,6 +400,15 @@ _SPECIAL_DISPATCH = {
         ("emit_spacing_tail", "certify_spacing_tail_bound_point", "SpacingTailBoundEmitter"),
     "autocorr_support":
         ("emit_autocorr_support", "certify_autocorr_support_point", "AutocorrSupportEmitter"),
+    # Axiom-Math bgp212 + Dyson-quasicrystal emitters (2026-09-09).
+    "rayleigh_gram":
+        ("emit_rayleigh_gram", "certify_rayleigh_gram_point", "RayleighGramEmitter"),
+    "polytope_moment":
+        ("emit_polytope_moment", "certify_polytope_moment_point", "PolytopeMomentEmitter"),
+    "admissible_tuple":
+        ("emit_admissible_tuple", "certify_admissible_tuple_point", "AdmissibleTupleEmitter"),
+    "lee_yang_stable_pair":
+        ("emit_lee_yang", "certify_lee_yang_stable_pair_point", "LeeYangStablePairEmitter"),
     "max_modulus": ("emit_max_modulus", "certify_max_modulus_point", "MaxModulusEmitter"),
     "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point", "BCDerivReEmitter"),
     "entire_part_bound":

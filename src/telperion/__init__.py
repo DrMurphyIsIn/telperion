@@ -83,6 +83,18 @@ from .emit_spacing_tail import (  # noqa: F401
 from .emit_autocorr_support import (  # noqa: F401
     AutocorrSupportEmitter, autocorr_support_certificate, autocorr_support_family,
 )
+from .emit_rayleigh_gram import (  # noqa: F401
+    RayleighGramEmitter, rayleigh_gram_certificate, rayleigh_gram_family,
+)
+from .emit_polytope_moment import (  # noqa: F401
+    PolytopeMomentEmitter, polytope_moment_certificate, polytope_moment_family,
+)
+from .emit_admissible_tuple import (  # noqa: F401
+    AdmissibleTupleEmitter, admissible_tuple_certificate, admissible_tuple_family,
+)
+from .emit_lee_yang import (  # noqa: F401
+    LeeYangStablePairEmitter, lee_yang_stable_pair_certificate, lee_yang_stable_pair_family,
+)
 from .palomar_mine import (  # noqa: F401
     classify_entry, mine, mining_report, poll, fetch_registry,
     parse_feed, fetch_feed, MiningCandidate, TOPIC_KEYWORDS, SHAPE_RULES,

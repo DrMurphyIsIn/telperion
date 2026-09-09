@@ -179,6 +179,22 @@ REGISTRY: dict[str, SensitivityStance] = {
     "AutocorrSupportEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "concrete (v⋆v)(y) ≤ (2M−|y|)₊ support-geometry bound by "
                                  "norm_num; exact-rational, no corruptible identity"),
+    "RayleighGramEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                              "cᵀJc − θ·cᵀIc > 0 with BOTH Gram contractions spelled out "
+                              "entry-wise and re-done by norm_num; certify refuses a failing "
+                              "or degenerate (cᵀIc≤0) instance — no vacuous inequality ships"),
+    "PolytopeMomentEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                "Σ coeff·simplexMoment(R,m,es) = q re-executed by norm_num "
+                                "over the in-Lean closed form; integral semantics + "
+                                "triangulation validity are the documented generator seam"),
+    "AdmissibleTupleEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                 "admissibility re-decided over a non-empty derived prime list "
+                                 "(p=2 always present) + concrete diameter equality, both by "
+                                 "kernel decide; inadmissible tuples ({0,2,4} control) refused"),
+    "LeeYangStablePairEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                   "Schur–Cohn/Jury chain positivity recomputed from coefficient "
+                                   "literals by norm_num; certify cross-checks numeric roots and "
+                                   "refuses borderline/mismatched verdicts — no knife-edge certs"),
     "EndpointGeomCapEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "geometric cap (R+z)/(R−z)² ≤ (R+1)/(R−1)² on the "
                                  "disk: an endpoint-maximum monotonicity bound, no "
