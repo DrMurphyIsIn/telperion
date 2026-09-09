@@ -163,6 +163,18 @@ def build_source(name: str) -> Source:
     if name in ("github", "mathlib"):
         from .source_mining_github import github_source
         return github_source()
+    if name == "challenges":
+        # Local-clone adapter: needs a path + repo name, supplied via env
+        # (TELPERION_CHALLENGE_REPO_PATH / _NAME) since build_source is zero-arg.
+        import os
+        path = os.environ.get("TELPERION_CHALLENGE_REPO_PATH")
+        rname = os.environ.get("TELPERION_CHALLENGE_REPO_NAME", "local/checkout")
+        if not path:
+            raise ValueError(
+                "challenges source needs TELPERION_CHALLENGE_REPO_PATH "
+                "(a local formalization-repo clone with ComparatorChallenges/)")
+        from .source_mining_challenges import challenge_source
+        return challenge_source(path, rname)
     if name == "zulip":
         from .source_mining_zulip import zulip_source
         return zulip_source()

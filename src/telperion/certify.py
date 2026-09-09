@@ -333,6 +333,16 @@ _SPECIAL_KINDS = (
     "comparability_envelope",
     "discrete_moment",
     "poly_exp_absorption",
+    # NS/Euler wave-6 (2026-09-09, campaign closeout): graded-convolution
+    # endpoint identities, power-tower recurrence closure, Faa di Bruno
+    # partition-sum bound, forbidden-factor word invariant (first discrete
+    # axis), low-order + geometric-tail hybrid, eventual scaling threshold.
+    "graded_convolution",
+    "power_tower",
+    "partition_composition",
+    "regular_word",
+    "low_order_tail",
+    "eventual_threshold",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -516,6 +526,21 @@ _SPECIAL_DISPATCH = {
     "poly_exp_absorption":
         ("emit_poly_exp_absorption", "certify_poly_exp_absorption_point",
          "PolyExpAbsorptionEmitter"),
+    "graded_convolution":
+        ("emit_graded_convolution", "certify_graded_convolution_point",
+         "GradedConvolutionEmitter"),
+    "power_tower":
+        ("emit_power_tower", "certify_power_tower_point", "PowerTowerEmitter"),
+    "partition_composition":
+        ("emit_partition_composition", "certify_partition_composition_point",
+         "PartitionCompositionEmitter"),
+    "regular_word":
+        ("emit_regular_word", "certify_regular_word_point", "RegularWordEmitter"),
+    "low_order_tail":
+        ("emit_low_order_tail", "certify_low_order_tail_point", "LowOrderTailEmitter"),
+    "eventual_threshold":
+        ("emit_eventual_threshold", "certify_eventual_threshold_point",
+         "EventualThresholdEmitter"),
 }
 
 
