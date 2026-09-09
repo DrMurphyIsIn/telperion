@@ -24,6 +24,12 @@ GITHUB_REPOS: tuple[str, ...] = (
     "google-deepmind/formal-conjectures",
     "AlexKontorovich/PrimeNumberTheoremAnd",
     "dwrensha/compfiles",              # Catalog Of Math Problems Formalized In Lean
+    # Frontier formalization drops mined by the 2026-09 campaigns — commits are
+    # Lean-verified port leads (NS/Euler blowup: 25 emitter kinds distilled;
+    # zeta-23: hermitian-moment emitters; ZetaZeros: curvature/enclosure emitters).
+    "openai/NavierStokesAndEuler",
+    "anthropics/zeta-23-lean",
+    "AxiomMath/ZetaZeros",
 )
 
 GITHUB_API = "https://api.github.com"
