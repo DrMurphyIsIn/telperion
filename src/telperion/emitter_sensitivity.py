@@ -466,6 +466,29 @@ REGISTRY: dict[str, SensitivityStance] = {
         "eventually-bounded -> globally-bounded with the explicit Finset-sum "
         "witness C = A + sum |f n|/w n; a single fully-generic fixed atom, no "
         "per-instance data and no corruptible cofactor"),
+    "GradedConvolutionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "graded-convolution endpoint identities (congr-below / strict-congr / "
+        "next-delta): fully-generic fixed exact identities over abstract modules, "
+        "no per-instance data and no corruptible cofactor"),
+    "PowerTowerEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "power-tower recurrence closure C q <= (9L)^(3^q): fully-generic fixed "
+        "induction atoms over an abstract sequence; no corruptible cofactor"),
+    "PartitionCompositionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Faa di Bruno factorial-square partition-sum bound over Mathlib "
+        "OrderedFinpartition (extendEquiv recursion): fully-generic fixed calculus, "
+        "no corruptible cofactor"),
+    "RegularWordEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "forbidden-factor word invariant 2*losses <= len+1 over List Bool: "
+        "decidable structural recursion + omega; first discrete axis, no "
+        "corruptible cofactor"),
+    "LowOrderTailEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "low-order grades + doubled geometric tail hybrid: fully-generic fixed "
+        "atoms (geometric sums <= 2 / <= 2q^a + the assembled bound); no "
+        "corruptible cofactor"),
+    "EventualThresholdEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "eventual scaling threshold with explicit nested-max-of-ratios witness: "
+        "the arity IS the statement; witness assembly re-derived in-kernel by "
+        "le_max chains + div_lt_iff0; no corruptible cofactor"),
     "ComparabilityEnvelopeEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "comparability/Lipschitz envelope atoms (rpow both-signs, sqrt "
         "conjugate-multiply, 1+x^2 denominator kill): fully-generic fixed atoms, "
