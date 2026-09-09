@@ -146,6 +146,18 @@ from .emit_poly_geom_closure import (  # noqa: F401
 from .emit_twopoint_moment import (  # noqa: F401
     TwoPointMomentEmitter, twopoint_moment_certificate, twopoint_moment_family,
 )
+from .emit_two_row_solve import (  # noqa: F401
+    TwoRowSolveEmitter, two_row_solve_certificate, two_row_solve_family,
+)
+from .emit_ratio_telescope import (  # noqa: F401
+    RatioTelescopeEmitter, ratio_telescope_certificate, ratio_telescope_family,
+)
+from .emit_monomial_ladder import (  # noqa: F401
+    MonomialLadderEmitter, monomial_ladder_certificate, monomial_ladder_family,
+)
+from .emit_rpow_budget import (  # noqa: F401
+    RpowBudgetEmitter, rpow_budget_certificate, rpow_budget_family,
+)
 from .emit_bilinear_corner import (  # noqa: F401
     BilinearCornerBoxEmitter, bilinear_corner_certificate, bilinear_corner_family,
 )
