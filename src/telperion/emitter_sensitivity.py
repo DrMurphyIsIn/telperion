@@ -162,6 +162,10 @@ REGISTRY: dict[str, SensitivityStance] = {
     "RankTraceScalarEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "integrality atom 2c·x−c² ≤ x² = (x−c)²≥0 via "
                                  "nlinarith [sq_nonneg]; a pure square-positivity fact"),
+    "LiPositivityLadderEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                    "0 ≤ (taylorCoeff riemannXi n).re from a certified "
+                                    "positive lower bound (hypothesis hlo = the Arb enclosure, "
+                                    "the trust seam) via le_trans; positivity, no corruptible identity"),
     "EndpointGeomCapEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                  "geometric cap (R+z)/(R−z)² ≤ (R+1)/(R−1)² on the "
                                  "disk: an endpoint-maximum monotonicity bound, no "

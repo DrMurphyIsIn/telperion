@@ -228,6 +228,10 @@ _SPECIAL_KINDS = (
     # atom 2c·x−c² ≤ x²). Positive-proportion machinery; NOT a step toward RH.
     "two_moment_count",
     "rank_trace_scalar",
+    # Li positivity ladder (2026-09-09, RH-roadmap Track 2): the n-th Li-criterion rung
+    # 0 ≤ (taylorCoeff riemannXi n).re from a certified positive lower bound; feeds the
+    # upstream LiCriterion.li_criterion_rh_iff. Finite prefix, NOT RH.
+    "li_positivity",
     # Winding-number frontier (2026-09-06, same RH session): slit_loop_winding_zero (Rouché heart —
     # closed loop in ‖·-1‖<r≤1 ⟹ ∮ w'/w = 0, winding 0, via clog_real + FTC-2) and box_residue_sum
     # (box analogue of full_argument_principle, Finset-linearity plumbing conditional on the per-pole
@@ -366,6 +370,9 @@ _SPECIAL_DISPATCH = {
         ("emit_hermitian_moment", "certify_two_moment_count_point", "TwoMomentCountEmitter"),
     "rank_trace_scalar":
         ("emit_hermitian_moment", "certify_rank_trace_scalar_point", "RankTraceScalarEmitter"),
+    # Li positivity ladder (RH-roadmap Track 2, onto nicholasbulka/li-criterion-rh-equivalence-lean).
+    "li_positivity":
+        ("emit_li_positivity", "certify_li_positivity_point", "LiPositivityLadderEmitter"),
     "max_modulus": ("emit_max_modulus", "certify_max_modulus_point", "MaxModulusEmitter"),
     "bc_deriv_re": ("emit_bc_deriv_re", "certify_bc_deriv_re_point", "BCDerivReEmitter"),
     "entire_part_bound":

@@ -67,6 +67,9 @@ from .emit_hermitian_moment import (  # noqa: F401
     TwoMomentCountEmitter, two_moment_count_certificate, two_moment_count_family,
     RankTraceScalarEmitter, rank_trace_scalar_certificate, rank_trace_scalar_family,
 )
+from .emit_li_positivity import (  # noqa: F401
+    LiPositivityLadderEmitter, li_rung_certificate, li_positivity_family,
+)
 from .palomar_mine import (  # noqa: F401
     classify_entry, mine, mining_report, poll, fetch_registry,
     parse_feed, fetch_feed, MiningCandidate, TOPIC_KEYWORDS, SHAPE_RULES,
