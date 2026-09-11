@@ -44,3 +44,44 @@ def test_dry_runs_do_not_count_as_attempted(tmp_path):
     led.append(rec(verdict="DryRun"))
     assert not led.attempted("m1")
     assert led.win_rate("SOSEmitter") is None
+
+
+def test_corrupted_trailing_jsonl_line_skipped(tmp_path):
+    """Interrupted append (truncated trailing line) is skipped; earlier records survive."""
+    p = tmp_path / "ledger.jsonl"
+    # Write two valid records and one truncated (interrupted write)
+    import json
+    from telperion.prove2me.ledger import AttemptRecord
+    rec1 = rec(milestone="m1", verdict="Proved")
+    rec2 = rec(milestone="m2", verdict="Disproved")
+    with p.open("w") as f:
+        f.write(json.dumps({
+            "milestone_id": rec1.milestone_id,
+            "mission_id": rec1.mission_id,
+            "emitters": list(rec1.emitters),
+            "lift_hash": rec1.lift_hash,
+            "verdict": rec1.verdict,
+            "server_output": rec1.server_output,
+            "wall_s": rec1.wall_s,
+            "submission_id": rec1.submission_id,
+            "date": rec1.date,
+        }) + "\n")
+        f.write(json.dumps({
+            "milestone_id": rec2.milestone_id,
+            "mission_id": rec2.mission_id,
+            "emitters": list(rec2.emitters),
+            "lift_hash": rec2.lift_hash,
+            "verdict": rec2.verdict,
+            "server_output": rec2.server_output,
+            "wall_s": rec2.wall_s,
+            "submission_id": rec2.submission_id,
+            "date": rec2.date,
+        }) + "\n")
+        # Truncated third line (simulating interrupted write)
+        f.write('{"milestone_id": "m3", "mis')
+
+    # Load should skip corrupted line and return only 2 valid records
+    led = AttemptLedger(p)
+    assert len(led.records()) == 2
+    assert led.records()[0].milestone_id == "m1"
+    assert led.records()[1].milestone_id == "m2"

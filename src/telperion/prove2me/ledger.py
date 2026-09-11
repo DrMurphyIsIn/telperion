@@ -35,9 +35,16 @@ class AttemptLedger:
         if self.path.exists():
             for line in self.path.read_text().splitlines():
                 if line.strip():
-                    d = json.loads(line)
-                    d["emitters"] = tuple(d["emitters"])
-                    self._records.append(AttemptRecord(**d))
+                    try:
+                        d = json.loads(line)
+                        d["emitters"] = tuple(d["emitters"])
+                        self._records.append(AttemptRecord(**d))
+                    except json.JSONDecodeError:
+                        # Interrupted append loses at most one truncated record.
+                        # Deterministic recovery: skip corrupt line. Crashing on
+                        # boot is worse than dropping a truncated record (advisory
+                        # data; impact is deferred triage only).
+                        continue
 
     def append(self, rec: AttemptRecord) -> None:
         self._records.append(rec)
