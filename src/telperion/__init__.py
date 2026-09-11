@@ -304,6 +304,10 @@ from .emit_max_modulus import (  # noqa: F401
     MaxModulusEmitter, max_modulus_certificate,
     max_modulus_family, certify_max_modulus_point,
 )
+from .emit_unit_modulus_sos import (  # noqa: F401
+    UnitModulusSOSEmitter, UnitModulusCertificate, unit_modulus_certificate,
+    unit_modulus_sos_family, certify_unit_modulus_point,
+)
 from .emit_bc_deriv_re import (  # noqa: F401
     BCDerivReEmitter, bc_deriv_re_certificate,
     bc_deriv_re_family, certify_bc_deriv_re_point,

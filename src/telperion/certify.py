@@ -317,6 +317,10 @@ _SPECIAL_KINDS = (
     "multilinear_perturbation",
     "poly_geom_closure",
     "twopoint_moment",
+    # Unit-modulus conjugate-pair SOS (2026-09-11): for |u| = 1, 2 - u^m - conj(u^m) = ‖1 - u^m‖²,
+    # the manifest square behind on-line Riemann-zero Li positivity (RvMOnLinePositivity) and the
+    # "+" side of the Weil-form (1,1) signature. Hermitian SOS, NOT a step toward RH.
+    "unit_modulus_sos",
     # NS/Euler wave-4 (2026-09-09): 2x2 solution-entry bound (scalar, no Matrix),
     # ratio-recurrence telescoping (factorial/geometric/index normal forms),
     # monomial budget ladder (symbolic-base exponent absorption), rpow exponent
@@ -441,6 +445,8 @@ _SPECIAL_DISPATCH = {
         ("emit_entire_part_bound", "certify_entire_part_bound_point", "EntirePartBoundEmitter"),
     "two_scale_separation":
         ("emit_two_scale_separation", "certify_two_scale_separation_point", "TwoScaleSeparationEmitter"),
+    "unit_modulus_sos":
+        ("emit_unit_modulus_sos", "certify_unit_modulus_point", "UnitModulusSOSEmitter"),
     "endpoint_geom_cap":
         ("emit_endpoint_geom_cap", "certify_endpoint_geom_cap_point", "EndpointGeomCapEmitter"),
     "far_pole_sum": ("emit_far_pole_sum", "certify_far_pole_sum_point", "FarPoleSumEmitter"),
