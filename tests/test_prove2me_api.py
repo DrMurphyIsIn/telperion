@@ -94,11 +94,13 @@ def test_breaker_resets_on_success(tmp_path):
 
 
 def test_urlerror_raises_platform_down_and_trips_breaker(tmp_path):
-    """URLError (connection failure, timeout, DNS) is typed and counted by breaker."""
+    """URLError (connection failure, timeout, DNS) is typed, retried, and counted by breaker."""
+    calls = []
+
     def transport_with_urlerror(method, url, headers, body):
+        calls.append((method, url))
         raise urllib.error.URLError("connection refused")
 
-    calls = []
     c = Prove2MeClient(
         workspace=tmp_path,
         transport=transport_with_urlerror,
@@ -107,6 +109,8 @@ def test_urlerror_raises_platform_down_and_trips_breaker(tmp_path):
     )
     with pytest.raises(PlatformDown, match="connection failed"):
         c.request("GET", "/missions", auth=False)
+    # Initial + 3 retries = 4 transport calls
+    assert len(calls) == 4, f"Expected 4 calls (initial + 3 retries), got {len(calls)}"
     assert c._consecutive_5xx == 1  # URLError counts as a server error
 
 

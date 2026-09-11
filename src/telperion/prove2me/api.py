@@ -64,8 +64,6 @@ def _urllib_transport(method: str, url: str, headers: dict, body: bytes | None) 
             return HttpResponse(resp.status, resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return HttpResponse(e.code, e.read().decode("utf-8", errors="replace"))
-    except urllib.error.URLError as e:
-        raise PlatformDown(f"connection failed: {e}") from e
 
 
 class Prove2MeClient:
