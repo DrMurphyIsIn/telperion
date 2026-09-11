@@ -19,7 +19,7 @@ from pathlib import Path
 # Value comes from that file's metadata.version.
 SKILL_VERSION = "0.10.1"
 
-DEFAULT_BASE_URL = "https://prove2.me/api/v1"  # confirm against vendored skill.md
+DEFAULT_BASE_URL = "https://prove2.me/api/v1"
 _RETRIES = 3
 
 
@@ -49,7 +49,12 @@ class HttpResponse:
     body: str
 
     def json(self) -> dict:
-        return json.loads(self.body) if self.body else {}
+        if not self.body:
+            return {}
+        try:
+            return json.loads(self.body)
+        except json.JSONDecodeError as e:
+            raise Prove2MeError(f"malformed JSON in response: {e}") from e
 
 
 def _urllib_transport(method: str, url: str, headers: dict, body: bytes | None) -> HttpResponse:
@@ -59,6 +64,8 @@ def _urllib_transport(method: str, url: str, headers: dict, body: bytes | None) 
             return HttpResponse(resp.status, resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return HttpResponse(e.code, e.read().decode("utf-8", errors="replace"))
+    except urllib.error.URLError as e:
+        raise PlatformDown(f"connection failed: {e}") from e
 
 
 class Prove2MeClient:
@@ -101,12 +108,20 @@ class Prove2MeClient:
         resp: HttpResponse | None = None
         for attempt in range(_RETRIES + 1):
             self._throttle()
-            resp = self._transport(method, self.base_url + path, headers, body)
+            try:
+                resp = self._transport(method, self.base_url + path, headers, body)
+            except urllib.error.URLError as e:
+                if attempt < _RETRIES:
+                    self._sleep(2.0 * 2 ** attempt)
+                    continue
+                self._consecutive_5xx += 1
+                raise PlatformDown(f"connection failed: {e}") from e
             if resp.status not in (429,) and resp.status < 500:
                 break
             if attempt < _RETRIES:
                 self._sleep(2.0 * 2 ** attempt)
-        assert resp is not None
+        if resp is None:
+            raise Prove2MeError("internal: no response from transport")
 
         if resp.status == 429:
             raise RateLimited(f"{method} {path}: still 429 after {_RETRIES} retries")

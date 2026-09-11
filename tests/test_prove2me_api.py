@@ -1,6 +1,7 @@
 """Prove2MeClient core: transport injection, auth gate, throttle, breaker."""
 import json
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from telperion.prove2me.api import (  # noqa: E402
     PlatformDown,
     ProtocolDrift,
     Prove2MeClient,
+    Prove2MeError,
     RateLimited,
 )
 
@@ -89,3 +91,34 @@ def test_breaker_resets_on_success(tmp_path):
     c.request("GET", "/missions", auth=False)   # success resets counter
     with pytest.raises(PlatformDown):
         c.request("GET", "/missions", auth=False)  # count restarts at 1, no halt
+
+
+def test_urlerror_raises_platform_down_and_trips_breaker(tmp_path):
+    """URLError (connection failure, timeout, DNS) is typed and counted by breaker."""
+    def transport_with_urlerror(method, url, headers, body):
+        raise urllib.error.URLError("connection refused")
+
+    calls = []
+    c = Prove2MeClient(
+        workspace=tmp_path,
+        transport=transport_with_urlerror,
+        _sleep=lambda x: None,
+        _now=lambda: 0.0,
+    )
+    with pytest.raises(PlatformDown, match="connection failed"):
+        c.request("GET", "/missions", auth=False)
+    assert c._consecutive_5xx == 1  # URLError counts as a server error
+
+
+def test_malformed_json_raises_typed_error(tmp_path):
+    """Non-JSON error body (e.g., HTML 502) raises Prove2MeError, not raw JSONDecodeError."""
+    resp = HttpResponse(502, "<html>Gateway Error</html>")
+    with pytest.raises(Prove2MeError, match="malformed JSON"):
+        resp.json()
+
+
+def test_malformed_json_in_request_response(tmp_path):
+    """Malformed JSON in a 200 response is caught and wrapped."""
+    c, _, _ = make_client(tmp_path, [HttpResponse(200, "not json")])
+    with pytest.raises(Prove2MeError, match="malformed JSON"):
+        c.request("GET", "/missions", auth=False)
