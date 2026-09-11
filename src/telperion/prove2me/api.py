@@ -148,3 +148,110 @@ class Prove2MeClient:
                 f"platform skill version {v!r} != ours {SKILL_VERSION!r}: "
                 f"re-vendor https://prove2.me/skill.md and update SKILL_VERSION"
             )
+
+    # -- auth chain (credentials -> 30-day key -> hourly token) -------------
+
+    @property
+    def _tokens_path(self) -> Path:
+        return self.workspace / "telperion_tokens.json"
+
+    def _load_tokens(self) -> dict:
+        if self._tokens_path.exists():
+            return json.loads(self._tokens_path.read_text())
+        return {}
+
+    def _save_tokens(self, updates: dict) -> None:
+        doc = self._load_tokens()
+        doc.update(updates)
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self._tokens_path.write_text(json.dumps(doc, indent=1) + "\n")
+
+    def login(self, email: str, password: str) -> None:
+        out = self.request("POST", "/login",
+                           {"email": email, "password": password}, auth=False)
+        self._check_version(out)
+        self._session_token = out.get("session_token") or out.get("token")
+
+    def mint_api_key(self) -> str:
+        headers_token = getattr(self, "_session_token", None)
+        if not headers_token:
+            raise AuthError("login first: mint_api_key needs a session token")
+        self.access_token = headers_token          # session token authorizes minting
+        out = self.request("POST", "/agent/api-key", {})
+        self.access_token = None
+        self._save_tokens({"api_key": out["api_key"],
+                           "api_key_expires": out.get("expires_at", "")})
+        return out["api_key"]
+
+    def refresh(self) -> None:
+        key = self._load_tokens().get("api_key")
+        if not key:
+            raise AuthError("no api key: run login + mint_api_key (or paste one "
+                            "from account settings into telperion_tokens.json)")
+        out = self.request("POST", "/agent/refresh", {"api_key": key}, auth=False)
+        self._check_version(out)
+        self.access_token = out["access_token"]
+        self._save_tokens({"access_token": self.access_token,
+                           "access_expires": out.get("expires_at", "")})
+
+    def ensure_auth(self) -> None:
+        if self.access_token:
+            return
+        saved = self._load_tokens()
+        self.access_token = saved.get("access_token") or None
+        if not self.access_token:
+            self.refresh()
+
+    # -- endpoints ----------------------------------------------------------
+
+    def missions(self) -> list:
+        out = self.request("GET", "/missions")
+        return out if isinstance(out, list) else out.get("missions", [])
+
+    def milestones(self, mission_id: str) -> list:
+        out = self.request("GET", f"/missions/{mission_id}/milestones")
+        return out if isinstance(out, list) else out.get("milestones", [])
+
+    def theorem(self, theorem_id: str) -> dict:
+        return self.request("GET", f"/theorems/{theorem_id}")
+
+    def theorem_graph(self, theorem_id: str) -> dict:
+        return self.request("GET", f"/theorems/{theorem_id}/graph")
+
+    def theorem_submissions(self, theorem_id: str) -> list:
+        out = self.request("GET", f"/theorems/{theorem_id}/submissions")
+        return out if isinstance(out, list) else out.get("submissions", [])
+
+    def milestone_history(self, milestone_id: str) -> list:
+        out = self.request("GET", f"/milestones/{milestone_id}/history")
+        return out if isinstance(out, list) else out.get("history", [])
+
+    def verify(self, lean_source: str, target_id: str, private: bool = False) -> str:
+        payload = {"target_id": target_id, "source": lean_source}
+        if private:
+            payload["private"] = True
+        out = self.request("POST", "/verify", payload)
+        return out["submission_id"]
+
+    def verdict(self, submission_id: str) -> dict:
+        return self.request("GET", f"/verify?submission_id={submission_id}")
+
+    def annotate(self, submission_id: str, explanation: str) -> None:
+        self.request("PATCH", f"/submissions/{submission_id}",
+                     {"explanation": explanation})
+
+    def comment(self, mission_id: str, text: str) -> None:
+        self.request("POST", f"/missions/{mission_id}/comments", {"text": text})
+
+    def rate(self, target_id: str, payload: dict) -> None:
+        self.request("POST", "/rate", {"target_id": target_id, **payload})
+
+    def submit_problem(self, payload: dict) -> dict:
+        return self.request("POST", "/submit-problem", payload)
+
+    def submit_definition(self, payload: dict) -> dict:
+        return self.request("POST", "/submit-definition", payload)
+
+    def publish_jobs(self) -> list:
+        out = self.request("GET", "/publish-jobs")
+        return out if isinstance(out, list) else out.get("jobs", [])
