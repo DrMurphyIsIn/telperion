@@ -50,6 +50,37 @@ def test_registry_enumeration_is_nonempty_and_large():
     assert "SOSEmitter" in names and len(names) >= 100   # 133 on main
 
 
+def test_registry_includes_non_emit_module_emitters():
+    names = registry_class_names()
+    # TailNatEmitter lives in tails.py, not an emit*-prefixed module.
+    # Confirms EXTRA_EMITTER_MODULES is scanned.
+    assert "TailNatEmitter" in names
+    assert "DichotomyGlueEmitter" in names
+    assert "VarMapAdapterEmitter" in names
+
+
+def test_exact_identity_does_not_match_lean_definition_syntax():
+    # ':= (expr)' is a Lean definition — the old pattern r"=\s*[-\d(]" fires
+    # on the '=' in ':=' when followed by '(' (e.g. ':= (n + 1)').
+    # The negative lookbehind r"(?<!:)=\s*[-\d(]" blocks this.
+    conf, classes = match_statement(
+        "theorem solution (n : ℕ) : result := (n + 1)"
+    )
+    identity_classes = {"IdentityEmitter", "ExactFactEmitter", "RationalIdentityEmitter"}
+    assert not (set(classes) & identity_classes), (
+        f"exact-identity falsely fired on ':=' syntax: {classes}"
+    )
+    # Genuine numeric equality still fires correctly.
+    _, classes2 = match_statement("theorem solution : (3 : ℚ)/4 + 1/4 = 1")
+    assert set(classes2) & identity_classes
+
+
+def test_coverage_report_exposes_import_failures():
+    rep = coverage_report()
+    assert "import_failures" in rep
+    assert isinstance(rep["import_failures"], list)
+
+
 def test_triage_ranks_skips_attempted_and_roundtrips(tmp_path):
     milestones = [
         {"id": "m1", "mission_id": "A", "status": "open",

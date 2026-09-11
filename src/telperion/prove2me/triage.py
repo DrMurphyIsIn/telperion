@@ -20,12 +20,21 @@ from .ledger import AttemptLedger
 
 _NUMERIC = r"(ℕ|ℤ|ℚ|ℝ|Nat|Int|Rat|Real)"  # N Z Q R
 
+# Modules outside the emit* naming convention that define Emitter subclasses.
+# _load_all_emitters imports these in addition to the emit* scan.
+EXTRA_EMITTER_MODULES: tuple[str, ...] = ("tails", "dichotomy", "varmap")
+
 # Structure keywords that mark a statement OUTSIDE certificate shapes.
+# Uniform prefix semantics: single alternation, one outer \w* — no inner \b.
 BLOCKLIST = re.compile(
-    r"\b(Group|Ring\b|Field\b|Module|Category|Continuous|Measure|Measurable|"
-    r"Topolog|SimpleGraph|Homeomorph|Isometry|Filter\.|Deriv|integral|"
-    r"Polynomial\.Galois|Matrix\.det)\w*"
+    r"\b(Group|Ring|Field|Module|Category|Continuous|Measure|Measurabl|"
+    r"Topolog|SimpleGraph|Homeomorph|Isometry|Deriv|integral|"
+    r"Filter\.|Matrix\.det)\w*"
 )
+
+# Import failures recorded during the last _load_all_emitters() call.
+# List of (module_name, error_repr) tuples; cleared and repopulated on each scan.
+IMPORT_FAILURES: list[tuple[str, str]] = []
 
 
 @dataclass(frozen=True)
@@ -39,10 +48,6 @@ class ShapeRule:
         return re.search(self.pattern, text) is not None
 
 
-# Note on TailNatEmitter: the brief names it but it does not exist in the
-# registry (no emit_tail_nat.py).  We substitute EventualThresholdEmitter,
-# which handles the same "∀ n ≥ k, f(n) ≤ g(n)" pattern, alongside the
-# real MonotoneRatioTailEmitter that appears in g4's expect_any list.
 SHAPE_RULES: tuple[ShapeRule, ...] = (
     ShapeRule(
         "nonneg-or-le-inequality",
@@ -60,7 +65,7 @@ SHAPE_RULES: tuple[ShapeRule, ...] = (
     ShapeRule(
         "exact-identity",
         ("IdentityEmitter", "ExactFactEmitter", "RationalIdentityEmitter"),
-        r"=\s*[-\d(]",
+        r"(?<!:)=\s*[-\d(]",  # negative lookbehind excludes Lean's := definitions
         0.5,
     ),
     ShapeRule(
@@ -71,7 +76,7 @@ SHAPE_RULES: tuple[ShapeRule, ...] = (
     ),
     ShapeRule(
         "nat-tail",
-        ("EventualThresholdEmitter", "MonotoneRatioTailEmitter"),
+        ("TailNatEmitter", "EventualThresholdEmitter", "MonotoneRatioTailEmitter"),
         r"∀\s*\w+\s*:\s*ℕ.*(≤|<).*→",
         0.6,
     ),
@@ -104,16 +109,29 @@ SHAPE_RULES: tuple[ShapeRule, ...] = (
 
 
 def _load_all_emitters() -> None:
+    """Import every module that may define Emitter subclasses.
+
+    Covers two populations:
+    - emit*-prefixed modules (the main corpus, discovered via pkgutil)
+    - EXTRA_EMITTER_MODULES (tails, dichotomy, varmap — use non-emit names)
+
+    Import failures are recorded in IMPORT_FAILURES (module_name, error_repr)
+    rather than silently absorbed so coverage_report() can surface them.
+    """
+    global IMPORT_FAILURES
+    IMPORT_FAILURES = []
     import telperion
-    for m in pkgutil.iter_modules(telperion.__path__):
-        if m.name.startswith("emit"):
-            try:
-                importlib.import_module(f"telperion.{m.name}")
-            except (ImportError, Exception):
-                # Optional-extra emitters (sdp/bg) may have uninstalled deps.
-                # Tolerate any import-time exception rather than crashing the
-                # registry — a missing module is a named gap, not a fatal error.
-                pass
+    candidates: list[str] = [
+        m.name for m in pkgutil.iter_modules(telperion.__path__)
+        if m.name.startswith("emit")
+    ] + list(EXTRA_EMITTER_MODULES)
+    for name in candidates:
+        try:
+            importlib.import_module(f"telperion.{name}")
+        except Exception as exc:
+            # Optional-extra emitters (sdp/bg) may have uninstalled deps.
+            # Record rather than hide so coverage_report() can name the gap.
+            IMPORT_FAILURES.append((name, repr(exc)))
 
 
 def registry_class_names() -> set[str]:
@@ -134,6 +152,7 @@ def coverage_report() -> dict:
     return {
         "unknown_rule_classes": sorted(ruled - registry),
         "unmatched_registry_classes": sorted(registry - ruled),
+        "import_failures": list(IMPORT_FAILURES),  # (module_name, error_repr)
     }
 
 
