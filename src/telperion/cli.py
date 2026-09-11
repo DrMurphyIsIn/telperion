@@ -824,21 +824,31 @@ def cmd_p2m_attempt(args) -> int:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
+    from .certify import certify
     from .emit_facts import IdentityEmitter
     from .lean import LeanProfile
-    from .workflow import certify, emit
+    from .workflow import emit
     emitters = getattr(mod, "EMITTERS", None) or [IdentityEmitter()]
     res = emit(certify(mod.family()), LeanProfile(), emitters, mod.validation(),
                file_name=f"{name}.lean")
-    # res.files is a dict of filename -> Lean source text; extract the single file.
-    (lean_source,) = res.files.values()
+    # res.files is a dict of filename -> Lean source text; guard against multi-file emit.
+    files = list(res.files.values())
+    if len(files) != 1:
+        print(f"expected 1 emitted Lean file, got {len(files)}: {list(res.files)}")
+        return 1
+    lean_source = files[0]
 
     items = [i for i in load_queue(ws.root / "queue.json")
              if i.milestone_id == args.milestone_id] \
         if (ws.root / "queue.json").exists() else []
     if not items:
         from .prove2me.triage import QueueItem
-        items = [QueueItem(args.milestone_id, "", mod.FORMAL_STATEMENT,
+        formal_stmt = getattr(mod, "FORMAL_STATEMENT", "")
+        if not formal_stmt:
+            print("family.py must define FORMAL_STATEMENT or run "
+                  "`telperion p2m triage` first")
+            return 1
+        items = [QueueItem(args.milestone_id, "", formal_stmt,
                            tuple(type(e).__name__ for e in emitters), 0.0)]
 
     c = Prove2MeClient(workspace=ws.root)
