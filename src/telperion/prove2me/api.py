@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Update whenever docs/vendor/prove2me_skill.md is re-vendored (spec §api.py).
@@ -176,9 +177,14 @@ class Prove2MeClient:
         headers_token = getattr(self, "_session_token", None)
         if not headers_token:
             raise AuthError("login first: mint_api_key needs a session token")
+        old = self.access_token
         self.access_token = headers_token          # session token authorizes minting
-        out = self.request("POST", "/agent/api-key", {})
-        self.access_token = None
+        try:
+            out = self.request("POST", "/agent/api-key", {})
+        finally:
+            self.access_token = old
+        self._check_version(out)
+        self._session_token = None
         self._save_tokens({"api_key": out["api_key"],
                            "api_key_expires": out.get("expires_at", "")})
         return out["api_key"]
@@ -198,9 +204,22 @@ class Prove2MeClient:
         if self.access_token:
             return
         saved = self._load_tokens()
-        self.access_token = saved.get("access_token") or None
-        if not self.access_token:
+        expires_str = saved.get("access_expires")
+        if not self._is_token_valid(expires_str):
             self.refresh()
+            return
+        self.access_token = saved.get("access_token")
+
+    def _is_token_valid(self, expires_at: str | None) -> bool:
+        """Check if a token expiry timestamp is still valid (in the future)."""
+        if not expires_at:
+            return False
+        try:
+            iso_str = expires_at.replace("Z", "+00:00")
+            expiry = datetime.fromisoformat(iso_str)
+            return expiry > datetime.now(timezone.utc)
+        except (ValueError, TypeError):
+            return False
 
     # -- endpoints ----------------------------------------------------------
 

@@ -142,6 +142,8 @@ def test_auth_chain_persists_key_and_token(tmp_path):
     assert c.access_token == "HOURLY"
     saved = json.loads((tmp_path / "telperion_tokens.json").read_text())
     assert saved["api_key"] == "KEY30"
+    assert saved["access_token"] == "HOURLY"
+    assert saved["access_expires"] == "2026-09-11T13:00:00Z"
     # every auth response was version-gated: drift in any would have raised
 
 
@@ -168,7 +170,31 @@ def test_verify_returns_submission_id_and_verdict_polls(tmp_path):
 
 def test_ensure_auth_uses_persisted_key(tmp_path):
     (tmp_path / "telperion_tokens.json").write_text(json.dumps(
-        {"api_key": "KEY30", "api_key_expires": "2099-01-01T00:00:00Z"}
+        {"api_key": "KEY30", "api_key_expires": "2099-01-01T00:00:00Z",
+         "access_token": "T1", "access_expires": "2099-01-01T01:00:00Z"}
+    ))
+    c, _, _ = make_client(tmp_path, [])
+    c.ensure_auth()
+    assert c.access_token == "T1"
+
+
+def test_mint_api_key_restores_access_token_on_error(tmp_path):
+    """CRITICAL: mint_api_key must restore access_token if request() fails."""
+    # 5xx response triggers 3 retries = 4 total attempts; provide enough responses
+    c, _, _ = make_client(tmp_path, [HttpResponse(500, "{}")] * 4)
+    c._session_token = "sess"
+    c.access_token = "prev_token"
+    with pytest.raises(PlatformDown):
+        c.mint_api_key()
+    # access_token must be restored to its pre-call value, not left as session token
+    assert c.access_token == "prev_token"
+
+
+def test_ensure_auth_refreshes_expired_token(tmp_path):
+    """IMPORTANT: ensure_auth must refresh() if persisted token is expired."""
+    (tmp_path / "telperion_tokens.json").write_text(json.dumps(
+        {"api_key": "KEY30", "api_key_expires": "2099-01-01T00:00:00Z",
+         "access_token": "EXPIRED", "access_expires": "2020-01-01T00:00:00Z"}
     ))
     c, calls, _ = make_client(
         tmp_path,
@@ -177,3 +203,35 @@ def test_ensure_auth_uses_persisted_key(tmp_path):
     )
     c.ensure_auth()
     assert c.access_token == "T2"
+    assert len(calls) == 1  # exactly one refresh() call
+    assert "/agent/refresh" in calls[0][1]
+
+
+def test_ensure_auth_skips_refresh_if_token_valid(tmp_path):
+    """Persisted valid token should not trigger refresh()."""
+    (tmp_path / "telperion_tokens.json").write_text(json.dumps(
+        {"access_token": "VALID", "access_expires": "2099-01-01T00:00:00Z"}
+    ))
+    c, calls, _ = make_client(tmp_path, [])
+    c.ensure_auth()
+    assert c.access_token == "VALID"
+    assert len(calls) == 0  # no refresh() call
+
+
+def test_mint_api_key_version_gates_response(tmp_path):
+    """IMPORTANT 3: mint_api_key must call _check_version on /agent/api-key response."""
+    c, _, _ = make_client(
+        tmp_path,
+        [ok({"version": "wrong", "api_key": "KEY30", "expires_at": "2026-10-11T00:00:00Z"})],
+    )
+    c._session_token = "sess"
+    with pytest.raises(ProtocolDrift):
+        c.mint_api_key()
+
+
+def test_mint_api_key_clears_session_token(tmp_path):
+    """Minor: session token should be cleared after use (single-use credential)."""
+    c, _, _ = make_client(tmp_path, [ok({"api_key": "KEY", "expires_at": "2026-10-11T00:00:00Z"})])
+    c._session_token = "sess"
+    c.mint_api_key()
+    assert c._session_token is None
