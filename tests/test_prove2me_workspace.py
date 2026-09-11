@@ -15,7 +15,7 @@ def test_ensure_layout_creates_dirs_and_gitignores_secrets(tmp_path):
     for d in ("Definitions", "Theorems", "Solutions", "attempts"):
         assert (tmp_path / "wsp" / d).is_dir()
     gi = (tmp_path / "wsp" / ".gitignore").read_text()
-    assert "credentials.json" in gi and "telperion_tokens.json" in gi
+    assert "credentials.json" in gi and "telperion_tokens.json" in gi and ".lake/" in gi
 
 
 def test_scratch_project_pins_platform_toolchain(tmp_path):
@@ -47,3 +47,10 @@ def test_scratch_project_defaults_to_platform_mathlib_rev(tmp_path):
     lakefile = (proj / "lakefile.toml").read_text()
     # The default should be the platform commit SHA, not the tag
     assert '0df444a360eaa60ab8c11dca51a86af692955474' in lakefile
+
+
+def test_scaffold_lift_generated_python_is_syntactically_valid(tmp_path):
+    ws = Workspace(root=tmp_path / "wsp")
+    ws.ensure_layout()
+    fam = ws.scaffold_lift("mile99", "theorem foo : True := trivial", name="Foo")
+    compile(fam.read_text(), str(fam), "exec")  # raises SyntaxError on failure

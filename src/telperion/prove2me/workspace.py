@@ -73,9 +73,17 @@ class Workspace:
         for d in ("Definitions", "Theorems", "Solutions", "attempts"):
             (self.root / d).mkdir(parents=True, exist_ok=True)
         gi = self.root / ".gitignore"
-        wanted = "credentials.json\ntelperion_tokens.json\n.lake/\n__pycache__/\n"
-        if not gi.exists() or wanted not in gi.read_text():
-            gi.write_text((gi.read_text() if gi.exists() else "") + wanted)
+        required_entries = ["credentials.json", "telperion_tokens.json", ".lake/", "__pycache__/"]
+        existing_lines = set()
+        if gi.exists():
+            existing_lines = set(ln.strip() for ln in gi.read_text().splitlines() if ln.strip())
+        new_entries = [ln for ln in required_entries if ln not in existing_lines]
+        if new_entries:
+            content = (gi.read_text() if gi.exists() else "")
+            if content and not content.endswith("\n"):
+                content += "\n"
+            content += "\n".join(new_entries) + "\n"
+            gi.write_text(content)
 
     def sync_official(self, repo_url: str) -> None:
         """Clone or pull the official platform workspace repo into root."""
@@ -92,6 +100,7 @@ class Workspace:
         if not name.isidentifier():
             raise ValueError(f"scratch project name must be an identifier: {name!r}")
         proj = self.root / "attempts" / name / "lean"
+        # emitted solution module goes to <proj>/<name>/<name>.lean (imported by the root file)
         (proj / name).mkdir(parents=True, exist_ok=True)
         (proj / "lean-toolchain").write_text(toolchain + "\n")
         (proj / "lakefile.toml").write_text(
