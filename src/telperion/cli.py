@@ -800,7 +800,11 @@ def cmd_p2m_lift(args) -> int:
             print("no formal_statement on that milestone")
             return 1
     name = args.name or f"M{args.milestone_id}"
-    fam = ws.scaffold_lift(args.milestone_id, stmt, name=name)
+    try:
+        fam = ws.scaffold_lift(args.milestone_id, stmt, name=name)
+    except FileExistsError as e:
+        print(str(e))
+        return 1
     print(f"lift stub: {fam}\nedit family()/validation(), then: "
           f"telperion p2m attempt {args.milestone_id} --name {name}")
     return 0
@@ -838,6 +842,21 @@ def cmd_p2m_attempt(args) -> int:
         return 1
     lean_source = files[0]
 
+    # F5: if the lift defines PROOF_BODY, compose the final submission as the
+    # emitted file followed by a `theorem solution` block that closes the proof.
+    # This is required for I3: the submitted source must contain formal_statement
+    # verbatim and be named `solution`.  render_solution(imports=()) avoids a
+    # duplicate `import Mathlib` header since the emitted file already has one.
+    proof_body = getattr(mod, "PROOF_BODY", None)
+    formal_stmt_for_composition = getattr(mod, "FORMAL_STATEMENT", "")
+    if proof_body and formal_stmt_for_composition:
+        from .prove2me.attempt import render_solution
+        solution_block = render_solution(formal_stmt_for_composition, proof_body, imports=())
+        lean_source = lean_source + "\n" + solution_block
+    elif not proof_body:
+        print("hint: lift defines no PROOF_BODY; submitting raw emitted file "
+              "(will refuse unless it contains the formal statement verbatim)")
+
     items = [i for i in load_queue(ws.root / "queue.json")
              if i.milestone_id == args.milestone_id] \
         if (ws.root / "queue.json").exists() else []
@@ -855,11 +874,14 @@ def cmd_p2m_attempt(args) -> int:
     if not args.no_submit:
         c.ensure_auth()
     led = AttemptLedger(ws.root / "telperion_ledger.jsonl")
+    # Naming per vendored platform docs (Theorems.Thm_<id>); confirm/adjust
+    # in live acceptance against the actual module path the server expects.
     rec = run_attempt(
         c, ws, items[0], lean_source,
         tuple(type(e).__name__ for e in emitters),
         hashlib.sha256(fam_path.read_bytes()).hexdigest()[:16],
         led, no_submit=args.no_submit, explanation=args.explanation or "",
+        target_module=f"Theorems.Thm_{args.milestone_id}",
     )
     print(f"{rec.verdict}  milestone={rec.milestone_id} "
           f"submission={rec.submission_id or '-'}")
@@ -881,6 +903,23 @@ def cmd_p2m_coverage(args) -> int:
     rep = coverage_report()
     print(_json.dumps(rep, indent=1))
     return 0 if not rep["unknown_rule_classes"] else 1
+
+
+def cmd_p2m_sync(args) -> int:
+    """Clone or pull the official platform workspace repo.
+
+    NOTE: do NOT route through _p2m_workspace here — that helper calls
+    ensure_layout() unconditionally, which would create the directory structure
+    before sync_official clones into it.  sync_official calls ensure_layout
+    itself after a successful clone/pull.
+    """
+    from pathlib import Path as _P
+    from .prove2me.workspace import Workspace
+    root = _P(args.workspace) if args.workspace else None
+    ws = Workspace(root=root)
+    ws.sync_official(args.repo_url)
+    print(f"workspace synced: {ws.root}")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -1126,6 +1165,9 @@ def main(argv=None) -> int:
     q.set_defaults(fn=cmd_p2m_status)
     q = p2m_sub.add_parser("coverage", help="shape-rule vs registry coverage report")
     q.set_defaults(fn=cmd_p2m_coverage)
+    q = p2m_sub.add_parser("sync", help="clone or pull the official platform workspace repo")
+    q.add_argument("repo_url", help="git URL of the official prove2.me workspace repo"); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_sync)
 
     args = ap.parse_args(argv)
     return args.fn(args)

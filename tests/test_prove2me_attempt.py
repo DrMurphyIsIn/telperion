@@ -151,3 +151,97 @@ def test_run_attempt_rejection_is_ledgered_not_retried(tmp_path, monkeypatch):
                       _sleep=lambda s: None)
     assert rec.verdict == "Rejected" and "type mismatch" in rec.server_output
     assert led.rejected("m1")           # I5: recorded; caller re-triages, never blind-resubmits
+
+
+# --- F3: PollTimeout verdict ---
+
+def test_run_attempt_poll_timeout_verdict(tmp_path, monkeypatch):
+    """After max_polls PENDING responses, verdict is PollTimeout (not Rejected)."""
+    from telperion.prove2me.api import PlatformDown
+    responses = [
+        HttpResponse(200, json.dumps({"submission_id": "s_pt"})),
+        HttpResponse(200, json.dumps({"status": "PENDING"})),
+        HttpResponse(200, json.dumps({"status": "PENDING"})),
+    ]
+    c = _scripted_client(tmp_path, responses)
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: None)
+    rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                      _sleep=lambda s: None, max_polls=2)
+    assert rec.verdict == "PollTimeout"
+    assert "2 polls" in rec.server_output
+    assert rec.submission_id == "s_pt"
+    assert led.records()[0].verdict == "PollTimeout"
+    # PollTimeout counts as attempted (no-repeat rule)
+    assert led.attempted("m1")
+
+
+# --- F1: SubmittedUnknown on 5xx burst after verify ---
+
+def test_run_attempt_submitted_unknown_on_5xx_after_verify(tmp_path, monkeypatch):
+    """If verify() succeeds but verdict poll raises PlatformDown, ledger
+    SubmittedUnknown with the submission_id, then re-raise PlatformDown."""
+    from telperion.prove2me.api import PlatformDown
+
+    # verify returns OK; 4 × 500 responses exhaust backoff -> PlatformDown
+    five_xx = [HttpResponse(500, "err")] * 4
+    responses = [HttpResponse(200, json.dumps({"submission_id": "s_unk"}))] + five_xx
+    c = _scripted_client(tmp_path, responses)
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: None)
+
+    with pytest.raises(PlatformDown):
+        run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                    _sleep=lambda s: None)
+
+    # Ledger must contain SubmittedUnknown with the submission_id
+    records = led.records()
+    assert records, "ledger must not be empty after SubmittedUnknown"
+    assert records[-1].verdict == "SubmittedUnknown"
+    assert records[-1].submission_id == "s_unk"
+    # No-repeat rule must fire
+    assert led.attempted("m1")
+
+
+# --- F9: render_solution and check_solution_theorem strip := sorry variants ---
+
+def test_render_solution_strips_bare_sorry():
+    stmt = "theorem solution : (1 : ℚ) + 1 = 2 := sorry"
+    src = render_solution(stmt, "by norm_num")
+    assert ":= sorry" not in src
+    assert "by norm_num" in src
+
+
+def test_check_solution_theorem_allows_statement_with_bare_sorry_suffix():
+    """Formal statement ending in `:= sorry` (captain placeholder) must be
+    accepted after normalization — the sorry suffix is stripped before the
+    verbatim check so CertifyRefused is not incorrectly triggered."""
+    stmt_with_sorry = STMT + " := sorry"
+    # check_solution_theorem should pass: sorry stripped from want, GOOD contains stmt
+    check_solution_theorem(GOOD, stmt_with_sorry)
+
+
+# --- F4: target_module I2 wired ---
+
+def test_run_attempt_i2_target_module_wired(tmp_path, monkeypatch):
+    """run_attempt with target_module matching an import in lean_source triggers
+    CertifyRefused and ledgers it — no network call."""
+    src_with_self_import = "import Theorems.Thm_m1\n" + GOOD
+    c = _scripted_client(tmp_path, [])    # any request would IndexError
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: None)
+    rec = run_attempt(c, ws, item, src_with_self_import, ("IdentityEmitter",), "hash",
+                      led, no_submit=True, target_module="Theorems.Thm_m1",
+                      _sleep=lambda s: None)
+    assert rec.verdict == "CertifyRefused"
+    assert "I2" in rec.server_output
+    assert led.records()[0].verdict == "CertifyRefused"

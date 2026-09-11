@@ -7,8 +7,16 @@ formal_statement VERBATIM so faithfulness is reviewable at a glance.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
+
+# Seed lake-manifest.json from this path when present; avoids a full
+# `lake update` on first build (slow, requires network).
+# Depth: workspace.py -> prove2me/ -> telperion/ -> src/ -> <repo root> -> examples/
+_BUNDLED_MANIFEST = (
+    Path(__file__).parents[3] / "examples" / "prove2me_compat" / "lean" / "lake-manifest.json"
+)
 
 # From the platform workspace probe (examples/prove2me_compat/README.md).
 PLATFORM_TOOLCHAIN = "leanprover/lean4:v4.33.1"
@@ -39,12 +47,18 @@ A wrong lift fails certify() or the local build -- it cannot reach the platform.
 import sympy as sp
 
 from telperion import GridSpec, InequalityFamily
+from telperion.emit import DirectPolyaEmitter
 from telperion.workflow import ValidationReport
 
 # telperion must already be importable (the `telperion p2m` CLI process provides it)
 
 MILESTONE_ID = "{milestone_id}"
 FORMAL_STATEMENT = {statement_literal}
+# Lean proof of the VERBATIM formal statement; may reference the emitted
+# theorems above it.  Replace "by positivity" with the actual tactic/term.
+PROOF_BODY = "by positivity"
+
+EMITTERS = [DirectPolyaEmitter()]
 
 
 def family() -> InequalityFamily:
@@ -96,7 +110,8 @@ class Workspace:
         self.ensure_layout()
 
     def scratch_project(self, name: str, toolchain: str = PLATFORM_TOOLCHAIN,
-                        mathlib_rev: str = PLATFORM_MATHLIB_REV) -> Path:
+                        mathlib_rev: str = PLATFORM_MATHLIB_REV,
+                        _manifest_source: Path | None = None) -> Path:
         if not name.isidentifier():
             raise ValueError(f"scratch project name must be an identifier: {name!r}")
         proj = self.root / "attempts" / name / "lean"
@@ -106,6 +121,13 @@ class Workspace:
         (proj / "lakefile.toml").write_text(
             _LAKEFILE.format(name=name, mathlib_rev=mathlib_rev))
         (proj / f"{name}.lean").write_text(f"import {name}.{name}\n")
+        # Seed lake-manifest.json from the bundled example to skip `lake update`
+        # on first build (slow, requires network).  Falls back to `lake update`
+        # automatically if absent (live system without bundled manifest).
+        manifest_src = _manifest_source if _manifest_source is not None else _BUNDLED_MANIFEST
+        dest_manifest = proj / "lake-manifest.json"
+        if not dest_manifest.exists() and manifest_src.exists():
+            shutil.copy2(manifest_src, dest_manifest)
         return proj
 
     def scaffold_lift(self, milestone_id: str, formal_statement: str,
@@ -113,6 +135,11 @@ class Workspace:
         d = self.root / "attempts" / name
         d.mkdir(parents=True, exist_ok=True)
         fam = d / "family.py"
+        if fam.exists():
+            raise FileExistsError(
+                f"lift already exists at {fam}; delete it or choose a different "
+                f"--name to start fresh"
+            )
         fam.write_text(_LIFT_STUB.format(
             milestone_id=milestone_id,
             name=name,

@@ -33,7 +33,8 @@ class BuildFailed(Prove2MeError):
 def render_solution(formal_statement: str, proof_body: str,
                     imports: tuple[str, ...] = ("Mathlib",)) -> str:
     stmt = formal_statement.strip()
-    stmt = re.sub(r":=\s*by\s+sorry\s*$", "", stmt).rstrip()
+    # Strip both `:= by sorry` and `:= sorry` so the caller's proof_body replaces it.
+    stmt = re.sub(r":=\s*(by\s+)?sorry\s*$", "", stmt).rstrip()
     lines = [f"import {i}" for i in imports]
     lines += ["", f"{stmt} := {proof_body}", ""]
     return "\n".join(lines)
@@ -47,8 +48,10 @@ def check_no_sorry(src: str) -> None:
 def check_solution_theorem(src: str, formal_statement: str) -> None:
     if not re.search(r"\btheorem solution\b", src):
         raise InvariantViolation("I3: submitted theorem must be named `solution`")
+    # Strip both `:= by sorry` and `:= sorry` from the want normalization so
+    # the captain's placeholder proof body never blocks the verbatim check.
     want = " ".join(
-        re.sub(r":=\s*by\s+sorry\s*$", "", formal_statement.strip()).split()
+        re.sub(r":=\s*(by\s+)?sorry\s*$", "", formal_statement.strip()).split()
     )
     have = " ".join(src.split())
     if want not in have:
@@ -66,8 +69,15 @@ def check_no_self_import(src: str, target_module: str) -> None:
 
 
 def lake_build(project_dir: Path, runner=subprocess.run) -> None:
-    r = runner(["lake", "build"], cwd=str(project_dir),
+    try:
+        # Pre-warm the Mathlib binary cache; non-fatal if unavailable (cache miss
+        # is not an error; first build simply compiles from source).
+        runner(["lake", "exe", "cache", "get"], cwd=str(project_dir),
                capture_output=True, timeout=3600)
+        r = runner(["lake", "build"], cwd=str(project_dir),
+                   capture_output=True, timeout=3600)
+    except subprocess.TimeoutExpired as exc:
+        raise BuildFailed(f"I1: lake timed out in {project_dir}") from exc
     if r.returncode != 0:
         tail = (r.stdout + r.stderr).decode(errors="replace")[-2000:]
         raise BuildFailed(f"I1: lake build failed in {project_dir}:\n{tail}")
@@ -121,19 +131,30 @@ def run_attempt(
         return record("DryRun")
 
     submission_id = client.verify(lean_source, target_id=item.milestone_id)
-    for _ in range(max_polls):
-        v = client.verdict(submission_id)
-        status = v.get("status", "PENDING")
-        if status != "PENDING":
-            break
-        _sleep(poll_interval_s)
-    else:
-        return record("Rejected", "poll timeout", submission_id)
+    # F1: wrap poll + annotate so a 5xx burst after verify() still ledgers
+    # the fact that a submission was sent (SubmittedUnknown).
+    try:
+        for _ in range(max_polls):
+            v = client.verdict(submission_id)
+            status = v.get("status", "PENDING")
+            if status != "PENDING":
+                break
+            _sleep(poll_interval_s)
+        else:
+            return record("PollTimeout",
+                          f"poll timeout after {max_polls} polls",
+                          submission_id)
 
-    output = v.get("output", "")
-    if status in ("Proved", "Disproved"):
-        if explanation:
-            client.annotate(submission_id, explanation)      # I4
-        return record(status, output, submission_id)
-    # I5: ledger the rejection; the CALLER re-triages -- never resubmit here.
-    return record("Rejected", output, submission_id)
+        output = v.get("output", "")
+        if status in ("Proved", "Disproved"):
+            if explanation:
+                client.annotate(submission_id, explanation)      # I4
+            return record(status, output, submission_id)
+        # I5: ledger the rejection; the CALLER re-triages -- never resubmit here.
+        return record("Rejected", output, submission_id)
+    except Prove2MeError as exc:
+        # Submission was sent but verdict is unknown (e.g. 5xx burst on poll).
+        # Ledger SubmittedUnknown so the no-repeat rule fires; re-raise so the
+        # caller can surface the error rather than silently swallowing it.
+        record("SubmittedUnknown", str(exc), submission_id)
+        raise

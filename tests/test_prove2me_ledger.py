@@ -46,6 +46,39 @@ def test_dry_runs_do_not_count_as_attempted(tmp_path):
     assert led.win_rate("SOSEmitter") is None
 
 
+# --- F2: SubmittedUnknown and PollTimeout taxonomy ---
+
+def test_submitted_unknown_counts_as_attempted_not_in_win_rate(tmp_path):
+    """SubmittedUnknown counts as attempted (no-repeat) but is excluded from
+    win_rate denominators — same as DryRun exclusion from win_rate but
+    unlike DryRun it DOES count for attempted()."""
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    led.append(rec(verdict="SubmittedUnknown"))
+    assert led.attempted("m1"), "SubmittedUnknown must count as attempted"
+    assert led.win_rate("SOSEmitter") is None, \
+        "SubmittedUnknown must be excluded from win_rate denominator"
+
+
+def test_poll_timeout_counts_as_attempted_not_in_win_rate(tmp_path):
+    """PollTimeout has the same semantics as SubmittedUnknown."""
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    led.append(rec(verdict="PollTimeout"))
+    assert led.attempted("m1"), "PollTimeout must count as attempted"
+    assert led.win_rate("SOSEmitter") is None, \
+        "PollTimeout must be excluded from win_rate denominator"
+
+
+def test_win_rate_excludes_all_unscored_verdicts(tmp_path):
+    """win_rate denominator excludes DryRun, SubmittedUnknown, PollTimeout."""
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    led.append(rec(verdict="Proved"))          # win
+    led.append(rec(milestone="m2", verdict="DryRun"))
+    led.append(rec(milestone="m3", verdict="SubmittedUnknown"))
+    led.append(rec(milestone="m4", verdict="PollTimeout"))
+    # Only the Proved record should be in denominator => 1/1 = 1.0
+    assert led.win_rate("SOSEmitter") == 1.0
+
+
 def test_corrupted_trailing_jsonl_line_skipped(tmp_path):
     """Interrupted append (truncated trailing line) is skipped; earlier records survive."""
     p = tmp_path / "ledger.jsonl"

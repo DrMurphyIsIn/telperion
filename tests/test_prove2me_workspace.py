@@ -54,3 +54,41 @@ def test_scaffold_lift_generated_python_is_syntactically_valid(tmp_path):
     ws.ensure_layout()
     fam = ws.scaffold_lift("mile99", "theorem foo : True := trivial", name="Foo")
     compile(fam.read_text(), str(fam), "exec")  # raises SyntaxError on failure
+
+
+# --- F8: scaffold_lift overwrite guard ---
+
+def test_scaffold_lift_raises_file_exists_error_on_overwrite(tmp_path):
+    """scaffold_lift raises FileExistsError when family.py already exists."""
+    import pytest
+    ws = Workspace(root=tmp_path / "wsp")
+    ws.ensure_layout()
+    ws.scaffold_lift("mile1", "theorem solution : True := trivial", name="M1")
+    with pytest.raises(FileExistsError, match="already exists"):
+        ws.scaffold_lift("mile1", "theorem solution : True := trivial", name="M1")
+
+
+# --- F6a: scratch_project copies bundled lake-manifest.json ---
+
+def test_scratch_project_copies_bundled_manifest_when_present(tmp_path):
+    """scratch_project seeds lake-manifest.json from a supplied source path."""
+    from telperion.prove2me.workspace import Workspace
+    ws = Workspace(root=tmp_path / "wsp")
+    ws.ensure_layout()
+    # Provide a fake manifest source
+    fake_manifest = tmp_path / "fake-lake-manifest.json"
+    fake_manifest.write_text('{"version": 7, "packages": []}')
+    proj = ws.scratch_project("Mtest", _manifest_source=fake_manifest)
+    dest = proj / "lake-manifest.json"
+    assert dest.exists(), "lake-manifest.json should be copied into scratch project"
+    assert '"packages"' in dest.read_text()
+
+
+def test_scratch_project_skips_manifest_when_source_absent(tmp_path):
+    """scratch_project silently skips manifest copy when source doesn't exist."""
+    from pathlib import Path
+    ws = Workspace(root=tmp_path / "wsp")
+    ws.ensure_layout()
+    proj = ws.scratch_project("Mtest2", _manifest_source=Path("/nonexistent/manifest.json"))
+    dest = proj / "lake-manifest.json"
+    assert not dest.exists(), "no manifest should appear when source is absent"
