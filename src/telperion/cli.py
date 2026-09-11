@@ -733,6 +733,146 @@ def cmd_source_mine(args) -> int:
     return 0
 
 
+def _p2m_workspace(args):
+    from pathlib import Path as _P
+    from .prove2me.workspace import Workspace
+    ws = Workspace(root=_P(args.workspace) if args.workspace else None)
+    ws.ensure_layout()
+    return ws
+
+
+def cmd_p2m_login(args) -> int:
+    """Establish the auth chain: credentials -> 30-day key -> hourly token."""
+    import getpass
+    from .prove2me.api import Prove2MeClient
+    ws = _p2m_workspace(args)
+    c = Prove2MeClient(workspace=ws.root)
+    email = args.email or input("prove2.me email: ")
+    c.login(email, getpass.getpass("password: "))
+    c.mint_api_key()
+    c.refresh()
+    print(f"authenticated; tokens in {c._tokens_path}")
+    return 0
+
+
+def cmd_p2m_missions(args) -> int:
+    """List platform missions."""
+    from .prove2me.api import Prove2MeClient
+    ws = _p2m_workspace(args)
+    c = Prove2MeClient(workspace=ws.root)
+    c.ensure_auth()
+    for m in c.missions():
+        print(f"{m.get('id')}  {m.get('status', '?'):<10} {m.get('title', '')[:70]}")
+    return 0
+
+
+def cmd_p2m_triage(args) -> int:
+    """Rank open milestones vs emitter registry."""
+    from .prove2me.api import Prove2MeClient
+    from .prove2me.ledger import AttemptLedger
+    from .prove2me.triage import save_queue, triage
+    ws = _p2m_workspace(args)
+    c = Prove2MeClient(workspace=ws.root)
+    c.ensure_auth()
+    milestones = []
+    for m in c.missions():
+        milestones.extend(c.milestones(str(m["id"])))
+    led = AttemptLedger(ws.root / "telperion_ledger.jsonl")
+    q = triage(milestones, ledger=led)
+    save_queue(q, ws.root / "queue.json")
+    for item in q[:20]:
+        print(f"{item.score:5.2f}  {item.milestone_id:<16} "
+              f"{','.join(item.emitter_classes[:3])}")
+    print(f"{len(q)} certificate-shaped milestones -> {ws.root / 'queue.json'}")
+    return 0
+
+
+def cmd_p2m_lift(args) -> int:
+    """Scaffold a lift family for one milestone (statement fetched or passed)."""
+    ws = _p2m_workspace(args)
+    stmt = args.statement
+    if not stmt:
+        from .prove2me.api import Prove2MeClient
+        c = Prove2MeClient(workspace=ws.root)
+        c.ensure_auth()
+        stmt = c.theorem(args.milestone_id).get("formal_statement", "")
+        if not stmt:
+            print("no formal_statement on that milestone")
+            return 1
+    name = args.name or f"M{args.milestone_id}"
+    fam = ws.scaffold_lift(args.milestone_id, stmt, name=name)
+    print(f"lift stub: {fam}\nedit family()/validation(), then: "
+          f"telperion p2m attempt {args.milestone_id} --name {name}")
+    return 0
+
+
+def cmd_p2m_attempt(args) -> int:
+    """Certify+emit the lift, run invariants, build locally, submit (unless --no-submit)."""
+    import hashlib
+    import importlib.util
+    from .prove2me.api import Prove2MeClient
+    from .prove2me.attempt import run_attempt
+    from .prove2me.ledger import AttemptLedger
+    from .prove2me.triage import load_queue
+    ws = _p2m_workspace(args)
+    name = args.name or f"M{args.milestone_id}"
+    fam_path = ws.root / "attempts" / name / "family.py"
+    if not fam_path.exists():
+        print(f"no lift at {fam_path}: run `telperion p2m lift` first")
+        return 1
+    spec = importlib.util.spec_from_file_location(f"p2m_lift_{name}", fam_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    from .emit_facts import IdentityEmitter
+    from .lean import LeanProfile
+    from .workflow import certify, emit
+    emitters = getattr(mod, "EMITTERS", None) or [IdentityEmitter()]
+    res = emit(certify(mod.family()), LeanProfile(), emitters, mod.validation(),
+               file_name=f"{name}.lean")
+    # res.files is a dict of filename -> Lean source text; extract the single file.
+    (lean_source,) = res.files.values()
+
+    items = [i for i in load_queue(ws.root / "queue.json")
+             if i.milestone_id == args.milestone_id] \
+        if (ws.root / "queue.json").exists() else []
+    if not items:
+        from .prove2me.triage import QueueItem
+        items = [QueueItem(args.milestone_id, "", mod.FORMAL_STATEMENT,
+                           tuple(type(e).__name__ for e in emitters), 0.0)]
+
+    c = Prove2MeClient(workspace=ws.root)
+    if not args.no_submit:
+        c.ensure_auth()
+    led = AttemptLedger(ws.root / "telperion_ledger.jsonl")
+    rec = run_attempt(
+        c, ws, items[0], lean_source,
+        tuple(type(e).__name__ for e in emitters),
+        hashlib.sha256(fam_path.read_bytes()).hexdigest()[:16],
+        led, no_submit=args.no_submit, explanation=args.explanation or "",
+    )
+    print(f"{rec.verdict}  milestone={rec.milestone_id} "
+          f"submission={rec.submission_id or '-'}")
+    return 0 if rec.verdict in ("Proved", "Disproved", "DryRun") else 1
+
+
+def cmd_p2m_status(args) -> int:
+    """Print attempt ledger summary."""
+    from .prove2me.ledger import AttemptLedger
+    ws = _p2m_workspace(args)
+    print(AttemptLedger(ws.root / "telperion_ledger.jsonl").render_status())
+    return 0
+
+
+def cmd_p2m_coverage(args) -> int:
+    """Shape-rule vs registry coverage report."""
+    import json as _json
+    from .prove2me.triage import coverage_report
+    rep = coverage_report()
+    print(_json.dumps(rep, indent=1))
+    return 0 if not rep["unknown_rule_classes"] else 1
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -948,6 +1088,34 @@ def main(argv=None) -> int:
     p.add_argument("--model", default="qwen2.5-coder:7b")
     p.add_argument("--no-llm", action="store_true")
     p.set_defaults(fn=cmd_evolve)
+
+    p2m = sub.add_parser("p2m", help="prove2.me solver bridge (see docs/PROVE2ME_BRIDGE_DESIGN_2026-09-11.md)")
+    p2m_sub = p2m.add_subparsers(dest="p2m_cmd", required=True)
+
+    def _wsopt(p):
+        p.add_argument("--workspace", default=None,
+                       help="workspace root (default $HOME/prove2me_workspace)")
+
+    q = p2m_sub.add_parser("login", help="auth chain: credentials -> key -> token")
+    q.add_argument("--email", default=None); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_login)
+    q = p2m_sub.add_parser("missions", help="list platform missions"); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_missions)
+    q = p2m_sub.add_parser("triage", help="rank open milestones vs emitter registry"); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_triage)
+    q = p2m_sub.add_parser("lift", help="scaffold a lift family for one milestone")
+    q.add_argument("milestone_id"); q.add_argument("--statement", default=None)
+    q.add_argument("--name", default=None); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_lift)
+    q = p2m_sub.add_parser("attempt", help="certify, emit, gate, and submit one milestone")
+    q.add_argument("milestone_id"); q.add_argument("--name", default=None)
+    q.add_argument("--no-submit", action="store_true")
+    q.add_argument("--explanation", default=None); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_attempt)
+    q = p2m_sub.add_parser("status", help="attempt ledger summary"); _wsopt(q)
+    q.set_defaults(fn=cmd_p2m_status)
+    q = p2m_sub.add_parser("coverage", help="shape-rule vs registry coverage report")
+    q.set_defaults(fn=cmd_p2m_coverage)
 
     args = ap.parse_args(argv)
     return args.fn(args)
