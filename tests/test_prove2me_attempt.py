@@ -106,6 +106,35 @@ def test_run_attempt_submits_polls_annotates_and_ledgers(tmp_path, monkeypatch):
     assert not responses        # all four calls consumed, including annotate
 
 
+def test_run_attempt_certify_refused_ledgered(tmp_path, monkeypatch):
+    """InvariantViolation (sorry) in run_attempt returns CertifyRefused, no network."""
+    c = _scripted_client(tmp_path, [])          # any request would IndexError
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    sorry_source = GOOD.replace("by norm_num", "by sorry")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    rec = run_attempt(c, ws, item, sorry_source, ("IdentityEmitter",), "hash",
+                      led, _sleep=lambda s: None)
+    assert rec.verdict == "CertifyRefused"
+    assert led.records()[0].verdict == "CertifyRefused"
+
+
+def test_run_attempt_build_failed_ledgered_no_network(tmp_path, monkeypatch):
+    """BuildFailed from lake_build is ledgered; no network call is made."""
+    c = _scripted_client(tmp_path, [])          # any request would IndexError
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    def _failing_build(project_dir, runner=None):
+        raise BuildFailed("I1: lake build failed in /tmp:\nunsolved goals")
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build", _failing_build)
+    rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash",
+                      led, _sleep=lambda s: None)
+    assert rec.verdict == "BuildFailed"
+    assert "unsolved goals" in rec.server_output
+    assert led.records()[0].verdict == "BuildFailed"
+
+
 def test_run_attempt_rejection_is_ledgered_not_retried(tmp_path, monkeypatch):
     responses = [
         HttpResponse(200, json.dumps({"submission_id": "s8"})),

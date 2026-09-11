@@ -10,6 +10,7 @@ proceed with a caveat.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import re
 import subprocess
 import time
@@ -98,15 +99,23 @@ def run_attempt(
         return rec
 
     # I2 + I3: source checks before anything expensive
-    check_no_sorry(lean_source)
-    check_solution_theorem(lean_source, item.statement)
-    check_no_self_import(lean_source, target_module)
+    try:
+        check_no_sorry(lean_source)
+        check_solution_theorem(lean_source, item.statement)
+        check_no_self_import(lean_source, target_module)
+    except InvariantViolation as e:
+        return record("CertifyRefused", str(e))
 
     # I1: green local build against the platform pin
-    name = f"M{re.sub(r'[^A-Za-z0-9]', '', item.milestone_id)}"
+    # Stable suffix prevents milestone_ids differing only in punctuation from colliding.
+    suffix = hashlib.sha256(item.milestone_id.encode()).hexdigest()[:6]
+    name = f"M{re.sub(r'[^A-Za-z0-9]', '', item.milestone_id)}_{suffix}"
     proj = workspace.scratch_project(name)
-    (proj / name / f"{name}.lean").write_text(lean_source)
-    lake_build(proj)
+    (proj / name / f"{name}.lean").write_text(lean_source, encoding="utf-8")
+    try:
+        lake_build(proj)
+    except BuildFailed as e:
+        return record("BuildFailed", str(e))
 
     if no_submit:
         return record("DryRun")
