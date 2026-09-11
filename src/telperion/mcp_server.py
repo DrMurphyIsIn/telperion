@@ -244,6 +244,57 @@ def relax(family: str, axis: str, iters: int = 200) -> str:
 
 
 @mcp.tool()
+def p2m_triage() -> str:
+    """Rank prove2.me open milestones against Telperion's emitter registry
+    (certificate-first triage). Writes queue.json in the workspace; returns
+    the top of the ranked queue. Requires prior `telperion p2m login`."""
+    code, out = _cli(["p2m", "triage"])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def p2m_lift(milestone_id: str, name: str = "") -> str:
+    """Scaffold a lift family (Lean formal_statement embedded verbatim) for one
+    prove2.me milestone. Edit family()/validation() before attempting."""
+    args = ["p2m", "lift", milestone_id]
+    if name:
+        args += ["--name", name]
+    code, out = _cli(args)
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def p2m_attempt(milestone_id: str, name: str = "", no_submit: bool = False,
+                explanation: str = "") -> str:
+    """Certify+emit the lift, enforce invariants I1-I5 (local lake build gate),
+    submit to prove2.me unless no_submit, poll the verdict, ledger the result."""
+    args = ["p2m", "attempt", milestone_id]
+    if name:
+        args += ["--name", name]
+    if no_submit:
+        args += ["--no-submit"]
+    if explanation:
+        args += ["--explanation", explanation]
+    code, out = _cli(args)
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def p2m_status() -> str:
+    """Attempt-ledger summary: attempts, proved count, recent verdicts."""
+    code, out = _cli(["p2m", "status"])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def p2m_coverage() -> str:
+    """Shape-rule vs emitter-registry coverage: unknown rule classes (error)
+    and registry emitters no rule can select (named gap)."""
+    code, out = _cli(["p2m", "coverage"])
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
 def read_manifest(frozen_dir: str) -> str:
     """Read a frozen directory's provenance manifest (family, input hash,
     tool version, files, theorem count)."""
