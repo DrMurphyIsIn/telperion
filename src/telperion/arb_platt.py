@@ -73,19 +73,23 @@ def _fmpz_to_int(f) -> int:
     return int(_L.fmpz_get_str(None, 10, f).decode())
 
 
-def zeta_nzeros(t: int, prec: int = 96) -> tuple[Fraction, Fraction]:
+def zeta_nzeros(t, prec: int = 96) -> tuple[Fraction, Fraction]:
     """Rigorous enclosure of N(t), the number of zeta zeros with 0 < Im <= t.
 
-    `t` is taken as an exact integer (band edges are integers).  Returns the
+    `t` is an exact rational (integer or Fraction band edge).  Returns the
     rational [lo, hi] enclosure; when hi - lo < 1 the integer N(t) is pinned."""
     if not PLATT_AVAILABLE:
         raise RuntimeError("libflint with Platt machinery not found")
+    t = Fraction(t)
     # arb_t: single arb_struct
     res = _L._arb_vec_init(1)
     tt = _L._arb_vec_init(1)
     try:
-        ft = _fmpz_t(t)
+        ft = _fmpz_t(t.numerator)
         _L.arb_set_fmpz(ctypes.c_void_p(tt), ft)
+        if t.denominator != 1:
+            _L.arb_div_ui(ctypes.c_void_p(tt), ctypes.c_void_p(tt),
+                          ctypes.c_ulong(t.denominator), ctypes.c_long(prec))
         _L.acb_dirichlet_zeta_nzeros(ctypes.c_void_p(res), ctypes.c_void_p(tt),
                                      ctypes.c_long(prec))
         a, b, e = _fmpz_t(0), _fmpz_t(0), _fmpz_t(0)
@@ -103,13 +107,14 @@ def zeta_nzeros(t: int, prec: int = 96) -> tuple[Fraction, Fraction]:
         _L._arb_vec_clear(ctypes.c_void_p(tt), 1)
 
 
-def zeros_in_interval(im_lo: int, im_hi: int, prec: int = 128
+def zeros_in_interval(im_lo, im_hi, prec: int = 128
                       ) -> list[tuple[Fraction, Fraction]]:
-    """Enclosures of every zero ordinate in [im_lo, im_hi] (integer band edges).
+    """Enclosures of every zero ordinate in [im_lo, im_hi] (rational band edges).
 
     Pins N(im_lo) and N(im_hi) rigorously, fetches the consecutive zeros by
     index, and checks they all fall inside the interval with their neighbours
     outside — a fully rigorous (Arb-level) zero inventory for the band."""
+    im_lo, im_hi = Fraction(im_lo), Fraction(im_hi)
     nlo_l, nlo_h = zeta_nzeros(im_lo)
     nhi_l, nhi_h = zeta_nzeros(im_hi)
     import math as _m
