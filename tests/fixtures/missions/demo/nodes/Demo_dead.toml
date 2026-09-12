@@ -1,0 +1,9 @@
+created = "2026-09-11"
+depends_on = []
+deprecated_reason = "Superseded by Demo.lemma_a"
+kind = "lemma"
+name = "Demo.dead"
+statement_module = "Statements.Demo_dead"
+status = "deprecated"
+title = "Deprecated dead node"
+updated = "2026-09-11"

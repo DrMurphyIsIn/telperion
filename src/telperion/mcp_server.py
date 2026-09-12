@@ -267,6 +267,26 @@ def methodology() -> str:
     return doc.read_text() if doc.exists() else "METHODOLOGY.md not found"
 
 
+@mcp.tool()
+def mission_status(campaign: str = "") -> str:
+    """One-glance status tree of an internal mission campaign (all campaigns
+    when empty): node statuses, reductions' closure_clean, claims."""
+    args = ["mission", "status"] + ([campaign] if campaign else [])
+    code, out = _cli(args)
+    return out.strip() or f"exit {code}"
+
+
+@mcp.tool()
+def mission_open_leaves(campaign: str = "", include_claimed: bool = False) -> str:
+    """The live frontier: open nodes whose dependencies are all proved,
+    minus freshly-claimed ones (include_claimed=True shows those too)."""
+    args = ["mission", "open-leaves"] + ([campaign] if campaign else [])
+    if include_claimed:
+        args.append("--all")
+    code, out = _cli(args)
+    return out.strip() or f"exit {code}"
+
+
 def main() -> None:  # entry point: telperion-mcp
     mcp.run()
 

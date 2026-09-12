@@ -1,0 +1,8 @@
+created = "2026-09-11"
+depends_on = []
+kind = "lemma"
+name = "Demo.lemma_b"
+statement_module = "Statements.Demo_lemma_b"
+status = "draft"
+title = "Demo lemma B"
+updated = "2026-09-11"

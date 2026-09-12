@@ -300,6 +300,19 @@ REGISTRY: dict[str, SensitivityStance] = {
     "RationalSOSEmitter": _S(CERTIFICATE_SENSITIVE,
                              "Artin: q·p is SOS for nonneg-but-not-SOS p; the "
                              "denominator q and the SOS of q·p are load-bearing"),
+    "UnitModulusSOSEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "Hermitian conjugate-pair SOS: 2 − u^m − conj(u^m) = ‖1 − u^m‖² under "
+        "|u| = 1, an exact identity discharged via Complex.mul_conj; corrupt "
+        "the pairing and the identity breaks (stance for the #467 emitter, "
+        "missing on origin/main; classified here to green the gate)",
+        neg_control=NegControlStance(
+            NEG_CONTROL_DECLARED_UNWIRED,
+            "falsifiable in principle (a forged pairing is kernel-rejected) but "
+            "no adapter in negative_control_harness.ADAPTERS yet; the emitter "
+            "itself refuses the degenerate m < 1 control",
+        ),
+    ),
     "BernsteinEmitter": _S(STRUCTURALLY_NONVACUOUS,
                            "interval positivity via nonnegative Bernstein "
                            "coefficients; positivity by structure"),
