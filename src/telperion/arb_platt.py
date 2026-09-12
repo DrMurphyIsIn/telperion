@@ -22,10 +22,12 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import glob
+import math
 import os
 from fractions import Fraction
 
-__all__ = ["hardy_z_zeros", "zeta_nzeros", "zeros_in_interval", "PLATT_AVAILABLE"]
+__all__ = ["hardy_z_zeros", "zeta_nzeros", "zeros_in_interval", "platt_grid",
+           "PLATT_AVAILABLE", "PLATT_GRID_AVAILABLE"]
 
 # arb_struct in flint 3.x / arb 2.x on 64-bit:
 #   arf_struct { fmpz exp; mp_size_t size; mantissa (2 words) } = 32 bytes
@@ -54,17 +56,24 @@ if _LIB_PATH:
         for fn in ("_arb_vec_init", "_arb_vec_clear", "acb_dirichlet_hardy_z_zeros",
                    "arb_get_interval_fmpz_2exp", "fmpz_init", "fmpz_clear",
                    "fmpz_get_str", "acb_dirichlet_zeta_nzeros", "arb_init",
-                   "arb_clear", "arb_set_fmpz", "arb_div_ui"):
+                   "arb_clear", "arb_set_fmpz", "arb_div_ui", "fmpz_set_si",
+                   "acb_dirichlet_platt_scaled_lambda_vec"):
             getattr(_L, fn)
         _L._arb_vec_init.restype = ctypes.c_void_p
         _L._arb_vec_init.argtypes = [ctypes.c_long]
         _L._arb_vec_clear.argtypes = [ctypes.c_void_p, ctypes.c_long]
         _L.acb_dirichlet_hardy_z_zeros.restype = None
+        _L.acb_dirichlet_platt_scaled_lambda_vec.restype = None
+        _L.arb_get_interval_fmpz_2exp.restype = None
         _L.fmpz_get_str.restype = ctypes.c_char_p
     except (OSError, AttributeError):
         _L = None
 
 PLATT_AVAILABLE = _L is not None
+# platt_grid needs the FFT multieval entry point (present in this libflint 18.x
+# via the auto-tuning `scaled_lambda_vec` wrapper); guard it separately so the
+# rest of the module still loads on a libflint that lacks it.
+PLATT_GRID_AVAILABLE = _L is not None and hasattr(_L, "acb_dirichlet_platt_scaled_lambda_vec")
 
 _fmpz_t = ctypes.c_long * 1
 
@@ -168,3 +177,111 @@ def hardy_z_zeros(n_start: int, count: int, prec: int = 128) -> list[tuple[Fract
         return out
     finally:
         _L._arb_vec_clear(ctypes.c_void_p(vec), count)
+
+
+# ---------------------------------------------------------------------------
+# FFT-amortized grid evaluation (Program Anduril C1)
+# ---------------------------------------------------------------------------
+# `acb_dirichlet_platt_scaled_lambda_vec(res, T, A, B, prec)` evaluates
+#   scaled-Lambda(t_k) = Lambda(1/2 + i t_k) * e^{pi t_k / 4}
+# simultaneously at N = A*B grid points t_k = T - B/2 + k/A  (k = 0..N-1)
+# using Platt's discrete-Fourier multi-evaluation (it is the auto-tuning wrapper
+# over `acb_dirichlet_platt_multieval`, which picks the h/J/K/sigma window
+# parameters internally).  The e^{pi t/4} factor is STRICTLY POSITIVE, so the
+# SIGN of each grid value equals the sign of Lambda(1/2 + i t_k): the sign-box
+# semantics are identical to per-point `enclose_lambda`, and the certificate only
+# ever consumes the COUNT of sign changes.  Same Arb trust class as the rest of
+# this module -- a wrong grid yields a refused/mismatched count, never a wrong
+# certificate.  conjecture1_proved = False.
+
+
+def platt_grid_params(im_lo, im_hi, *, spacing_den: int = 4, margin: int = 12
+                      ) -> tuple[int, int, int]:
+    """Choose (T_center, A, B) for a scaled-Lambda grid covering [im_lo, im_hi].
+
+    `A` = grid density (points per unit t; spacing = 1/A).  Default A = 4 gives
+    spacing 0.25, comfortably below the mean zero spacing ~2*pi/log T (~0.6 at
+    T~1e4, ~0.45 at T~1e6); close pairs tighter than the spacing are caught by
+    the caller's inventory cross-check and trigger the midpoint fallback.
+
+    `B` = grid span (grid runs T-B/2 .. T+B/2); chosen as the smallest even
+    integer >= band width + 2*margin so the band sits inside the grid with slack
+    on both sides (the DFT windows degrade near the grid edge).  `N = A*B` is
+    even by construction (A>=1 integer, B even)."""
+    im_lo = Fraction(im_lo)
+    im_hi = Fraction(im_hi)
+    if not im_lo < im_hi:
+        raise ValueError(f"platt_grid_params: need im_lo < im_hi, got [{im_lo}, {im_hi}]")
+    center = (im_lo + im_hi) / 2
+    T_center = int(center.__round__())  # multieval T is an integer fmpz
+    A = int(spacing_den)
+    width = float(im_hi - im_lo)
+    need = width + 2 * margin
+    # smallest even B with T_center - B/2 <= im_lo and T_center + B/2 >= im_hi,
+    # plus the requested margin.
+    half = max(float(im_hi) - T_center, T_center - float(im_lo)) + margin
+    B = 2 * int(math.ceil(half))
+    if B < int(math.ceil(need)):
+        B = 2 * int(math.ceil(need / 2))
+    if B % 2:
+        B += 1
+    return T_center, A, B
+
+
+def platt_grid(im_lo, im_hi, *, prec: int = 300, spacing_den: int = 4,
+               margin: int = 12, A: int | None = None, B: int | None = None,
+               T_center: int | None = None
+               ) -> list[tuple[Fraction, tuple[Fraction, Fraction]]]:
+    """Rigorous sign-boxes of scaled-Lambda(1/2 + i t_k) on a uniform grid.
+
+    Returns `[(t_k, (lo, hi)), ...]` for grid points t_k that fall inside
+    [im_lo, im_hi], each with the exact rational outward-dyadic enclosure of the
+    scaled-Lambda value at t_k (extracted via `arb_get_interval_fmpz_2exp`, no
+    decimal parsing).  Points outside the band are dropped.  A single FFT call
+    prices the whole band -- the remaining sqrt(T) per-point cost of the
+    per-point sweep is amortised away.
+
+    The box SIGN is the sign of Lambda(1/2 + i t_k) (positive e^{pi t/4} scaling);
+    feed the result to `sign_change_count` exactly like `enclose_lambda` boxes."""
+    if not PLATT_GRID_AVAILABLE:
+        raise RuntimeError("libflint scaled_lambda_vec (platt multieval) not found")
+    im_lo = Fraction(im_lo)
+    im_hi = Fraction(im_hi)
+    if A is None or B is None or T_center is None:
+        T_center, A, B = platt_grid_params(im_lo, im_hi,
+                                           spacing_den=spacing_den, margin=margin)
+    N = A * B
+    if N % 2:
+        raise ValueError(f"platt_grid: N = A*B must be even, got A={A} B={B}")
+    res = _L._arb_vec_init(N)
+    T = _fmpz_t(0)
+    _L.fmpz_init(T)
+    _L.fmpz_set_si(T, ctypes.c_long(T_center))
+    try:
+        _L.acb_dirichlet_platt_scaled_lambda_vec(
+            ctypes.c_void_p(res), T, ctypes.c_long(A), ctypes.c_long(B),
+            ctypes.c_long(prec))
+        out: list[tuple[Fraction, tuple[Fraction, Fraction]]] = []
+        a, b, e = _fmpz_t(0), _fmpz_t(0), _fmpz_t(0)
+        for fz in (a, b, e):
+            _L.fmpz_init(fz)
+        try:
+            for k in range(N):
+                t_k = Fraction(T_center) - Fraction(B, 2) + Fraction(k, A)
+                if t_k < im_lo or t_k > im_hi:
+                    continue
+                p = ctypes.c_void_p(res + k * _ARB_SIZE)
+                _L.arb_get_interval_fmpz_2exp(a, b, e, p)
+                ia, ib, ie = _fmpz_to_int(a), _fmpz_to_int(b), _fmpz_to_int(e)
+                lo = Fraction(ia) * Fraction(2) ** ie
+                hi = Fraction(ib) * Fraction(2) ** ie
+                if not lo <= hi:
+                    raise RuntimeError(f"platt_grid: non-ordered box at k={k}")
+                out.append((t_k, (lo, hi)))
+            return out
+        finally:
+            for fz in (a, b, e):
+                _L.fmpz_clear(fz)
+    finally:
+        _L._arb_vec_clear(ctypes.c_void_p(res), N)
+        _L.fmpz_clear(T)
