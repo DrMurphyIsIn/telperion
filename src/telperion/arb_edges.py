@@ -148,9 +148,28 @@ def argchange_edge(kind, fixed, lo, hi, prec=192, seg_prec=192, max_depth=28):
             return _zeta_point(t, fixed, prec)
         return _gammaR_point(fixed, t, prec)
 
+    # Seed the subdivision at a sane piece length BEFORE adaptive refinement:
+    # evaluating the continuum enclosure over a whole 30-40-height edge means a
+    # radius-20 ball through acb -- pathologically slow and hopelessly wide.
+    # Seeds are sized to the argument speed of each edge kind:
+    #   zeta_vert @ sigma=2 : arg wiggles slowly (Dirichlet regime)   -> ~2.0
+    #   gammaR_vert         : arg rotates ~ (1/2) log(T/2pi) per unit -> ~0.5/logT
+    #   zeta_horiz          : 3-unit strip crossing, zeros nearby      -> ~1/8
+    import math as _m
+    span = hi - lo
+    if kind == "zeta_vert":
+        seed_len = Fraction(2)
+    elif kind == "gammaR_vert":
+        logt = _m.log(max(float(lo), 8.0) / (2 * _m.pi))
+        seed_len = Fraction(1, max(2, int(_m.ceil(logt))))
+    else:
+        seed_len = Fraction(1, 8)
+    n_seed = max(1, int(_m.ceil(float(span / seed_len))))
+
     # adaptive piece list: (a, b, witness r)
     pieces = []
-    stack = [(lo, hi, 0)]
+    stack = [(lo + span * k / n_seed, lo + span * (k + 1) / n_seed, 0)
+             for k in range(n_seed)]
     while stack:
         a, b, depth = stack.pop()
         box = seg_box(a, b)
