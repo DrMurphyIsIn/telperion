@@ -265,8 +265,17 @@ class Prove2MeClient:
     # -- endpoints ----------------------------------------------------------
 
     def missions(self) -> list:
-        out = self.request("GET", "/missions")
-        return out if isinstance(out, list) else out.get("missions", [])
+        """All missions, paginated (live API defaults to 20/page; limit+offset
+        confirmed 2026-09-11)."""
+        all_missions: list = []
+        offset = 0
+        while True:
+            out = self.request("GET", f"/missions?limit=100&offset={offset}")
+            batch = out if isinstance(out, list) else out.get("missions", [])
+            all_missions.extend(batch)
+            if len(batch) < 100:
+                return all_missions
+            offset += 100
 
     def milestones(self, mission_id: str) -> list:
         out = self.request("GET", f"/missions/{mission_id}/milestones")
