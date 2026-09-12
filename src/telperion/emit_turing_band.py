@@ -16,13 +16,83 @@ conjecture1_proved = False.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 from fractions import Fraction
 
 import sympy as sp
 
 from telperion.emit_box_localization import _rat_lean, choose_ball, _heartbeats_for
 
-__all__ = ["emit_turing_band_instantiation", "choose_ball_tight"]
+__all__ = [
+    "emit_turing_band_instantiation", "choose_ball_tight",
+    "TuringBandCertificate", "turing_band_certificate",
+    "certify_turing_band_point", "TuringBandEmitter", "turing_band_family",
+]
+
+_EDGE_KEYS = ("av2", "aht", "ahb", "ag1", "ag2")
+
+
+@dataclass(frozen=True)
+class TuringBandCertificate:
+    """Self-checked T5 band certificate: the exact data the emitted Lean states.
+
+    `edges` holds the OUTWARD-ROUNDED rational literals that appear verbatim in
+    the emitted `hArbT` hypothesis (not the raw Arb dyadics).  Constructed only
+    through `turing_band_certificate`, whose refusal guards enforce (in exact
+    rational arithmetic) everything the kernel's `hpin` side conditions need."""
+
+    n: int
+    re_lo: str
+    re_hi: str
+    im_lo: str
+    im_hi: str
+    edges: dict = field(default_factory=dict)   # key -> (Fraction lo, Fraction hi)
+
+    def to_json_dict(self) -> dict:
+        return {
+            "kind": "turing_band", "n": self.n,
+            "re_lo": self.re_lo, "re_hi": self.re_hi,
+            "im_lo": self.im_lo, "im_hi": self.im_hi,
+            "edges": {k: [str(v[0]), str(v[1])] for k, v in self.edges.items()},
+        }
+
+
+def turing_band_certificate(*, n, re_lo, re_hi, im_lo, im_hi, edges,
+                            round_digits: int = 12) -> TuringBandCertificate:
+    """Build and EXACTLY self-check a T5 band certificate.  REFUSES (ValueError):
+
+    * `n < 1` (an empty band belongs to the empty-band route);
+    * an invalid box (σ-range not straddling 1/2 inside [-1,2], or Im ≤ 0);
+    * a non-interval edge enclosure (L > H);
+    * edge sums that fail the kernel's `hpin` pinning conditions at `n` — the
+      RvM-count == on-line-count cross-check, in exact rational arithmetic
+      against the same rational π bounds (3.14 < π < 3.1416) the kernel uses."""
+    if not isinstance(n, int) or n < 1:
+        raise ValueError(f"turing_band_certificate: n must be an int >= 1; got {n!r}")
+    rl, rh = Fraction(re_lo), Fraction(re_hi)
+    il, ih = Fraction(im_lo), Fraction(im_hi)
+    if not (Fraction(-1) <= rl < Fraction(1, 2) < rh <= 2):
+        raise ValueError(
+            f"turing_band_certificate: sigma-range [{rl},{rh}] must straddle 1/2 within [-1,2]")
+    if not (0 < il < ih):
+        raise ValueError(f"turing_band_certificate: need 0 < {il} < {ih}")
+    lit = {}
+    for k in _EDGE_KEYS:
+        L, H = Fraction(edges[k][0]), Fraction(edges[k][1])
+        if L > H:
+            raise ValueError(f"turing_band_certificate: edge {k} enclosure inverted")
+        lit[k] = (_frac_out(L, up=False, digits=round_digits),
+                  _frac_out(H, up=True, digits=round_digits))
+    (L1, H1), (L2, H2), (L3, H3), (L4, H4), (L5, H5) = (lit[k] for k in _EDGE_KEYS)
+    lo_sum = 2 * L1 + L2 - H3 + L4 + L5
+    hi_sum = 2 * H1 + H2 - L3 + H4 + H5
+    if not (2 * Fraction(31416, 10000) * (n - 1) < lo_sum
+            and hi_sum < 2 * Fraction(314, 100) * (n + 1)):
+        raise ValueError(
+            f"turing_band_certificate: edge sums [{float(lo_sum)}, {float(hi_sum)}] do not "
+            f"pin N = {n} (2*pi*N = {2 * math.pi * n:.4f}) — enclosure too wide or count wrong")
+    return TuringBandCertificate(
+        n=n, re_lo=str(rl), re_hi=str(rh), im_lo=str(il), im_hi=str(ih), edges=lit)
 
 
 def choose_ball_tight(re_lo, re_hi, im_lo, im_hi, margin=sp.Rational(1, 16)):
@@ -60,39 +130,39 @@ def _fl(x: Fraction) -> str:
 def emit_turing_band_instantiation(
     *, n: int, re_lo, re_hi, im_lo, im_hi, edges: dict, tag: str,
     namespace: str | None = None, theorem_name: str | None = None,
+    cert_sink: dict | None = None,
 ) -> str:
-    """Emit the T5 per-band Lean file.
+    """Emit the T5 per-band Lean file (band theorem + kernel statement-match gate).
 
     edges: dict from arb_edges.enclose_band_edges — keys av2/aht/ahb/ag1/ag2,
-    values (L, H) Fractions enclosing the respective argChange quantities."""
-    if n < 1:
-        raise ValueError("emit_turing_band_instantiation needs n >= 1")
+    values (L, H) Fractions enclosing the respective argChange quantities.
+    All refusal guards live in `turing_band_certificate`.  If `cert_sink` is a
+    dict it is filled with the certificate's JSON-able record (the `.cert.json`
+    sidecar consumed by the post-hoc `statement_match_check` audit)."""
+    cert = turing_band_certificate(
+        n=n, re_lo=re_lo, re_hi=re_hi, im_lo=im_lo, im_hi=im_hi, edges=edges)
+    if cert_sink is not None:
+        cert_sink.update(cert.to_json_dict())
+    return _render_turing_band(cert, tag=tag, namespace=namespace,
+                               theorem_name=theorem_name)
+
+
+def _render_turing_band(cert: TuringBandCertificate, *, tag: str,
+                        namespace: str | None = None,
+                        theorem_name: str | None = None) -> str:
+    n = cert.n
     namespace = namespace or f"RHInBoxT_{tag}"
     name = theorem_name or f"rh_in_box_{tag}"
-    s0 = _rat_lean(sp.Rational(re_lo))
-    s1 = _rat_lean(sp.Rational(re_hi))
-    t0 = _rat_lean(sp.Rational(im_lo))
-    t1 = _rat_lean(sp.Rational(im_hi))
+    s0 = _rat_lean(sp.Rational(cert.re_lo))
+    s1 = _rat_lean(sp.Rational(cert.re_hi))
+    t0 = _rat_lean(sp.Rational(cert.im_lo))
+    t1 = _rat_lean(sp.Rational(cert.im_hi))
     # Tight ball covering the RvM rectangle [-1,2] x [T0,T1] (pole s=1 strictly outside).
-    cx, cy, rsq = choose_ball_tight(-1, 2, im_lo, im_hi)
+    cx, cy, rsq = choose_ball_tight(-1, 2, cert.im_lo, cert.im_hi)
     cx_s, cy_s, rsq_s = _rat_lean(cx), _rat_lean(cy), _rat_lean(rsq)
 
-    # outward-rounded small literals for the five enclosures
-    lit = {}
-    for k in ("av2", "aht", "ahb", "ag1", "ag2"):
-        L, H = edges[k]
-        lit[k] = (_frac_out(Fraction(L), up=False), _frac_out(Fraction(H), up=True))
-    (L1, H1), (L2, H2), (L3, H3), (L4, H4), (L5, H5) = (
-        lit["av2"], lit["aht"], lit["ahb"], lit["ag1"], lit["ag2"])
-
-    # driver-side pinning sanity (mirrors the kernel's hpin conditions exactly)
-    lo_sum = 2 * L1 + L2 - H3 + L4 + L5
-    hi_sum = 2 * H1 + H2 - L3 + H4 + H5
-    if not (2 * Fraction(31416, 10000) * (n - 1) < lo_sum
-            and hi_sum < 2 * Fraction(314, 100) * (n + 1)):
-        raise ValueError(
-            f"turing band {tag}: edge sums [{float(lo_sum)}, {float(hi_sum)}] do not pin "
-            f"N = {n} (2pi*N = {2 * math.pi * n:.4f}) — enclosure too wide or count wrong")
+    lit = cert.edges
+    (L1, H1), (L2, H2), (L3, H3), (L4, H4), (L5, H5) = (lit[k] for k in _EDGE_KEYS)
 
     # LIST-FORM on-line input: O(1) destructuring (the 2N+1-component nested
     # existential of the winding route costs ~45s of `obtain` at N ~= 42 — the
@@ -206,5 +276,104 @@ def emit_turing_band_instantiation(
     A(f"    ({_fl(L1)}) ({_fl(H1)}) ({_fl(L2)}) ({_fl(H2)}) ({_fl(L3)}) ({_fl(H3)}) ({_fl(L4)}) ({_fl(H4)}) ({_fl(L5)}) ({_fl(H5)})\n")
     A(f"    hbox_ball hs1PB hnzb hnzt hnzl hins hAV2 hAHt hAHb hAG1 hAG2 hpinL hpinH\n")
     A(f"    T hTline hTzero hTbox hcountN\n")
+    # ---- kernel statement-match gate --------------------------------------------
+    # Elaborates iff the band theorem's Pi-type is DEFEQ to the canonical
+    # TuringBand.BandStatement at these parameters: the statement SHAPE is pinned
+    # by the hand-audited kernel definition, so an over-quantified / weakened /
+    # truncated emitted statement FAILS THE BUILD (the 2026-09-12 winding-route
+    # hArb bug class).  The emitter can only vary parameters, which the driver
+    # cross-checks numerically.
+    A(f"\n/-- Kernel statement-match gate: `{name}` states EXACTLY the canonical\n")
+    A(f"    `TuringBand.BandStatement` at this band's parameters (defeq).  -/\n")
+    A(f"theorem statement_match :\n")
+    A(f"    TuringBand.BandStatement (({s0}) : ℝ) ({s1}) ({t0}) ({t1}) {n}\n")
+    A(f"      ({_fl(L1)}) ({_fl(H1)}) ({_fl(L2)}) ({_fl(H2)}) ({_fl(L3)}) ({_fl(H3)})\n")
+    A(f"      ({_fl(L4)}) ({_fl(H4)}) ({_fl(L5)}) ({_fl(H5)}) cPB RPB hs1PB :=\n")
+    A(f"  {name}\n")
     A(f"\nend {namespace}\n")
     return "".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# First-class Telperion kind: "turing_band"                                    #
+# --------------------------------------------------------------------------- #
+
+def certify_turing_band_point(family, pt, name):
+    """Certify one instance from ``family.special[1](pt)`` — a dict with keys
+    ``n, re_lo, re_hi, im_lo, im_hi, edges`` (edges: av2/aht/ahb/ag1/ag2 ->
+    (lo, hi) rationals).  All refusals via `turing_band_certificate`."""
+    from telperion.certify import CertifiedInstance
+
+    spec = family.special[1](pt)
+    cert = turing_band_certificate(
+        n=int(spec["n"]), re_lo=spec["re_lo"], re_hi=spec["re_hi"],
+        im_lo=spec["im_lo"], im_hi=spec["im_hi"], edges=spec["edges"])
+    inst = CertifiedInstance(point=dict(pt), lean_name=name, corners=(), payload=cert)
+    return inst, 1
+
+
+def _band_tag_of(cert: TuringBandCertificate) -> str:
+    def _t(v):
+        v = Fraction(v)
+        return (f"{v.numerator}" if v.denominator == 1
+                else f"{v.numerator}d{v.denominator}").replace("-", "m")
+    return f"{_t(cert.re_lo)}_{_t(cert.re_hi)}_{_t(cert.im_lo)}_{_t(cert.im_hi)}"
+
+
+def _make_turing_band_emitter():
+    """Deferred Emitter subclass construction (avoids a workflow import cycle
+    at module load; the class is materialized once, on first use)."""
+    from telperion.workflow import Emitter
+
+    @dataclass
+    class _TuringBandEmitter(Emitter):
+        """Emit one T5 band certificate file per instance (kind="turing_band").
+
+        Each unit is a standalone Lean module: the band theorem
+        `rh_in_box_<tag>` (RvM edge decomposition through
+        `TuringBand.turing_band_on_line`) plus the kernel `statement_match`
+        gate against the canonical `TuringBand.BandStatement`.  The canonical
+        gate supersedes the generic `emit_gate` example (which single-sources
+        the type string and can therefore only catch post-emission drift, not
+        emitter statement bugs)."""
+
+        def __post_init__(self):
+            self.kind = "turing_band"
+            self.requires_prelude = ()
+            self.emit_statement_gate = False  # superseded by BandStatement gate
+
+        def emit_body(self, fam, profile=None):
+            texts, nthm = [], 0
+            for inst in fam.instances:
+                cert: TuringBandCertificate = inst.payload
+                texts.append(_render_turing_band(
+                    cert, tag=_band_tag_of(cert), theorem_name=inst.lean_name))
+                nthm += 2  # band theorem + statement_match gate
+            return "\n".join(texts), nthm
+
+    return _TuringBandEmitter
+
+
+_EMITTER_CLS = None
+
+
+def TuringBandEmitter(*args, **kwargs):
+    """Factory matching the registry's `EmitterClass()` call convention."""
+    global _EMITTER_CLS
+    if _EMITTER_CLS is None:
+        _EMITTER_CLS = _make_turing_band_emitter()
+    return _EMITTER_CLS(*args, **kwargs)
+
+
+def turing_band_family(name, symbols, grid, lean_name, spec, constants=None):
+    """Build a turing_band family (kind='turing_band').
+
+    ``spec``: callable ``pt -> dict`` with keys n, re_lo, re_hi, im_lo, im_hi,
+    edges (dict av2/aht/ahb/ag1/ag2 -> (lo, hi) rationals).  Certification
+    REFUSES (ValueError) any point failing `turing_band_certificate`'s guards
+    (n < 1, invalid box, inverted enclosure, pinning failure)."""
+    from telperion.family import InequalityFamily
+
+    return InequalityFamily(
+        name=name, symbols=tuple(symbols), grid=grid, lean_name=lean_name,
+        special=("turing_band", spec), constants=dict(constants or {}))

@@ -357,6 +357,10 @@ from .emit_annulus_count import (  # noqa: F401
     annulus_count_family, certify_annulus_count_point,
 )
 # RH-in-a-box localization capstone (Stage 3, 2026-09-06): every zeta-zero in the box is on Re=1/2.
+from .emit_turing_band import (  # noqa: F401
+    TuringBandCertificate, TuringBandEmitter, certify_turing_band_point,
+    emit_turing_band_instantiation, turing_band_certificate, turing_band_family,
+)
 from .emit_box_localization import (  # noqa: F401
     BoxLocalizationEmitter, box_localization_certificate,
     box_localization_family, certify_box_localization_point,

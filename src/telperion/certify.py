@@ -222,6 +222,10 @@ _SPECIAL_KINDS = (
     # total divisor = on-line count ⟹ every zero in the box is on Re=1/2 (Turing-style verification,
     # NOT a proof of RH).  Refuses n_line > n_total and n_line != n_total.
     "box_localization",
+    # T5 Turing-band certificate (2026-09-12): per-band total count via the RvM
+    # edge decomposition (zero_count_band_edge_decomp) with Arb-enclosed edge
+    # argument-changes; kernel statement-match gate against BandStatement.
+    "turing_band",
     # HermitianMomentInertia family (2026-09-08, ported from anthropics/zeta-23-lean,
     # arXiv:2608.13637): two_moment_count (§6 scalar count certificate (2−κ)N−err ≤ count,
     # H(λ) / H_d(λ) via nlinarith off Real.sqrt_le_sqrt) and rank_trace_scalar (integrality
@@ -463,6 +467,8 @@ _SPECIAL_DISPATCH = {
         ("emit_annulus_count", "certify_annulus_count_point", "AnnulusCountEmitter"),
     "box_localization":
         ("emit_box_localization", "certify_box_localization_point", "BoxLocalizationEmitter"),
+    "turing_band":
+        ("emit_turing_band", "certify_turing_band_point", "TuringBandEmitter"),
     "slit_loop_winding_zero":
         ("emit_slit_loop_winding_zero", "certify_slit_loop_winding_zero_point",
          "SlitLoopWindingZeroEmitter"),
