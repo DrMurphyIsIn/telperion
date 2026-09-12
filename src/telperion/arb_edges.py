@@ -123,6 +123,42 @@ def _gammaR_point(s_re, s_im, prec):
     return _gammaR_ball(s_re, s_im, s_im, prec)
 
 
+def _gammaR_vert_lgamma(sigma, t0, t1, prec):
+    """argChangeVert GammaR sigma t0 t1 via principal log-gamma endpoints.
+
+    GammaR(s) = pi^(-s/2) * Gamma(s/2).  Along the vertical segment
+    s/2 = sigma/2 + i[t0/2, t1/2] with t0 > 0 the principal lgamma branch cut
+    (-inf, 0] is avoided, so lgamma is holomorphic on a neighbourhood of the
+    segment and d/dt Im lgamma(s/2) equals the argChange integrand exactly
+    (FTC on the same branch — no mod-2pi ambiguity).  Hence
+
+      argChangeVert GammaR sigma t0 t1
+        = Im lgamma(sigma/2 + i t1/2) - Im lgamma(sigma/2 + i t0/2)
+          - ((t1 - t0)/2) * log(pi).
+
+    Two acb.lgamma evaluations replace ~600 per-piece gamma balls (7.4s -> ms).
+    Classical-continuity justification documented here; the resulting interval
+    remains ARB NON-KERNEL INPUT exactly as before."""
+    sigma, t0, t1 = Fraction(sigma), Fraction(t0), Fraction(t1)
+    assert t0 > 0
+    ctx_prec = flint.ctx.prec
+    flint.ctx.prec = prec
+    try:
+        def _im_lgamma(t):
+            re_b = flint.arb(sigma.numerator) / flint.arb(2 * sigma.denominator)
+            im_b = flint.arb(t.numerator) / flint.arb(2 * t.denominator)
+            return _arb_ball_to_fractions(flint.acb(re_b, im_b).lgamma().imag)
+        i0 = _im_lgamma(t0)
+        i1 = _im_lgamma(t1)
+        dl = Fraction(t1 - t0, 2)
+        logpi = _arb_ball_to_fractions(flint.arb.pi().log())
+        lo_v = i1[0] - i0[1] - dl * logpi[1]
+        hi_v = i1[1] - i0[0] - dl * logpi[0]
+        return (lo_v, hi_v)
+    finally:
+        flint.ctx.prec = ctx_prec
+
+
 def argchange_edge(kind, fixed, lo, hi, prec=192, seg_prec=192, max_depth=28):
     """Enclose the continuous argument change of zeta or GammaR along an edge.
 
@@ -133,6 +169,8 @@ def argchange_edge(kind, fixed, lo, hi, prec=192, seg_prec=192, max_depth=28):
     the INCREASING direction of the varying coordinate.
     """
     fixed, lo, hi = Fraction(fixed), Fraction(lo), Fraction(hi)
+    if kind == "gammaR_vert":
+        return _gammaR_vert_lgamma(fixed, lo, hi, prec)
 
     def seg_box(a, b):
         if kind == "zeta_vert":
