@@ -40,6 +40,42 @@ def render_solution(formal_statement: str, proof_body: str,
     return "\n".join(lines)
 
 
+def compose_submission(preamble: str, emitted: str, formal_statement: str,
+                       proof_body: str) -> str:
+    """Compose solution.lean: merged imports FIRST (Lean requirement), then
+    the theorem's preamble opens/defs, then the emitted supporting theorems
+    (their import lines hoisted), then `theorem solution : <verbatim> := body`.
+
+    The platform's preamble carries whatever the formal_statement needs to
+    parse (targeted imports, `open` lines); the emitted file typically starts
+    with `import Mathlib`. Duplicates are dropped, order preserved
+    (preamble imports before emitted imports).
+    """
+    def split_imports(text: str) -> tuple[list[str], list[str]]:
+        imports, rest = [], []
+        for line in text.splitlines():
+            (imports if re.match(r"\s*import\s+\S", line) else rest).append(line)
+        return imports, rest
+
+    pre_imports, pre_rest = split_imports(preamble or "")
+    emit_imports, emit_rest = split_imports(emitted or "")
+    seen: set[str] = set()
+    merged_imports = []
+    for line in pre_imports + emit_imports:
+        key = " ".join(line.split())
+        if key not in seen:
+            seen.add(key)
+            merged_imports.append(line.strip())
+    solution = render_solution(formal_statement, proof_body, imports=())
+    blocks = [
+        "\n".join(merged_imports),
+        "\n".join(pre_rest).strip(),
+        "\n".join(emit_rest).strip(),
+        solution.strip(),
+    ]
+    return "\n\n".join(b for b in blocks if b) + "\n"
+
+
 def check_no_sorry(src: str) -> None:
     if re.search(r"\bsorry\b", src):
         raise InvariantViolation("I3: submission contains `sorry`")
@@ -130,9 +166,13 @@ def run_attempt(
     if no_submit:
         return record("DryRun")
 
-    submission_id = client.verify(lean_source, target_id=item.milestone_id)
-    # F1: wrap poll + annotate so a 5xx burst after verify() still ledgers
-    # the fact that a submission was sent (SubmittedUnknown).
+    # I4: the explanation rides along with the submission itself (live
+    # contract: `-F explanation=` on /verify; PATCH annotate remains for
+    # later edits).
+    submission_id = client.verify(lean_source, target_id=item.milestone_id,
+                                  explanation=explanation)
+    # F1: wrap the poll so a 5xx burst after verify() still ledgers the
+    # fact that a submission was sent (SubmittedUnknown).
     try:
         for _ in range(max_polls):
             v = client.verdict(submission_id)
@@ -147,8 +187,6 @@ def run_attempt(
 
         output = v.get("output", "")
         if status in ("Proved", "Disproved"):
-            if explanation:
-                client.annotate(submission_id, explanation)      # I4
             return record(status, output, submission_id)
         # I5: ledger the rejection; the CALLER re-triages -- never resubmit here.
         return record("Rejected", output, submission_id)

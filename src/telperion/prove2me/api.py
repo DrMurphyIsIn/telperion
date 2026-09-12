@@ -58,6 +58,35 @@ class HttpResponse:
             raise Prove2MeError(f"malformed JSON in response: {e}") from e
 
 
+def _encode_multipart(fields: dict, file_content: bytes,
+                      file_field: str = "file",
+                      filename: str = "solution.lean") -> tuple[bytes, str]:
+    """RFC 2388 multipart/form-data body for POST /verify (stdlib only).
+
+    Boundary is derived from the payload hash — deterministic (no
+    Date.now/random in cert-adjacent paths) and collision-checked against
+    the content.
+    """
+    import hashlib as _hashlib
+    seed = _hashlib.sha256(file_content + repr(sorted(fields.items())).encode())
+    boundary = "telperion-p2m-" + seed.hexdigest()[:24]
+    while boundary.encode() in file_content:
+        boundary += "x"
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"'
+            f"\r\n\r\n{value}\r\n".encode()
+        )
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; '
+        f'filename="{filename}"\r\nContent-Type: text/plain; charset=utf-8'
+        f"\r\n\r\n".encode() + file_content + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
 def _urllib_transport(method: str, url: str, headers: dict, body: bytes | None) -> HttpResponse:
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
@@ -91,7 +120,8 @@ class Prove2MeClient:
 
     # -- core ---------------------------------------------------------------
 
-    def request(self, method: str, path: str, json_body: dict | None = None, auth: bool = True) -> dict:
+    def request(self, method: str, path: str, json_body: dict | None = None, auth: bool = True,
+                multipart: tuple[bytes, str] | None = None) -> dict:
         if self._consecutive_5xx >= self._breaker_threshold:
             raise PlatformDown(
                 f"circuit breaker open after {self._consecutive_5xx} consecutive "
@@ -102,7 +132,11 @@ class Prove2MeClient:
             if not self.access_token:
                 raise AuthError("no access token: run the auth chain first")
             headers["Authorization"] = f"Bearer {self.access_token}"
-        body = json.dumps(json_body).encode() if json_body is not None else None
+        if multipart is not None:
+            body, content_type = multipart
+            headers["Content-Type"] = content_type
+        else:
+            body = json.dumps(json_body).encode() if json_body is not None else None
 
         resp: HttpResponse | None = None
         for attempt in range(_RETRIES + 1):
@@ -210,15 +244,22 @@ class Prove2MeClient:
             return
         self.access_token = saved.get("access_token")
 
-    def _is_token_valid(self, expires_at: str | None) -> bool:
-        """Check if a token expiry timestamp is still valid (in the future)."""
+    def _is_token_valid(self, expires_at: str | int | float | None) -> bool:
+        """Check if a token expiry timestamp is still valid (in the future).
+
+        The live platform returns epoch seconds (int); older fixtures and the
+        vendored docs show ISO 8601 strings. Accept both; anything
+        unparseable is invalid (forces a refresh).
+        """
         if not expires_at:
             return False
         try:
-            iso_str = expires_at.replace("Z", "+00:00")
-            expiry = datetime.fromisoformat(iso_str)
+            if isinstance(expires_at, (int, float)):
+                expiry = datetime.fromtimestamp(expires_at, timezone.utc)
+            else:
+                expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             return expiry > datetime.now(timezone.utc)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OSError):
             return False
 
     # -- endpoints ----------------------------------------------------------
@@ -245,11 +286,18 @@ class Prove2MeClient:
         out = self.request("GET", f"/milestones/{milestone_id}/history")
         return out if isinstance(out, list) else out.get("history", [])
 
-    def verify(self, lean_source: str, target_id: str, private: bool = False) -> str:
-        payload = {"target_id": target_id, "source": lean_source}
-        if private:
-            payload["private"] = True
-        out = self.request("POST", "/verify", payload)
+    def verify(self, lean_source: str, target_id: str, explanation: str = "",
+               proof_type: str = "") -> str:
+        """Submit solution.lean for a theorem. LIVE contract (references/prove.md):
+        multipart/form-data with theorem_id + file (+ optional explanation,
+        proof_type=disprove). Visibility inherits from the target."""
+        fields = {"theorem_id": target_id}
+        if proof_type:
+            fields["proof_type"] = proof_type
+        if explanation:
+            fields["explanation"] = explanation
+        out = self.request("POST", "/verify",
+                           multipart=_encode_multipart(fields, lean_source.encode()))
         return out["submission_id"]
 
     def verdict(self, submission_id: str) -> dict:

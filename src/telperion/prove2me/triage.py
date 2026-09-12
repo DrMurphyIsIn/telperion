@@ -171,11 +171,13 @@ def match_statement(formal_statement: str) -> tuple[float, tuple[str, ...]]:
 
 @dataclass(frozen=True)
 class QueueItem:
-    milestone_id: str
+    milestone_id: str        # the THEOREM id (POST /verify target)
     mission_id: str
     statement: str
     emitter_classes: tuple[str, ...]
     score: float
+    theorem_name: str = ""   # e.g. "Foo.bar" -> I2 module Theorems.Thm_Foo_bar
+    preamble: str = ""       # imports/opens the formal_statement needs to parse
 
 
 def triage(
@@ -204,6 +206,8 @@ def triage(
             stmt,
             classes,
             round(conf * prior, 4),
+            theorem_name=str(m.get("theorem_name", "")),
+            preamble=str(m.get("preamble", "")),
         ))
     return sorted(items, key=lambda i: -i.score)
 
@@ -220,7 +224,11 @@ def save_queue(items: list[QueueItem], path: Path) -> None:
 
 def load_queue(path: Path) -> list[QueueItem]:
     doc = json.loads(Path(path).read_text())
+    # tolerate queues written before theorem_name/preamble existed
     return [
-        QueueItem(**{**d, "emitter_classes": tuple(d["emitter_classes"])})
+        QueueItem(**{
+            "theorem_name": "", "preamble": "", **d,
+            "emitter_classes": tuple(d["emitter_classes"]),
+        })
         for d in doc["items"]
     ]

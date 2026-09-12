@@ -774,9 +774,29 @@ def cmd_p2m_triage(args) -> int:
     ws = _p2m_workspace(args)
     c = Prove2MeClient(workspace=ws.root)
     c.ensure_auth()
+    # LIVE-API adapter (2026-09-11): missions carry no status; milestones are
+    # {completed, theorem:{id, theorem_name, status}}; the formal_statement and
+    # preamble live on GET /theorems/:id. The triage target id is the THEOREM
+    # id (what POST /verify wants).
     milestones = []
     for m in c.missions():
-        milestones.extend(c.milestones(str(m["id"])))
+        for mil in c.milestones(str(m["id"])):
+            if mil.get("completed"):
+                continue
+            thm_ref = mil.get("theorem") or {}
+            thm_id = str(thm_ref.get("id", ""))
+            if not thm_id or thm_ref.get("status") in ("Proved", "Disproved"):
+                continue
+            thm = c.theorem(thm_id)
+            milestones.append({
+                "id": thm_id,
+                "mission_id": str(m["id"]),
+                "status": "open",
+                "formal_statement": thm.get("formal_statement", ""),
+                "theorem_name": thm.get("theorem_name",
+                                        thm_ref.get("theorem_name", "")),
+                "preamble": thm.get("preamble", ""),
+            })
     led = AttemptLedger(ws.root / "telperion_ledger.jsonl")
     q = triage(milestones, ledger=led)
     save_queue(q, ws.root / "queue.json")
@@ -847,16 +867,6 @@ def cmd_p2m_attempt(args) -> int:
     # This is required for I3: the submitted source must contain formal_statement
     # verbatim and be named `solution`.  render_solution(imports=()) avoids a
     # duplicate `import Mathlib` header since the emitted file already has one.
-    proof_body = getattr(mod, "PROOF_BODY", None)
-    formal_stmt_for_composition = getattr(mod, "FORMAL_STATEMENT", "")
-    if proof_body and formal_stmt_for_composition:
-        from .prove2me.attempt import render_solution
-        solution_block = render_solution(formal_stmt_for_composition, proof_body, imports=())
-        lean_source = lean_source + "\n" + solution_block
-    elif not proof_body:
-        print("hint: lift defines no PROOF_BODY; submitting raw emitted file "
-              "(will refuse unless it contains the formal statement verbatim)")
-
     items = [i for i in load_queue(ws.root / "queue.json")
              if i.milestone_id == args.milestone_id] \
         if (ws.root / "queue.json").exists() else []
@@ -870,6 +880,19 @@ def cmd_p2m_attempt(args) -> int:
         items = [QueueItem(args.milestone_id, "", formal_stmt,
                            tuple(type(e).__name__ for e in emitters), 0.0)]
 
+    proof_body = getattr(mod, "PROOF_BODY", None)
+    formal_stmt_for_composition = items[0].statement or getattr(mod, "FORMAL_STATEMENT", "")
+    if proof_body and formal_stmt_for_composition:
+        # Live contract: imports must be merged FIRST (theorem preamble +
+        # emitted header), then preamble opens, emitted bodies, and the
+        # verbatim `theorem solution` closing block (I3).
+        from .prove2me.attempt import compose_submission
+        lean_source = compose_submission(items[0].preamble, lean_source,
+                                         formal_stmt_for_composition, proof_body)
+    elif not proof_body:
+        print("hint: lift defines no PROOF_BODY; submitting raw emitted file "
+              "(will refuse unless it contains the formal statement verbatim)")
+
     c = Prove2MeClient(workspace=ws.root)
     if not args.no_submit:
         c.ensure_auth()
@@ -881,7 +904,10 @@ def cmd_p2m_attempt(args) -> int:
         tuple(type(e).__name__ for e in emitters),
         hashlib.sha256(fam_path.read_bytes()).hexdigest()[:16],
         led, no_submit=args.no_submit, explanation=args.explanation or "",
-        target_module=f"Theorems.Thm_{args.milestone_id}",
+        # Live contract: module slug is the theorem_name with '.' -> '_'
+        # (references/prove.md); fall back to the id form if name unknown.
+        target_module=("Theorems.Thm_" + items[0].theorem_name.replace(".", "_"))
+        if items[0].theorem_name else f"Theorems.Thm_{args.milestone_id}",
     )
     print(f"{rec.verdict}  milestone={rec.milestone_id} "
           f"submission={rec.submission_id or '-'}")

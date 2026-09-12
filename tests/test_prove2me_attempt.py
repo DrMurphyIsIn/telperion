@@ -88,10 +88,9 @@ def test_run_attempt_dry_run_never_touches_network(tmp_path, monkeypatch):
 
 def test_run_attempt_submits_polls_annotates_and_ledgers(tmp_path, monkeypatch):
     responses = [
-        HttpResponse(200, json.dumps({"submission_id": "s7"})),      # POST /verify
+        HttpResponse(200, json.dumps({"submission_id": "s7"})),      # POST /verify (multipart, explanation inline: I4)
         HttpResponse(200, json.dumps({"status": "PENDING"})),
         HttpResponse(200, json.dumps({"status": "Proved"})),
-        HttpResponse(200, "{}"),                                      # PATCH annotate (I4)
     ]
     c = _scripted_client(tmp_path, responses)
     ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
@@ -103,7 +102,7 @@ def test_run_attempt_submits_polls_annotates_and_ledgers(tmp_path, monkeypatch):
                       explanation="norm_num identity; source: arithmetic",
                       _sleep=lambda s: None)
     assert rec.verdict == "Proved" and rec.submission_id == "s7"
-    assert not responses        # all four calls consumed, including annotate
+    assert not responses        # all three calls consumed (I4 rides on verify)
 
 
 def test_run_attempt_certify_refused_ledgered(tmp_path, monkeypatch):
@@ -245,3 +244,22 @@ def test_run_attempt_i2_target_module_wired(tmp_path, monkeypatch):
     assert rec.verdict == "CertifyRefused"
     assert "I2" in rec.server_output
     assert led.records()[0].verdict == "CertifyRefused"
+
+
+def test_compose_submission_merges_imports_first():
+    from telperion.prove2me.attempt import compose_submission
+    preamble = "import Mathlib.Data.Real.Basic\nopen Real\n"
+    emitted = "import Mathlib\n\ntheorem helper : (0:\u211d) \u2264 1 := by norm_num\n"
+    stmt = "theorem solution : (0:\u211d) \u2264 1 := by sorry"
+    out = compose_submission(preamble, emitted, stmt, "by exact helper")
+    lines = out.splitlines()
+    first_nonimport = next(i for i, ln in enumerate(lines)
+                           if ln.strip() and not ln.startswith("import"))
+    assert all(not ln.startswith("import") for ln in lines[first_nonimport:]), \
+        "all imports must precede everything else"
+    assert lines[0] == "import Mathlib.Data.Real.Basic"   # preamble imports first
+    assert "import Mathlib" in out and out.count("import Mathlib\n") == 1
+    assert "open Real" in out
+    assert "theorem helper" in out
+    assert "theorem solution : (0:\u211d) \u2264 1 := by exact helper" in out
+    assert "sorry" not in out

@@ -235,3 +235,29 @@ def test_mint_api_key_clears_session_token(tmp_path):
     c._session_token = "sess"
     c.mint_api_key()
     assert c._session_token is None
+
+
+def test_verify_sends_multipart_with_explanation(tmp_path):
+    """LIVE contract: POST /verify is multipart/form-data (theorem_id + file
+    [+ explanation]); the explanation rides along at submit time (I4)."""
+    captured = {}
+
+    def transport(method, url, headers, body):
+        captured.update(method=method, url=url, headers=headers, body=body)
+        return HttpResponse(200, json.dumps({"submission_id": "s1"}))
+
+    c = Prove2MeClient(workspace=tmp_path, transport=transport,
+                       _sleep=lambda s: None, _now=lambda: 0.0)
+    c.access_token = "t"
+    sid = c.verify("theorem solution : 1 = 1 := rfl", target_id="thm-9",
+                   explanation="by rfl; source: arithmetic")
+    assert sid == "s1"
+    assert captured["method"] == "POST" and captured["url"].endswith("/verify")
+    ct = captured["headers"]["Content-Type"]
+    assert ct.startswith("multipart/form-data; boundary=")
+    body = captured["body"]
+    assert b'name="theorem_id"' in body and b"thm-9" in body
+    assert b'filename="solution.lean"' in body
+    assert b"theorem solution : 1 = 1 := rfl" in body
+    assert b'name="explanation"' in body
+    assert b'name="proof_type"' not in body   # default prove omits it
