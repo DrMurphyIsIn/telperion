@@ -70,6 +70,10 @@ from .emit_hermitian_moment import (  # noqa: F401
 from .emit_li_positivity import (  # noqa: F401
     LiPositivityLadderEmitter, li_rung_certificate, li_positivity_family,
 )
+from .emit_robin_growth import (  # noqa: F401
+    RobinGrowthEmitter, robin_growth_certificate, robin_growth_family,
+    robin_rhs_lower_bound, sigma_exact,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

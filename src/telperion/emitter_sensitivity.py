@@ -567,6 +567,35 @@ REGISTRY: dict[str, SensitivityStance] = {
                    "ring identity) but no adapter is registered in "
                    "negative_control_harness.ADAPTERS yet — the honestly-named gap"),
     ),
+    # --- RH SEVEN-FACES instruments (2026-09-14, face-emitters agent) ---
+    "RobinGrowthEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Robin rung (σ(n):ℝ) < R with R = e^γ·n·log log n carried as hypothesis hR : "
+        "Llo ≤ R (the Arb enclosure trust seam): the exact σ(n) and the certified "
+        "lower bound Llo ARE the statement, the chaining (σ:ℝ) < Llo is re-decided "
+        "in-kernel by norm_num and closed by lt_of_lt_of_le; a non-strict Llo (≤σ) or "
+        "n ≤ 5040 (outside Robin's range) refused at certify time (negative control); "
+        "no separately-supplied corruptible cofactor"),
+    "BaezDuarteEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Báez-Duarte rung d²_N ≤ U with d²_N carried as hypothesis hval : Q ≤ U and Q "
+        "the exact quadratic-form value of the chosen coefficient vector (the analytic "
+        "trust seam is d²_N ≤ Q, the closed-form Gram evaluation): the exact rational Q "
+        "and the readable upper bound U ARE the statement, Q ≤ U re-decided by norm_num "
+        "and closed by le_trans; a U below the exact Q refused at certify time (negative "
+        "control); no separately-supplied corruptible cofactor"),
+    "LehmerPairEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "de Bruijn–Newman lower bound Λ_lo ≤ Λ carried through hLam : L ≤ Λ with L the "
+        "certified rational bound from a close consecutive-zero pair's gap (the Arb "
+        "ordinate data is the trust seam): the rational L ARE the statement, L ≤ Λ_lo "
+        "chained by le_trans; a non-close pair (gap not below the Lehmer threshold) or a "
+        "non-negative-side bound refused at certify time (negative control); no "
+        "separately-supplied corruptible cofactor"),
+    "BagchiRecurrenceEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "recurrence sup bound M ≤ ε with M = max_grid |ζ(s+iτ) − target(s)| carried as "
+        "hypothesis hgrid : dev ≤ M-per-point from Arb acb_zeta enclosures (the trust "
+        "seam): the certified per-point deviations and the tolerance ε ARE the statement, "
+        "the grid-max ≤ ε re-decided by norm_num over the finite grid; an ε below the "
+        "certified max deviation refused at certify time (negative control); no "
+        "separately-supplied corruptible cofactor"),
 }
 
 
