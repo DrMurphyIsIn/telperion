@@ -271,6 +271,14 @@ REGISTRY: dict[str, SensitivityStance] = {
                                "3-XOR moment matrix PSD via GF(2) block-rank-one SOS "
                                "xᵀMx = Σ_class(Σ σ_S x_S)² (ring+positivity); positivity "
                                "by structure, no corruptible identity"),
+    "UnitModulusSOSEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                "Hermitian conjugate-pair SOS 2 − v − conj v = ‖1 − v‖² at "
+                                "v = uᵐ for |u| = 1 (the manifest square behind on-line Li "
+                                "positivity): discharged by the Complex.mul_conj identity + "
+                                "positivity — a structural Hermitian SOS, the |u|=1 side "
+                                "condition carried as hypothesis; m < 1 (degenerate power) "
+                                "refused at certify time (negative control); no separately-"
+                                "supplied corruptible cofactor"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "

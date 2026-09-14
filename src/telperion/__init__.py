@@ -82,6 +82,10 @@ from .emit_lehmer_pair import (  # noqa: F401
     LehmerPairEmitter, lehmer_pair_certificate, lehmer_pair_family,
     lehmer_pair_quality, find_closest_pair,
 )
+from .emit_bagchi_recurrence import (  # noqa: F401
+    BagchiRecurrenceEmitter, bagchi_recurrence_certificate, bagchi_recurrence_family,
+    bagchi_grid_max, scan_best_shift,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,
