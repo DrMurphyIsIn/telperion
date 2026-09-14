@@ -563,13 +563,6 @@ REGISTRY: dict[str, SensitivityStance] = {
         "list and radius ARE the statement; the mass M and per-term |a_i| facts "
         "are re-decided in-kernel (sign-aware abs_of_nonneg/nonpos + norm_num + "
         "linarith); T < 1 / zero leading coeff refused at certify time"),
-    "UnitModulusSOSEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "Hermitian SOS from |u|=1: 2 − uᵐ − conj(uᵐ) = ‖1 − uᵐ‖² ≥ 0, a manifest sum of squares "
-        "discharged deterministically by the Complex.mul_conj identity (no SDP, no search). "
-        "Positivity by structure; the |u|=1 side condition enters as a hypothesis, no separately-"
-        "supplied corruptible identity (same stance as PSDFormEmitter / Xor3MomentPSDEmitter). "
-        "certify refuses m < 1 (the degenerate/vacuous power). Pre-existing origin/main gap; "
-        "classified here to green the completeness gate. conjecture1_proved = False"),
     # --- PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14) ---
     "BraggAmplitudeEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Truncated Bragg amplitude Σ cos(γ_k·u) ∈ [A,B] over rational ordinate brackets: each "
