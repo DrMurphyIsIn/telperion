@@ -50,7 +50,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
-from .rh_jensen.coefficients import _arb_ball_to_fractions
+# NOTE: the flint-gated import lives INSIDE the two enclosure functions below
+# (same idiom as emit_jensen_polynomial_hyperbolicity): `telperion/__init__`
+# imports emit_bragg_floor unconditionally for sensitivity-registry
+# completeness, so nothing at module level here may require python-flint.
 
 # The fixed real base point s₀ > 1 at which the von Mangoldt Bragg series converges (Brick D1's
 # Re s > 1 domain).  s₀ = 2 keeps the series geometric-fast and the tail small; any rational > 1
@@ -95,6 +98,7 @@ def enclose_arch_floors(count: int, prec_bits: int = 256) -> list[tuple[Fraction
     """
     import mpmath as mp
     from flint import acb, acb_series, ctx
+    from .rh_jensen.coefficients import _arb_ball_to_fractions  # flint-gated
 
     if count <= 0:
         raise ValueError(f"enclose_arch_floors: need count >= 1, got {count}")
@@ -159,6 +163,7 @@ def enclose_bragg_truncation(
     ``ValueError`` on ``s0 ≤ 1`` (tail diverges) or a failed small-prime anchor.
     """
     from flint import acb, arb, ctx
+    from .rh_jensen.coefficients import _arb_ball_to_fractions  # flint-gated
 
     if s0 <= 1:
         raise ValueError(f"enclose_bragg_truncation: need s0 > 1 (convergence), got {s0}")

@@ -14,6 +14,10 @@ from pathlib import Path
 import pytest
 import sympy as sp
 
+# The enclosure functions these tests exercise are Arb-backed; in flint-less
+# environments (the sympy-only CI matrix cells) the whole module skips.
+pytest.importorskip("flint")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import telperion  # noqa: E402,F401  (loads every Emitter subclass + adapter)
