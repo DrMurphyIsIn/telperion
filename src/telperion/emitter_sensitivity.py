@@ -271,6 +271,14 @@ REGISTRY: dict[str, SensitivityStance] = {
                                "3-XOR moment matrix PSD via GF(2) block-rank-one SOS "
                                "xᵀMx = Σ_class(Σ σ_S x_S)² (ring+positivity); positivity "
                                "by structure, no corruptible identity"),
+    "UnitModulusSOSEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                "Hermitian conjugate-pair SOS 2 − v − conj v = ‖1 − v‖² at "
+                                "v = uᵐ for |u| = 1 (the manifest square behind on-line Li "
+                                "positivity): discharged by the Complex.mul_conj identity + "
+                                "positivity — a structural Hermitian SOS, the |u|=1 side "
+                                "condition carried as hypothesis; m < 1 (degenerate power) "
+                                "refused at certify time (negative control); no separately-"
+                                "supplied corruptible cofactor"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "
@@ -604,6 +612,37 @@ REGISTRY: dict[str, SensitivityStance] = {
                    "ring identity) but no adapter is registered in "
                    "negative_control_harness.ADAPTERS yet — the honestly-named gap"),
     ),
+    # --- RH SEVEN-FACES instruments (2026-09-14, face-emitters agent) ---
+    "RobinGrowthEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Robin rung (σ(n):ℝ) < R with R = e^γ·n·log log n carried as hypothesis hR : "
+        "Llo ≤ R (the Arb enclosure trust seam): the exact σ(n) and the certified "
+        "lower bound Llo ARE the statement, the chaining (σ:ℝ) < Llo is re-decided "
+        "in-kernel by norm_num and closed by lt_of_lt_of_le; a non-strict Llo (≤σ) or "
+        "n ≤ 5040 (outside Robin's range) refused at certify time (negative control); "
+        "no separately-supplied corruptible cofactor"),
+    "BaezDuarteEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Báez-Duarte rung d²_N ≤ U with d²_N carried as hypothesis hval : Q ≤ U and Q "
+        "the exact quadratic-form value of the chosen coefficient vector (the analytic "
+        "trust seam is d²_N ≤ Q, the closed-form Gram evaluation): the exact rational Q "
+        "and the readable upper bound U ARE the statement, Q ≤ U re-decided by norm_num "
+        "and closed by le_trans; a U below the exact Q refused at certify time (negative "
+        "control); no separately-supplied corruptible cofactor"),
+    "LehmerPairEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "certified Lehmer-pair quality inequality quality_short ≤ qcap (< 1) with "
+        "quality = δ²·C_n the exact rational Lehmer signature from a close consecutive-"
+        "zero pair (the Arb ordinate data via hardy_z_zeros is the trust seam): the "
+        "rounded rationals ARE the statement, re-decided by norm_num; a non-Lehmer pair "
+        "(quality ≥ 1) or a qcap below the quality / ≥ the threshold refused at certify "
+        "time (negative controls); the de Bruijn–Newman Λ lower bound derived from it is "
+        "shipped only as the documented WIP hypothesis-carrying skeleton (CNV constant "
+        "unverified), NOT a numeric kernel claim; no separately-supplied corruptible cofactor"),
+    "BagchiRecurrenceEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "recurrence sup bound M ≤ ε with M = max_grid |ζ(s+iτ) − target(s)| carried as "
+        "hypothesis hgrid : dev ≤ M-per-point from Arb acb_zeta enclosures (the trust "
+        "seam): the certified per-point deviations and the tolerance ε ARE the statement, "
+        "the grid-max ≤ ε re-decided by norm_num over the finite grid; an ε below the "
+        "certified max deviation refused at certify time (negative control); no "
+        "separately-supplied corruptible cofactor"),
 }
 
 

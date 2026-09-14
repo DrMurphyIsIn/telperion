@@ -367,6 +367,25 @@ _SPECIAL_KINDS = (
     "defect_witness",
     "selfinversive_rigidity",
     "winding_box_zero",
+    # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
+    # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
+    # numeric fact as an Arb-enclosure HYPOTHESIS (the trust seam); the kernel proves
+    # only the trivial chaining.  A finite rung per face, NOT a step toward RH.
+    #   robin_growth  -- Face 2 (temperedness): σ(n) < e^γ·n·log log n for n > 5040
+    #                    (Robin 1984, RH ⟺ ∀ such n).  Exact σ(n) < certified Arb
+    #                    lower bound on the RHS, chained by lt_of_lt_of_le.
+    #   baez_duarte   -- Face 6 (spectral): a rational UPPER bound on the
+    #                    Nyman–Beurling–Báez-Duarte distance d²_N (RH ⟺ d²_N → 0),
+    #                    from an explicit coefficient vector's certified Gram value.
+    #   lehmer_pair   -- Face 5 (de Bruijn–Newman): a certified de Bruijn–Newman Λ
+    #                    lower bound from a close ("Lehmer") consecutive-zero pair.
+    #   bagchi_recurrence -- Face 4 (recurrence): a certified sup bound
+    #                    sup_{s∈K}|ζ(s+iτ) − target(s)| < ε on a rational grid
+    #                    (Bagchi 1981, RH ⟺ ζ strongly recurrent); Arb-trust class.
+    "robin_growth",
+    "baez_duarte",
+    "lehmer_pair",
+    "bagchi_recurrence",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -579,6 +598,16 @@ _SPECIAL_DISPATCH = {
          "SelfInversiveRigidityEmitter"),
     "winding_box_zero":
         ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
+    # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).
+    "robin_growth":
+        ("emit_robin_growth", "certify_robin_growth_point", "RobinGrowthEmitter"),
+    "baez_duarte":
+        ("emit_baez_duarte", "certify_baez_duarte_point", "BaezDuarteEmitter"),
+    "lehmer_pair":
+        ("emit_lehmer_pair", "certify_lehmer_pair_point", "LehmerPairEmitter"),
+    "bagchi_recurrence":
+        ("emit_bagchi_recurrence", "certify_bagchi_recurrence_point",
+         "BagchiRecurrenceEmitter"),
 }
 
 

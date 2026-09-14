@@ -70,6 +70,22 @@ from .emit_hermitian_moment import (  # noqa: F401
 from .emit_li_positivity import (  # noqa: F401
     LiPositivityLadderEmitter, li_rung_certificate, li_positivity_family,
 )
+from .emit_robin_growth import (  # noqa: F401
+    RobinGrowthEmitter, robin_growth_certificate, robin_growth_family,
+    robin_rhs_lower_bound, sigma_exact,
+)
+from .emit_baez_duarte import (  # noqa: F401
+    BaezDuarteEmitter, baez_duarte_certificate, baez_duarte_family,
+    baez_duarte_upper_bound, optimal_coeffs,
+)
+from .emit_lehmer_pair import (  # noqa: F401
+    LehmerPairEmitter, lehmer_pair_certificate, lehmer_pair_family,
+    lehmer_pair_quality, find_closest_pair,
+)
+from .emit_bagchi_recurrence import (  # noqa: F401
+    BagchiRecurrenceEmitter, bagchi_recurrence_certificate, bagchi_recurrence_family,
+    bagchi_grid_max, scan_best_shift,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,
