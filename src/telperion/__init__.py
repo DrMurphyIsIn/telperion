@@ -78,6 +78,10 @@ from .emit_baez_duarte import (  # noqa: F401
     BaezDuarteEmitter, baez_duarte_certificate, baez_duarte_family,
     baez_duarte_upper_bound, optimal_coeffs,
 )
+from .emit_lehmer_pair import (  # noqa: F401
+    LehmerPairEmitter, lehmer_pair_certificate, lehmer_pair_family,
+    lehmer_pair_quality, find_closest_pair,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

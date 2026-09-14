@@ -583,12 +583,14 @@ REGISTRY: dict[str, SensitivityStance] = {
         "and closed by le_trans; a U below the exact Q refused at certify time (negative "
         "control); no separately-supplied corruptible cofactor"),
     "LehmerPairEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "de Bruijn–Newman lower bound Λ_lo ≤ Λ carried through hLam : L ≤ Λ with L the "
-        "certified rational bound from a close consecutive-zero pair's gap (the Arb "
-        "ordinate data is the trust seam): the rational L ARE the statement, L ≤ Λ_lo "
-        "chained by le_trans; a non-close pair (gap not below the Lehmer threshold) or a "
-        "non-negative-side bound refused at certify time (negative control); no "
-        "separately-supplied corruptible cofactor"),
+        "certified Lehmer-pair quality inequality quality_short ≤ qcap (< 1) with "
+        "quality = δ²·C_n the exact rational Lehmer signature from a close consecutive-"
+        "zero pair (the Arb ordinate data via hardy_z_zeros is the trust seam): the "
+        "rounded rationals ARE the statement, re-decided by norm_num; a non-Lehmer pair "
+        "(quality ≥ 1) or a qcap below the quality / ≥ the threshold refused at certify "
+        "time (negative controls); the de Bruijn–Newman Λ lower bound derived from it is "
+        "shipped only as the documented WIP hypothesis-carrying skeleton (CNV constant "
+        "unverified), NOT a numeric kernel claim; no separately-supplied corruptible cofactor"),
     "BagchiRecurrenceEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "recurrence sup bound M ≤ ε with M = max_grid |ζ(s+iτ) − target(s)| carried as "
         "hypothesis hgrid : dev ≤ M-per-point from Arb acb_zeta enclosures (the trust "
