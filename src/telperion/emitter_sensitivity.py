@@ -555,6 +555,43 @@ REGISTRY: dict[str, SensitivityStance] = {
         "list and radius ARE the statement; the mass M and per-term |a_i| facts "
         "are re-decided in-kernel (sign-aware abs_of_nonneg/nonpos + norm_num + "
         "linarith); T < 1 / zero leading coeff refused at certify time"),
+    "UnitModulusSOSEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Hermitian SOS from |u|=1: 2 − uᵐ − conj(uᵐ) = ‖1 − uᵐ‖² ≥ 0, a manifest sum of squares "
+        "discharged deterministically by the Complex.mul_conj identity (no SDP, no search). "
+        "Positivity by structure; the |u|=1 side condition enters as a hypothesis, no separately-"
+        "supplied corruptible identity (same stance as PSDFormEmitter / Xor3MomentPSDEmitter). "
+        "certify refuses m < 1 (the degenerate/vacuous power). Pre-existing origin/main gap; "
+        "classified here to green the completeness gate. conjecture1_proved = False"),
+    # --- PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14) ---
+    "BraggAmplitudeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Truncated Bragg amplitude Σ cos(γ_k·u) ∈ [A,B] over rational ordinate brackets: each "
+        "per-bracket cos box is a CosEnclosure order-4 base bracket (cos_base_interval, decided by "
+        "norm_num) + Lipschitz width absorption (cos_encl_bracket), folded by add_encl; the claimed "
+        "[A,B] is closed by le_trans over norm_num-decided rational endpoint facts. No "
+        "separately-supplied corruptible identity — the enclosure boxes ARE the statement, and "
+        "certify REFUSES a claimed interval that fails to enclose the folded box (the negative "
+        "control) and any |c_k|>1 out-of-range sample. conjecture1_proved = False"),
+    "DefectWitnessEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Two-configuration inertia gap (BraggDefect shape): on-line functional value 0 ∈ [A,B] and "
+        "off-line functional value strictly in [C,D] with D < A (the certified leakage gap). All "
+        "three facts (0 ∈ [A,B]; the off-line interval; the gap D < A) are concrete-rational, "
+        "closed by norm_num; the intervals ARE the statement, no separately-supplied corruptible "
+        "cofactor. certify REFUSES a swapped/non-separated configuration (the off-line upper bound "
+        "not strictly below the on-line lower value) — the negative control. conjecture1_proved = False"),
+    "WindingBoxZeroEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Arb-trust-class winding-number box certificate (the turing_band sidecar trust class): the "
+        "rigorous zero count of an analytic function on a rational-cornered box, via the "
+        "quadrant-advance argument principle over Arb-ball boundary samples. Ships NO kernel theorem "
+        "(nthm=0) — only a .cert.json sidecar + a documentation stub — so there is no Lean identity "
+        "to corrupt; the winding integer is RE-VERIFIED at doubled precision + density at certify "
+        "time and a claimed count the argument principle does not support is REFUSED (the negative "
+        "control). conjecture1_proved = False"),
+    "SelfInversiveRigidityEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Equal-modulus real-rootedness (TwoFreqRigidity.twoFreq_realRooted_iff): the Gaussian-rational "
+        "coefficients c₁,c₂ ARE the statement; the emitted proof discharges ‖c₁‖=‖c₂‖ from the EXACT "
+        "rational equality |c₁|²=|c₂|² (Complex.norm via norm_num on re²+im²) and applies the in-island "
+        "iff lemma; no separately-supplied corruptible identity. certify REFUSES |c₁|²≠|c₂|² (real-"
+        "rootedness not forced) — the negative control. conjecture1_proved = False"),
     "SqrtRootEliminationEmitter": _S(
         CERTIFICATE_SENSITIVE,
         "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "

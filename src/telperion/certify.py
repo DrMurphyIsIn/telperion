@@ -351,6 +351,22 @@ _SPECIAL_KINDS = (
     "regular_word",
     "low_order_tail",
     "eventual_threshold",
+    # PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14), promoting the campaign's
+    # four minted certificate shapes to first-class kinds:
+    #   bragg_amplitude       -- certified truncated diffraction sum Σ cos(γ_k·u) ∈ [A,B]
+    #                            over rational ordinate brackets (CosEnclosure base-case
+    #                            fold, the BraggH100 pipeline reduced to a small instance).
+    #   defect_witness        -- two-configuration inertia gap (BraggDefect): on-line
+    #                            functional value inside [A,B]∋0, off-line strictly below
+    #                            with a certified leakage gap.
+    #   selfinversive_rigidity -- equal-modulus real-rootedness (TwoFreqRigidity): |c₁|=|c₂|
+    #                            EXACTLY ⟹ the two-frequency sum is real-rooted.
+    #   winding_box_zero       -- Arb-trust-class winding-number box certificate for a zero
+    #                            (sidecar + documentation stub, NOT a kernel theorem).
+    "bragg_amplitude",
+    "defect_witness",
+    "selfinversive_rigidity",
+    "winding_box_zero",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -553,6 +569,16 @@ _SPECIAL_DISPATCH = {
     "eventual_threshold":
         ("emit_eventual_threshold", "certify_eventual_threshold_point",
          "EventualThresholdEmitter"),
+    # PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14).
+    "bragg_amplitude":
+        ("emit_bragg_amplitude", "certify_bragg_amplitude_point", "BraggAmplitudeEmitter"),
+    "defect_witness":
+        ("emit_defect_witness", "certify_defect_witness_point", "DefectWitnessEmitter"),
+    "selfinversive_rigidity":
+        ("emit_selfinversive_rigidity", "certify_selfinversive_rigidity_point",
+         "SelfInversiveRigidityEmitter"),
+    "winding_box_zero":
+        ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
 }
 
 

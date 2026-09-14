@@ -324,6 +324,24 @@ from .emit_endpoint_geom_cap import (  # noqa: F401
     EndpointGeomCapEmitter, endpoint_geom_cap_certificate,
     endpoint_geom_cap_family, certify_endpoint_geom_cap_point,
 )
+# PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14): the campaign's four minted
+# certificate shapes promoted to first-class Telperion kinds.
+from .emit_bragg_amplitude import (  # noqa: F401
+    BraggAmplitudeEmitter, bragg_amplitude_certificate,
+    bragg_amplitude_family, certify_bragg_amplitude_point,
+)
+from .emit_defect_witness import (  # noqa: F401
+    DefectWitnessEmitter, defect_witness_certificate,
+    defect_witness_family, certify_defect_witness_point,
+)
+from .emit_selfinversive_rigidity import (  # noqa: F401
+    SelfInversiveRigidityEmitter, selfinversive_rigidity_certificate,
+    selfinversive_rigidity_family, certify_selfinversive_rigidity_point,
+)
+from .emit_winding_box_zero import (  # noqa: F401
+    WindingBoxZeroEmitter, winding_box_zero_certificate,
+    winding_box_zero_family, certify_winding_box_zero_point,
+)
 # Flint-free emitter previously only imported via the flint-gated rh_jensen
 # modules, making sensitivity-registry discovery depend on whether python-flint
 # was installed.  Imported here unconditionally so the completeness/stray gates
