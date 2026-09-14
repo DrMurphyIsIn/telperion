@@ -56,7 +56,16 @@ from fractions import Fraction
 __all__ = [
     "dh_eval", "dh_kappa_interval", "certify_offline_zero",
     "winding_number", "DH_AVAILABLE", "KAPPA_APPROX",
+    "l_chi5_eval", "CHI5", "CHI5_BAR",
 ]
+
+# The odd primitive Dirichlet character chi mod 5 used in the DH construction
+# (arb_dh module docstring; QC_DH_SCOUT.md).  2 is a generator of (Z/5)^*:
+# 2^1=2, 2^2=4, 2^3=3, 2^4=1, and the odd character sends the generator to i.
+# So chi = [chi(1),chi(2),chi(3),chi(4)] = [1, i, -i, -1] (chi(5)=chi(0)=0).
+# CHI5[a] / CHI5_BAR[a] give (re, im) integer coordinates of chi(a) / conj(chi(a)).
+CHI5 = {1: (1, 0), 2: (0, 1), 3: (0, -1), 4: (-1, 0)}
+CHI5_BAR = {1: (1, 0), 2: (0, -1), 3: (0, 1), 4: (-1, 0)}
 
 # acb_struct = two arb_struct = 2 * 48 bytes; arb_struct = 48 bytes (flint 18.x,
 # 64-bit -- same layout arb_platt relies on).
@@ -87,6 +96,7 @@ if _LIB_PATH:
         _needed = (
             "acb_init", "acb_clear", "acb_set_si", "acb_add", "acb_sub",
             "acb_mul", "acb_mul_arb", "acb_neg", "acb_pow", "acb_dirichlet_hurwitz",
+            "acb_set_si_si", "acb_addmul",
             "arb_init", "arb_clear", "arb_set_si", "arb_set_ui", "arb_sqrt_ui",
             "arb_sqrt", "arb_add", "arb_sub", "arb_mul", "arb_div", "arb_sub_ui",
             "arb_div_ui", "arb_get_interval_fmpz_2exp", "arb_set",
@@ -271,6 +281,76 @@ def dh_eval(s_re, s_im, prec: int = 128
     _, out = _new_acb()
     try:
         _dh_eval_acb(out, s_re, s_im, prec)
+        re_lo, re_hi = _arb_to_interval(_acb_real_ptr(out))
+        im_lo, im_hi = _arb_to_interval(_acb_imag_ptr(out))
+        return (re_lo, re_hi, im_lo, im_hi)
+    finally:
+        _L.acb_clear(out)
+
+
+# ---------------------------------------------------------------------------
+# Dirichlet L-function L(s, chi) for the character chi mod 5 (the L-column, W3c)
+# ---------------------------------------------------------------------------
+# DH is the NON-multiplicative linear combination
+#     D = (1-i kappa)/2 L(s,chi) + (1+i kappa)/2 L(s,chi-bar)
+# of the two genuine L-functions L(s,chi), L(s,chi-bar).  Each L is a bona-fide
+# Dirichlet L-function WITH an Euler product, so it should PASS the B-mult-twisted
+# clause (Euler product with a unimodular character twist); their sum DH keeps
+# FAILING it.  We evaluate L(s,chi) by the same period-5 -> Hurwitz collapse used
+# for D, but with the character weights chi(a) (complex units) instead of the real
+# DH vector:
+#     L(s,chi) = 5^{-s} sum_{a=1}^{4} chi(a) zeta(s, a/5).
+# Trust class: Arb ball (interval) rigor, identical to dh_eval.
+
+def _l_chi5_eval_acb(p_out, s_re: Fraction, s_im: Fraction,
+                     conj: bool, prec: int) -> None:
+    """p_out (initialised acb) <- L(s_re + i s_im, chi) (or chi-bar if conj)."""
+    chi = CHI5_BAR if conj else CHI5
+    _, p_s = _new_acb()
+    _, zr = _new_acb()
+    _, w = _new_acb()          # the character weight chi(a) as an acb
+    _, term = _new_acb()
+    _, acc = _new_acb()
+    _, five = _new_acb()
+    _, five_pow = _new_acb()
+    _, neg_s = _new_acb()
+    try:
+        _set_acb_from_fraction(p_s, s_re, s_im, prec)
+        _L.acb_set_si(acc, ctypes.c_long(0))
+        for a in (1, 2, 3, 4):
+            _acb_hurwitz(zr, p_s, a, 5, prec)
+            wr, wi = chi[a]
+            _L.acb_set_si_si(w, ctypes.c_long(wr), ctypes.c_long(wi))
+            _L.acb_mul(term, zr, w, ctypes.c_long(prec))
+            _L.acb_add(acc, acc, term, ctypes.c_long(prec))
+        # multiply by 5^{-s}
+        _L.acb_neg(neg_s, p_s)
+        _L.acb_set_si(five, ctypes.c_long(5))
+        _L.acb_pow(five_pow, five, neg_s, ctypes.c_long(prec))
+        _L.acb_mul(p_out, acc, five_pow, ctypes.c_long(prec))
+    finally:
+        for p in (p_s, zr, w, term, acc, five, five_pow, neg_s):
+            _L.acb_clear(p)
+
+
+def l_chi5_eval(s_re, s_im, prec: int = 128, conj: bool = False
+                ) -> tuple[Fraction, Fraction, Fraction, Fraction]:
+    """Rigorous outward-rounded dyadic rectangle for L(s_re + i s_im, chi),
+    chi the odd primitive character mod 5 (or chi-bar if `conj=True`).
+
+    `s_re`, `s_im` are exact rationals.  Returns (re_lo, re_hi, im_lo, im_hi)
+    exact Fractions strictly enclosing L(s,chi).  This is the L-function column
+    of the MIRRORMERE zoo (W3c): a genuine degree-1 arithmetic L-function with an
+    Euler product, sitting alongside its non-multiplicative combination DH.
+
+        (1-i kappa)/2 L(s,chi) + (1+i kappa)/2 L(s,chi-bar) == D(s)  (verified)."""
+    if not DH_AVAILABLE:
+        raise RuntimeError("libflint with acb_dirichlet_hurwitz not found")
+    s_re = Fraction(s_re)
+    s_im = Fraction(s_im)
+    _, out = _new_acb()
+    try:
+        _l_chi5_eval_acb(out, s_re, s_im, conj, prec)
         re_lo, re_hi = _arb_to_interval(_acb_real_ptr(out))
         im_lo, im_hi = _arb_to_interval(_acb_imag_ptr(out))
         return (re_lo, re_hi, im_lo, im_hi)
