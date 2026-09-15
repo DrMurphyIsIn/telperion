@@ -1,0 +1,7 @@
+description = "A synthetic demonstration campaign for testing the registry."
+environment_mathlib_rev = "v4.32.0"
+environment_toolchain = "leanprover/lean4:v4.32.0"
+goal_node = "Demo_goal"
+name = "Demo.goal"
+sources = []
+title = "Demo Campaign"

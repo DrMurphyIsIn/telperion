@@ -176,6 +176,25 @@ REGISTRY: dict[str, SensitivityStance] = {
                                     # norm_num gate 0 ≤ lo makes a sign-corrupted lower bound
                                     # kernel-rejected.  See negctrl_adapters/adapter_li_positivity.py.
                                     neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "UnitModulusSOSEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                "0 ≤ (2 − u^m − conj(u^m)).re for |u|=1 via the manifest Hermitian "
+                                "square ‖1 − u^m‖² (Complex.mul_conj + Complex.normSq_nonneg); the "
+                                "|u|=1 side condition is a hypothesis, positivity is by structure with "
+                                "no separately-supplied corruptible identity (the degenerate power "
+                                "m<1 is refused at certify time — the negative control)"),
+    "BraggFloorEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                            "Route P Brick D3 diffraction rung floorHi ≤ braggLo − tailHi: a concrete "
+                            "rational inequality discharged by norm_num (the truncated von Mangoldt "
+                            "Bragg amplitude net of its certified tail clears the explicit archimedean "
+                            "floor).  braggLo/tailHi/floorHi are Arb (python-flint) enclosures — the "
+                            "documented trust seam; certify REFUSES a non-positive margin, so no "
+                            "vacuous/false inequality ships.  Finite category-b; the passage to the "
+                            "companion coefficient is the conditional RH-hard exhaustion seam, never "
+                            "discharged (conjecture1_proved = False)",
+                            # Structural, yet a kernel control exists: a sign/value-corrupted literal
+                            # making floorHi ≤ braggLo − tailHi FALSE is kernel-rejected by norm_num.
+                            # See negctrl_adapters/adapter_bragg_floor.py.
+                            neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
@@ -271,14 +290,6 @@ REGISTRY: dict[str, SensitivityStance] = {
                                "3-XOR moment matrix PSD via GF(2) block-rank-one SOS "
                                "xᵀMx = Σ_class(Σ σ_S x_S)² (ring+positivity); positivity "
                                "by structure, no corruptible identity"),
-    "UnitModulusSOSEmitter": _S(STRUCTURALLY_NONVACUOUS,
-                                "Hermitian conjugate-pair SOS 2 − v − conj v = ‖1 − v‖² at "
-                                "v = uᵐ for |u| = 1 (the manifest square behind on-line Li "
-                                "positivity): discharged by the Complex.mul_conj identity + "
-                                "positivity — a structural Hermitian SOS, the |u|=1 side "
-                                "condition carried as hypothesis; m < 1 (degenerate power) "
-                                "refused at certify time (negative control); no separately-"
-                                "supplied corruptible cofactor"),
     # --- emitters merged from main (runway + knapsack_sos arc) ---
     "FwdTelescopeEmitter": _S(CERTIFICATE_SENSITIVE,
                               "forward telescoping Σ = Π (SumEqProd); the "
