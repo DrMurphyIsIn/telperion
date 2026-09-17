@@ -52,12 +52,35 @@ class LiRungCert:
     lo: sp.Rational
 
 
+def _exact_rational(lo) -> sp.Rational:
+    """EXACT conversion of the certified bound to a sympy Rational.
+
+    `fractions.Fraction` / `int` / `sp.Rational` carry an exact numerator and
+    denominator and are converted verbatim — never through `sp.nsimplify`, whose
+    mpmath `identify` heuristic is a 1e-15-tolerance CLOSED-FORM SEARCH: on the
+    12-significant-digit literals of rungs n ≳ 150 it returned radicals
+    (`60*2**(39/245)*...`, a TypeError) and could in principle return a nearby
+    DIFFERENT rational silently.  The heuristic path is kept only for strings.
+    (Found by the B1 throughput trial at N = 200; the committed 20 rungs were
+    unaffected — their regeneration is byte-identical before and after.)
+    """
+    if isinstance(lo, sp.Rational):
+        return lo
+    if hasattr(lo, "numerator") and hasattr(lo, "denominator"):
+        return sp.Rational(int(lo.numerator), int(lo.denominator))
+    if isinstance(lo, float):
+        raise TypeError(
+            f"li_positivity REFUSED: a float lower bound ({lo!r}) is not an exact certificate; "
+            "pass a fractions.Fraction or sympy Rational")
+    return sp.Rational(sp.nsimplify(lo))
+
+
 def li_rung_certificate(n, lo) -> LiRungCert:
     """Build (and exactly re-check) an n-th-rung certificate.  Refuses `n < 0`
     and a non-positive lower bound (a `lo ≤ 0` cannot witness positivity — that is
     an honest refusal, not a false theorem)."""
     n = int(n)
-    lo = sp.Rational(sp.nsimplify(lo))
+    lo = _exact_rational(lo)
     if n < 0:
         raise ValueError(f"li_positivity REFUSED: need n ≥ 0 (got {n})")
     if lo <= 0:

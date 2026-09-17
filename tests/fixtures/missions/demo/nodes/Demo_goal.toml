@@ -1,0 +1,8 @@
+created = "2026-09-11"
+depends_on = ["Demo_lemma_a", "Demo_lemma_b"]
+kind = "goal"
+name = "Demo.goal"
+statement_module = "Statements.Demo_goal"
+status = "draft"
+title = "Demo goal theorem"
+updated = "2026-09-11"

@@ -347,6 +347,12 @@ _SPECIAL_KINDS = (
     "regular_word",
     "low_order_tail",
     "eventual_threshold",
+    # Route P Brick D3 part 2 (2026-09-12, Dyson-quasicrystal diffraction): the order-n log-prime
+    # (von Mangoldt / Bragg) amplitude certificate — truncated Bragg partial sum at a fixed base
+    # point s0>1, net of a certified tail, clears the explicit archimedean floor -(1+Re taylorCoeff
+    # Γℝ n).  A FINITE rational inequality (category-b); the passage to the companion coefficient and
+    # the Route-P falsifiability atom is the CONDITIONAL, RH-hard exhaustion seam (never discharged).
+    "bragg_floor",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -547,6 +553,10 @@ _SPECIAL_DISPATCH = {
     "eventual_threshold":
         ("emit_eventual_threshold", "certify_eventual_threshold_point",
          "EventualThresholdEmitter"),
+    # Route P Brick D3 part 2 (Dyson-quasicrystal diffraction; onto RvMRoutePFalsify /
+    # RvMCompanionBraggLimit, pinned in the li_positivity island lakefile).
+    "bragg_floor":
+        ("emit_bragg_floor", "certify_bragg_floor_point", "BraggFloorEmitter"),
 }
 
 

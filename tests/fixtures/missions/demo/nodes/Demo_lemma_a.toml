@@ -1,0 +1,13 @@
+created = "2026-09-11"
+depends_on = []
+kind = "lemma"
+name = "Demo.lemma_a"
+statement_module = "Statements.Demo_lemma_a"
+status = "open"
+title = "Demo lemma A"
+updated = "2026-09-11"
+
+[readback]
+auditor = "operator"
+date = "2026-09-11"
+text = "This statement says lemma A holds unconditionally."
