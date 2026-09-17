@@ -156,7 +156,6 @@ def test_run_attempt_rejection_is_ledgered_not_retried(tmp_path, monkeypatch):
 
 def test_run_attempt_poll_timeout_verdict(tmp_path, monkeypatch):
     """After max_polls PENDING responses, verdict is PollTimeout (not Rejected)."""
-    from telperion.prove2me.api import PlatformDown
     responses = [
         HttpResponse(200, json.dumps({"submission_id": "s_pt"})),
         HttpResponse(200, json.dumps({"status": "PENDING"})),

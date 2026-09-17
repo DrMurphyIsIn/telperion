@@ -84,7 +84,6 @@ def test_corrupted_trailing_jsonl_line_skipped(tmp_path):
     p = tmp_path / "ledger.jsonl"
     # Write two valid records and one truncated (interrupted write)
     import json
-    from telperion.prove2me.ledger import AttemptRecord
     rec1 = rec(milestone="m1", verdict="Proved")
     rec2 = rec(milestone="m2", verdict="Disproved")
     with p.open("w") as f:

@@ -106,7 +106,7 @@ def test_p2m_lift_returns_1_on_overwrite(tmp_path, capsys):
 
 def test_lake_build_runs_cache_get_then_build(tmp_path):
     """lake_build issues `lake exe cache get` before `lake build`."""
-    from telperion.prove2me.attempt import lake_build, BuildFailed
+    from telperion.prove2me.attempt import lake_build
     calls = []
 
     def fake_runner(cmd, **kw):
