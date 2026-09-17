@@ -55,17 +55,58 @@ class VerifyReport:
 # normalize_lean
 # ---------------------------------------------------------------------------
 
-def normalize_lean(text: str) -> str:
-    """Strip Lean comments, collapse whitespace, drop trailing := by sorry / := sorry.
+def _strip_lean_comments(text: str) -> str:
+    """Single-pass comment stripper in Lean lexing order.
 
-    Block comments (/- ... -/) are handled non-nestedly (sufficient for our
-    artifact matching use-case; nested block comments in Lean 4 are legal but
-    the payloads we deal with don't use them).
+    Handles `--` line comments, NESTED `/- ... -/` block comments (Lean 4
+    block comments nest — and `/--` doc comments open a block, so stripping
+    line comments first would mutilate the opener and leave prose residue;
+    that exact bug broke containment on the 2026-09-16 grant pre-flight),
+    and double-quoted string literals (comment markers inside strings are
+    inert). An unterminated block comment swallows the rest of the text,
+    matching Lean's own lexer.
     """
-    # Remove -- single-line comments (rest of line)
-    text = re.sub(r"--[^\n]*", "", text)
-    # Remove /- ... -/ block comments (non-greedy, non-nested)
-    text = re.sub(r"/-.*?-/", "", text, flags=re.DOTALL)
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "-" and text[i:i + 2] == "--":
+            while i < n and text[i] != "\n":
+                i += 1
+        elif ch == "/" and text[i:i + 2] == "/-":
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if text[i:i + 2] == "/-":
+                    depth += 1
+                    i += 2
+                elif text[i:i + 2] == "-/":
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+        elif ch == '"':
+            out.append(ch)
+            i += 1
+            while i < n:
+                out.append(text[i])
+                if text[i] == "\\" and i + 1 < n:
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    i += 1
+                    break
+                i += 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def normalize_lean(text: str) -> str:
+    """Strip Lean comments, collapse whitespace, drop trailing := by sorry / := sorry."""
+    text = _strip_lean_comments(text)
     # Collapse all whitespace runs to a single space
     text = re.sub(r"\s+", " ", text).strip()
     # Drop trailing := by sorry or := sorry
