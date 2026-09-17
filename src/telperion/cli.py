@@ -1564,7 +1564,9 @@ def main(argv=None) -> int:
     q = p2m_sub.add_parser("attempt", help="certify, emit, gate, and submit one milestone")
     q.add_argument("milestone_id"); q.add_argument("--name", default=None)
     q.add_argument("--no-submit", action="store_true")
-    q.add_argument("--explanation", default=None); _wsopt(q)
+    q.add_argument("--explanation", default=None,
+                   help="required for a live submission (I4); 2-4 factual sentences + source")
+    _wsopt(q)
     q.set_defaults(fn=cmd_p2m_attempt)
     q = p2m_sub.add_parser("status", help="attempt ledger summary"); _wsopt(q)
     q.set_defaults(fn=cmd_p2m_status)

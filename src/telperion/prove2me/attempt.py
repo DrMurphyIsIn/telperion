@@ -30,6 +30,16 @@ class BuildFailed(Prove2MeError):
     """I1: local lake build failed; nothing was submitted."""
 
 
+def check_explanation(explanation: str) -> None:
+    """I4: a live submission must carry a non-empty explanation (the platform
+    stores it with the proof; it is the reputational surface)."""
+    if not (explanation or "").strip():
+        raise InvariantViolation(
+            "I4: a live submission requires a non-empty --explanation "
+            "(2-4 factual sentences + source citation); use --no-submit for a dry run"
+        )
+
+
 def render_solution(formal_statement: str, proof_body: str,
                     imports: tuple[str, ...] = ("Mathlib",)) -> str:
     stmt = formal_statement.strip()
@@ -144,11 +154,14 @@ def run_attempt(
         ledger.append(rec)
         return rec
 
-    # I2 + I3: source checks before anything expensive
+    # I2 + I3 (+ I4 when a live submission is intended): checks before
+    # anything expensive.  A dry run needs no explanation.
     try:
         check_no_sorry(lean_source)
         check_solution_theorem(lean_source, item.statement)
         check_no_self_import(lean_source, target_module)
+        if not no_submit:
+            check_explanation(explanation)
     except InvariantViolation as e:
         return record("CertifyRefused", str(e))
 

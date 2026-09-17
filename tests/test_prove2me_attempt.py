@@ -10,6 +10,7 @@ from telperion.prove2me.api import HttpResponse, Prove2MeClient  # noqa: E402
 from telperion.prove2me.attempt import (  # noqa: E402
     BuildFailed,
     InvariantViolation,
+    check_explanation,
     check_no_self_import,
     check_no_sorry,
     check_solution_theorem,
@@ -128,7 +129,8 @@ def test_run_attempt_build_failed_ledgered_no_network(tmp_path, monkeypatch):
         raise BuildFailed("I1: lake build failed in /tmp:\nunsolved goals")
     monkeypatch.setattr("telperion.prove2me.attempt.lake_build", _failing_build)
     rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash",
-                      led, _sleep=lambda s: None)
+                      led, explanation="norm_num; source: arithmetic",
+                      _sleep=lambda s: None)
     assert rec.verdict == "BuildFailed"
     assert "unsolved goals" in rec.server_output
     assert led.records()[0].verdict == "BuildFailed"
@@ -147,6 +149,7 @@ def test_run_attempt_rejection_is_ledgered_not_retried(tmp_path, monkeypatch):
     monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
                         lambda project_dir, runner=None: None)
     rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                      explanation="norm_num; source: arithmetic",
                       _sleep=lambda s: None)
     assert rec.verdict == "Rejected" and "type mismatch" in rec.server_output
     assert led.rejected("m1")           # I5: recorded; caller re-triages, never blind-resubmits
@@ -168,6 +171,7 @@ def test_run_attempt_poll_timeout_verdict(tmp_path, monkeypatch):
     monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
                         lambda project_dir, runner=None: None)
     rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                      explanation="norm_num; source: arithmetic",
                       _sleep=lambda s: None, max_polls=2)
     assert rec.verdict == "PollTimeout"
     assert "2 polls" in rec.server_output
@@ -196,6 +200,7 @@ def test_run_attempt_submitted_unknown_on_5xx_after_verify(tmp_path, monkeypatch
 
     with pytest.raises(PlatformDown):
         run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                    explanation="norm_num; source: arithmetic",
                     _sleep=lambda s: None)
 
     # Ledger must contain SubmittedUnknown with the submission_id
@@ -262,3 +267,41 @@ def test_compose_submission_merges_imports_first():
     assert "theorem helper" in out
     assert "theorem solution : (0:\u211d) \u2264 1 := by exact helper" in out
     assert "sorry" not in out
+
+
+# --- I4: explanation required for a live submission ---
+
+def test_i4_check_explanation_refuses_blank():
+    for blank in ("", "   ", "\n"):
+        with pytest.raises(InvariantViolation, match="I4"):
+            check_explanation(blank)
+    check_explanation("exact rational SOS, kernel-checked; source: arithmetic")
+
+
+def test_run_attempt_live_submit_without_explanation_refused_no_network(tmp_path, monkeypatch):
+    """I4: no_submit=False and empty explanation -> CertifyRefused, ledgered,
+    and neither lake_build nor the network is reached."""
+    c = _scripted_client(tmp_path, [])          # any request would IndexError
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    built = []
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: built.append(project_dir))
+    rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                      explanation="   ", _sleep=lambda s: None)
+    assert rec.verdict == "CertifyRefused" and "I4" in rec.server_output
+    assert led.records()[0].verdict == "CertifyRefused"
+    assert not built
+
+
+def test_run_attempt_dry_run_needs_no_explanation(tmp_path, monkeypatch):
+    c = _scripted_client(tmp_path, [])
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: None)
+    rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                      no_submit=True, _sleep=lambda s: None)
+    assert rec.verdict == "DryRun"

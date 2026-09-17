@@ -267,7 +267,9 @@ def p2m_lift(milestone_id: str, name: str = "") -> str:
 def p2m_attempt(milestone_id: str, name: str = "", no_submit: bool = False,
                 explanation: str = "") -> str:
     """Certify+emit the lift, enforce invariants I1-I5 (local lake build gate),
-    submit to prove2.me unless no_submit, poll the verdict, ledger the result."""
+    submit to prove2.me unless no_submit, poll the verdict, ledger the result.
+    A live submission (no_submit=False) is refused unless explanation is
+    non-empty (I4)."""
     args = ["p2m", "attempt", milestone_id]
     if name:
         args += ["--name", name]
