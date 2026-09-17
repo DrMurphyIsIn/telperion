@@ -312,6 +312,41 @@ def test_normalize_strips_comments_and_sorry():
     assert "theorem bar" in result2
 
 
+def test_normalize_strips_multiline_doc_comments_without_residue():
+    # Regression (2026-09-16 grant pre-flight): a /-- doc comment -/ whose
+    # opener line carries `--` was mutilated by line-comment stripping BEFORE
+    # block stripping ran, leaving prose residue between adjacent decls and
+    # breaking containment for AND_g2_reflected_band.
+    raw = (
+        "namespace ReflectedBand_t14\n"
+        "/-- The boxes are nonoverlapping\n"
+        "and strictly alternate in sign. -/\n"
+        "def d : BandData := x\n"
+        "end ReflectedBand_t14\n"
+    )
+    result = normalize_lean(raw)
+    assert "alternate" not in result
+    assert "/" not in result
+    assert "namespace ReflectedBand_t14 def d : BandData := x end" in result
+
+
+def test_normalize_handles_nested_block_comments():
+    # Lean 4 block comments nest; the whole outer comment must vanish.
+    raw = "theorem foo /- outer /- inner -/ still outer -/ : True := by sorry"
+    result = normalize_lean(raw)
+    assert "outer" not in result and "inner" not in result
+    assert "theorem foo : True" in result
+
+
+def test_normalize_line_comment_does_not_open_block():
+    # `/-` inside a `--` line comment is inert; a later real `-/`-free code
+    # line must survive.
+    raw = "-- see /- the note\ntheorem baz : True := by sorry"
+    result = normalize_lean(raw)
+    assert "theorem baz : True" in result
+    assert "note" not in result
+
+
 # ---------------------------------------------------------------------------
 # C2: verify_campaign is read-only — stale closure_clean must be reported
 #     but NOT repaired on disk
