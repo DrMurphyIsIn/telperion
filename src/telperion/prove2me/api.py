@@ -264,18 +264,28 @@ class Prove2MeClient:
 
     # -- endpoints ----------------------------------------------------------
 
-    def missions(self) -> list:
-        """All missions, paginated (live API defaults to 20/page; limit+offset
-        confirmed 2026-09-11)."""
+    def missions(self, page_limit: int = 100) -> list:
+        """All missions, paginated via limit+offset (confirmed live 2026-09-11).
+
+        The server may CLAMP `limit` (the live API caps at 20/page), so the
+        page size is learned from the first page rather than assumed: stop on
+        an empty page or a page shorter than the first one, and advance
+        `offset` by the number of items actually received.
+        """
         all_missions: list = []
         offset = 0
+        page_size: int | None = None
         while True:
-            out = self.request("GET", f"/missions?limit=100&offset={offset}")
+            out = self.request("GET", f"/missions?limit={page_limit}&offset={offset}")
             batch = out if isinstance(out, list) else out.get("missions", [])
-            all_missions.extend(batch)
-            if len(batch) < 100:
+            if not batch:
                 return all_missions
-            offset += 100
+            all_missions.extend(batch)
+            if page_size is None:
+                page_size = len(batch)
+            if len(batch) < page_size:
+                return all_missions
+            offset += len(batch)
 
     def milestones(self, mission_id: str) -> list:
         out = self.request("GET", f"/missions/{mission_id}/milestones")

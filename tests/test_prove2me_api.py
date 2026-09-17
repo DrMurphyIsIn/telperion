@@ -261,3 +261,42 @@ def test_verify_sends_multipart_with_explanation(tmp_path):
     assert b"theorem solution : 1 = 1 := rfl" in body
     assert b'name="explanation"' in body
     assert b'name="proof_type"' not in body   # default prove omits it
+
+
+def _paged_missions(tmp_path, total, cap):
+    """Scripted server that clamps `limit` to `cap` and serves `total` missions."""
+    missions = [{"id": f"m{i}"} for i in range(total)]
+    calls = []
+
+    def transport(method, url, headers, body):
+        calls.append(url)
+        offset = int(url.split("offset=")[1])
+        return ok({"missions": missions[offset:offset + cap]})
+
+    c = Prove2MeClient(workspace=tmp_path, transport=transport,
+                       _sleep=lambda s: None, _now=lambda: 0.0)
+    c.access_token = "t"
+    return c, calls
+
+
+def test_missions_reads_every_page_when_server_clamps_limit(tmp_path):
+    c, calls = _paged_missions(tmp_path, total=45, cap=20)
+    got = c.missions()
+    assert [m["id"] for m in got] == [f"m{i}" for i in range(45)]
+    # offsets advance by the RECEIVED page size, not the requested limit
+    assert [u.split("offset=")[1] for u in calls] == ["0", "20", "40"]
+
+
+def test_missions_exact_multiple_of_page_stops_on_empty_page(tmp_path):
+    c, calls = _paged_missions(tmp_path, total=40, cap=20)
+    assert len(c.missions()) == 40
+    assert [u.split("offset=")[1] for u in calls] == ["0", "20", "40"]
+
+
+def test_missions_empty_and_single_page(tmp_path):
+    c, calls = _paged_missions(tmp_path, total=0, cap=20)
+    assert c.missions() == [] and len(calls) == 1
+    # A single short page: the cap is unknown, so one extra (empty) page is
+    # fetched to confirm the end -- two requests, seven missions.
+    c, calls = _paged_missions(tmp_path, total=7, cap=20)
+    assert len(c.missions()) == 7 and len(calls) == 2
