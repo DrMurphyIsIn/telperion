@@ -162,6 +162,12 @@ def run_attempt(
         check_no_self_import(lean_source, target_module)
         if not no_submit:
             check_explanation(explanation)
+            if ledger.attempted_with_hash(item.milestone_id, lift_hash):
+                raise InvariantViolation(
+                    f"I5: milestone {item.milestone_id} was already attempted "
+                    f"with this exact lift ({lift_hash}); edit the lift "
+                    f"(new hash) after re-triage instead of resubmitting it"
+                )
     except InvariantViolation as e:
         return record("CertifyRefused", str(e))
 

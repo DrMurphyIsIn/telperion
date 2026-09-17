@@ -117,3 +117,20 @@ def test_corrupted_trailing_jsonl_line_skipped(tmp_path):
     assert len(led.records()) == 2
     assert led.records()[0].milestone_id == "m1"
     assert led.records()[1].milestone_id == "m2"
+
+
+def test_attempted_with_hash_same_lift_only(tmp_path):
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    led.append(rec(milestone="m1", verdict="Rejected"))       # lift_hash abc123
+    assert led.attempted_with_hash("m1", "abc123")
+    assert not led.attempted_with_hash("m1", "def456")        # edited lift
+    assert not led.attempted_with_hash("m2", "abc123")
+    # DryRun never counts
+    led2 = AttemptLedger(tmp_path / "l2.jsonl")
+    led2.append(rec(milestone="m1", verdict="DryRun"))
+    assert not led2.attempted_with_hash("m1", "abc123")
+    # Unknown-outcome verdicts DO count (platform may hold the submission)
+    for v in ("SubmittedUnknown", "PollTimeout"):
+        led3 = AttemptLedger(tmp_path / f"l_{v}.jsonl")
+        led3.append(rec(milestone="m1", verdict=v))
+        assert led3.attempted_with_hash("m1", "abc123")

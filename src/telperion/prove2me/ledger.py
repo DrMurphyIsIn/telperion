@@ -85,6 +85,13 @@ class AttemptLedger:
         return any(r.milestone_id == milestone_id and r.verdict != "DryRun"
                    for r in self._records)
 
+    def attempted_with_hash(self, milestone_id: str, lift_hash: str) -> bool:
+        """True if a non-DryRun record exists for this milestone with the SAME
+        lift_hash: re-sending it would be a blind resubmission (I5). A changed
+        lift (different hash) after a rejection is a new attempt and allowed."""
+        return any(r.milestone_id == milestone_id and r.lift_hash == lift_hash
+                   and r.verdict != "DryRun" for r in self._records)
+
     def rejected(self, milestone_id: str) -> list[AttemptRecord]:
         return [r for r in self._records
                 if r.milestone_id == milestone_id and r.verdict in _LOSSES]

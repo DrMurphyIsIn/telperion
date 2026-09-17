@@ -18,7 +18,7 @@ from telperion.prove2me.attempt import (  # noqa: E402
     render_solution,
     run_attempt,
 )
-from telperion.prove2me.ledger import AttemptLedger  # noqa: E402
+from telperion.prove2me.ledger import AttemptLedger, AttemptRecord  # noqa: E402
 from telperion.prove2me.triage import QueueItem  # noqa: E402
 from telperion.prove2me.workspace import Workspace  # noqa: E402
 
@@ -303,5 +303,55 @@ def test_run_attempt_dry_run_needs_no_explanation(tmp_path, monkeypatch):
     monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
                         lambda project_dir, runner=None: None)
     rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "hash", led,
+                      no_submit=True, _sleep=lambda s: None)
+    assert rec.verdict == "DryRun"
+
+
+# --- I5: identical lift is never resubmitted ---
+
+def _rejected_once(c, ws, led, item):
+    return run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "lift-A", led,
+                       explanation="norm_num; source: arithmetic",
+                       _sleep=lambda s: None)
+
+
+def test_run_attempt_refuses_resubmitting_identical_lift(tmp_path, monkeypatch):
+    responses = [
+        HttpResponse(200, json.dumps({"submission_id": "s1"})),
+        HttpResponse(200, json.dumps({"status": "Rejected", "output": "nope"})),
+    ]
+    c = _scripted_client(tmp_path, responses)
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: None)
+    assert _rejected_once(c, ws, led, item).verdict == "Rejected"
+    assert not responses
+    # Second run with the SAME lift_hash: refused before build/network
+    # (transport list is empty; any request would IndexError).
+    rec = _rejected_once(c, ws, led, item)
+    assert rec.verdict == "CertifyRefused" and "I5" in rec.server_output
+    # Same milestone, EDITED lift (new hash): allowed to reach the platform.
+    responses.extend([
+        HttpResponse(200, json.dumps({"submission_id": "s2"})),
+        HttpResponse(200, json.dumps({"status": "Proved"})),
+    ])
+    rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "lift-B", led,
+                      explanation="norm_num; source: arithmetic",
+                      _sleep=lambda s: None)
+    assert rec.verdict == "Proved" and rec.submission_id == "s2"
+
+
+def test_run_attempt_dry_run_ignores_prior_attempt(tmp_path, monkeypatch):
+    c = _scripted_client(tmp_path, [])
+    ws = Workspace(root=tmp_path / "wsp"); ws.ensure_layout()
+    led = AttemptLedger(tmp_path / "l.jsonl")
+    led.append(AttemptRecord("m1", "A", ("IdentityEmitter",), "lift-A",
+                             "Rejected", "", 1.0, "s1", "2026-09-17"))
+    item = QueueItem("m1", "A", STMT, ("IdentityEmitter",), 0.9)
+    monkeypatch.setattr("telperion.prove2me.attempt.lake_build",
+                        lambda project_dir, runner=None: None)
+    rec = run_attempt(c, ws, item, GOOD, ("IdentityEmitter",), "lift-A", led,
                       no_submit=True, _sleep=lambda s: None)
     assert rec.verdict == "DryRun"
