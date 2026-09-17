@@ -357,12 +357,19 @@ def _make_turing_band_emitter():
 _EMITTER_CLS = None
 
 
-def TuringBandEmitter(*args, **kwargs):
-    """Factory matching the registry's `EmitterClass()` call convention."""
+def turing_band_emitter_class():
+    """The (memoized) `_TuringBandEmitter` class.  Exposed so the sensitivity
+    registry's discovery walk can materialize it deterministically instead of
+    seeing it only when some earlier caller happened to build a family."""
     global _EMITTER_CLS
     if _EMITTER_CLS is None:
         _EMITTER_CLS = _make_turing_band_emitter()
-    return _EMITTER_CLS(*args, **kwargs)
+    return _EMITTER_CLS
+
+
+def TuringBandEmitter(*args, **kwargs):
+    """Factory matching the registry's `EmitterClass()` call convention."""
+    return turing_band_emitter_class()(*args, **kwargs)
 
 
 def turing_band_family(name, symbols, grid, lean_name, spec, constants=None):

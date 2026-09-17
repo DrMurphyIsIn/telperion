@@ -41,7 +41,11 @@ def _find_libflint() -> str | None:
     except Exception:
         return None
     d = os.path.dirname(__import__("flint").__file__)
-    for pat in (".dylibs/libflint*.dylib", "../flint*/lib*flint*.so*"):
+    # macOS wheels: flint/.dylibs/; Linux auditwheel wheels: python_flint.libs/
+    # (sibling of the package dir, NOT under flint*/ -- the old pattern missed
+    # it, so CI runners never found Platt and every Platt test errored).
+    for pat in (".dylibs/libflint*.dylib", "../flint*/lib*flint*.so*",
+                "../python_flint.libs/lib*flint*.so*", "../flint.libs/lib*flint*.so*"):
         hits = sorted(glob.glob(os.path.join(d, pat)))
         if hits:
             return hits[0]

@@ -29,6 +29,8 @@ declared here.
 """
 from __future__ import annotations
 
+import importlib
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -590,6 +592,16 @@ REGISTRY: dict[str, SensitivityStance] = {
         "closed by norm_num; the intervals ARE the statement, no separately-supplied corruptible "
         "cofactor. certify REFUSES a swapped/non-separated configuration (the off-line upper bound "
         "not strictly below the on-line lower value) — the negative control. conjecture1_proved = False"),
+    # --- 2026-09-17: the T5 per-band certificate emitter (kind="turing_band"). ---
+    "_TuringBandEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Per-band RH-in-a-box theorem rh_in_box_<tag> assembled through TuringBand.turing_band_on_line "
+        "plus a kernel statement_match gate against the canonical TuringBand.BandStatement. The Arb "
+        "enclosures (edge non-vanishing, winding integer, on-line sign-change count) enter as theorem "
+        "HYPOTHESES (the documented trust boundary), so a corrupted certificate yields a DIFFERENT "
+        "hypothesis set, never a false kernel theorem — there is no corruptible identity certificate "
+        "at the emission layer. Winding == line count is enforced at driver/certify time (refusal "
+        "guard) and the WindingBoxZeroEmitter sidecar re-verifies the winding at doubled precision. "
+        "conjecture1_proved = False"),
     "WindingBoxZeroEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Arb-trust-class winding-number box certificate (the turing_band sidecar trust class): the "
         "rigorous zero count of an analytic function on a rational-cornered box, via the "
@@ -716,6 +728,11 @@ def neg_control_unwired_emitters() -> list[str]:
     )
 
 
+_LAZY_EMITTER_CLASSES: tuple[tuple[str, str], ...] = (
+    ("telperion.emit_turing_band", "turing_band_emitter_class"),
+)
+
+
 def discover_emitters() -> list[type]:
     """Every concrete SHIPPED Emitter subclass reachable from the base class.
 
@@ -725,6 +742,11 @@ def discover_emitters() -> list[type]:
     is ``builtins``) pollutes ``Emitter.__subclasses__()`` process-globally but is
     NOT a shippable emitter, so it is excluded from the completeness gate."""
     seen: dict[str, type] = {}
+    # Lazily-constructed emitters (deferred to dodge an import cycle) are only
+    # reachable from Emitter.__subclasses__() once their factory has run;
+    # materialize them here so discovery is order-independent.
+    for mod_name, accessor in _LAZY_EMITTER_CLASSES:
+        getattr(importlib.import_module(mod_name), accessor)()
 
     def walk(cls: type) -> None:
         for sub in cls.__subclasses__():
