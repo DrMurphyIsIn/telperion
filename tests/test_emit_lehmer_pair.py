@@ -41,8 +41,16 @@ def _emit(fam):
     return next(iter(report.files.values()))
 
 
+def _need_platt():
+    """Skip (not error) where libflint lacks the Platt machinery: `flint` can
+    import while `acb_dirichlet_platt_*` is absent from the bundled library."""
+    from telperion.arb_platt import PLATT_AVAILABLE
+    if not PLATT_AVAILABLE:
+        pytest.skip("libflint with Platt machinery not found")
+
+
 def _close_pair():
-    pytest.importorskip("flint")
+    _need_platt()
     n, ratio = find_closest_pair(1, 500)
     return n, ratio
 
@@ -57,7 +65,7 @@ def test_close_pair_is_a_lehmer_pair():
 
 def test_certificate_refuses_non_lehmer_pair():
     """NEGATIVE CONTROL: a wide (typical) pair with quality ≥ 1 is not a Lehmer pair."""
-    pytest.importorskip("flint")
+    _need_platt()
     wide_n = None
     for n in range(2, 200):
         q, _, _ = lehmer_pair_quality(n)
@@ -117,7 +125,7 @@ def test_emitter_is_classified():
 
 
 def test_generated_example_builds():
-    pytest.importorskip("flint")
+    _need_platt()
     import importlib.util as _u
     gen_path = (Path(__file__).resolve().parents[1]
                 / "examples" / "lehmer_pair" / "generate.py")
