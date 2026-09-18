@@ -245,8 +245,35 @@ def verify_lean(
             ["lake", "env", "lean", tmp],
             cwd=str(env_dir), capture_output=True, text=True, env=env, timeout=timeout,
         )
-        elapsed = time.time() - t0
         out = (proc.stdout or "") + (proc.stderr or "")
+        if "could not execute external process" in out:
+            # E2BIG wall (2026-09-14): `lake env` builds an environment whose size
+            # grows with the workspace's lean_lib count; past ~12k libs it exceeds
+            # macOS's execve limit and lake cannot spawn ANY child ("could not
+            # execute external process 'lean'").  Fall back to direct `lean` with
+            # the compact LEAN_PATH (package build dirs only) -- byte-identical
+            # elaboration, minus the oversized env.  Root fix = B2 lake sharding.
+            lp = []
+            pkgs = env_dir / ".lake" / "packages"
+            if pkgs.is_dir():
+                for d in sorted(pkgs.iterdir()):
+                    cand = d / ".lake" / "build" / "lib" / "lean"
+                    if cand.is_dir():
+                        lp.append(str(cand))
+            for extra in (env_dir.parent.parent / "zero_free_bridge" / "lean",):
+                cand = extra / ".lake" / "build" / "lib" / "lean"
+                if cand.is_dir():
+                    lp.append(str(cand))
+            lp.append(str(env_dir / ".lake" / "build" / "lib" / "lean"))
+            env2 = {"PATH": env["PATH"], "LEAN_PATH": os.pathsep.join(lp),
+                    "HOME": env.get("HOME", str(Path.home()))}
+            proc = subprocess.run(
+                ["lean", tmp],
+                cwd=str(env_dir), capture_output=True, text=True, env=env2,
+                timeout=timeout,
+            )
+            out = (proc.stdout or "") + (proc.stderr or "")
+        elapsed = time.time() - t0
         returncode = proc.returncode
     finally:
         os.unlink(tmp)
