@@ -353,6 +353,10 @@ _SPECIAL_KINDS = (
     # Γℝ n).  A FINITE rational inequality (category-b); the passage to the companion coefficient and
     # the Route-P falsifiability atom is the CONDITIONAL, RH-hard exhaustion seam (never discharged).
     "bragg_floor",
+    # Interval-inertia certificate (2026-09-18): the exact signature (posIndex, defect)
+    # shared by EVERY Hermitian matrix inside a rational interval box, via RHLinalg's
+    # Sylvester subspace bounds.  Island-pinned to the ported RHLinalg block (v4.32.0).
+    "interval_gram_inertia",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -557,6 +561,11 @@ _SPECIAL_DISPATCH = {
     # RvMCompanionBraggLimit, pinned in the li_positivity island lakefile).
     "bragg_floor":
         ("emit_bragg_floor", "certify_bragg_floor_point", "BraggFloorEmitter"),
+    # Interval-Gram inertia (2026-09-18): kernel-certified (posIndex, defect) of every
+    # Hermitian matrix in a rational interval box (RHInertia prelude over RHLinalg).
+    "interval_gram_inertia":
+        ("emit_interval_gram_inertia", "certify_interval_gram_inertia_point",
+         "IntervalGramInertiaEmitter"),
 }
 
 

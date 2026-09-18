@@ -75,6 +75,11 @@ from .emit_bragg_floor import (  # noqa: F401
     bragg_floor_family, certify_bragg_floor_point,
     bragg_below_floor_refutes_rh_lean,
 )
+from .emit_interval_gram_inertia import (  # noqa: F401
+    IntervalGramInertiaEmitter, IntervalGramInertiaCert,
+    interval_gram_inertia_certificate, interval_gram_inertia_family,
+    certify_interval_gram_inertia_point, interval_gram_inertia_prelude_lean,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,
