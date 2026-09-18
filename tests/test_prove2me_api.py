@@ -1,0 +1,302 @@
+"""Prove2MeClient core: transport injection, auth gate, throttle, breaker."""
+import json
+import sys
+import urllib.error
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from telperion.prove2me.api import (  # noqa: E402
+    SKILL_VERSION,
+    AuthError,
+    HttpResponse,
+    PlatformDown,
+    ProtocolDrift,
+    Prove2MeClient,
+    Prove2MeError,
+    RateLimited,
+)
+
+
+def make_client(tmp_path, responses, **kw):
+    """Client with a scripted transport; records every request it makes."""
+    calls = []
+
+    def transport(method, url, headers, body):
+        calls.append((method, url, headers, body))
+        r = responses.pop(0)
+        return r if isinstance(r, HttpResponse) else HttpResponse(*r)
+
+    slept = []
+    c = Prove2MeClient(
+        workspace=tmp_path,
+        transport=transport,
+        _sleep=slept.append,
+        _now=lambda: 0.0,
+        **kw,
+    )
+    return c, calls, slept
+
+
+def ok(payload):
+    return HttpResponse(200, json.dumps(payload))
+
+
+def test_request_returns_parsed_json(tmp_path):
+    c, calls, _ = make_client(tmp_path, [ok({"hello": "world"})])
+    out = c.request("GET", "/missions", auth=False)
+    assert out == {"hello": "world"}
+    assert calls[0][0] == "GET" and calls[0][1].endswith("/missions")
+
+
+def test_version_gate_raises_protocol_drift(tmp_path):
+    bad = ok({"version": SKILL_VERSION + "-newer", "access_token": "t"})
+    c, _, _ = make_client(tmp_path, [bad])
+    with pytest.raises(ProtocolDrift):
+        c._check_version(bad.json())
+
+
+def test_401_raises_auth_error(tmp_path):
+    c, _, _ = make_client(tmp_path, [HttpResponse(401, "{}")])
+    with pytest.raises(AuthError):
+        c.request("GET", "/missions", auth=False)
+
+
+def test_429_raises_rate_limited_after_retries(tmp_path):
+    c, calls, slept = make_client(
+        tmp_path, [HttpResponse(429, "{}")] * 4
+    )
+    with pytest.raises(RateLimited):
+        c.request("GET", "/missions", auth=False)
+    assert len(calls) == 4          # initial + 3 backoff retries
+    assert len(slept) >= 3          # backoff sleeps happened
+
+
+def test_breaker_halts_after_5_consecutive_5xx(tmp_path):
+    c, _, _ = make_client(tmp_path, [HttpResponse(500, "{}")] * 40)
+    for _ in range(5):
+        with pytest.raises(PlatformDown):
+            c.request("GET", "/missions", auth=False)
+    with pytest.raises(PlatformDown, match="circuit breaker"):
+        c.request("GET", "/missions", auth=False)
+
+
+def test_breaker_resets_on_success(tmp_path):
+    seq = [HttpResponse(500, "{}")] * 16 + [ok({})] + [HttpResponse(500, "{}")] * 4
+    c, _, _ = make_client(tmp_path, list(seq))
+    for _ in range(4):
+        with pytest.raises(PlatformDown):
+            c.request("GET", "/missions", auth=False)
+    c.request("GET", "/missions", auth=False)   # success resets counter
+    with pytest.raises(PlatformDown):
+        c.request("GET", "/missions", auth=False)  # count restarts at 1, no halt
+
+
+def test_urlerror_raises_platform_down_and_trips_breaker(tmp_path):
+    """URLError (connection failure, timeout, DNS) is typed, retried, and counted by breaker."""
+    calls = []
+
+    def transport_with_urlerror(method, url, headers, body):
+        calls.append((method, url))
+        raise urllib.error.URLError("connection refused")
+
+    c = Prove2MeClient(
+        workspace=tmp_path,
+        transport=transport_with_urlerror,
+        _sleep=lambda x: None,
+        _now=lambda: 0.0,
+    )
+    with pytest.raises(PlatformDown, match="connection failed"):
+        c.request("GET", "/missions", auth=False)
+    # Initial + 3 retries = 4 transport calls
+    assert len(calls) == 4, f"Expected 4 calls (initial + 3 retries), got {len(calls)}"
+    assert c._consecutive_5xx == 1  # URLError counts as a server error
+
+
+def test_malformed_json_raises_typed_error(tmp_path):
+    """Non-JSON error body (e.g., HTML 502) raises Prove2MeError, not raw JSONDecodeError."""
+    resp = HttpResponse(502, "<html>Gateway Error</html>")
+    with pytest.raises(Prove2MeError, match="malformed JSON"):
+        resp.json()
+
+
+def test_malformed_json_in_request_response(tmp_path):
+    """Malformed JSON in a 200 response is caught and wrapped."""
+    c, _, _ = make_client(tmp_path, [HttpResponse(200, "not json")])
+    with pytest.raises(Prove2MeError, match="malformed JSON"):
+        c.request("GET", "/missions", auth=False)
+
+
+def test_auth_chain_persists_key_and_token(tmp_path):
+    responses = [
+        ok({"version": SKILL_VERSION, "session_token": "sess"}),          # /login
+        ok({"api_key": "KEY30", "expires_at": "2026-10-11T00:00:00Z"}),   # /agent/api-key
+        ok({"version": SKILL_VERSION, "access_token": "HOURLY",
+            "expires_at": "2026-09-11T13:00:00Z"}),                        # /agent/refresh
+    ]
+    c, calls, _ = make_client(tmp_path, responses)
+    c.login("me@example.com", "pw")
+    c.mint_api_key()
+    c.refresh()
+    assert c.access_token == "HOURLY"
+    saved = json.loads((tmp_path / "telperion_tokens.json").read_text())
+    assert saved["api_key"] == "KEY30"
+    assert saved["access_token"] == "HOURLY"
+    assert saved["access_expires"] == "2026-09-11T13:00:00Z"
+    # every auth response was version-gated: drift in any would have raised
+
+
+def test_login_version_drift_refuses(tmp_path):
+    c, _, _ = make_client(
+        tmp_path, [ok({"version": "other", "session_token": "s"})]
+    )
+    with pytest.raises(ProtocolDrift):
+        c.login("me@example.com", "pw")
+
+
+def test_verify_returns_submission_id_and_verdict_polls(tmp_path):
+    c, calls, _ = make_client(
+        tmp_path,
+        [ok({"submission_id": "sub1"}), ok({"status": "Proved"})],
+    )
+    c.access_token = "t"
+    sid = c.verify("theorem solution : 1 = 1 := rfl", target_id="thm9")
+    assert sid == "sub1"
+    assert c.verdict("sub1")["status"] == "Proved"
+    assert calls[0][0] == "POST" and "/verify" in calls[0][1]
+    assert calls[1][0] == "GET" and "submission_id=sub1" in calls[1][1]
+
+
+def test_ensure_auth_uses_persisted_key(tmp_path):
+    (tmp_path / "telperion_tokens.json").write_text(json.dumps(
+        {"api_key": "KEY30", "api_key_expires": "2099-01-01T00:00:00Z",
+         "access_token": "T1", "access_expires": "2099-01-01T01:00:00Z"}
+    ))
+    c, _, _ = make_client(tmp_path, [])
+    c.ensure_auth()
+    assert c.access_token == "T1"
+
+
+def test_mint_api_key_restores_access_token_on_error(tmp_path):
+    """CRITICAL: mint_api_key must restore access_token if request() fails."""
+    # 5xx response triggers 3 retries = 4 total attempts; provide enough responses
+    c, _, _ = make_client(tmp_path, [HttpResponse(500, "{}")] * 4)
+    c._session_token = "sess"
+    c.access_token = "prev_token"
+    with pytest.raises(PlatformDown):
+        c.mint_api_key()
+    # access_token must be restored to its pre-call value, not left as session token
+    assert c.access_token == "prev_token"
+
+
+def test_ensure_auth_refreshes_expired_token(tmp_path):
+    """IMPORTANT: ensure_auth must refresh() if persisted token is expired."""
+    (tmp_path / "telperion_tokens.json").write_text(json.dumps(
+        {"api_key": "KEY30", "api_key_expires": "2099-01-01T00:00:00Z",
+         "access_token": "EXPIRED", "access_expires": "2020-01-01T00:00:00Z"}
+    ))
+    c, calls, _ = make_client(
+        tmp_path,
+        [ok({"version": SKILL_VERSION, "access_token": "T2",
+             "expires_at": "2099-01-01T01:00:00Z"})],
+    )
+    c.ensure_auth()
+    assert c.access_token == "T2"
+    assert len(calls) == 1  # exactly one refresh() call
+    assert "/agent/refresh" in calls[0][1]
+
+
+def test_ensure_auth_skips_refresh_if_token_valid(tmp_path):
+    """Persisted valid token should not trigger refresh()."""
+    (tmp_path / "telperion_tokens.json").write_text(json.dumps(
+        {"access_token": "VALID", "access_expires": "2099-01-01T00:00:00Z"}
+    ))
+    c, calls, _ = make_client(tmp_path, [])
+    c.ensure_auth()
+    assert c.access_token == "VALID"
+    assert len(calls) == 0  # no refresh() call
+
+
+def test_mint_api_key_version_gates_response(tmp_path):
+    """IMPORTANT 3: mint_api_key must call _check_version on /agent/api-key response."""
+    c, _, _ = make_client(
+        tmp_path,
+        [ok({"version": "wrong", "api_key": "KEY30", "expires_at": "2026-10-11T00:00:00Z"})],
+    )
+    c._session_token = "sess"
+    with pytest.raises(ProtocolDrift):
+        c.mint_api_key()
+
+
+def test_mint_api_key_clears_session_token(tmp_path):
+    """Minor: session token should be cleared after use (single-use credential)."""
+    c, _, _ = make_client(tmp_path, [ok({"api_key": "KEY", "expires_at": "2026-10-11T00:00:00Z"})])
+    c._session_token = "sess"
+    c.mint_api_key()
+    assert c._session_token is None
+
+
+def test_verify_sends_multipart_with_explanation(tmp_path):
+    """LIVE contract: POST /verify is multipart/form-data (theorem_id + file
+    [+ explanation]); the explanation rides along at submit time (I4)."""
+    captured = {}
+
+    def transport(method, url, headers, body):
+        captured.update(method=method, url=url, headers=headers, body=body)
+        return HttpResponse(200, json.dumps({"submission_id": "s1"}))
+
+    c = Prove2MeClient(workspace=tmp_path, transport=transport,
+                       _sleep=lambda s: None, _now=lambda: 0.0)
+    c.access_token = "t"
+    sid = c.verify("theorem solution : 1 = 1 := rfl", target_id="thm-9",
+                   explanation="by rfl; source: arithmetic")
+    assert sid == "s1"
+    assert captured["method"] == "POST" and captured["url"].endswith("/verify")
+    ct = captured["headers"]["Content-Type"]
+    assert ct.startswith("multipart/form-data; boundary=")
+    body = captured["body"]
+    assert b'name="theorem_id"' in body and b"thm-9" in body
+    assert b'filename="solution.lean"' in body
+    assert b"theorem solution : 1 = 1 := rfl" in body
+    assert b'name="explanation"' in body
+    assert b'name="proof_type"' not in body   # default prove omits it
+
+
+def _paged_missions(tmp_path, total, cap):
+    """Scripted server that clamps `limit` to `cap` and serves `total` missions."""
+    missions = [{"id": f"m{i}"} for i in range(total)]
+    calls = []
+
+    def transport(method, url, headers, body):
+        calls.append(url)
+        offset = int(url.split("offset=")[1])
+        return ok({"missions": missions[offset:offset + cap]})
+
+    c = Prove2MeClient(workspace=tmp_path, transport=transport,
+                       _sleep=lambda s: None, _now=lambda: 0.0)
+    c.access_token = "t"
+    return c, calls
+
+
+def test_missions_reads_every_page_when_server_clamps_limit(tmp_path):
+    c, calls = _paged_missions(tmp_path, total=45, cap=20)
+    got = c.missions()
+    assert [m["id"] for m in got] == [f"m{i}" for i in range(45)]
+    # offsets advance by the RECEIVED page size, not the requested limit
+    assert [u.split("offset=")[1] for u in calls] == ["0", "20", "40"]
+
+
+def test_missions_exact_multiple_of_page_stops_on_empty_page(tmp_path):
+    c, calls = _paged_missions(tmp_path, total=40, cap=20)
+    assert len(c.missions()) == 40
+    assert [u.split("offset=")[1] for u in calls] == ["0", "20", "40"]
+
+
+def test_missions_empty_and_single_page(tmp_path):
+    c, calls = _paged_missions(tmp_path, total=0, cap=20)
+    assert c.missions() == [] and len(calls) == 1
+    # A single short page: the cap is unknown, so one extra (empty) page is
+    # fetched to confirm the end -- two requests, seven missions.
+    c, calls = _paged_missions(tmp_path, total=7, cap=20)
+    assert len(c.missions()) == 7 and len(calls) == 2

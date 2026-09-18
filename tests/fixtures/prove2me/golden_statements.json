@@ -1,0 +1,30 @@
+{
+  "format": "telperion-p2m-golden-v1",
+  "note": "Hand-labeled seed corpus. Task 10 appends real statements fetched from completed missions. match=true means stage-1 triage SHOULD select it.",
+  "statements": [
+    {"id": "g1", "match": true,  "expect_any": ["SOSEmitter", "DirectPolyaEmitter", "PSDFormEmitter"],
+     "text": "theorem solution : ∀ x : ℝ, 0 ≤ x^2 - 2*x + 1"},
+    {"id": "g2", "match": true,  "expect_any": ["IdentityEmitter", "ExactFactEmitter", "RationalIdentityEmitter"],
+     "text": "theorem solution : (3 : ℚ)/4 + 1/4 = 1"},
+    {"id": "g3", "match": true,  "expect_any": ["PadicValuationEmitter"],
+     "text": "theorem solution : padicValNat 3 405 = 4"},
+    {"id": "g4", "match": true,  "expect_any": ["TailNatEmitter", "MonotoneRatioTailEmitter"],
+     "text": "theorem solution : ∀ n : ℕ, 5 ≤ n → n^2 ≤ 2^n"},
+    {"id": "g5", "match": true,  "expect_any": ["CauchySchwarzEmitter", "TangentSumEmitter", "SOSEmitter"],
+     "text": "theorem solution (x y z : ℝ) : (x + y + z)^2 ≤ 3 * (x^2 + y^2 + z^2)"},
+    {"id": "g6", "match": true,  "expect_any": ["InfeasibilityEmitter", "SOSRefutationEmitter"],
+     "text": "theorem solution : ¬ ∃ x y : ℚ, x^2 + y^2 = -1"},
+    {"id": "g7", "match": true,  "expect_any": ["FiniteDecideEmitter", "CaseDispatchAssemblyEmitter"],
+     "text": "theorem solution : ∀ n : ℕ, n ≤ 6 → n * (n + 1) % 2 = 0"},
+    {"id": "g8", "match": false, "expect_any": [],
+     "text": "theorem solution (G : Type*) [Group G] (a b : G) : (a * b)⁻¹ = b⁻¹ * a⁻¹"},
+    {"id": "g9", "match": false, "expect_any": [],
+     "text": "theorem solution (f : ℝ → ℝ) (hf : Continuous f) : Continuous (fun x => f x + 1)"},
+    {"id": "g10", "match": false, "expect_any": [],
+     "text": "theorem solution (α : Type*) [MeasurableSpace α] (μ : Measure α) : μ ∅ = 0"},
+    {"id": "g11", "match": true,  "expect_any": ["WZEmitter", "IdentityEmitter"],
+     "text": "theorem solution (n : ℕ) : ∑ k in Finset.range (n + 1), (n.choose k) = 2^n"},
+    {"id": "g12", "match": false, "expect_any": [],
+     "text": "theorem solution (V : Type*) (G : SimpleGraph V) : G.chromaticNumber ≤ 0 ∨ True"}
+  ]
+}
