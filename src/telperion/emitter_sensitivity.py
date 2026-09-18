@@ -29,6 +29,8 @@ declared here.
 """
 from __future__ import annotations
 
+import importlib
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -209,6 +211,21 @@ REGISTRY: dict[str, SensitivityStance] = {
         # kernel-gated adapter (negctrl_adapters/adapter_interval_gram_inertia.py) IS, and it is
         # the stronger of the two checks.
         checked_in=None),
+    "WeilFormEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
+                                  "E8 Weil pairing enclosure: the Arb box [lo, hi] for "
+                                  "Re weilForm (crossCorr g g') is a separately-supplied, "
+                                  "corruptible numeric certificate; the emitted theorem is only "
+                                  "its kernel consequence (box_pos / box_minor_pos), whose side "
+                                  "goals 0 < lo and max(c0^2, c1^2) < lo_a * lo_b are decided by "
+                                  "norm_num.  Corrupt a literal so the box no longer implies the "
+                                  "consequence and the kernel REJECTS the proof.  Arb is the "
+                                  "documented non-kernel trust seam; certify REFUSES a "
+                                  "non-compactly-supported test (the PNT growth trap), an "
+                                  "over-wide box, a Hermitian-inconsistent mirror, and a "
+                                  "non-positive margin.  Finite category-b "
+                                  "(conjecture1_proved = False)",
+                                  # See negctrl_adapters/adapter_weil_form_enclosure.py.
+                                  neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
@@ -588,6 +605,46 @@ REGISTRY: dict[str, SensitivityStance] = {
         "list and radius ARE the statement; the mass M and per-term |a_i| facts "
         "are re-decided in-kernel (sign-aware abs_of_nonneg/nonpos + norm_num + "
         "linarith); T < 1 / zero leading coeff refused at certify time"),
+    # --- PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14) ---
+    "BraggAmplitudeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Truncated Bragg amplitude Σ cos(γ_k·u) ∈ [A,B] over rational ordinate brackets: each "
+        "per-bracket cos box is a CosEnclosure order-4 base bracket (cos_base_interval, decided by "
+        "norm_num) + Lipschitz width absorption (cos_encl_bracket), folded by add_encl; the claimed "
+        "[A,B] is closed by le_trans over norm_num-decided rational endpoint facts. No "
+        "separately-supplied corruptible identity — the enclosure boxes ARE the statement, and "
+        "certify REFUSES a claimed interval that fails to enclose the folded box (the negative "
+        "control) and any |c_k|>1 out-of-range sample. conjecture1_proved = False"),
+    "DefectWitnessEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Two-configuration inertia gap (BraggDefect shape): on-line functional value 0 ∈ [A,B] and "
+        "off-line functional value strictly in [C,D] with D < A (the certified leakage gap). All "
+        "three facts (0 ∈ [A,B]; the off-line interval; the gap D < A) are concrete-rational, "
+        "closed by norm_num; the intervals ARE the statement, no separately-supplied corruptible "
+        "cofactor. certify REFUSES a swapped/non-separated configuration (the off-line upper bound "
+        "not strictly below the on-line lower value) — the negative control. conjecture1_proved = False"),
+    # --- 2026-09-17: the T5 per-band certificate emitter (kind="turing_band"). ---
+    "_TuringBandEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Per-band RH-in-a-box theorem rh_in_box_<tag> assembled through TuringBand.turing_band_on_line "
+        "plus a kernel statement_match gate against the canonical TuringBand.BandStatement. The Arb "
+        "enclosures (edge non-vanishing, winding integer, on-line sign-change count) enter as theorem "
+        "HYPOTHESES (the documented trust boundary), so a corrupted certificate yields a DIFFERENT "
+        "hypothesis set, never a false kernel theorem — there is no corruptible identity certificate "
+        "at the emission layer. Winding == line count is enforced at driver/certify time (refusal "
+        "guard) and the WindingBoxZeroEmitter sidecar re-verifies the winding at doubled precision. "
+        "conjecture1_proved = False"),
+    "WindingBoxZeroEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Arb-trust-class winding-number box certificate (the turing_band sidecar trust class): the "
+        "rigorous zero count of an analytic function on a rational-cornered box, via the "
+        "quadrant-advance argument principle over Arb-ball boundary samples. Ships NO kernel theorem "
+        "(nthm=0) — only a .cert.json sidecar + a documentation stub — so there is no Lean identity "
+        "to corrupt; the winding integer is RE-VERIFIED at doubled precision + density at certify "
+        "time and a claimed count the argument principle does not support is REFUSED (the negative "
+        "control). conjecture1_proved = False"),
+    "SelfInversiveRigidityEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Equal-modulus real-rootedness (TwoFreqRigidity.twoFreq_realRooted_iff): the Gaussian-rational "
+        "coefficients c₁,c₂ ARE the statement; the emitted proof discharges ‖c₁‖=‖c₂‖ from the EXACT "
+        "rational equality |c₁|²=|c₂|² (Complex.norm via norm_num on re²+im²) and applies the in-island "
+        "iff lemma; no separately-supplied corruptible identity. certify REFUSES |c₁|²≠|c₂|² (real-"
+        "rootedness not forced) — the negative control. conjecture1_proved = False"),
     "SqrtRootEliminationEmitter": _S(
         CERTIFICATE_SENSITIVE,
         "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "
@@ -600,6 +657,37 @@ REGISTRY: dict[str, SensitivityStance] = {
                    "ring identity) but no adapter is registered in "
                    "negative_control_harness.ADAPTERS yet — the honestly-named gap"),
     ),
+    # --- RH SEVEN-FACES instruments (2026-09-14, face-emitters agent) ---
+    "RobinGrowthEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Robin rung (σ(n):ℝ) < R with R = e^γ·n·log log n carried as hypothesis hR : "
+        "Llo ≤ R (the Arb enclosure trust seam): the exact σ(n) and the certified "
+        "lower bound Llo ARE the statement, the chaining (σ:ℝ) < Llo is re-decided "
+        "in-kernel by norm_num and closed by lt_of_lt_of_le; a non-strict Llo (≤σ) or "
+        "n ≤ 5040 (outside Robin's range) refused at certify time (negative control); "
+        "no separately-supplied corruptible cofactor"),
+    "BaezDuarteEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Báez-Duarte rung d²_N ≤ U with d²_N carried as hypothesis hval : Q ≤ U and Q "
+        "the exact quadratic-form value of the chosen coefficient vector (the analytic "
+        "trust seam is d²_N ≤ Q, the closed-form Gram evaluation): the exact rational Q "
+        "and the readable upper bound U ARE the statement, Q ≤ U re-decided by norm_num "
+        "and closed by le_trans; a U below the exact Q refused at certify time (negative "
+        "control); no separately-supplied corruptible cofactor"),
+    "LehmerPairEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "certified Lehmer-pair quality inequality quality_short ≤ qcap (< 1) with "
+        "quality = δ²·C_n the exact rational Lehmer signature from a close consecutive-"
+        "zero pair (the Arb ordinate data via hardy_z_zeros is the trust seam): the "
+        "rounded rationals ARE the statement, re-decided by norm_num; a non-Lehmer pair "
+        "(quality ≥ 1) or a qcap below the quality / ≥ the threshold refused at certify "
+        "time (negative controls); the de Bruijn–Newman Λ lower bound derived from it is "
+        "shipped only as the documented WIP hypothesis-carrying skeleton (CNV constant "
+        "unverified), NOT a numeric kernel claim; no separately-supplied corruptible cofactor"),
+    "BagchiRecurrenceEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "recurrence sup bound M ≤ ε with M = max_grid |ζ(s+iτ) − target(s)| carried as "
+        "hypothesis hgrid : dev ≤ M-per-point from Arb acb_zeta enclosures (the trust "
+        "seam): the certified per-point deviations and the tolerance ε ARE the statement, "
+        "the grid-max ≤ ε re-decided by norm_num over the finite grid; an ε below the "
+        "certified max deviation refused at certify time (negative control); no "
+        "separately-supplied corruptible cofactor"),
 }
 
 
@@ -669,6 +757,11 @@ def neg_control_unwired_emitters() -> list[str]:
     )
 
 
+_LAZY_EMITTER_CLASSES: tuple[tuple[str, str], ...] = (
+    ("telperion.emit_turing_band", "turing_band_emitter_class"),
+)
+
+
 def discover_emitters() -> list[type]:
     """Every concrete SHIPPED Emitter subclass reachable from the base class.
 
@@ -678,6 +771,11 @@ def discover_emitters() -> list[type]:
     is ``builtins``) pollutes ``Emitter.__subclasses__()`` process-globally but is
     NOT a shippable emitter, so it is excluded from the completeness gate."""
     seen: dict[str, type] = {}
+    # Lazily-constructed emitters (deferred to dodge an import cycle) are only
+    # reachable from Emitter.__subclasses__() once their factory has run;
+    # materialize them here so discovery is order-independent.
+    for mod_name, accessor in _LAZY_EMITTER_CLASSES:
+        getattr(importlib.import_module(mod_name), accessor)()
 
     def walk(cls: type) -> None:
         for sub in cls.__subclasses__():

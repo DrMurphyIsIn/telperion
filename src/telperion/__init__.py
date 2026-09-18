@@ -70,6 +70,22 @@ from .emit_hermitian_moment import (  # noqa: F401
 from .emit_li_positivity import (  # noqa: F401
     LiPositivityLadderEmitter, li_rung_certificate, li_positivity_family,
 )
+from .emit_robin_growth import (  # noqa: F401
+    RobinGrowthEmitter, robin_growth_certificate, robin_growth_family,
+    robin_rhs_lower_bound, sigma_exact,
+)
+from .emit_baez_duarte import (  # noqa: F401
+    BaezDuarteEmitter, baez_duarte_certificate, baez_duarte_family,
+    baez_duarte_upper_bound, optimal_coeffs,
+)
+from .emit_lehmer_pair import (  # noqa: F401
+    LehmerPairEmitter, lehmer_pair_certificate, lehmer_pair_family,
+    lehmer_pair_quality, find_closest_pair,
+)
+from .emit_bagchi_recurrence import (  # noqa: F401
+    BagchiRecurrenceEmitter, bagchi_recurrence_certificate, bagchi_recurrence_family,
+    bagchi_grid_max, scan_best_shift,
+)
 from .emit_bragg_floor import (  # noqa: F401
     BraggFloorEmitter, BraggFloorCert, bragg_floor_certificate,
     bragg_floor_family, certify_bragg_floor_point,
@@ -79,6 +95,11 @@ from .emit_interval_gram_inertia import (  # noqa: F401
     IntervalGramInertiaEmitter, IntervalGramInertiaCert,
     interval_gram_inertia_certificate, interval_gram_inertia_family,
     certify_interval_gram_inertia_point, interval_gram_inertia_prelude_lean,
+)
+from .emit_weil_form_enclosure import (  # noqa: F401
+    WeilFormEnclosureEmitter, WeilFormEnclosureCert, WeilFormEnclosureData, WeilBox,
+    weil_form_enclosure_certificate, weil_form_enclosure_family,
+    certify_weil_form_enclosure_point, weil_form_prelude_lean,
 )
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
@@ -334,6 +355,24 @@ from .emit_endpoint_geom_cap import (  # noqa: F401
     EndpointGeomCapEmitter, endpoint_geom_cap_certificate,
     endpoint_geom_cap_family, certify_endpoint_geom_cap_point,
 )
+# PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14): the campaign's four minted
+# certificate shapes promoted to first-class Telperion kinds.
+from .emit_bragg_amplitude import (  # noqa: F401
+    BraggAmplitudeEmitter, bragg_amplitude_certificate,
+    bragg_amplitude_family, certify_bragg_amplitude_point,
+)
+from .emit_defect_witness import (  # noqa: F401
+    DefectWitnessEmitter, defect_witness_certificate,
+    defect_witness_family, certify_defect_witness_point,
+)
+from .emit_selfinversive_rigidity import (  # noqa: F401
+    SelfInversiveRigidityEmitter, selfinversive_rigidity_certificate,
+    selfinversive_rigidity_family, certify_selfinversive_rigidity_point,
+)
+from .emit_winding_box_zero import (  # noqa: F401
+    WindingBoxZeroEmitter, winding_box_zero_certificate,
+    winding_box_zero_family, certify_winding_box_zero_point,
+)
 # Flint-free emitter previously only imported via the flint-gated rh_jensen
 # modules, making sensitivity-registry discovery depend on whether python-flint
 # was installed.  Imported here unconditionally so the completeness/stray gates
@@ -367,6 +406,10 @@ from .emit_annulus_count import (  # noqa: F401
     annulus_count_family, certify_annulus_count_point,
 )
 # RH-in-a-box localization capstone (Stage 3, 2026-09-06): every zeta-zero in the box is on Re=1/2.
+from .emit_turing_band import (  # noqa: F401
+    TuringBandCertificate, TuringBandEmitter, certify_turing_band_point,
+    emit_turing_band_instantiation, turing_band_certificate, turing_band_family,
+)
 from .emit_box_localization import (  # noqa: F401
     BoxLocalizationEmitter, box_localization_certificate,
     box_localization_family, certify_box_localization_point,
