@@ -222,6 +222,10 @@ _SPECIAL_KINDS = (
     # total divisor = on-line count ⟹ every zero in the box is on Re=1/2 (Turing-style verification,
     # NOT a proof of RH).  Refuses n_line > n_total and n_line != n_total.
     "box_localization",
+    # T5 Turing-band certificate (2026-09-12): per-band total count via the RvM
+    # edge decomposition (zero_count_band_edge_decomp) with Arb-enclosed edge
+    # argument-changes; kernel statement-match gate against BandStatement.
+    "turing_band",
     # HermitianMomentInertia family (2026-09-08, ported from anthropics/zeta-23-lean,
     # arXiv:2608.13637): two_moment_count (§6 scalar count certificate (2−κ)N−err ≤ count,
     # H(λ) / H_d(λ) via nlinarith off Real.sqrt_le_sqrt) and rank_trace_scalar (integrality
@@ -347,6 +351,41 @@ _SPECIAL_KINDS = (
     "regular_word",
     "low_order_tail",
     "eventual_threshold",
+    # PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14), promoting the campaign's
+    # four minted certificate shapes to first-class kinds:
+    #   bragg_amplitude       -- certified truncated diffraction sum Σ cos(γ_k·u) ∈ [A,B]
+    #                            over rational ordinate brackets (CosEnclosure base-case
+    #                            fold, the BraggH100 pipeline reduced to a small instance).
+    #   defect_witness        -- two-configuration inertia gap (BraggDefect): on-line
+    #                            functional value inside [A,B]∋0, off-line strictly below
+    #                            with a certified leakage gap.
+    #   selfinversive_rigidity -- equal-modulus real-rootedness (TwoFreqRigidity): |c₁|=|c₂|
+    #                            EXACTLY ⟹ the two-frequency sum is real-rooted.
+    #   winding_box_zero       -- Arb-trust-class winding-number box certificate for a zero
+    #                            (sidecar + documentation stub, NOT a kernel theorem).
+    "bragg_amplitude",
+    "defect_witness",
+    "selfinversive_rigidity",
+    "winding_box_zero",
+    # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
+    # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
+    # numeric fact as an Arb-enclosure HYPOTHESIS (the trust seam); the kernel proves
+    # only the trivial chaining.  A finite rung per face, NOT a step toward RH.
+    #   robin_growth  -- Face 2 (temperedness): σ(n) < e^γ·n·log log n for n > 5040
+    #                    (Robin 1984, RH ⟺ ∀ such n).  Exact σ(n) < certified Arb
+    #                    lower bound on the RHS, chained by lt_of_lt_of_le.
+    #   baez_duarte   -- Face 6 (spectral): a rational UPPER bound on the
+    #                    Nyman–Beurling–Báez-Duarte distance d²_N (RH ⟺ d²_N → 0),
+    #                    from an explicit coefficient vector's certified Gram value.
+    #   lehmer_pair   -- Face 5 (de Bruijn–Newman): a certified de Bruijn–Newman Λ
+    #                    lower bound from a close ("Lehmer") consecutive-zero pair.
+    #   bagchi_recurrence -- Face 4 (recurrence): a certified sup bound
+    #                    sup_{s∈K}|ζ(s+iτ) − target(s)| < ε on a rational grid
+    #                    (Bagchi 1981, RH ⟺ ζ strongly recurrent); Arb-trust class.
+    "robin_growth",
+    "baez_duarte",
+    "lehmer_pair",
+    "bagchi_recurrence",
     # Route P Brick D3 part 2 (2026-09-12, Dyson-quasicrystal diffraction): the order-n log-prime
     # (von Mangoldt / Bragg) amplitude certificate — truncated Bragg partial sum at a fixed base
     # point s0>1, net of a certified tail, clears the explicit archimedean floor -(1+Re taylorCoeff
@@ -469,6 +508,8 @@ _SPECIAL_DISPATCH = {
         ("emit_annulus_count", "certify_annulus_count_point", "AnnulusCountEmitter"),
     "box_localization":
         ("emit_box_localization", "certify_box_localization_point", "BoxLocalizationEmitter"),
+    "turing_band":
+        ("emit_turing_band", "certify_turing_band_point", "TuringBandEmitter"),
     "slit_loop_winding_zero":
         ("emit_slit_loop_winding_zero", "certify_slit_loop_winding_zero_point",
          "SlitLoopWindingZeroEmitter"),
@@ -553,6 +594,26 @@ _SPECIAL_DISPATCH = {
     "eventual_threshold":
         ("emit_eventual_threshold", "certify_eventual_threshold_point",
          "EventualThresholdEmitter"),
+    # PROGRAM ANDÚRIL × MIRRORMERE emitters (2026-09-14).
+    "bragg_amplitude":
+        ("emit_bragg_amplitude", "certify_bragg_amplitude_point", "BraggAmplitudeEmitter"),
+    "defect_witness":
+        ("emit_defect_witness", "certify_defect_witness_point", "DefectWitnessEmitter"),
+    "selfinversive_rigidity":
+        ("emit_selfinversive_rigidity", "certify_selfinversive_rigidity_point",
+         "SelfInversiveRigidityEmitter"),
+    "winding_box_zero":
+        ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
+    # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).
+    "robin_growth":
+        ("emit_robin_growth", "certify_robin_growth_point", "RobinGrowthEmitter"),
+    "baez_duarte":
+        ("emit_baez_duarte", "certify_baez_duarte_point", "BaezDuarteEmitter"),
+    "lehmer_pair":
+        ("emit_lehmer_pair", "certify_lehmer_pair_point", "LehmerPairEmitter"),
+    "bagchi_recurrence":
+        ("emit_bagchi_recurrence", "certify_bagchi_recurrence_point",
+         "BagchiRecurrenceEmitter"),
     # Route P Brick D3 part 2 (Dyson-quasicrystal diffraction; onto RvMRoutePFalsify /
     # RvMCompanionBraggLimit, pinned in the li_positivity island lakefile).
     "bragg_floor":
