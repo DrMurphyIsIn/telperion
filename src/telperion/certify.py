@@ -392,6 +392,10 @@ _SPECIAL_KINDS = (
     # Γℝ n).  A FINITE rational inequality (category-b); the passage to the companion coefficient and
     # the Route-P falsifiability atom is the CONDITIONAL, RH-hard exhaustion seam (never discharged).
     "bragg_floor",
+    # MIRRORMERE exp-enclosure (2026-09-18): rational brackets of Real.exp at a rational point
+    # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
+    # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
+    "exp_enclosure",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -618,6 +622,10 @@ _SPECIAL_DISPATCH = {
     # RvMCompanionBraggLimit, pinned in the li_positivity island lakefile).
     "bragg_floor":
         ("emit_bragg_floor", "certify_bragg_floor_point", "BraggFloorEmitter"),
+    # MIRRORMERE exp-enclosure (rational Real.exp brackets via Real.exp_bound; the
+    # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
+    "exp_enclosure":
+        ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
 }
 
 

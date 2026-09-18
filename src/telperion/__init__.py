@@ -91,6 +91,10 @@ from .emit_bragg_floor import (  # noqa: F401
     bragg_floor_family, certify_bragg_floor_point,
     bragg_below_floor_refutes_rh_lean,
 )
+from .emit_exp_enclosure import (  # noqa: F401
+    ExpEnclosureEmitter, ExpEnclosureCert, exp_enclosure_certificate,
+    exp_enclosure_family, certify_exp_enclosure_point, taylor_box, taylor_parts,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,
