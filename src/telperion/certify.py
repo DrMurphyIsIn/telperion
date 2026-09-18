@@ -366,6 +366,10 @@ _SPECIAL_KINDS = (
     "bragg_amplitude",
     "defect_witness",
     "selfinversive_rigidity",
+    #   disjoint_discs        -- MIRRORMERE E4b isolation INSTANCE (OfflineDiscs): explicit
+    #                            strip points + explicit rational radius, pairwise (2r)^2 <
+    #                            dist^2 and strict strip margins, all norm_num-decided.
+    "disjoint_discs",
     "winding_box_zero",
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
     # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
@@ -602,6 +606,8 @@ _SPECIAL_DISPATCH = {
     "selfinversive_rigidity":
         ("emit_selfinversive_rigidity", "certify_selfinversive_rigidity_point",
          "SelfInversiveRigidityEmitter"),
+    "disjoint_discs":
+        ("emit_disjoint_discs", "certify_disjoint_discs_point", "DisjointDiscsEmitter"),
     "winding_box_zero":
         ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).

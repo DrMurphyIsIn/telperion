@@ -610,6 +610,19 @@ REGISTRY: dict[str, SensitivityStance] = {
         "to corrupt; the winding integer is RE-VERIFIED at doubled precision + density at certify "
         "time and a claimed count the argument principle does not support is REFUSED (the negative "
         "control). conjecture1_proved = False"),
+    # --- 2026-09-18: MIRRORMERE E4b isolation INSTANCE emitter (the concrete shape the
+    #     Rouche/E5 leg consumes; the general lemma is OfflineDiscs.offline_disjoint_discs). ---
+    "DisjointDiscsEmitter": _S(CERTIFICATE_SENSITIVE,
+        "Concrete isolation instance (OfflineDiscs shape): explicit Gaussian-rational strip points "
+        "plus an explicit rational radius r. The load-bearing facts are the per-pair STRICT "
+        "separation (2r)^2 < dist^2 (reached by Complex.dist_eq + Complex.norm_def + Real.lt_sqrt, "
+        "so no square root is ever approximated) and the per-point strict strip margins r < re, "
+        "r < 1 - re, all closed by norm_num on rational data. r is a SUPPLIED number that appears "
+        "in the statement AND is what the kernel arithmetic must clear, so an inflated r yields a "
+        "FALSE pair theorem the kernel rejects -- hence an adapter, not not_applicable. certify "
+        "REFUSES an overlapping pair, a boundary-reaching radius, a point off the open strip, a "
+        "duplicate point, or r <= 0. conjecture1_proved = False",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "SelfInversiveRigidityEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Equal-modulus real-rootedness (TwoFreqRigidity.twoFreq_realRooted_iff): the Gaussian-rational "
         "coefficients c₁,c₂ ARE the statement; the emitted proof discharges ‖c₁‖=‖c₂‖ from the EXACT "
