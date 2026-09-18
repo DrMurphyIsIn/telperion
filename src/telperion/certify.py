@@ -366,6 +366,10 @@ _SPECIAL_KINDS = (
     "bragg_amplitude",
     "defect_witness",
     "selfinversive_rigidity",
+    #   twofreq_offline       -- the COMPLEMENT of selfinversive_rigidity: |c1|^2 != |c2|^2
+    #                            EXACTLY ==> the two-frequency sum is NOT real-rooted (and,
+    #                            for the Euler-factor family, every zero sits at Im x = 1/2).
+    "twofreq_offline",
     "winding_box_zero",
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
     # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
@@ -602,6 +606,8 @@ _SPECIAL_DISPATCH = {
     "selfinversive_rigidity":
         ("emit_selfinversive_rigidity", "certify_selfinversive_rigidity_point",
          "SelfInversiveRigidityEmitter"),
+    "twofreq_offline":
+        ("emit_twofreq_offline", "certify_twofreq_offline_point", "TwoFreqOfflineEmitter"),
     "winding_box_zero":
         ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).

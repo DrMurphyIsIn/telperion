@@ -359,6 +359,10 @@ from .emit_selfinversive_rigidity import (  # noqa: F401
     SelfInversiveRigidityEmitter, selfinversive_rigidity_certificate,
     selfinversive_rigidity_family, certify_selfinversive_rigidity_point,
 )
+from .emit_twofreq_offline import (  # noqa: F401
+    TwoFreqOfflineEmitter, twofreq_offline_certificate,
+    twofreq_offline_family, certify_twofreq_offline_point,
+)
 from .emit_winding_box_zero import (  # noqa: F401
     WindingBoxZeroEmitter, winding_box_zero_certificate,
     winding_box_zero_family, certify_winding_box_zero_point,
