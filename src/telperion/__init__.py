@@ -190,6 +190,10 @@ from .emit_poly_exp_absorption import (  # noqa: F401
     PolyExpAbsorptionEmitter, poly_exp_absorption_certificate,
     poly_exp_absorption_family,
 )
+from .emit_exp_laurent_identity import (  # noqa: F401
+    ExpLaurentIdentityEmitter, exp_laurent_certificate,
+    exp_laurent_identity_family,
+)
 from .emit_graded_convolution import (  # noqa: F401
     GradedConvolutionEmitter, graded_convolution_certificate,
     graded_convolution_family,
