@@ -195,6 +195,21 @@ REGISTRY: dict[str, SensitivityStance] = {
                             # making floorHi ≤ braggLo − tailHi FALSE is kernel-rejected by norm_num.
                             # See negctrl_adapters/adapter_bragg_floor.py.
                             neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "WeilFormEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
+                                  "E8 Weil pairing enclosure: the Arb box [lo, hi] for "
+                                  "Re weilForm (crossCorr g g') is a separately-supplied, "
+                                  "corruptible numeric certificate; the emitted theorem is only "
+                                  "its kernel consequence (box_pos / box_minor_pos), whose side "
+                                  "goals 0 < lo and max(c0^2, c1^2) < lo_a * lo_b are decided by "
+                                  "norm_num.  Corrupt a literal so the box no longer implies the "
+                                  "consequence and the kernel REJECTS the proof.  Arb is the "
+                                  "documented non-kernel trust seam; certify REFUSES a "
+                                  "non-compactly-supported test (the PNT growth trap), an "
+                                  "over-wide box, a Hermitian-inconsistent mirror, and a "
+                                  "non-positive margin.  Finite category-b "
+                                  "(conjecture1_proved = False)",
+                                  # See negctrl_adapters/adapter_weil_form_enclosure.py.
+                                  neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "

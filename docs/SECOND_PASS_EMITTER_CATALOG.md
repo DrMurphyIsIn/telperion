@@ -113,3 +113,43 @@ generator-producible / kernel-checkable certificate boundary.
   *behind* #1, already covered by `finite_decide`/`telescoping`. P5, skip.
 - `SlitPlaneLogPrimitive` / `ConjugationFold` (`RvM/Fold.lean`, `GammaFacts/StirlingVert.lean`)
   — bespoke complex-analytic glue, no certificate boundary. Skip.
+
+---
+
+## Built after this catalog
+
+### `weil_form_enclosure` — the E8 pairing itself, as a named-hypothesis trust seam  [BUILT 2026-09-18]
+- **The gap it closed.** `bragg_floor` certifies finite Bragg amplitudes against an archimedean
+  floor per Li order `n`, but NOTHING in Telperion evaluated the E8 pairing — the finite prime
+  sum `Σ_{n ≤ e^R} Λ(n)/√n (g(log n) + g(−log n))`, the two pole terms `h(±i/2)`, the `−g(0) log π`
+  term, and the digamma integral `(1/2π) ∫ h(r) Re ψ(1/4 + ir/2) dr` — for a concrete `C_c^∞` test
+  function, nor the `k × k` Gram entries for cross-correlations. That is the right-hand side of the
+  PROVED registry node `RH_limit_explicit_formula` (E8, `WeilExplicit`; `E6Bridge4.lean`, #560).
+- **Backend.** `telperion/src/telperion/weil_form_eval.py` — python-flint (`acb`) evaluator over the
+  bump family `g(u) = amp·P(t)·exp(−1/(1−t²))`, `t = (u−c)/w`. Rigour: interior-cut collars for the
+  bump's non-analytic endpoints; the archimedean tail bounded (not truncated) by `|h(r)| ≤ ‖f^{(N)}‖₁/|r|^N`
+  with `‖f^{(N)}‖₁` from a symbolic-derivative + Arb-ball-grid sup bound, and the explicit
+  `|Re ψ(1/4+iy)| ≤ log(|y|+2) + 4.4` (derivation in the module docstring, re-verified on a dyadic
+  Arb sweep as a refuse-to-emit anchor). Prime side exact and FINITE — the compact-support payoff.
+  `G_i(z)G_j(−z)` collapses the pole terms and `h_i(r)h_j(−r)` keeps the archimedean integrand
+  ENTIRE (writing `conj`/`.real` inside it would silently invalidate Arb's path integral).
+- **Emitted Lean.** `emit_weil_form_enclosure.py`. The enclosure is the NAMED HYPOTHESIS `henc`
+  (the `BraggDefect` `hexp` / Li-ladder `henc` discipline) and the kernel proves only its
+  consequence, through two abstract lemmas whose numeric side goals are `norm_num`:
+  `box_pos` (`0 < weilForm (autocorr g)`) and `box_minor_pos` (Sylvester: both leading principal
+  minors of a `2 × 2` Weil-Gram block positive, i.e. the block is positive definite — the datum a
+  Gram-inertia consumer wants). `weil_negative_refutes_rh` is the falsifiability face; its RH
+  content is the UNDISCHARGED hypothesis `hpos : RiemannHypothesis → 0 ≤ …`.
+- **Refusals.** non-compact support (the PNT growth trap, E8 memo 2.2); box wider than the declared
+  threshold; inverted box; Hermitian-inconsistent `(i,j)`/`(j,i)` mirrors; `lo ≤ 0`; non-positive
+  worst-case determinant.
+- **Registry stance.** `CERTIFICATE_SENSITIVE` with a two-sided kernel adapter
+  (`negctrl_adapters/adapter_weil_form_enclosure.py`): a forged off-diagonal box that exceeds
+  Cauchy–Schwarz makes `max(c0², c1²) < a0·b0` FALSE and the kernel rejects; the true bump-pair
+  block (worst-case determinant ≈ +6.19e−10) compiles.
+- **Dogfood.** `examples/weil_form_enclosure/` (`generate.py --check` also gates the `WeilExplicit`
+  vocabulary mirror against `E6Bridge4.lean` byte-for-byte); CI job `weil-form-enclosure-compiles`.
+- **Honest scope.** Category-(b): finite, consistent with RH, PROVING NOTHING about it. A positive
+  autocorrelation pairing is what RH PREDICTS; Weil positivity over EVERY admissible test function
+  is RH-equivalent and no finite family approaches "every". Arb is a non-kernel trust seam.
+  `conjecture1_proved = False`.
