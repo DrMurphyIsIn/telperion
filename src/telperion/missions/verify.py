@@ -116,6 +116,33 @@ def normalize_lean(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# artifact_incompleteness_markers
+# ---------------------------------------------------------------------------
+
+#: Tokens that mean "this Lean is not a finished proof". `native_decide` is included
+#: because it discharges a goal through the compiler rather than the kernel, which is
+#: outside the trust story every campaign doc claims.
+_INCOMPLETE_TOKENS = ("sorry", "admit", "native_decide")
+
+
+def artifact_incompleteness_markers(artifact_text: str) -> List[str]:
+    """Return the incompleteness tokens genuinely present in a Lean artifact.
+
+    Comments and string literals are stripped first (via the same lexer-order stripper
+    the containment check uses), so prose such as "no `sorry`" in a docstring does NOT
+    count -- only tokens in real Lean code do.
+
+    WHY (audit 2026-09-18): `grant_status` checked only that the artifact CONTAINS the
+    node's statement. It never asked whether the artifact PROVES it, so an artifact whose
+    body was `:= by sorry` satisfied the gate. Worse, `normalize_lean` strips a trailing
+    `:= by sorry` before comparison, which made a stub match more easily, not less.
+    """
+    code = _strip_lean_comments(artifact_text)
+    return [tok for tok in _INCOMPLETE_TOKENS
+            if re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w.])", code)]
+
+
+# ---------------------------------------------------------------------------
 # _normalized_statement / statement_matches / refutation_matches
 # ---------------------------------------------------------------------------
 
@@ -310,6 +337,16 @@ def grant_status(campaign: Campaign, slug: str) -> Node:
     refut_ok = refutation_matches(artifact_text, node, campaign.root)
 
     if stmt_ok:
+        # Containment says the artifact CONTAINS the statement; it does not say the
+        # artifact PROVES it. Refuse to grant `proved` against Lean that still carries a
+        # genuine sorry/admit/native_decide in code (comments and strings are stripped).
+        markers = artifact_incompleteness_markers(artifact_text)
+        if markers:
+            raise GateError(
+                f"Node {slug!r}: artifact {node.proof.artifact!r} contains the statement "
+                f"but also carries {', '.join(markers)} in Lean code; refusing to grant "
+                "'proved' against an unfinished artifact."
+            )
         new_status = "proved"
     elif refut_ok:
         new_status = "refuted"
@@ -406,6 +443,13 @@ def verify_campaign(
                 f"Node {sl!r}: status is 'proved' but artifact does not "
                 f"contain the normalized statement."
             )
+        elif node.status == "proved":
+            markers = artifact_incompleteness_markers(artifact_text)
+            if markers:
+                errors.append(
+                    f"Node {sl!r}: status is 'proved' but artifact "
+                    f"{node.proof.artifact!r} carries {', '.join(markers)} in Lean code."
+                )
         elif node.status == "refuted" and not refut_ok:
             errors.append(
                 f"Node {sl!r}: status is 'refuted' but artifact does not "
