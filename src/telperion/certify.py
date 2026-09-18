@@ -392,6 +392,11 @@ _SPECIAL_KINDS = (
     # Γℝ n).  A FINITE rational inequality (category-b); the passage to the companion coefficient and
     # the Route-P falsifiability atom is the CONDITIONAL, RH-hard exhaustion seam (never discharged).
     "bragg_floor",
+    # E8 Weil pairing (2026-09-18): the Arb-enclosed value of archSide - primeSide for a
+    # concrete compactly supported test function (and the k x k cross-correlation Gram),
+    # emitted as a NAMED-HYPOTHESIS seam whose kernel consequence is positivity / a positive
+    # 2x2 Sylvester minor.  Finite category-b; conjecture1_proved = False.
+    "weil_form_enclosure",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -618,6 +623,10 @@ _SPECIAL_DISPATCH = {
     # RvMCompanionBraggLimit, pinned in the li_positivity island lakefile).
     "bragg_floor":
         ("emit_bragg_floor", "certify_bragg_floor_point", "BraggFloorEmitter"),
+    # E8 Weil pairing enclosure (onto the WeilExplicit vocabulary of RH_limit_explicit_formula).
+    "weil_form_enclosure":
+        ("emit_weil_form_enclosure", "certify_weil_form_enclosure_point",
+         "WeilFormEnclosureEmitter"),
 }
 
 
