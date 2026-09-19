@@ -409,6 +409,10 @@ _SPECIAL_KINDS = (
     # emitted as a NAMED-HYPOTHESIS seam whose kernel consequence is positivity / a positive
     # 2x2 Sylvester minor.  Finite category-b; conjecture1_proved = False.
     "weil_form_enclosure",
+    # MIRRORMERE exp-enclosure (2026-09-18): rational brackets of Real.exp at a rational point
+    # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
+    # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
+    "exp_enclosure",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -649,6 +653,10 @@ _SPECIAL_DISPATCH = {
     "weil_form_enclosure":
         ("emit_weil_form_enclosure", "certify_weil_form_enclosure_point",
          "WeilFormEnclosureEmitter"),
+    # MIRRORMERE exp-enclosure (rational Real.exp brackets via Real.exp_bound; the
+    # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
+    "exp_enclosure":
+        ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
 }
 
 

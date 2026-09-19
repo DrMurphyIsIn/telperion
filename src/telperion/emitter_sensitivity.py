@@ -226,6 +226,25 @@ REGISTRY: dict[str, SensitivityStance] = {
                                   "(conjecture1_proved = False)",
                                   # See negctrl_adapters/adapter_weil_form_enclosure.py.
                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ExpEnclosureEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                             "rational bracket lo <= Real.exp x <= hi (and the deficit "
+                             "e^x + e^-x - 2 / cosh faces) at a rational x with |x| <= 1: the "
+                             "bracket IS the statement, re-derived in the kernel from Mathlib's "
+                             "Real.exp_bound at the certified Taylor order by norm_num "
+                             "[Nat.factorial] + linarith -- no separately-supplied identity to "
+                             "corrupt, so the shape is structural.  certify REFUSES a bracket the "
+                             "exact rational Taylor box does not imply (and |x| > 1, order < 1 or "
+                             "> 64, inverted brackets, non-positive deficit displacement, "
+                             "non-rational input), so no widened or false enclosure ships.  A "
+                             "finite arithmetic fact about a transcendental constant at one "
+                             "rational point; it discharges the Arb hexp hypothesis of "
+                             "BraggDefect.bragg_defect_witness and says nothing about RH "
+                             "(conjecture1_proved = False)",
+                             # Structural, yet a kernel control exists: a hand-minted bracket
+                             # NARROWER than the Taylor box (which Layer 1 refuses) makes the
+                             # emitted linarith unprovable, so the kernel rejects it.
+                             # See negctrl_adapters/adapter_exp_enclosure.py.
+                             neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
