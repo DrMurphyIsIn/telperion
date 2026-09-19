@@ -712,6 +712,15 @@ def verify_campaign(
         log = AttemptLog(ledger_path)
         try:
             log.records()
+            # A malformed line anywhere is skipped so one bad record cannot crash the
+            # loader, but skipping it silently means a session's recorded work simply
+            # disappears from the ledger. Surface the count.
+            skipped = getattr(log, "skipped_lines", 0)
+            if skipped:
+                warnings.append(
+                    f"Attempts ledger: {skipped} malformed line(s) skipped in "
+                    f"{ledger_path.name}; those attempts are absent from every digest."
+                )
         except Exception as exc:
             errors.append(f"Attempts ledger parse error: {exc}")
 

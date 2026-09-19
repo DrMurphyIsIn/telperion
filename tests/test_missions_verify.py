@@ -847,3 +847,68 @@ def test_disabled_step_does_not_vouch_for_an_island(tmp_path):
         "        working-directory: telperion/examples/ghost/lean\n        run: lake build\n"
     )
     assert "ghost" not in ci_built_islands(repo)
+
+
+# ---------------------------------------------------------------------------
+# T12: data-integrity findings from the 2026-09-19 audit.
+# ---------------------------------------------------------------------------
+
+def test_node_write_is_atomic_so_a_reader_never_sees_a_torn_file(tmp_path):
+    """A concurrent reader must see the old file or the new one, never a prefix.
+
+    The audit walked every byte prefix of all 66 live node files and found 201 truncation
+    points that load as a VALID Node with a field missing -- `readback` in 64 of 66 files.
+    Combined with the registry's read-modify-write, a torn read permanently erases the
+    record that gates promote_to_open.
+    """
+    from telperion.missions.schema import atomic_write_text
+
+    target = tmp_path / "n.toml"
+    target.write_text("old")
+    atomic_write_text(target, "new content")
+    assert target.read_text() == "new content"
+    # nothing left behind
+    assert [q.name for q in tmp_path.iterdir()] == ["n.toml"]
+
+
+def test_saving_a_node_preserves_blocks_the_schema_does_not_model(tmp_path):
+    """`[nonvacuity]` and `proof.fidelity_note` must survive a load/save cycle.
+
+    A live node carries both. `fidelity_note` records that its proof is kernel-verified
+    locally and NOT on main CI -- exactly the kind of honesty field whose loss matters --
+    and any CLI mutation used to erase 1978 characters of it silently.
+    """
+    from telperion.missions.schema import load_node, save_node
+
+    src = tmp_path / "n.toml"
+    src.write_text(
+        'name = "T.x"\ntitle = "t"\nkind = "lemma"\nstatus = "open"\n'
+        'statement_module = "Statements.T_x"\ndepends_on = []\n\n'
+        '[proof]\nartifact = "a.lean"\nartifact_kind = "lean_module"\nvia = "direct"\n'
+        'closure_clean = false\nfidelity_note = "verified locally, NOT on main CI"\n\n'
+        '[nonvacuity]\nwitness = "a concrete instance"\n'
+    )
+    before = src.read_text()
+    save_node(load_node(src), src)
+    after = src.read_text()
+    assert "nonvacuity" in after
+    assert "fidelity_note" in after
+    assert "verified locally, NOT on main CI" in after
+    assert "a concrete instance" in after
+    assert len(after) >= len(before) - 8  # ordering may shift; content must not be lost
+
+
+def test_open_leaves_survives_a_cross_campaign_dependency(tmp_path):
+    """A qualified `<campaign>:<slug>` dep must not KeyError the command sessions run first."""
+    from telperion.missions.registry import open_leaves
+    from telperion.missions.schema import Node, Proof
+
+    node = Node(name="T.x", title="t", kind="lemma", status="open",
+                depends_on=("other:OTHER_dep",), statement_module="Statements.T_x")
+
+    class _Campaign:
+        nodes = {"T_x": node}
+        root = tmp_path / "home"
+
+    # unresolvable external dep counts as not proved, so the node is simply not a leaf
+    assert open_leaves(_Campaign()) == []

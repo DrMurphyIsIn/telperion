@@ -1165,6 +1165,12 @@ def cmd_mission_audit(args) -> int:
     from .missions.registry import load_campaign, promote_to_open
     from .missions.schema import Readback, SchemaError, save_node, slug_of
 
+    if not (args.text or "").strip() or not (args.auditor or "").strip():
+        print("audit: --text and --auditor must both be non-empty. A read-back is the only "
+              "thing standing between a wrong statement and the registry; an empty one "
+              "promotes a draft while recording nothing.")
+        return 1
+
     slug = slug_of(args.slug)
     camp_root = _resolve_campaign(_missions_root(args), slug,
                                   getattr(args, "campaign", None))
@@ -1216,6 +1222,26 @@ def cmd_mission_link(args) -> int:
         camp = load_campaign(camp_root)
     except SchemaError as exc:
         print(f"Schema error: {exc}")
+        return 1
+
+    # The artifact must actually be there. `link` validated only the two enums, so a
+    # session could record a path that does not exist and see "proof link recorded"; because
+    # the battery skips coherence checks for nodes that are not proved or refuted, the bogus
+    # link stayed invisible to CI until someone ran `grant` (audit 2026-09-19).
+    artifact_path = (camp_root / args.artifact).resolve()
+    if not artifact_path.exists():
+        print(f"{slug}: artifact {args.artifact!r} does not exist "
+              f"(resolved to {artifact_path}); refusing to record the link.")
+        return 1
+
+    # Repointing a node that is already proved or refuted silently invalidates the evidence
+    # its status rests on, while leaving the status in place.
+    existing = camp.nodes.get(slug)
+    if existing is not None and existing.status in ("proved", "refuted") \
+            and not getattr(args, "force", False):
+        print(f"{slug}: status is {existing.status!r}; repointing its artifact would leave "
+              "the status resting on evidence nobody checked. Re-run with --force if that "
+              "is genuinely intended.")
         return 1
 
     proof = Proof(
@@ -1652,6 +1678,9 @@ def main(argv=None) -> int:
     p.add_argument("--artifact", required=True)
     p.add_argument("--kind", required=True, choices=("lean_module", "frozen_cert"))
     p.add_argument("--via", required=True, choices=("direct", "reduction"))
+    p.add_argument("--force", action="store_true",
+                   help="allow repointing the artifact of a node that is already "
+                        "proved or refuted (its status will then rest on unchecked evidence)")
     p.set_defaults(mission_fn=cmd_mission_link)
 
     # attempt SLUG [--campaign C] --session S --route R --verdict V --detail D

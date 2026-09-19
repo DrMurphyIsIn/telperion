@@ -17,7 +17,10 @@ keywords = ["lean4", "mathlib", "polya", "positivity", "certificates", "sympy", 
 # (enforced by tests/test_core_boundary.py) and its graph modules need
 # networkx + numpy.  Install the `bg` extra to use the lab (`graph` is a legacy
 # alias).  (sos_sdp additionally needs cvxpy via the `sdp` extra.)
-dependencies = ["sympy>=1.12"]
+# tomli: the missions registry parses TOML. CI runs 3.11+ and gets stdlib `tomllib`;
+# without this an older interpreter silently fell back to a non-TOML subset parser, so
+# the same node file could mean different things locally and in CI (audit 2026-09-19).
+dependencies = ["sympy>=1.12", "tomli>=2.0; python_version < '3.11'"]
 
 [project.optional-dependencies]
 flint = ["python-flint>=0.6"]

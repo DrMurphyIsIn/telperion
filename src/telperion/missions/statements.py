@@ -12,7 +12,7 @@ import hashlib
 from pathlib import Path
 from typing import List
 
-from .schema import MissionManifest, Node, slug_of
+from .schema import atomic_write_text, MissionManifest, Node, slug_of
 
 # The sentinel that all generated files carry
 _SENTINEL = "DO NOT EDIT BY HAND"
@@ -122,7 +122,7 @@ def write_statement(
     """Render and write the statement file; create parent dirs as needed."""
     path = statement_path(root, node)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_statement(node, statement, manifest))
+    atomic_write_text(path, render_statement(node, statement, manifest))
     return path
 
 
@@ -200,7 +200,7 @@ def scaffold_package(root: Path, manifest: MissionManifest) -> List[Path]:
 
     # lean/lean-toolchain
     toolchain_path = lean_dir / "lean-toolchain"
-    toolchain_path.write_text(manifest.environment_toolchain + "\n")
+    atomic_write_text(toolchain_path, manifest.environment_toolchain + "\n")
     written.append(toolchain_path)
 
     # lean/lakefile.toml
@@ -217,7 +217,7 @@ def scaffold_package(root: Path, manifest: MissionManifest) -> List[Path]:
         "[[lean_lib]]\n"
         'name = "Statements"\n'
     )
-    lakefile_path.write_text(lakefile_content)
+    atomic_write_text(lakefile_path, lakefile_content)
     written.append(lakefile_path)
 
     # Collect present statement modules (sorted)
@@ -231,7 +231,7 @@ def scaffold_package(root: Path, manifest: MissionManifest) -> List[Path]:
     # lean/Statements.lean — root module
     root_module_path = lean_dir / "Statements.lean"
     root_module_lines = [f"import {m}" for m in module_names]
-    root_module_path.write_text("\n".join(root_module_lines) + "\n")
+    atomic_write_text(root_module_path, "\n".join(root_module_lines) + "\n")
     written.append(root_module_path)
 
     return written
