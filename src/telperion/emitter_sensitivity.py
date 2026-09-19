@@ -226,6 +226,25 @@ REGISTRY: dict[str, SensitivityStance] = {
                                   "(conjecture1_proved = False)",
                                   # See negctrl_adapters/adapter_weil_form_enclosure.py.
                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ExpEnclosureEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                             "rational bracket lo <= Real.exp x <= hi (and the deficit "
+                             "e^x + e^-x - 2 / cosh faces) at a rational x with |x| <= 1: the "
+                             "bracket IS the statement, re-derived in the kernel from Mathlib's "
+                             "Real.exp_bound at the certified Taylor order by norm_num "
+                             "[Nat.factorial] + linarith -- no separately-supplied identity to "
+                             "corrupt, so the shape is structural.  certify REFUSES a bracket the "
+                             "exact rational Taylor box does not imply (and |x| > 1, order < 1 or "
+                             "> 64, inverted brackets, non-positive deficit displacement, "
+                             "non-rational input), so no widened or false enclosure ships.  A "
+                             "finite arithmetic fact about a transcendental constant at one "
+                             "rational point; it discharges the Arb hexp hypothesis of "
+                             "BraggDefect.bragg_defect_witness and says nothing about RH "
+                             "(conjecture1_proved = False)",
+                             # Structural, yet a kernel control exists: a hand-minted bracket
+                             # NARROWER than the Taylor box (which Layer 1 refuses) makes the
+                             # emitted linarith unprovable, so the kernel rejects it.
+                             # See negctrl_adapters/adapter_exp_enclosure.py.
+                             neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
@@ -560,6 +579,12 @@ REGISTRY: dict[str, SensitivityStance] = {
         "power m and exact constant (4m)^m ARE the statement, re-decided in-kernel "
         "(add_one_le_exp + pow + norm_num); m=0 refused at certify time (negative "
         "control); no corruptible cofactor"),
+    "ExpLaurentIdentityEmitter": _S(CERTIFICATE_SENSITIVE,
+        "an exp-Laurent identity in e^d, e^(-d) certified as an exact reduction of "
+        "lhs - rhs modulo the single relation e^d * e^(-d) = 1; the QUOTIENT "
+        "(cofactor) is carried into linear_combination, so a corrupted cofactor or "
+        "a corrupted side leaves a nonzero residue and ring cannot close it",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "TwoRowSolveEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "2x2 solution-entry bound from row-scale + ratio-gap hypotheses: a single "
         "fully-generic fixed atom (eq_div_iff/abs algebra + nlinarith), no per-instance "
@@ -639,12 +664,42 @@ REGISTRY: dict[str, SensitivityStance] = {
         "to corrupt; the winding integer is RE-VERIFIED at doubled precision + density at certify "
         "time and a claimed count the argument principle does not support is REFUSED (the negative "
         "control). conjecture1_proved = False"),
+    # --- 2026-09-18: MIRRORMERE E4b isolation INSTANCE emitter (the concrete shape the
+    #     Rouche/E5 leg consumes; the general lemma is OfflineDiscs.offline_disjoint_discs). ---
+    "DisjointDiscsEmitter": _S(CERTIFICATE_SENSITIVE,
+        "Concrete isolation instance (OfflineDiscs shape): explicit Gaussian-rational strip points "
+        "plus an explicit rational radius r. The load-bearing facts are the per-pair STRICT "
+        "separation (2r)^2 < dist^2 (reached by Complex.dist_eq + Complex.norm_def + Real.lt_sqrt, "
+        "so no square root is ever approximated) and the per-point strict strip margins r < re, "
+        "r < 1 - re, all closed by norm_num on rational data. r is a SUPPLIED number that appears "
+        "in the statement AND is what the kernel arithmetic must clear, so an inflated r yields a "
+        "FALSE pair theorem the kernel rejects -- hence an adapter, not not_applicable. certify "
+        "REFUSES an overlapping pair, a boundary-reaching radius, a point off the open strip, a "
+        "duplicate point, or r <= 0. conjecture1_proved = False",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "SelfInversiveRigidityEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Equal-modulus real-rootedness (TwoFreqRigidity.twoFreq_realRooted_iff): the Gaussian-rational "
         "coefficients c₁,c₂ ARE the statement; the emitted proof discharges ‖c₁‖=‖c₂‖ from the EXACT "
         "rational equality |c₁|²=|c₂|² (Complex.norm via norm_num on re²+im²) and applies the in-island "
         "iff lemma; no separately-supplied corruptible identity. certify REFUSES |c₁|²≠|c₂|² (real-"
-        "rootedness not forced) — the negative control. conjecture1_proved = False"),
+        "rootedness not forced) — the negative control. MODE offline (2026-09-18): the mirror, "
+        "refutation-shaped — radical coefficients r*sqrt(q) with |c1|^2 != |c2|^2 EXACTLY emit "
+        "NOT-real-rooted via the .mp direction, the kernel re-deriving ||c||^2 = r^2*q by norm_num "
+        "(so a corrupted normSq breaks the emitted rewrite, not the statement), plus the explicit "
+        "x = i/2 witness for the Euler-factor shape; certify REFUSES EQUAL modulus and any "
+        "frequency pair needing transcendence of log. conjecture1_proved = False"),
+    "TwoFreqOfflineEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Off-line displacement, the EXACT COMPLEMENT of SelfInversiveRigidityEmitter "
+        "(TwoFreqRigidity.twoFreq_realRooted_iff): the coefficient literals ARE the statement, "
+        "and the emitted proof refutes real-rootedness from the EXACT rational inequality "
+        "|c1|^2 != |c2|^2 (normSq by norm_num / Real.mul_self_sqrt); no separately-supplied "
+        "corruptible identity. certify REFUSES equal modulus -- precisely the regime the "
+        "rigidity emitter certifies -- so the two partition the coefficient space and neither "
+        "can emit a false theorem; also refuses a zero coefficient, equal frequencies "
+        "(including the disguised neglog(1) = rat(0)) and mode='displacement' outside the "
+        "Euler-factor shape. A kernel-gated adapter renders the equal-modulus forgery in "
+        "bridge-hypothesis mode. conjecture1_proved = False",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "SqrtRootEliminationEmitter": _S(
         CERTIFICATE_SENSITIVE,
         "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "

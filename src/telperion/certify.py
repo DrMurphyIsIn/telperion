@@ -341,6 +341,10 @@ _SPECIAL_KINDS = (
     "comparability_envelope",
     "discrete_moment",
     "poly_exp_absorption",
+    # MIRRORMERE W3d (2026-09-18): exp-Laurent identities in e^d, e^(-d)
+    # certified as an exact reduction modulo the single relation
+    # e^d * e^(-d) = 1 (the Face 4 <-> Face 1 recurrence-deficit rows).
+    "exp_laurent_identity",
     # NS/Euler wave-6 (2026-09-09, campaign closeout): graded-convolution
     # endpoint identities, power-tower recurrence closure, Faa di Bruno
     # partition-sum bound, forbidden-factor word invariant (first discrete
@@ -366,6 +370,14 @@ _SPECIAL_KINDS = (
     "bragg_amplitude",
     "defect_witness",
     "selfinversive_rigidity",
+    #   disjoint_discs        -- MIRRORMERE E4b isolation INSTANCE (OfflineDiscs): explicit
+    #                            strip points + explicit rational radius, pairwise (2r)^2 <
+    #                            dist^2 and strict strip margins, all norm_num-decided.
+    "disjoint_discs",
+    #   twofreq_offline       -- the COMPLEMENT of selfinversive_rigidity: |c1|^2 != |c2|^2
+    #                            EXACTLY ==> the two-frequency sum is NOT real-rooted (and,
+    #                            for the Euler-factor family, every zero sits at Im x = 1/2).
+    "twofreq_offline",
     "winding_box_zero",
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
     # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
@@ -401,6 +413,10 @@ _SPECIAL_KINDS = (
     # emitted as a NAMED-HYPOTHESIS seam whose kernel consequence is positivity / a positive
     # 2x2 Sylvester minor.  Finite category-b; conjecture1_proved = False.
     "weil_form_enclosure",
+    # MIRRORMERE exp-enclosure (2026-09-18): rational brackets of Real.exp at a rational point
+    # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
+    # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
+    "exp_enclosure",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -588,6 +604,9 @@ _SPECIAL_DISPATCH = {
     "poly_exp_absorption":
         ("emit_poly_exp_absorption", "certify_poly_exp_absorption_point",
          "PolyExpAbsorptionEmitter"),
+    "exp_laurent_identity":
+        ("emit_exp_laurent_identity", "certify_exp_laurent_identity_point",
+         "ExpLaurentIdentityEmitter"),
     "graded_convolution":
         ("emit_graded_convolution", "certify_graded_convolution_point",
          "GradedConvolutionEmitter"),
@@ -611,6 +630,10 @@ _SPECIAL_DISPATCH = {
     "selfinversive_rigidity":
         ("emit_selfinversive_rigidity", "certify_selfinversive_rigidity_point",
          "SelfInversiveRigidityEmitter"),
+    "disjoint_discs":
+        ("emit_disjoint_discs", "certify_disjoint_discs_point", "DisjointDiscsEmitter"),
+    "twofreq_offline":
+        ("emit_twofreq_offline", "certify_twofreq_offline_point", "TwoFreqOfflineEmitter"),
     "winding_box_zero":
         ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).
@@ -636,6 +659,10 @@ _SPECIAL_DISPATCH = {
     "weil_form_enclosure":
         ("emit_weil_form_enclosure", "certify_weil_form_enclosure_point",
          "WeilFormEnclosureEmitter"),
+    # MIRRORMERE exp-enclosure (rational Real.exp brackets via Real.exp_bound; the
+    # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
+    "exp_enclosure":
+        ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
 }
 
 

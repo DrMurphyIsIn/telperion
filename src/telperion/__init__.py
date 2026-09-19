@@ -101,6 +101,10 @@ from .emit_weil_form_enclosure import (  # noqa: F401
     weil_form_enclosure_certificate, weil_form_enclosure_family,
     certify_weil_form_enclosure_point, weil_form_prelude_lean,
 )
+from .emit_exp_enclosure import (  # noqa: F401
+    ExpEnclosureEmitter, ExpEnclosureCert, exp_enclosure_certificate,
+    exp_enclosure_family, certify_exp_enclosure_point, taylor_box, taylor_parts,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,
@@ -199,6 +203,10 @@ from .emit_discrete_moment import (  # noqa: F401
 from .emit_poly_exp_absorption import (  # noqa: F401
     PolyExpAbsorptionEmitter, poly_exp_absorption_certificate,
     poly_exp_absorption_family,
+)
+from .emit_exp_laurent_identity import (  # noqa: F401
+    ExpLaurentIdentityEmitter, exp_laurent_certificate,
+    exp_laurent_identity_family,
 )
 from .emit_graded_convolution import (  # noqa: F401
     GradedConvolutionEmitter, graded_convolution_certificate,
@@ -368,6 +376,14 @@ from .emit_defect_witness import (  # noqa: F401
 from .emit_selfinversive_rigidity import (  # noqa: F401
     SelfInversiveRigidityEmitter, selfinversive_rigidity_certificate,
     selfinversive_rigidity_family, certify_selfinversive_rigidity_point,
+)
+from .emit_disjoint_discs import (  # noqa: F401
+    DisjointDiscsEmitter, disjoint_discs_certificate,
+    disjoint_discs_family, certify_disjoint_discs_point,
+)
+from .emit_twofreq_offline import (  # noqa: F401
+    TwoFreqOfflineEmitter, twofreq_offline_certificate,
+    twofreq_offline_family, certify_twofreq_offline_point,
 )
 from .emit_winding_box_zero import (  # noqa: F401
     WindingBoxZeroEmitter, winding_box_zero_certificate,

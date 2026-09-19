@@ -153,3 +153,32 @@ generator-producible / kernel-checkable certificate boundary.
   autocorrelation pairing is what RH PREDICTS; Weil positivity over EVERY admissible test function
   is RH-equivalent and no finite family approaches "every". Arb is a non-kernel trust seam.
   `conjecture1_proved = False`.
+## Addendum 2026-09-18 -- shape BUILT, not just catalogued
+
+### `DisjointDiscs` -- finite point bank -> explicit pairwise-disjoint discs inside the open strip
+- **Source:** MIRRORMERE node `MM_offline_disjoint_discs` / `QC_RECURRENCE_MEMO.md` section 4.3;
+  general lemma in `examples/quasicrystal/lean/OfflineDiscs.lean`.
+- **Shape:** Gaussian-rational strip points + an explicit rational radius `r` ⟹ kernel proves each
+  pair `Disjoint (closedBall z r) (closedBall w r)` from `(2r)^2 < dist^2` (square root eliminated
+  by `Real.lt_sqrt` BEFORE any arithmetic, so the goal is pure rational `norm_num`) and each disc
+  `⊆ {0 < re < 1}` from the 1-Lipschitz `abs_re_sub_le_dist`; assembly restates the registry node's
+  existential at the concrete `Finset`.
+- **Negative control:** an inflated `r` makes a pair theorem genuinely FALSE, so the kernel rejects
+  it -- a real Layer-2 seam (`negctrl_adapters/adapter_disjoint_discs.py`, two-sided, passing).
+  Layer 1 also refuses boundary-reaching radii, off-strip points, duplicates and `r <= 0`.
+- **Status:** BUILT (kind `disjoint_discs`, `DisjointDiscsEmitter`). Distinct from
+  `TwoScaleSeparation` (one centre, two radii, no containment) and from `SpacingTailBound` (1-D
+  separated support, inverse-power sums). The consumer joint -- feeding a certified disc bank into
+  `WindingCountEmitter` / `AnnulusCountEmitter` for the E5 Rouche count -- is NOT built.
+- conjecture1_proved = False.
+## Addendum 2026-09-18 -- MIRRORMERE ladder rung T2
+- `twofreq_offline` (`TwoFreqOfflineEmitter`) -- certified OFF-line displacement of a
+  two-frequency section: `|c1|^2 != |c2|^2` EXACTLY refutes real-rootedness via
+  `TwoFreqRigidity.twoFreq_realRooted_iff`, and for the Euler-factor family
+  `1 - p^(-s)` on `s = 1/2 + i x` it also certifies `Im x = 1/2` for EVERY zero.
+  The exact COMPLEMENT of `selfinversive_rigidity`: the two partition the coefficient
+  space, each refusing the other's regime.  Adds irrational coefficient literals
+  (`inv_sqrt`, `real_sqrt`) and the `-(Real.log p)` frequency literal, which the
+  Gaussian-rational-only rigidity emitter cannot express.  Kernel-gated negative-control
+  adapter (equal-modulus forgery).  Full write-up: `EMITTER_MIRRORMERE_2026-09-18.md`.
+  conjecture1_proved = False.
