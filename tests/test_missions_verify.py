@@ -725,3 +725,37 @@ def test_coverage_counts_cd_inside_run(tmp_path):
         "          cd telperion/examples/viacd/lean\n          lake build\n"
     )
     assert "viacd" in ci_built_islands(repo)
+
+
+def test_coverage_fallback_agrees_with_yaml_on_the_real_repo():
+    """The no-PyYAML fallback must not diverge from the YAML parser on this repo.
+
+    The required `unit` job has no PyYAML, so the fallback is what actually runs there.
+    """
+    import pathlib as _p
+    from telperion.missions import coverage as cov
+
+    repo = _p.Path(__file__).resolve().parents[2]
+    if not (repo / ".github" / "workflows").is_dir():
+        pytest.skip("not running inside the repo")
+    assert cov.ci_built_islands(repo) == cov._scan_islands_without_yaml(repo)
+
+
+def test_coverage_refuses_to_report_everything_uncovered(tmp_path):
+    """A broken parser must raise, not flunk every node.
+
+    Regression test for this module's own first revision: it swallowed a missing PyYAML
+    and returned an empty set, which reported every proved node in the registry as
+    uncovered. One loud error beats N confident false ones.
+    """
+    from telperion.missions.coverage import CoverageParseError, _assert_parser_sane
+
+    repo = tmp_path / "repo"
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: lake build\n")
+    with pytest.raises(CoverageParseError):
+        _assert_parser_sane(repo, set())
+    # a repo that genuinely builds nothing is not an error
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: echo hi\n")
+    _assert_parser_sane(repo, set())

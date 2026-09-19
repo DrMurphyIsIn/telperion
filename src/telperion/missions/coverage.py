@@ -37,6 +37,7 @@ __all__ = [
     "ci_built_islands",
     "islands_with_lean",
     "artifact_coverage_error",
+    "CoverageParseError",
 ]
 
 #: `telperion/examples/<island>/...`
@@ -55,14 +56,25 @@ def island_of(path: Path | str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _workflow_docs(repo_root: Path) -> List[dict]:
+def _workflow_paths(repo_root: Path) -> List[Path]:
+    return sorted((repo_root / ".github" / "workflows").glob("*.y*ml"))
+
+
+def _workflow_docs(repo_root: Path) -> Optional[List[dict]]:
+    """Parsed workflow documents, or None when PyYAML is unavailable.
+
+    Returning None (not []) is deliberate. An earlier revision swallowed the ImportError
+    and returned an empty list, which made `ci_built_islands` answer "nothing is built" in
+    any environment without PyYAML -- and the required `unit` job is exactly such an
+    environment. Every proved node then failed the coverage check at once. A checker that
+    degrades to a confident wrong answer is worse than one that admits it cannot parse.
+    """
     try:
         import yaml
-    except ImportError:  # pragma: no cover - PyYAML is a CI/dev dependency
-        return []
-    docs = []
-    wf_dir = repo_root / ".github" / "workflows"
-    for p in sorted(wf_dir.glob("*.y*ml")):
+    except ImportError:
+        return None
+    docs: List[dict] = []
+    for p in _workflow_paths(repo_root):
         try:
             doc = yaml.safe_load(p.read_text())
         except Exception:
@@ -70,6 +82,53 @@ def _workflow_docs(repo_root: Path) -> List[dict]:
         if isinstance(doc, dict):
             docs.append(doc)
     return docs
+
+
+def _scan_islands_without_yaml(repo_root: Path) -> Set[str]:
+    """Line-oriented fallback used when PyYAML is absent.
+
+    Steps in these workflows are written with `working-directory:` before the `run:` it
+    applies to, and job-level `defaults.run.working-directory` likewise precedes its steps,
+    so carrying the most recent directory forward and attributing each `lake build` to it
+    reproduces the YAML result on this repo. It is an approximation, and it is checked
+    against the YAML path by a test.
+    """
+    built: Set[str] = set()
+    for p in _workflow_paths(repo_root):
+        current: Optional[str] = None
+        for line in p.read_text().splitlines():
+            m = re.search(r"working-directory:\s*(\S+)", line)
+            if m:
+                current = island_of(m.group(1))
+                continue
+            if _BUILD_RE.search(line):
+                if current:
+                    built.add(current)
+            built.update(_CD_RE.findall(line))
+    return built
+
+
+class CoverageParseError(RuntimeError):
+    """The workflow parser produced an answer that cannot be right."""
+
+
+def _assert_parser_sane(repo_root: Path, built: Set[str]) -> None:
+    """Refuse to report "nothing is built" when the workflows plainly build something.
+
+    This is the guard for the failure this module itself shipped once: with PyYAML absent
+    the parser returned an empty set, every proved node failed coverage at once, and the
+    output looked like a registry catastrophe rather than a missing dependency. One loud
+    error beats N confident false ones.
+    """
+    if built:
+        return
+    for p in _workflow_paths(repo_root):
+        if _BUILD_RE.search(p.read_text()):
+            raise CoverageParseError(
+                f"workflow parsing found no island builds, yet {p.name} contains "
+                "`lake build` -- the coverage parser is broken, not the registry. "
+                "Refusing to report every proved node as uncovered."
+            )
 
 
 def ci_built_islands(repo_root: Path) -> Set[str]:
@@ -80,8 +139,13 @@ def ci_built_islands(repo_root: Path) -> Set[str]:
     counts too -- three jobs in this repo address their island that way rather than through
     `working-directory`, and missing them would produce false orphans.
     """
+    docs = _workflow_docs(repo_root)
+    if docs is None:
+        built = _scan_islands_without_yaml(repo_root)
+        _assert_parser_sane(repo_root, built)
+        return built
     built: Set[str] = set()
-    for doc in _workflow_docs(repo_root):
+    for doc in docs:
         jobs = doc.get("jobs") or {}
         if not isinstance(jobs, dict):
             continue
@@ -101,6 +165,7 @@ def ci_built_islands(repo_root: Path) -> Set[str]:
                     if name:
                         built.add(name)
                 built.update(_CD_RE.findall(run))
+    _assert_parser_sane(repo_root, built)
     return built
 
 
