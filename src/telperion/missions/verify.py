@@ -208,7 +208,85 @@ def refutation_matches(artifact_text: str, node: Node, root: Path) -> bool:
 # _compute_closures (pure) and recompute_closures (pure + write-back)
 # ---------------------------------------------------------------------------
 
-def _compute_closures(campaign: Campaign) -> Dict[str, bool]:
+
+
+def compute_universe_closures(universe) -> Dict[tuple, bool]:
+    """Global closure fixpoint across every campaign, keyed by (campaign, slug).
+
+    Same rules as the single-campaign pass, but dependency edges may cross
+    campaigns.  The result is cached on the universe as ``.closures`` so a
+    single load serves every consumer.  Anything that does not resolve stays
+    dirty; there is no path here that turns an unresolved edge clean.
+    """
+    from .registry import parse_dep
+
+    closure: Dict[tuple, bool] = {}
+    for cname, camp in universe.campaigns.items():
+        for sl, node in camp.nodes.items():
+            if node.proof is not None:
+                closure[(cname, sl)] = node.proof.closure_clean
+
+    changed = True
+    while changed:
+        changed = False
+        for cname, camp in universe.campaigns.items():
+            for sl, node in camp.nodes.items():
+                if node.proof is None or node.proof.via != "reduction":
+                    continue
+                ok = True
+                for dep in node.depends_on:
+                    dcamp, dtarget = parse_dep(dep, cname)
+                    tgt = universe.campaigns.get(dcamp)
+                    tnode = tgt.nodes.get(dtarget) if tgt is not None else None
+                    if (tnode is None or tnode.status != "proved"
+                            or not closure.get((dcamp, dtarget), False)):
+                        ok = False
+                        break
+                if ok != closure.get((cname, sl), False):
+                    closure[(cname, sl)] = ok
+                    changed = True
+
+    try:
+        universe.closures = closure
+    except Exception:
+        pass
+    return closure
+
+
+def _dep_is_clean(campaign, dep: str, closure: Dict[str, bool], universe=None) -> bool:
+    """Is this dependency edge satisfied for closure purposes?
+
+    THE ANTI-CASCADE RULE.  An edge counts only when its target genuinely
+    resolves, is `proved`, and is itself closure-clean.  An EXTERNAL edge with
+    no universe supplied, or one whose target does not resolve, is FALSE --
+    never True.  A cross-campaign reference must not be able to launder an
+    unverified premise into a clean closure, which is exactly the failure mode
+    the 2026-09-18 registry audit demonstrated on a throwaway campaign.
+    """
+    from .registry import parse_dep
+
+    home = campaign.root.name
+    camp, target = parse_dep(dep, home)
+    if camp == home:
+        node = campaign.nodes.get(target)
+        return node is not None and node.status == "proved" and closure.get(target, False)
+    if universe is None:
+        return False
+    ext = universe.resolve(home, dep)
+    if ext is None or ext.status != "proved":
+        return False
+    # NEVER fall back to the target's STORED closure_clean flag: a reduction
+    # node's stored flag can say True while its own dependency chain is dirty,
+    # which is precisely how transitive dirt would get laundered across a
+    # campaign boundary.  Compute the global fixpoint instead (cached on the
+    # universe), and treat anything unavailable as dirty.
+    ext_closure = getattr(universe, "closures", None)
+    if ext_closure is None:
+        ext_closure = compute_universe_closures(universe)
+    return bool(ext_closure.get((camp, target), False))
+
+
+def _compute_closures(campaign: Campaign, universe=None) -> Dict[str, bool]:
     """Pure fixpoint: compute closure_clean for every node with a proof link.
 
     Rules:
@@ -245,9 +323,7 @@ def _compute_closures(campaign: Campaign) -> Dict[str, bool]:
             if node.proof is None or node.proof.via != "reduction":
                 continue
             all_clean = all(
-                dep in campaign.nodes
-                and campaign.nodes[dep].status == "proved"
-                and closure.get(dep, False)
+                _dep_is_clean(campaign, dep, closure, universe)
                 for dep in node.depends_on
             )
             if all_clean != closure.get(sl, False):
@@ -373,10 +449,25 @@ def grant_status(campaign: Campaign, slug: str) -> Node:
 # verify_campaign  -- READ-ONLY audit battery
 # ---------------------------------------------------------------------------
 
+
+def _autoload_universe(root: Path):
+    """Best-effort: load the sibling campaigns so external edges can resolve.
+
+    Returns None if the siblings cannot be loaded for any reason, which leaves
+    every external edge dirty -- the safe direction.
+    """
+    try:
+        from .registry import load_universe
+        return load_universe(Path(root).parent)
+    except Exception:
+        return None
+
+
 def verify_campaign(
     root: Path,
     deep_lean: bool = False,
     runner: Optional[Callable] = None,
+    universe=None,
 ) -> VerifyReport:
     """Full invariant battery (read-only). Returns VerifyReport(errors, warnings, ok).
 
@@ -410,7 +501,12 @@ def verify_campaign(
     manifest = campaign.manifest
 
     # Compute fresh closure flags WITHOUT writing to disk (read-only audit)
-    fresh_closures = _compute_closures(campaign)
+    # Cross-campaign edges resolve only when a universe is supplied.  Without
+    # one, an external edge is treated as dirty, so the battery can warn but
+    # never certify an external dependency as satisfied.
+    if universe is None:
+        universe = _autoload_universe(root)
+    fresh_closures = _compute_closures(campaign, universe)
 
     # 2. Status coherence for proved/refuted nodes
     for sl, node in campaign.nodes.items():
