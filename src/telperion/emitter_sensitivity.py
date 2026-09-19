@@ -560,6 +560,12 @@ REGISTRY: dict[str, SensitivityStance] = {
         "power m and exact constant (4m)^m ARE the statement, re-decided in-kernel "
         "(add_one_le_exp + pow + norm_num); m=0 refused at certify time (negative "
         "control); no corruptible cofactor"),
+    "ExpLaurentIdentityEmitter": _S(CERTIFICATE_SENSITIVE,
+        "an exp-Laurent identity in e^d, e^(-d) certified as an exact reduction of "
+        "lhs - rhs modulo the single relation e^d * e^(-d) = 1; the QUOTIENT "
+        "(cofactor) is carried into linear_combination, so a corrupted cofactor or "
+        "a corrupted side leaves a nonzero residue and ring cannot close it",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "TwoRowSolveEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "2x2 solution-entry bound from row-scale + ratio-gap hypotheses: a single "
         "fully-generic fixed atom (eq_div_iff/abs algebra + nlinarith), no per-instance "

@@ -341,6 +341,10 @@ _SPECIAL_KINDS = (
     "comparability_envelope",
     "discrete_moment",
     "poly_exp_absorption",
+    # MIRRORMERE W3d (2026-09-18): exp-Laurent identities in e^d, e^(-d)
+    # certified as an exact reduction modulo the single relation
+    # e^d * e^(-d) = 1 (the Face 4 <-> Face 1 recurrence-deficit rows).
+    "exp_laurent_identity",
     # NS/Euler wave-6 (2026-09-09, campaign closeout): graded-convolution
     # endpoint identities, power-tower recurrence closure, Faa di Bruno
     # partition-sum bound, forbidden-factor word invariant (first discrete
@@ -592,6 +596,9 @@ _SPECIAL_DISPATCH = {
     "poly_exp_absorption":
         ("emit_poly_exp_absorption", "certify_poly_exp_absorption_point",
          "PolyExpAbsorptionEmitter"),
+    "exp_laurent_identity":
+        ("emit_exp_laurent_identity", "certify_exp_laurent_identity_point",
+         "ExpLaurentIdentityEmitter"),
     "graded_convolution":
         ("emit_graded_convolution", "certify_graded_convolution_point",
          "GradedConvolutionEmitter"),
