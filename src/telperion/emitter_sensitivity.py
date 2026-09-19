@@ -197,6 +197,20 @@ REGISTRY: dict[str, SensitivityStance] = {
                             # making floorHi ≤ braggLo − tailHi FALSE is kernel-rejected by norm_num.
                             # See negctrl_adapters/adapter_bragg_floor.py.
                             neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "IntervalGramInertiaEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "interval inertia (posIndex hG = p, defect hG = q) for EVERY Hermitian G in a rational "
+        "box: the load-bearing certificate is the exact congruence data -- the witness bases X, Y, "
+        "the compressed diagonals cx, cy, the half-width w and the column constants S = p, q.  "
+        "Corrupt a pivot, a basis column, or the width and the compressed-form margin "
+        "cx_k > w*S becomes FALSE: nlinarith cannot close it and the kernel rejects the proof.  "
+        "certify REFUSES a singular midpoint, an asymmetric/empty box, a definite box, and any "
+        "box wider than the pivot margin, so no false or vacuous signature ships.  Island-pinned "
+        "to the ported RHLinalg block (v4.32.0); real-symmetric only (conjecture1_proved = False)",
+        # The semantic assert_certificate_sensitive primitive is not wired for this emitter; the
+        # kernel-gated adapter (negctrl_adapters/adapter_interval_gram_inertia.py) IS, and it is
+        # the stronger of the two checks.
+        checked_in=None),
     "WeilFormEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
                                   "E8 Weil pairing enclosure: the Arb box [lo, hi] for "
                                   "Re weilForm (crossCorr g g') is a separately-supplied, "

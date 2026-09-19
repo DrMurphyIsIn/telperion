@@ -149,3 +149,21 @@ get Lean text, kernel-check it. All in `src/telperion/`, all with unit tests. La
 `emit_nonneg_orthant`) — plus the RH cosine leaves `mt_cosine_deg4_nonneg` / `vp_cosine_deg4_nonneg`
 in `EmittedShapes.lean`. Exact-arithmetic BG probes use `python-flint` `fmpq` (~20× over `Fraction`);
 `residual_flint_probe.pi_flint` is validated against `pi_loaded`.
+
+
+## Session 2026-09-18 — `interval_gram_inertia` (the interval-matrix signature)
+
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `IntervalGramInertiaEmitter` | `interval_gram_inertia` | for a rational box `lo ≤ G ≤ hi`, EVERY real symmetric `G` inside it has signature exactly `(p, q)`: `RHLinalg.posIndex hG = p ∧ RHInertia.defect hG = q`. Exact rational congruence `BᵀMB = D` for the midpoint (the `psd_form` LDLᵀ primitive run to a full diagonalization, with symmetric pivoting), unit-abs-sum witness bases `X`/`Y`, and the interval absorbed by `\|xᵀ(G−M)x\| ≤ w(Σ\|xᵢ\|)²` + Cauchy-Schwarz; sound exactly when `w·S < δ` | **Island-pinned** to the ported RHLinalg block (v4.32.0, `hermitian_moment` island) — the emitted file imports `RHInertia`, not just Mathlib. **Real-symmetric only**: the complex `2n` real embedding is NOT built and a complex instance is refused, not faked. Refuses an asymmetric/empty box (the phantom), a singular midpoint, a definite box (`psd_form`'s shape), a wrong claimed signature, and any box wider than the pivot margin |
+
+Fills the gap left by `psd_form` (one explicit matrix, definite only), `rayleigh_gram` (one
+direction) and `hermitian_moment`/`rank_trace_scalar` (scalar shadows): the recurring D2/D3/T3
+sentence "this Arb-enclosed Hermitian matrix has negative index exactly `q`". Replaces
+`BraggDefect.lean`'s hand-written 2x2 / 4x4 blocks with a generic `n x n` instrument.
+
+Design doc: [`INTERVAL_GRAM_INERTIA_EMITTER_DESIGN_2026-09-18.md`](INTERVAL_GRAM_INERTIA_EMITTER_DESIGN_2026-09-18.md).
+Dogfood: `examples/gram_inertia/` (4 boxes: `(1,1)` 2x2, `(2,1)` 3x3, `(2,2)` 4x4 offline-pair
+block, `(1,2)` fractional 3x3), CI job `gram-inertia-compiles`, axiom guard
+`AxiomGuardGramInertia.lean`. Negative control: `adapter_interval_gram_inertia` (forged pivot below
+the interval slack is kernel-rejected; separated-box twin compiles). `conjecture1_proved = False`.

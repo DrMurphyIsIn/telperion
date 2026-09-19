@@ -91,6 +91,11 @@ from .emit_bragg_floor import (  # noqa: F401
     bragg_floor_family, certify_bragg_floor_point,
     bragg_below_floor_refutes_rh_lean,
 )
+from .emit_interval_gram_inertia import (  # noqa: F401
+    IntervalGramInertiaEmitter, IntervalGramInertiaCert,
+    interval_gram_inertia_certificate, interval_gram_inertia_family,
+    certify_interval_gram_inertia_point, interval_gram_inertia_prelude_lean,
+)
 from .emit_weil_form_enclosure import (  # noqa: F401
     WeilFormEnclosureEmitter, WeilFormEnclosureCert, WeilFormEnclosureData, WeilBox,
     weil_form_enclosure_certificate, weil_form_enclosure_family,

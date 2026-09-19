@@ -1,0 +1,23 @@
+name = "GramInertia"
+defaultTargets = ["RHInertia", "GramInertia"]
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+# The ported RHLinalg block (Apache-2.0, anthropics zeta-23-lean): posIndex / hermForm / PosDefOn /
+# Sylvester's subspace bound.  This emitter is island-pinned to it; the sibling hermitian_moment
+# island carries the verbatim v4.32.0 port and is the single source.
+[[require]]
+name = "RHLinalg"
+path = "../../hermitian_moment/lean"
+
+# RHInertia: the interval-to-inertia bridge lemmas (emitted by
+# telperion.interval_gram_inertia_prelude_lean, drift-checked by generate.py --check).
+[[lean_lib]]
+name = "RHInertia"
+
+# GramInertia: the emitted per-box inertia certificates.
+[[lean_lib]]
+name = "GramInertia"
