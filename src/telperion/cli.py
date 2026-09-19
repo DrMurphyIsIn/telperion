@@ -1293,6 +1293,9 @@ def cmd_mission_verify(args) -> int:
 
     roots = _campaign_roots(_missions_root(args), getattr(args, "campaign", None))
     any_fail = False
+    # Some warnings are repo-global (the orphan-island list) and would otherwise repeat
+    # once per campaign; print each distinct warning once.
+    seen_warnings: set[str] = set()
     for camp_root in roots:
         deep = getattr(args, "deep_lean", False)
         report = verify_campaign(camp_root, deep_lean=deep)
@@ -1301,6 +1304,9 @@ def cmd_mission_verify(args) -> int:
                 print(f"ERROR [{camp_root.name}]: {e}")
         if report.warnings:
             for w in report.warnings:
+                if w in seen_warnings:
+                    continue
+                seen_warnings.add(w)
                 print(f"WARN  [{camp_root.name}]: {w}")
         if report.ok:
             print(f"verify [{camp_root.name}]: OK")

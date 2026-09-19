@@ -660,3 +660,68 @@ def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
     report = verify_campaign(root)
     assert not report.ok
     assert any("sorry" in e for e in report.errors)
+
+
+# ---------------------------------------------------------------------------
+# T10: a node may not be granted against Lean that no CI job compiles
+# (audit 2026-09-19: all six proved anduril nodes pointed at the zeta_reflection
+#  island, which no workflow built; two rh nodes had the same shape a day earlier)
+# ---------------------------------------------------------------------------
+
+def _fake_repo(tmp_path, island: str, *, wire_ci: bool):
+    """A miniature repo: one example island, and a workflow that may or may not build it."""
+    repo = tmp_path / "repo"
+    lean = repo / "telperion" / "examples" / island / "lean"
+    lean.mkdir(parents=True)
+    (lean / "Art.lean").write_text("theorem art_thm : 1 + 1 = 2 := by norm_num\n")
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    body = "jobs:\n  build:\n    steps:\n"
+    if wire_ci:
+        body += (f"      - working-directory: telperion/examples/{island}/lean\n"
+                 f"        run: lake build\n")
+    else:
+        # present, but only a python drift check -- no `lake build`, so no verification
+        body += (f"      - working-directory: telperion/examples/{island}/lean\n"
+                 f"        run: python generate.py --check\n")
+    (wf / "ci.yml").write_text(body)
+    return repo
+
+
+def test_coverage_detects_island_ci_never_builds(tmp_path):
+    from telperion.missions.coverage import artifact_coverage_error, ci_built_islands
+
+    repo = _fake_repo(tmp_path, "lonely", wire_ci=False)
+    art = repo / "telperion" / "examples" / "lonely" / "lean" / "Art.lean"
+    assert ci_built_islands(repo) == set()
+    err = artifact_coverage_error(art, repo)
+    assert err is not None and "lonely" in err
+
+    repo2 = _fake_repo(tmp_path / "b", "wired", wire_ci=True)
+    art2 = repo2 / "telperion" / "examples" / "wired" / "lean" / "Art.lean"
+    assert ci_built_islands(repo2) == {"wired"}
+    assert artifact_coverage_error(art2, repo2) is None
+
+
+def test_coverage_ignores_non_lean_and_non_island_artifacts(tmp_path):
+    from telperion.missions.coverage import artifact_coverage_error
+
+    repo = _fake_repo(tmp_path, "lonely", wire_ci=False)
+    # a .md artifact has nothing to compile
+    assert artifact_coverage_error(repo / "telperion" / "examples" / "lonely" / "x.md", repo) is None
+    # campaign-local Lean is covered by the campaign's own build, not by an island job
+    assert artifact_coverage_error(repo / "telperion" / "missions" / "rh" / "lean" / "S.lean", repo) is None
+
+
+def test_coverage_counts_cd_inside_run(tmp_path):
+    """Three jobs in the real repo address their island with `cd`, not working-directory."""
+    from telperion.missions.coverage import ci_built_islands
+
+    repo = tmp_path / "repo"
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - run: |\n"
+        "          cd telperion/examples/viacd/lean\n          lake build\n"
+    )
+    assert "viacd" in ci_built_islands(repo)

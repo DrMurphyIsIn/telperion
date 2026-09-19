@@ -24,6 +24,7 @@ from typing import Callable, Dict, List, Optional
 
 from .attempts import AttemptLog
 from .claims import is_stale, load_claims
+from .coverage import artifact_coverage_error, ci_built_islands, islands_with_lean
 from .registry import Campaign, load_campaign
 from .schema import Node, SchemaError, save_node, slug_of
 from .statements import _SENTINEL, regen_diff, statement_path
@@ -54,6 +55,11 @@ class VerifyReport:
 # ---------------------------------------------------------------------------
 # normalize_lean
 # ---------------------------------------------------------------------------
+
+
+def _repo_root(campaign_root: Path) -> Path:
+    """Repository root from a campaign root (`<repo>/telperion/missions/<campaign>`)."""
+    return Path(campaign_root).resolve().parents[2]
 
 def _strip_lean_comments(text: str) -> str:
     """Single-pass comment stripper in Lean lexing order.
@@ -431,6 +437,11 @@ def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
                 f"but also carries {', '.join(markers)} in Lean code; refusing to grant "
                 "'proved' against an unfinished artifact."
             )
+        # And refuse to grant against Lean that no CI job compiles. Sorry-free plus
+        # statement-containing is still not evidence if nothing ever elaborates the file.
+        cov = artifact_coverage_error(artifact_path, _repo_root(campaign.root))
+        if cov:
+            raise GateError(f"Node {slug!r}: {cov}")
         new_status = "proved"
     elif refut_ok:
         new_status = "refuted"
@@ -540,6 +551,11 @@ def verify_campaign(
         universe = _autoload_universe(root)
     fresh_closures = _compute_closures(campaign, universe)
 
+    # Build coverage: which example islands does CI actually run `lake build` in?
+    # Computed once per campaign -- it parses every workflow file.
+    repo_root = _repo_root(root)
+    built_islands = ci_built_islands(repo_root)
+
     # 2. Status coherence for proved/refuted nodes
     for sl, node in campaign.nodes.items():
         if node.status not in ("proved", "refuted"):
@@ -578,6 +594,9 @@ def verify_campaign(
                     f"Node {sl!r}: status is 'proved' but artifact "
                     f"{node.proof.artifact!r} carries {', '.join(markers)} in Lean code."
                 )
+            cov = artifact_coverage_error(artifact_path, repo_root, built_islands)
+            if cov:
+                errors.append(f"Node {sl!r}: status is 'proved' but {cov}")
         elif node.status == "refuted" and not refut_ok:
             errors.append(
                 f"Node {sl!r}: status is 'refuted' but artifact does not "
@@ -593,6 +612,19 @@ def verify_campaign(
                     f"Node {sl!r}: stored closure_clean={node.proof.closure_clean} "
                     f"but recomputed value={expected_clean}."
                 )
+
+    # 2d. Orphan islands (WARNING, not an error): Lean in the tree that no workflow builds.
+    # Only a *proved node* pointing into one is an error (checked above). An island with no
+    # node attached is scratch or in-flight work, and failing the battery on it would turn
+    # this check into an allowlist that rots. Surfacing it is what stops it quietly becoming
+    # a granted artifact later -- which is exactly how zeta_reflection got six.
+    orphans = sorted(islands_with_lean(repo_root) - built_islands)
+    if orphans:
+        warnings.append(
+            f"Example islands with Lean sources that no CI workflow builds ({len(orphans)}): "
+            f"{', '.join(orphans)}. Lean there is unverified until some job runs `lake build` "
+            "in it, and no node may be granted against it."
+        )
 
     # 3. regen_diff for every node with a statement file
     for sl, node in campaign.nodes.items():
