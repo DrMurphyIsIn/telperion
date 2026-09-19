@@ -45,6 +45,59 @@ class Campaign:
     manifest: MissionManifest
     nodes: Dict[str, Node]   # keyed by slug
 
+    @property
+    def cname(self) -> str:
+        """The campaign's on-disk directory name -- its identity in a dep ref.
+
+        Deliberately the directory name, not ``manifest.name``: the directory is
+        what the CLI's ``--campaign`` takes and what a cross-campaign reference
+        must resolve against (``rh``, not ``RH.conjecture``).
+        """
+        return self.root.name
+
+
+# ---------------------------------------------------------------------------
+# Cross-campaign dependency references
+#
+# A depends_on entry is either a bare slug (same campaign, unchanged) or a
+# qualified reference "<campaign-dir>:<NodeSlug>", e.g. "rh:RH_rvm_unconditional".
+# The qualified form exists because real dependencies cross campaigns: the
+# mirrormere D3 node genuinely needs the rh cumulative-RvM theorem.  Before this
+# existed, authors substituted a same-campaign proxy while the node title named
+# the real source, which put five unsupported edges in the registry.
+# ---------------------------------------------------------------------------
+
+DEP_SEP = ":"
+
+
+def parse_dep(dep: str, home: str) -> tuple:
+    """Split a depends_on entry into ``(campaign_dir, slug)``.
+
+    ``home`` is the referring campaign's directory name, used for bare slugs.
+    Raises SchemaError on a malformed reference.
+    """
+    if DEP_SEP not in dep:
+        if not dep:
+            raise SchemaError("empty depends_on entry")
+        return (home, dep)
+    camp, _, slug = dep.partition(DEP_SEP)
+    if not camp or not slug or DEP_SEP in slug:
+        raise SchemaError(
+            f"malformed cross-campaign reference {dep!r}; "
+            f"expected '<campaign>{DEP_SEP}<NodeSlug>'"
+        )
+    return (camp, slug)
+
+
+def is_external(dep: str, home: str) -> bool:
+    """True iff *dep* names a node in a campaign other than *home*."""
+    return parse_dep(dep, home)[0] != home
+
+
+def dep_ref(campaign: str, slug: str) -> str:
+    """Render a qualified reference."""
+    return f"{campaign}{DEP_SEP}{slug}"
+
 
 # ---------------------------------------------------------------------------
 # Load
@@ -75,13 +128,26 @@ def load_campaign(root: Path) -> Campaign:
                 )
             nodes[sl] = node
 
-    # Validate depends_on references
+    # Validate depends_on references.  Internal refs must be present in this
+    # campaign; external refs are checked by file existence only -- resolving
+    # them fully would recurse across campaigns, so full cross-campaign
+    # validation (including global acyclicity) lives in load_universe.
+    home = root.name
     for sl, node in nodes.items():
         for dep in node.depends_on:
-            if dep not in nodes:
-                raise SchemaError(
-                    f"Node {sl!r} depends_on {dep!r} which is not in the campaign."
-                )
+            camp, target = parse_dep(dep, home)
+            if camp == home:
+                if target not in nodes:
+                    raise SchemaError(
+                        f"Node {sl!r} depends_on {dep!r} which is not in the campaign."
+                    )
+            else:
+                ext = root.parent / camp / "nodes" / f"{target}.toml"
+                if not ext.is_file():
+                    raise SchemaError(
+                        f"Node {sl!r} depends_on external {dep!r}, but no such node "
+                        f"file exists at {ext}."
+                    )
 
     campaign = Campaign(root=root, manifest=manifest, nodes=nodes)
     assert_acyclic(campaign)
@@ -91,6 +157,17 @@ def load_campaign(root: Path) -> Campaign:
 # ---------------------------------------------------------------------------
 # DAG invariants
 # ---------------------------------------------------------------------------
+
+def _internal_deps(campaign: Campaign, slug: str) -> List[str]:
+    """This node's same-campaign dependency slugs (external refs dropped)."""
+    home = campaign.cname
+    out = []
+    for dep in campaign.nodes[slug].depends_on:
+        camp, target = parse_dep(dep, home)
+        if camp == home:
+            out.append(target)
+    return out
+
 
 def assert_acyclic(campaign: Campaign) -> None:
     """Raise SchemaError naming a cycle if the dependency graph is cyclic."""
@@ -102,7 +179,7 @@ def assert_acyclic(campaign: Campaign) -> None:
         if color[start] != WHITE:
             continue
         # DFS stack holds (slug, iterator-over-its-deps)
-        stack: List[tuple] = [(start, iter(campaign.nodes[start].depends_on))]
+        stack: List[tuple] = [(start, iter(_internal_deps(campaign, start)))]
         color[start] = GREY
 
         while stack:
@@ -130,6 +207,102 @@ def assert_acyclic(campaign: Campaign) -> None:
 # ---------------------------------------------------------------------------
 # Open-leaves query
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Universe: every campaign under one missions root, with cross-campaign edges
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Universe:
+    root: Path
+    campaigns: Dict[str, Campaign]   # keyed by directory name
+
+    def resolve(self, home: str, dep: str) -> Optional[Node]:
+        """The Node a depends_on entry names, or None if it does not resolve.
+
+        None is the conservative answer everywhere it is used: an edge that does
+        not resolve must never be treated as satisfied.
+        """
+        camp, target = parse_dep(dep, home)
+        c = self.campaigns.get(camp)
+        if c is None:
+            return None
+        return c.nodes.get(target)
+
+
+def load_universe(missions_root: Path) -> Universe:
+    """Load every campaign under *missions_root* and validate all edges.
+
+    A campaign directory is one containing ``mission.toml``.  Raises SchemaError
+    if any cross-campaign reference does not resolve, or if the GLOBAL graph
+    (internal and external edges together) contains a cycle.
+    """
+    missions_root = Path(missions_root)
+    campaigns: Dict[str, Campaign] = {}
+    for d in sorted(missions_root.iterdir()):
+        if d.is_dir() and (d / "mission.toml").is_file():
+            campaigns[d.name] = load_campaign(d)
+    uni = Universe(root=missions_root, campaigns=campaigns)
+
+    for cname, camp in campaigns.items():
+        for sl, node in camp.nodes.items():
+            for dep in node.depends_on:
+                if not is_external(dep, cname):
+                    continue
+                if uni.resolve(cname, dep) is None:
+                    raise SchemaError(
+                        f"Node {cname}:{sl} depends_on {dep!r}, which does not "
+                        f"resolve to a node in this missions root."
+                    )
+    assert_acyclic_universe(uni)
+    return uni
+
+
+def assert_acyclic_universe(uni: Universe) -> None:
+    """Raise SchemaError naming a cycle in the GLOBAL dependency graph.
+
+    Internal cycles are already rejected per campaign; this catches the ones a
+    per-campaign check structurally cannot see, e.g. rh:A -> mm:B -> rh:A.
+    """
+    WHITE, GREY, BLACK = 0, 1, 2
+    color: Dict[tuple, int] = {}
+    for cname, camp in uni.campaigns.items():
+        for sl in camp.nodes:
+            color[(cname, sl)] = WHITE
+
+    def deps_of(key: tuple) -> List[tuple]:
+        cname, sl = key
+        node = uni.campaigns[cname].nodes[sl]
+        out = []
+        for dep in node.depends_on:
+            camp, target = parse_dep(dep, cname)
+            if (camp, target) in color:
+                out.append((camp, target))
+        return out
+
+    for start in list(color):
+        if color[start] != WHITE:
+            continue
+        stack: List[tuple] = [(start, iter(deps_of(start)))]
+        color[start] = GREY
+        path: List[tuple] = [start]
+        while stack:
+            key, it = stack[-1]
+            try:
+                nxt = next(it)
+            except StopIteration:
+                color[key] = BLACK
+                stack.pop()
+                path.pop()
+                continue
+            if color.get(nxt) == GREY:
+                cyc = " -> ".join(f"{c}{DEP_SEP}{s}" for c, s in path + [nxt])
+                raise SchemaError(f"cross-campaign dependency cycle: {cyc}")
+            if color.get(nxt) == WHITE:
+                color[nxt] = GREY
+                path.append(nxt)
+                stack.append((nxt, iter(deps_of(nxt))))
 
 def open_leaves(
     campaign: Campaign,
