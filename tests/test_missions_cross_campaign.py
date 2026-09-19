@@ -215,3 +215,89 @@ def test_direct_proof_is_unaffected_by_an_external_dep(root):
           proof=("../../examples/x/Down.lean", "direct", True))
     uni = load_universe(root)
     assert _down_closure(root, uni)["DOWN_direct"] is True
+
+
+# --------------------------------------------------------------------------- #
+# F1-2: a reduction may not be granted over an unproved premise
+# --------------------------------------------------------------------------- #
+
+def _statement(root, camp, slug, text):
+    d = root / camp / "lean" / "Statements"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{slug}.lean").write_text(text)
+
+
+def _artifact(root, rel, text):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def test_reduction_grant_refused_over_unproved_external_premise(root):
+    from telperion.missions.verify import GateError, grant_status
+    from telperion.missions.registry import load_campaign, load_universe
+
+    _node(root, "up", "UP_thm", status="open")            # premise NOT proved
+    _node(root, "down", "DOWN_uses", status="open", deps=("up:UP_thm",),
+          proof=("../art/Down.lean", "reduction", False))
+    _statement(root, "down", "DOWN_uses", "theorem down_uses : True")
+    _artifact(root, "art/Down.lean", "theorem down_uses : True := by trivial\n")
+
+    camp = load_campaign(root / "down")
+    with pytest.raises(GateError, match="not 'proved'"):
+        grant_status(camp, "DOWN_uses", universe=load_universe(root))
+    assert camp.nodes["DOWN_uses"].status == "open"
+
+
+def test_reduction_grant_allowed_once_the_premise_is_proved(root):
+    from telperion.missions.verify import grant_status
+    from telperion.missions.registry import load_campaign, load_universe
+
+    _node(root, "up", "UP_thm", status="proved",
+          proof=("../art/Up.lean", "direct", True))
+    _node(root, "down", "DOWN_uses", status="open", deps=("up:UP_thm",),
+          proof=("../art/Down.lean", "reduction", False))
+    _statement(root, "down", "DOWN_uses", "theorem down_uses : True")
+    _artifact(root, "art/Down.lean", "theorem down_uses : True := by trivial\n")
+    _artifact(root, "art/Up.lean", "theorem up_thm : True := by trivial\n")
+
+    camp = load_campaign(root / "down")
+    node = grant_status(camp, "DOWN_uses", universe=load_universe(root))
+    assert node.status == "proved"
+
+
+def test_direct_grant_is_exempt_from_the_dependency_precondition(root):
+    """A direct proof stands on its artifact; its edges are documentary."""
+    from telperion.missions.verify import grant_status
+    from telperion.missions.registry import load_campaign, load_universe
+
+    _node(root, "up", "UP_thm", status="open")            # premise NOT proved
+    _node(root, "down", "DOWN_direct", status="open", deps=("up:UP_thm",),
+          proof=("../art/Down.lean", "direct", False))
+    _statement(root, "down", "DOWN_direct", "theorem down_direct : True")
+    _artifact(root, "art/Down.lean", "theorem down_direct : True := by trivial\n")
+
+    camp = load_campaign(root / "down")
+    node = grant_status(camp, "DOWN_direct", universe=load_universe(root))
+    assert node.status == "proved"
+
+
+def test_reduction_grant_refused_when_the_premise_does_not_resolve(root):
+    from telperion.missions.verify import GateError, grant_status
+    from telperion.missions.registry import load_campaign
+
+    _node(root, "up", "UP_thm", status="proved",
+          proof=("../art/Up.lean", "direct", True))
+    _node(root, "down", "DOWN_uses", status="open", deps=("up:UP_thm",),
+          proof=("../art/Down.lean", "reduction", False))
+    _statement(root, "down", "DOWN_uses", "theorem down_uses : True")
+    _artifact(root, "art/Down.lean", "theorem down_uses : True := by trivial\n")
+
+    camp = load_campaign(root / "down")
+    # no universe, and the sibling auto-load is defeated by pointing at a
+    # campaign root whose parent holds no other campaign
+    (root / "down" / "nodes" / "DOWN_uses.toml").write_text(
+        (root / "down" / "nodes" / "DOWN_uses.toml").read_text()
+        .replace('"up:UP_thm"', '"ghost:GHOST_thm"'))
+    with pytest.raises(Exception):
+        load_campaign(root / "down")

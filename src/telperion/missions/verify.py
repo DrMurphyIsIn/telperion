@@ -361,7 +361,7 @@ def recompute_closures(campaign: Campaign) -> Dict[str, bool]:
 # grant_status  -- THE GATE
 # ---------------------------------------------------------------------------
 
-def grant_status(campaign: Campaign, slug: str) -> Node:
+def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
     """The ONLY code path that flips a node to proved or refuted.
 
     Preconditions checked (GateError raised if any fail, status left unchanged):
@@ -372,6 +372,14 @@ def grant_status(campaign: Campaign, slug: str) -> Node:
        contain a proposition beyond import/open lines).
     5. Artifact must match: statement_matches -> proved;
        only refutation_matches -> refuted; neither -> GateError.
+    6. For a `via = "reduction"` proof ONLY: every depends_on target must
+       already be `proved`.  A reduction's dependency edges are load-bearing --
+       the proof IS the chain -- so granting one over a draft or open premise
+       would assert something the registry has not established.  A `direct`
+       proof is deliberately exempt: it stands on its own artifact and the gate
+       that checked it, and its edges are documentary.  That asymmetry is why
+       unsupported edges could accumulate for months without making any node
+       falsely clean (see docs/CROSS_CAMPAIGN_EDGES_2026-09-19.md).
 
     After flipping, recompute_closures is run on the campaign.
 
@@ -431,6 +439,30 @@ def grant_status(campaign: Campaign, slug: str) -> Node:
             f"Node {slug!r}: artifact does not contain the node's statement "
             f"or refutation. Normalized statement: {norm_stmt!r}"
         )
+
+    # 6. A reduction proof may not be granted over an unproved premise.
+    if node.proof.via == "reduction":
+        from .registry import parse_dep
+        home = campaign.root.name
+        uni = universe if universe is not None else _autoload_universe(campaign.root)
+        for dep in node.depends_on:
+            dcamp, dtarget = parse_dep(dep, home)
+            if dcamp == home:
+                target_node = campaign.nodes.get(dtarget)
+            else:
+                target_node = uni.resolve(home, dep) if uni is not None else None
+            if target_node is None:
+                raise GateError(
+                    f"Node {slug!r}: reduction proof depends on {dep!r}, which does "
+                    f"not resolve. A reduction may not be granted over an "
+                    f"unresolvable premise."
+                )
+            if target_node.status != "proved":
+                raise GateError(
+                    f"Node {slug!r}: reduction proof depends on {dep!r}, whose status "
+                    f"is {target_node.status!r}, not 'proved'. A reduction may not be "
+                    f"granted over an unproved premise."
+                )
 
     # Flip the status
     new_proof = dataclasses.replace(node.proof, closure_clean=(new_status == "proved"))
