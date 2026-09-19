@@ -688,6 +688,18 @@ REGISTRY: dict[str, SensitivityStance] = {
         "(so a corrupted normSq breaks the emitted rewrite, not the statement), plus the explicit "
         "x = i/2 witness for the Euler-factor shape; certify REFUSES EQUAL modulus and any "
         "frequency pair needing transcendence of log. conjecture1_proved = False"),
+    "TwoFreqOfflineEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "Off-line displacement, the EXACT COMPLEMENT of SelfInversiveRigidityEmitter "
+        "(TwoFreqRigidity.twoFreq_realRooted_iff): the coefficient literals ARE the statement, "
+        "and the emitted proof refutes real-rootedness from the EXACT rational inequality "
+        "|c1|^2 != |c2|^2 (normSq by norm_num / Real.mul_self_sqrt); no separately-supplied "
+        "corruptible identity. certify REFUSES equal modulus -- precisely the regime the "
+        "rigidity emitter certifies -- so the two partition the coefficient space and neither "
+        "can emit a false theorem; also refuses a zero coefficient, equal frequencies "
+        "(including the disguised neglog(1) = rat(0)) and mode='displacement' outside the "
+        "Euler-factor shape. A kernel-gated adapter renders the equal-modulus forgery in "
+        "bridge-hypothesis mode. conjecture1_proved = False",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "SqrtRootEliminationEmitter": _S(
         CERTIFICATE_SENSITIVE,
         "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "

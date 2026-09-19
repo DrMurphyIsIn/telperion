@@ -171,3 +171,14 @@ generator-producible / kernel-checkable certificate boundary.
   separated support, inverse-power sums). The consumer joint -- feeding a certified disc bank into
   `WindingCountEmitter` / `AnnulusCountEmitter` for the E5 Rouche count -- is NOT built.
 - conjecture1_proved = False.
+## Addendum 2026-09-18 -- MIRRORMERE ladder rung T2
+- `twofreq_offline` (`TwoFreqOfflineEmitter`) -- certified OFF-line displacement of a
+  two-frequency section: `|c1|^2 != |c2|^2` EXACTLY refutes real-rootedness via
+  `TwoFreqRigidity.twoFreq_realRooted_iff`, and for the Euler-factor family
+  `1 - p^(-s)` on `s = 1/2 + i x` it also certifies `Im x = 1/2` for EVERY zero.
+  The exact COMPLEMENT of `selfinversive_rigidity`: the two partition the coefficient
+  space, each refusing the other's regime.  Adds irrational coefficient literals
+  (`inv_sqrt`, `real_sqrt`) and the `-(Real.log p)` frequency literal, which the
+  Gaussian-rational-only rigidity emitter cannot express.  Kernel-gated negative-control
+  adapter (equal-modulus forgery).  Full write-up: `EMITTER_MIRRORMERE_2026-09-18.md`.
+  conjecture1_proved = False.
