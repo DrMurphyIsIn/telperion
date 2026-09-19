@@ -198,7 +198,13 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "analytic inputs of Thm 1.1 (eq. 2, Lemma 3.1, eqs. 6 and 12, and "
                                 "the block floor) are NAMED, UNDISCHARGED Lean hypotheses.  "
                                 "Finite category-b; the route is closed by Thm 1.4 at doubly "
-                                "exponential cost (conjecture1_proved = False)"),
+                                "exponential cost (conjecture1_proved = False)",
+                                # The semantic assert_certificate_sensitive primitive is not wired
+                                # for this emitter; the kernel-gated adapter
+                                # (negctrl_adapters/adapter_window_form_floor.py) IS, and so is the
+                                # certificate-layer control that refuses the paper's retracted
+                                # A_eff-for-A_L instance.  Both are stronger than the generic check.
+                                checked_in=None),
     "BraggFloorEmitter": _S(STRUCTURALLY_NONVACUOUS,
                             "Route P Brick D3 diffraction rung floorHi ≤ braggLo − tailHi: a concrete "
                             "rational inequality discharged by norm_num (the truncated von Mangoldt "

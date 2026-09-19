@@ -29,7 +29,9 @@ form while carrying the lift's tail constants and the reduction's threshold cons
     rational interval box.  Certifies INERTIA, not a quantitative floor, and explicitly REFUSES the
     definite case (`p == 0` or `q == 0`).  Zhu's block is definite and the datum is `lam0`.
   * ``psd_form`` -- exact rational PSD of one explicit matrix; no interval, no floor, no lift.
-  * ``rayleigh_gram`` -- one Rayleigh direction, not an infimum.
+  * ``rayleigh_gram`` -- one Rayleigh direction, and it bounds `lambda_max` of a symmetric pencil
+    from BELOW (`c'Jc - theta c'Ic > 0`).  That is the opposite end of the spectrum from the
+    `lambda_min` floor this shape needs, and the opposite direction.
   * ``tight_cap_enclosure`` / ``bragg_floor`` -- unrelated shapes.
 
 This emitter is that type.  Its certified datum is the bundle
