@@ -682,7 +682,12 @@ REGISTRY: dict[str, SensitivityStance] = {
         "coefficients c₁,c₂ ARE the statement; the emitted proof discharges ‖c₁‖=‖c₂‖ from the EXACT "
         "rational equality |c₁|²=|c₂|² (Complex.norm via norm_num on re²+im²) and applies the in-island "
         "iff lemma; no separately-supplied corruptible identity. certify REFUSES |c₁|²≠|c₂|² (real-"
-        "rootedness not forced) — the negative control. conjecture1_proved = False"),
+        "rootedness not forced) — the negative control. MODE offline (2026-09-18): the mirror, "
+        "refutation-shaped — radical coefficients r*sqrt(q) with |c1|^2 != |c2|^2 EXACTLY emit "
+        "NOT-real-rooted via the .mp direction, the kernel re-deriving ||c||^2 = r^2*q by norm_num "
+        "(so a corrupted normSq breaks the emitted rewrite, not the statement), plus the explicit "
+        "x = i/2 witness for the Euler-factor shape; certify REFUSES EQUAL modulus and any "
+        "frequency pair needing transcendence of log. conjecture1_proved = False"),
     "SqrtRootEliminationEmitter": _S(
         CERTIFICATE_SENSITIVE,
         "radical elimination v < E - u*sqrt(rad) <-> (v < E and 0 < Q): the "
