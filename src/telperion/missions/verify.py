@@ -130,6 +130,12 @@ def normalize_lean(text: str) -> str:
 #: outside the trust story every campaign doc claims.
 _INCOMPLETE_TOKENS = ("sorry", "admit", "native_decide")
 
+#: Declaration keywords that let an artifact ASSUME what it claims to prove. Matched only
+#: in declaration position, so a `#print axioms` line (the axiom guards' own idiom) does
+#: not trip them. Audit 2026-09-19 granted a node whose artifact read
+#: `axiom cheat : ...` / `theorem hard_thm := cheat n`.
+_ASSUMPTION_DECL_RE = re.compile(r"(?m)^\s*(axiom|unsafe)\s")
+
 
 def artifact_incompleteness_markers(artifact_text: str) -> List[str]:
     """Return the incompleteness tokens genuinely present in a Lean artifact.
@@ -144,8 +150,10 @@ def artifact_incompleteness_markers(artifact_text: str) -> List[str]:
     `:= by sorry` before comparison, which made a stub match more easily, not less.
     """
     code = _strip_lean_comments(artifact_text)
-    return [tok for tok in _INCOMPLETE_TOKENS
-            if re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w.])", code)]
+    found = [tok for tok in _INCOMPLETE_TOKENS
+             if re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w.])", code)]
+    found += sorted({m.group(1) for m in _ASSUMPTION_DECL_RE.finditer(code)})
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +196,40 @@ def _normalized_statement(node: Node, root: Path) -> str:
     return normalize_lean("\n".join(body_lines))
 
 
+#: what may follow a matched statement: the proof body, and nothing else
+_PROOF_BODY_RE = re.compile(r"^\s*(:=|by\b)")
+
+
+def _strip_string_literals(text: str) -> str:
+    """Blank the contents of double-quoted literals.
+
+    `_strip_lean_comments` preserves them on purpose (comment markers inside a string are
+    inert), but for CONTAINMENT they are attacker-controlled text: audit 2026-09-19 granted
+    a node whose statement appeared only inside a `String` literal in the artifact.
+    """
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
 def statement_matches(artifact_text: str, node_statement: str) -> bool:
-    """Return True iff normalize_lean(artifact_text) contains normalize_lean(node_statement)."""
-    return normalize_lean(node_statement) in normalize_lean(artifact_text)
+    """True iff the artifact DECLARES the node's statement and then proves it.
+
+    Plain substring containment is not enough, and the failure is not exotic. The normalized
+    statement ends at the conclusion, so an artifact that CONTINUES the conclusion still
+    contains it: a node claiming `NoZero s` was granted against an artifact proving the
+    strictly weaker `NoZero s \u2228 True` (audit 2026-09-19). So a match counts only when the
+    text immediately after it begins the proof body (`:=` or `by`), which is exactly the
+    point at which the statement has ended.
+    """
+    needle = normalize_lean(node_statement)
+    if not needle:
+        return False
+    hay = normalize_lean(_strip_string_literals(artifact_text))
+    start = hay.find(needle)
+    while start != -1:
+        if _PROOF_BODY_RE.match(hay[start + len(needle):]):
+            return True
+        start = hay.find(needle, start + 1)
+    return False
 
 
 def refutation_matches(artifact_text: str, node: Node, root: Path) -> bool:
@@ -422,26 +461,43 @@ def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
             "may be missing or contain only import/open lines."
         )
 
-    norm_artifact = normalize_lean(artifact_text)
-    stmt_ok = norm_stmt in norm_artifact
+    # The statement file must still be the one the node describes. `regen_diff` is checked
+    # by the read-only battery, but it was NOT checked here, so a hand-edited statement (with
+    # its self-computed header hash re-forged, which costs nothing) could be granted against.
+    drift = regen_diff(campaign.root, node, campaign.manifest)
+    if drift:
+        raise GateError(
+            f"Node {slug!r}: statement file does not match the node ({drift}); "
+            "refusing to grant against a drifted statement."
+        )
+
+    # A readback is required for draft -> open, but nothing re-checked it at grant time, so a
+    # node set to `open` by hand could be granted with no read-back on record at all.
+    if node.readback is None:
+        raise GateError(
+            f"Node {slug!r}: no read-back on record; refusing to grant. Run "
+            "`mission audit` with an independent read-back first."
+        )
+
+    # These two are paid by BOTH outcomes. Until 2026-09-19 they guarded only the `proved`
+    # branch, so a node could be flipped to `refuted` against an artifact carrying `sorry`
+    # in an island CI never builds -- and a false `refuted` on an RH node is as loud a claim
+    # as a false `proved`.
+    markers = artifact_incompleteness_markers(artifact_text)
+    if markers:
+        raise GateError(
+            f"Node {slug!r}: artifact {node.proof.artifact!r} carries "
+            f"{', '.join(markers)} in Lean code; refusing to grant against an "
+            "unfinished artifact."
+        )
+    cov = artifact_coverage_error(artifact_path, _repo_root(campaign.root))
+    if cov:
+        raise GateError(f"Node {slug!r}: {cov}")
+
+    stmt_ok = statement_matches(artifact_text, norm_stmt)
     refut_ok = refutation_matches(artifact_text, node, campaign.root)
 
     if stmt_ok:
-        # Containment says the artifact CONTAINS the statement; it does not say the
-        # artifact PROVES it. Refuse to grant `proved` against Lean that still carries a
-        # genuine sorry/admit/native_decide in code (comments and strings are stripped).
-        markers = artifact_incompleteness_markers(artifact_text)
-        if markers:
-            raise GateError(
-                f"Node {slug!r}: artifact {node.proof.artifact!r} contains the statement "
-                f"but also carries {', '.join(markers)} in Lean code; refusing to grant "
-                "'proved' against an unfinished artifact."
-            )
-        # And refuse to grant against Lean that no CI job compiles. Sorry-free plus
-        # statement-containing is still not evidence if nothing ever elaborates the file.
-        cov = artifact_coverage_error(artifact_path, _repo_root(campaign.root))
-        if cov:
-            raise GateError(f"Node {slug!r}: {cov}")
         new_status = "proved"
     elif refut_ok:
         new_status = "refuted"
@@ -578,8 +634,9 @@ def verify_campaign(
 
         # 2b. Statement / refutation match
         norm_stmt = _normalized_statement(node, root)
-        norm_artifact = normalize_lean(artifact_text)
-        stmt_ok = bool(norm_stmt) and norm_stmt in norm_artifact
+        # Same predicate as the gate: a match must land on a declaration that is then
+        # proved, not merely appear somewhere in the file.
+        stmt_ok = bool(norm_stmt) and statement_matches(artifact_text, norm_stmt)
         refut_ok = refutation_matches(artifact_text, node, root)
 
         if node.status == "proved" and not stmt_ok:

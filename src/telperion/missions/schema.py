@@ -106,6 +106,10 @@ class Proof:
     artifact_kind: str
     via: str
     closure_clean: bool = False
+    #: Free prose recorded with the link, e.g. where the artifact was kernel-verified when
+    #: that differs from CI. Modelled because it exists in live data and `save_node` used to
+    #: silently drop it: granting a node destroyed the note explaining its provenance.
+    fidelity_note: str = ""
 
     def __post_init__(self):
         if self.artifact_kind not in ARTIFACT_KINDS:
@@ -208,6 +212,8 @@ def _node_to_doc(node: Node) -> dict:
             "closure_clean": node.proof.closure_clean,
             "via": node.proof.via,
         }
+        if node.proof.fidelity_note:
+            doc["proof"]["fidelity_note"] = node.proof.fidelity_note
     if node.readback is not None:
         doc["readback"] = {
             "auditor": node.readback.auditor,
@@ -227,6 +233,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 artifact_kind=p["artifact_kind"],
                 via=p["via"],
                 closure_clean=p.get("closure_clean", False),
+                fidelity_note=p.get("fidelity_note", ""),
             )
         readback = None
         if "readback" in doc:

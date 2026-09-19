@@ -56,7 +56,13 @@ def copy_demo(tmp_path: Path) -> Path:
 
 def _open_node_with_proof(name: str, artifact: str, via: str = "direct",
                           refutation_statement: str = "") -> Node:
-    """Return an open Node with a proof link but status still 'open'."""
+    """Return an open Node with a proof link but status still 'open'.
+
+    The readback is part of the fixture because it is part of reality: `promote_to_open` is
+    the only draft->open path and it refuses without one, so an `open` node always has a
+    readback on record. Since 2026-09-19 `grant_status` re-checks it, which is what caught
+    that these fixtures were modelling a state the registry cannot reach.
+    """
     return Node(
         name=name,
         title=f"Test node {name}",
@@ -66,6 +72,8 @@ def _open_node_with_proof(name: str, artifact: str, via: str = "direct",
         statement_module=f"Statements.{slug_of(name)}",
         proof=Proof(artifact=artifact, artifact_kind="lean_module",
                     via=via, closure_clean=False),
+        readback=Readback(text=f"read-back of {name}", auditor="test-auditor",
+                          date="2026-09-11"),
         refutation_statement=refutation_statement,
         created="2026-09-11",
         updated="2026-09-11",
@@ -164,6 +172,8 @@ def test_gate_refuted_via_refutation_statement(tmp_path):
         proof=Proof(artifact="proof/Test_refuted.lean",
                     artifact_kind="lean_module", via="direct",
                     closure_clean=False),
+        readback=Readback(text="read-back of Test_refuted", auditor="test-auditor",
+                          date="2026-09-11"),
         refutation_statement=refutation,
         created="2026-09-11",
         updated="2026-09-11",
@@ -651,7 +661,10 @@ def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
 
     artifact_path = root / "proof" / "Test_stub2.lean"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text(f"{stmt} := by sorry\n")
+    # A trailing `:= by sorry` is stripped by normalize_lean, so the node would be caught by
+    # the containment check instead. Put a second declaration after it so the sorry is NOT
+    # trailing and the incompleteness scan is the check under test.
+    artifact_path.write_text(f"{stmt} := by sorry\ntheorem other_thm : True := trivial\n")
 
     # Force the node to `proved` on disk WITHOUT going through the gate, which is the
     # state the read-only battery has to be able to catch.
@@ -754,8 +767,83 @@ def test_coverage_refuses_to_report_everything_uncovered(tmp_path):
     wf = repo / ".github" / "workflows"
     wf.mkdir(parents=True)
     (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: lake build\n")
+    # steps_seen == 0 means the parser read nothing: that is the broken-parser signal
     with pytest.raises(CoverageParseError):
-        _assert_parser_sane(repo, set())
-    # a repo that genuinely builds nothing is not an error
+        _assert_parser_sane(repo, set(), 0)
+    # but an empty answer AFTER genuinely walking steps is correct, not an error --
+    # a repo whose build steps are all disabled is exactly that
+    _assert_parser_sane(repo, set(), 3)
+    # and a repo that genuinely builds nothing is fine either way
     (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: echo hi\n")
-    _assert_parser_sane(repo, set())
+    _assert_parser_sane(repo, set(), 0)
+
+
+# ---------------------------------------------------------------------------
+# T11: the nine false-`proved` paths found by the 2026-09-19 gate audit.
+# Each test is named for the attack it blocks, not for the function it calls.
+# ---------------------------------------------------------------------------
+
+def test_suffix_extension_does_not_satisfy_a_statement():
+    """`NoZero s ∨ True` must not satisfy a node claiming `NoZero s`.
+
+    The normalized statement ends at the conclusion, so plain containment is a prefix
+    match: an artifact that CONTINUES the conclusion still contains it, and proves
+    something strictly weaker.
+    """
+    from telperion.missions.verify import statement_matches
+
+    stmt = "theorem zeta_nonzero (s : C) : NoZero s"
+    assert not statement_matches("theorem zeta_nonzero (s : C) : NoZero s ∨ True := by simp", stmt)
+    assert not statement_matches("theorem hard : RH → RH := fun h => h", "theorem hard : RH")
+    # the honest forms still match, in both proof-body spellings
+    assert statement_matches("theorem zeta_nonzero (s : C) : NoZero s := by simp", stmt)
+    assert statement_matches("theorem zeta_nonzero (s : C) : NoZero s :=\n  foo", stmt)
+
+
+def test_statement_inside_a_string_literal_does_not_count():
+    from telperion.missions.verify import statement_matches
+
+    stmt = "theorem p : P"
+    assert not statement_matches('def msg : String := "theorem p : P := by trivial"', stmt)
+
+
+def test_artifact_may_not_assume_what_it_claims_to_prove():
+    """A self-supplied `axiom` or `unsafe` is an incompleteness marker."""
+    from telperion.missions.verify import artifact_incompleteness_markers
+
+    assert "axiom" in artifact_incompleteness_markers("axiom cheat : False\ntheorem t : P := cheat.elim")
+    assert "unsafe" in artifact_incompleteness_markers("unsafe def f : Nat := 0")
+    # the axiom guards' own idiom must NOT trip it
+    assert artifact_incompleteness_markers("#print axioms foo\ntheorem t : P := trivial") == []
+
+
+def test_island_attribution_survives_path_traversal(tmp_path):
+    """`../built/../unbuilt/X.lean` must be judged by where the file IS, not how it is spelled."""
+    from telperion.missions.coverage import artifact_coverage_error
+
+    repo = tmp_path / "repo"
+    for isl in ("wired", "unbuilt"):
+        (repo / "telperion" / "examples" / isl / "lean").mkdir(parents=True)
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - working-directory: telperion/examples/wired/lean\n"
+        "        run: lake build\n"
+    )
+    sneaky = repo / "telperion" / "examples" / "wired" / "lean" / ".." / ".." / "unbuilt" / "lean" / "U.lean"
+    err = artifact_coverage_error(sneaky, repo)
+    assert err is not None and "unbuilt" in err
+
+
+def test_disabled_step_does_not_vouch_for_an_island(tmp_path):
+    """A `lake build` under `if: false` never runs, so it is not evidence."""
+    from telperion.missions.coverage import ci_built_islands
+
+    repo = tmp_path / "repo"
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - if: false\n"
+        "        working-directory: telperion/examples/ghost/lean\n        run: lake build\n"
+    )
+    assert "ghost" not in ci_built_islands(repo)

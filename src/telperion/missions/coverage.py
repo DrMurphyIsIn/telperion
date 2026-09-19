@@ -112,23 +112,40 @@ class CoverageParseError(RuntimeError):
     """The workflow parser produced an answer that cannot be right."""
 
 
-def _assert_parser_sane(repo_root: Path, built: Set[str]) -> None:
-    """Refuse to report "nothing is built" when the workflows plainly build something.
+def _assert_parser_sane(repo_root: Path, built: Set[str], steps_seen: int) -> None:
+    """Refuse to report "nothing is built" when the parser never actually read anything.
 
-    This is the guard for the failure this module itself shipped once: with PyYAML absent
-    the parser returned an empty set, every proved node failed coverage at once, and the
-    output looked like a registry catastrophe rather than a missing dependency. One loud
-    error beats N confident false ones.
+    This guards the failure this module itself shipped once: with PyYAML absent the parser
+    returned an empty set, every proved node failed coverage at once, and the output looked
+    like a registry catastrophe rather than a missing dependency. One loud error beats N
+    confident false ones.
+
+    The distinguishing signal is `steps_seen`, not emptiness. A repo whose build steps are
+    all disabled is an empty answer that is CORRECT, and an earlier version of this guard
+    wrongly raised on exactly that. Only a parse that walked no steps at all, while the
+    workflow text plainly contains `lake build`, indicates a broken parser.
     """
-    if built:
+    if built or steps_seen:
         return
     for p in _workflow_paths(repo_root):
         if _BUILD_RE.search(p.read_text()):
             raise CoverageParseError(
-                f"workflow parsing found no island builds, yet {p.name} contains "
-                "`lake build` -- the coverage parser is broken, not the registry. "
-                "Refusing to report every proved node as uncovered."
+                f"workflow parsing walked no steps, yet {p.name} contains `lake build` "
+                "-- the coverage parser is broken, not the registry. Refusing to report "
+                "every proved node as uncovered."
             )
+
+
+def _never_runs(node: dict) -> bool:
+    """True when a job or step is disabled by a literal-false `if:`.
+
+    A `lake build` that GitHub will never execute is not evidence that anything is built,
+    and counting it would let a disabled step vouch for an island.
+    """
+    cond = node.get("if")
+    if cond is None:
+        return False
+    return str(cond).strip().lower() in {"false", "${{ false }}", "${{false}}"}
 
 
 def ci_built_islands(repo_root: Path) -> Set[str]:
@@ -142,9 +159,12 @@ def ci_built_islands(repo_root: Path) -> Set[str]:
     docs = _workflow_docs(repo_root)
     if docs is None:
         built = _scan_islands_without_yaml(repo_root)
-        _assert_parser_sane(repo_root, built)
+        # The fallback is line-oriented and does not model steps, so it reports 1 "step"
+        # whenever it read any workflow text at all.
+        _assert_parser_sane(repo_root, built, 1 if _workflow_paths(repo_root) else 0)
         return built
     built: Set[str] = set()
+    steps_seen = 0
     for doc in docs:
         jobs = doc.get("jobs") or {}
         if not isinstance(jobs, dict):
@@ -152,9 +172,14 @@ def ci_built_islands(repo_root: Path) -> Set[str]:
         for job in jobs.values():
             if not isinstance(job, dict):
                 continue
+            if _never_runs(job):
+                continue
             job_dir = (((job.get("defaults") or {}).get("run") or {}).get("working-directory"))
             for step in (job.get("steps") or []):
                 if not isinstance(step, dict):
+                    continue
+                steps_seen += 1
+                if _never_runs(step):
                     continue
                 run = str(step.get("run") or "")
                 if not _BUILD_RE.search(run):
@@ -165,7 +190,7 @@ def ci_built_islands(repo_root: Path) -> Set[str]:
                     if name:
                         built.add(name)
                 built.update(_CD_RE.findall(run))
-    _assert_parser_sane(repo_root, built)
+    _assert_parser_sane(repo_root, built, steps_seen)
     return built
 
 
@@ -194,13 +219,19 @@ def artifact_coverage_error(
     """
     if artifact_path.suffix != ".lean":
         return None
-    name = island_of(artifact_path)
+    # Attribute the island from the RESOLVED path. `island_of` on the raw string is
+    # caller-controlled: `../../examples/wired/lean/../../unbuilt/lean/U.lean` reads as the
+    # built island `wired` while the file actually lives in the unbuilt one. Resolving first
+    # is what makes the check about the file rather than about how it was spelled.
+    resolved = Path(artifact_path).resolve()
+    name = island_of(resolved)
     if name is None:
         return None
     if built is None:
         built = ci_built_islands(repo_root)
     if name in built:
         return None
+
     return (
         f"artifact lives in example island {name!r}, which no CI workflow builds "
         f"(no step runs `lake build` in telperion/examples/{name}/lean). A node may not be "
