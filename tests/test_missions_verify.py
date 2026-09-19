@@ -26,6 +26,7 @@ from telperion.missions.verify import (  # noqa: E402
     refutation_matches,
     recompute_closures,
     grant_status,
+    artifact_incompleteness_markers,
     verify_campaign,
 )
 
@@ -590,3 +591,72 @@ def test_direct_false_closure_survives_recompute(tmp_path):
         "recompute_closures must write back the corrected False for R, "
         "whose stale stored value was True"
     )
+
+
+# ---------------------------------------------------------------------------
+# T9: the gate refuses to grant `proved` against an unfinished artifact
+# (audit 2026-09-18: containment alone let a `:= by sorry` stub through, and
+#  normalize_lean strips a trailing sorry, which made the stub match MORE easily)
+# ---------------------------------------------------------------------------
+
+def test_incompleteness_markers_ignore_comments_and_strings():
+    assert artifact_incompleteness_markers("theorem a : True := by sorry") == ["sorry"]
+    assert artifact_incompleteness_markers("theorem a : True := by admit") == ["admit"]
+    assert artifact_incompleteness_markers("theorem a : True := by native_decide") == [
+        "native_decide"
+    ]
+    # prose in a doc comment is NOT a marker (the repo writes "no `sorry`" on purpose)
+    assert artifact_incompleteness_markers("/-- no `sorry` here -/\ntheorem a : True := trivial") == []
+    assert artifact_incompleteness_markers("-- sorry, this is a line comment\ntheorem a : True := trivial") == []
+    # a longer identifier that merely contains the token is not a marker
+    assert artifact_incompleteness_markers("theorem sorryless : True := trivial") == []
+
+
+def test_gate_refuses_proved_when_artifact_still_has_sorry(tmp_path):
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    manifest = _manifest()
+    from telperion.missions.schema import save_manifest
+    save_manifest(manifest, root / "mission.toml")
+
+    stmt = "theorem lemma_stub : 1 + 1 = 2"
+    node = _open_node_with_proof("Test.stub", artifact="proof/Test_stub.lean")
+    save_node(node, root / "nodes" / "Test_stub.toml")
+    write_statement(root, node, stmt, manifest)
+
+    artifact_path = root / "proof" / "Test_stub.lean"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    # Contains the statement verbatim, but proves nothing.
+    artifact_path.write_text(f"{stmt} := by sorry\n")
+
+    campaign = load_campaign(root)
+    with pytest.raises(GateError):
+        grant_status(campaign, "Test_stub")
+    assert load_node(root / "nodes" / "Test_stub.toml").status == "open"
+
+
+def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    manifest = _manifest()
+    from telperion.missions.schema import save_manifest
+    save_manifest(manifest, root / "mission.toml")
+
+    stmt = "theorem lemma_stub2 : 1 + 1 = 2"
+    node = _open_node_with_proof("Test.stub2", artifact="proof/Test_stub2.lean")
+    save_node(node, root / "nodes" / "Test_stub2.toml")
+    write_statement(root, node, stmt, manifest)
+
+    artifact_path = root / "proof" / "Test_stub2.lean"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(f"{stmt} := by sorry\n")
+
+    # Force the node to `proved` on disk WITHOUT going through the gate, which is the
+    # state the read-only battery has to be able to catch.
+    save_node(dataclasses.replace(node, status="proved"), root / "nodes" / "Test_stub2.toml")
+
+    report = verify_campaign(root)
+    assert not report.ok
+    assert any("sorry" in e for e in report.errors)
