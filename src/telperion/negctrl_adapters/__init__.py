@@ -6,8 +6,11 @@ from . import adapter_c_g_round  # noqa: F401
 from . import adapter_concave_stationary_max  # noqa: F401
 from . import adapter_cone_farkas  # noqa: F401
 from . import adapter_consequence  # noqa: F401
+from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
+from . import adapter_exp_laurent_identity  # noqa: F401
+from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
 from . import adapter_handelman  # noqa: F401
@@ -28,6 +31,7 @@ from . import adapter_symmetric_quad_d2  # noqa: F401
 from . import adapter_telescoping_potential  # noqa: F401
 from . import adapter_transcendental_enclosure  # noqa: F401
 from . import adapter_two_moment_count  # noqa: F401
+from . import adapter_twofreq_offline  # noqa: F401
 from . import adapter_w_z  # noqa: F401
 from . import adapter_weil_form_enclosure  # noqa: F401
 from . import adapter_window_form_floor  # noqa: F401
@@ -40,7 +44,10 @@ __all__ = [
     'adapter_cone_farkas',
     'adapter_consequence',
     'adapter_constrained_s_o_s',
+    'adapter_disjoint_discs',
     'adapter_exact_fact',
+    'adapter_exp_enclosure',
+    'adapter_exp_laurent_identity',
     'adapter_finite_argmax',
     'adapter_fwd_telescope',
     'adapter_handelman',
@@ -61,6 +68,7 @@ __all__ = [
     'adapter_telescoping_potential',
     'adapter_transcendental_enclosure',
     'adapter_two_moment_count',
+    'adapter_twofreq_offline',
     'adapter_w_z',
     'adapter_weil_form_enclosure',
     'adapter_window_form_floor',

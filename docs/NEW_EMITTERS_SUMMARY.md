@@ -91,6 +91,11 @@ Grouped by the front that motivated them. All kernel-green (local `lake build`),
 | `CurvatureBoundaryEmitter` | `curvature_boundary` | a function with definite `f''` sign has its extremum at the boundary (concave→min, convex→max, affine→endpoints) — ports their `extremalG_const`, generalizes `affine_param_endpoint`, covers the BG concave-corner case | interval-aware curvature check |
 | `TranscendentalEnclosureEmitter` | `transcendental_enclosure` | rational `L ≤ expr ≤ U` over a box — **log face** (`log(1+x)`, discharges the BG per-cell `log(1+S/d)`); Montgomery–Taylor `C₀` trig face deferred/refused | |
 
+### MIRRORMERE exp seam (2026-09-18)
+| Emitter | kind | Certifies | Scope note |
+|---|---|---|---|
+| `ExpEnclosureEmitter` | `exp_enclosure` | rational brackets of `Real.exp x` (`|x| ≤ 1`) from `Real.exp_bound`'s exact order-`n` Taylor box — plus the `exp_neg`, **deficit** (`e^x + e^{-x} - 2`) and `cosh` faces; the exp face that `transcendental_enclosure` (log only) and `log_combination` (internal degree-3 step) never exposed as a standalone certificate | **dogfooded**: discharges the Arb `hexp` of `BraggDefect.bragg_defect_witness` (→ `bragg_defect_witness_unconditional`, MM_bragg_defect_witness) and reproduces the `excess_bracket` / `ZooDH.cosh_bracket` constants. A finite arithmetic fact; conjecture1_proved = False |
+
 ### F\*-fold (cross-front dogfood)
 | Emitter | kind | Certifies | Scope note |
 |---|---|---|---|
