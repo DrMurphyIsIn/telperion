@@ -184,6 +184,21 @@ REGISTRY: dict[str, SensitivityStance] = {
                                 "|u|=1 side condition is a hypothesis, positivity is by structure with "
                                 "no separately-supplied corruptible identity (the degenerate power "
                                 "m<1 is refused at certify time — the negative control)"),
+    "WindowFormFloorEmitter": _S(CERTIFICATE_SENSITIVE,
+                                "Zhu arXiv:2608.24827 Thm 1.1 window-floor bundle "
+                                "(L, T#, A_L, beta*, lam0, eps_d, eps_b, N) closing on "
+                                "0 < min(lam0, beta* - eps_d) - eps_b.  The certificate is "
+                                "IDENTITY-CARRYING: A_L is re-derived by exact von Mangoldt "
+                                "summation over log n < 2L and beta* from (T#, A_L), so a "
+                                "corrupted constant breaks the re-derivation and the instance is "
+                                "refused -- this is the guard that catches the paper's own "
+                                "retracted support-2.38 claim (A_eff substituted for A_L, Remark "
+                                "3.3).  lam0 / eps_d / eps_b are Arb (python-flint) or mpmath "
+                                "enclosures -- the documented non-kernel trust seam; the four "
+                                "analytic inputs of Thm 1.1 (eq. 2, Lemma 3.1, eqs. 6 and 12, and "
+                                "the block floor) are NAMED, UNDISCHARGED Lean hypotheses.  "
+                                "Finite category-b; the route is closed by Thm 1.4 at doubly "
+                                "exponential cost (conjecture1_proved = False)"),
     "BraggFloorEmitter": _S(STRUCTURALLY_NONVACUOUS,
                             "Route P Brick D3 diffraction rung floorHi ≤ braggLo − tailHi: a concrete "
                             "rational inequality discharged by norm_num (the truncated von Mangoldt "

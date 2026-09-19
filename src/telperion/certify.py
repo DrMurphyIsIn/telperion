@@ -395,6 +395,11 @@ _SPECIAL_KINDS = (
     # Interval-inertia certificate (2026-09-18): the exact signature (posIndex, defect)
     # shared by EVERY Hermitian matrix inside a rational interval box, via RHLinalg's
     # Sylvester subspace bounds.  Island-pinned to the ported RHLinalg block (v4.32.0).
+    # Zhu's one-stroke window reduction (2026-09-19, arXiv:2608.24827 Thm 1.1): a finite
+    # Arb-certified Legendre-block floor lam0 lifted to a floor on the Weil form over the WHOLE
+    # window supp f in [-L,L], carrying beta* = log(T#/2pi) - 1/T# - A_L and the tail constants
+    # eps_d / eps_b.  The emitter RE-DERIVES A_L and beta* (the retraction guard).  Category-b.
+    "window_form_floor",
     "interval_gram_inertia",
     # E8 Weil pairing (2026-09-18): the Arb-enclosed value of archSide - primeSide for a
     # concrete compactly supported test function (and the k x k cross-correlation Gram),
@@ -629,6 +634,11 @@ _SPECIAL_DISPATCH = {
         ("emit_bragg_floor", "certify_bragg_floor_point", "BraggFloorEmitter"),
     # Interval-Gram inertia (2026-09-18): kernel-certified (posIndex, defect) of every
     # Hermitian matrix in a rational interval box (RHInertia prelude over RHLinalg).
+    # Zhu window-form floor (arXiv:2608.24827 Thm 1.1); onto the WeilExplicit / WeilForm
+    # vocabulary of RH_limit_explicit_formula.
+    "window_form_floor":
+        ("emit_window_form_floor", "certify_window_form_floor_point",
+         "WindowFormFloorEmitter"),
     "interval_gram_inertia":
         ("emit_interval_gram_inertia", "certify_interval_gram_inertia_point",
          "IntervalGramInertiaEmitter"),
