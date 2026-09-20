@@ -383,6 +383,10 @@ from .emit_selfinversive_rigidity import (  # noqa: F401
     SelfInversiveRigidityEmitter, selfinversive_rigidity_certificate,
     selfinversive_rigidity_family, certify_selfinversive_rigidity_point,
 )
+from .emit_leakage_dictionary import (  # noqa: F401
+    LeakageDictionaryEmitter, leakage_certificate,
+    leakage_dictionary_family, certify_leakage_dictionary_point,
+)
 from .emit_disjoint_discs import (  # noqa: F401
     DisjointDiscsEmitter, disjoint_discs_certificate,
     disjoint_discs_family, certify_disjoint_discs_point,

@@ -733,6 +733,34 @@ REGISTRY: dict[str, SensitivityStance] = {
         "(so a corrupted normSq breaks the emitted rewrite, not the statement), plus the explicit "
         "x = i/2 witness for the Euler-factor shape; certify REFUSES EQUAL modulus and any "
         "frequency pair needing transcendence of log. conjecture1_proved = False"),
+    "LeakageDictionaryEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "MIRRORMERE ROUTE A item A2b leakage dictionary: the RE-DERIVED log-derivative "
+        "coefficient row b(d), d | n, of a periodic amplitude, carried on the prime-log basis "
+        "and emitted as a chain of lemmas over Quasicrystal.IsLogDerivCoeff. The row IS the "
+        "separately-supplied certificate: each b(d) closed form is re-proved from the divisor "
+        "recursion at d (Nat.divisors expansion + the already-derived smaller coefficients) and "
+        "closed by linarith, so CORRUPTING ANY ENTRY leaves linarith with no proof and the "
+        "kernel rejects the file; the same holds for the interval-arithmetic enclosure of b(n), "
+        "which is computed from the island's kernel-proved atom bounds and closed by nlinarith. "
+        "certify REFUSES in BOTH directions -- a 'vanishes' claim for a non-completely-"
+        "multiplicative amplitude (the Davenport-Heilbronn fingerprint), a 'leaks' claim for a "
+        "completely multiplicative one (the island theorem proves it false), a vanishing claim "
+        "whose re-derived b(n) is not symbolically 0, a leak claim whose re-derived b(n) IS 0, "
+        "an unnormalized a(1) != 1, and a PRIME-POWER index (where the dictionary has no "
+        "content). Complete multiplicativity of a q-periodic amplitude is DECIDED exactly by "
+        "the q x q monoid-homomorphism table on Z/q, never sampled. The trivial-direction trap "
+        "is avoided by construction: the certificate is about the coefficients of a logarithmic "
+        "derivative, not about the support of Lambda (which is rfl-grade in Mathlib and is "
+        "quarantined in the island as vonMangoldt_support_is_definitional). "
+        "conjecture1_proved = False",
+        neg_control=NegControlStance(
+            NEG_CONTROL_DECLARED_UNWIRED,
+            reason="certificate-sensitive (a forged coefficient row is kernel-rejectable at the "
+                   "emitted linarith step, and the certify-time refusals already bite in both "
+                   "directions) but no adapter is registered in "
+                   "negative_control_harness.ADAPTERS yet -- the honestly-named gap"),
+    ),
     "TwoFreqOfflineEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Off-line displacement, the EXACT COMPLEMENT of SelfInversiveRigidityEmitter "
         "(TwoFreqRigidity.twoFreq_realRooted_iff): the coefficient literals ARE the statement, "
