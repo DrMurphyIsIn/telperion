@@ -422,6 +422,11 @@ _SPECIAL_KINDS = (
     # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
     # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
     "exp_enclosure",
+    # MIRRORMERE leakage dictionary (2026-09-19, ROUTE A item A2b): the log-derivative
+    # coefficient functional at a COMPOSITE index -- a completely-multiplicative amplitude
+    # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
+    # complete multiplicativity).  Exact symbolic divisor recursion; nothing about RH.
+    "leakage_dictionary",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -673,6 +678,11 @@ _SPECIAL_DISPATCH = {
     # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
     "exp_enclosure":
         ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
+    # MIRRORMERE leakage dictionary (ROUTE A item A2b): re-derived log-derivative coefficient
+    # rows at a composite index, over the island's LeakageDictionary vocabulary.
+    "leakage_dictionary":
+        ("emit_leakage_dictionary", "certify_leakage_dictionary_point",
+         "LeakageDictionaryEmitter"),
 }
 
 
