@@ -660,3 +660,63 @@ def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
     report = verify_campaign(root)
     assert not report.ok
     assert any("sorry" in e for e in report.errors)
+
+
+# --- what closure_clean actually is, pinned so the docstring cannot drift again ------
+#
+# grant_status writes closure_clean as a copy of status.  _compute_closures then seeds
+# from the stored flag and recomputes only `via = "reduction"` nodes, and verify_campaign
+# cross-checks only reductions.  So for a DIRECT proof the flag is never derived from
+# anything, and it is not a statement about discharged hypotheses.
+#
+# These tests do not ask anyone to "fix" that.  Preserving a stored False cannot work:
+# nodes are authored with False, so every first-time grant would stay dirty.  Telling a
+# deliberate False from a default one needs the closure_override_reason field of
+# ascent-plan ops F1-3/F1-4, which is an owner's decision.  The behaviour is pinned here
+# so the next reader is not misled by a docstring again.
+
+def _granted_node(tmp_path, name, stmt):
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    from telperion.missions.schema import save_manifest
+    save_manifest(_manifest(), root / "mission.toml")
+    slug = slug_of(name)
+    node = _open_node_with_proof(name, artifact=f"proof/{slug}.lean")
+    assert node.proof.closure_clean is False, "every new node is authored dirty"
+    save_node(node, root / "nodes" / f"{slug}.toml")
+    write_statement(root, node, stmt, _manifest())
+    art = root / "proof" / f"{slug}.lean"
+    art.parent.mkdir(parents=True, exist_ok=True)
+    art.write_text(f"{stmt}\n  := by\n  simp\n")
+    return root, slug
+
+
+def test_grant_writes_closure_clean_as_a_copy_of_status(tmp_path):
+    root, slug = _granted_node(tmp_path, "Test.flag", "theorem lemma_flag : 1 + 1 = 2")
+    granted = grant_status(load_campaign(root), slug)
+    assert granted.status == "proved"
+    assert granted.proof.closure_clean is True, (
+        "granting turns the authored False into True: a copy of status, not a derived "
+        "fact about discharged hypotheses"
+    )
+
+
+def test_a_hand_set_dirty_flag_survives_for_a_direct_proof(tmp_path):
+    """The only way to record a deliberate ruling today is to set it AFTER granting."""
+    import dataclasses
+
+    from telperion.missions.verify import _compute_closures
+
+    root, slug = _granted_node(tmp_path, "Test.ruled", "theorem lemma_ruled : 2 + 2 = 4")
+    grant_status(load_campaign(root), slug)
+    campaign = load_campaign(root)
+    node = campaign.nodes[slug]
+    assert node.proof.closure_clean is True
+    ruled = dataclasses.replace(node, proof=dataclasses.replace(node.proof, closure_clean=False))
+    save_node(ruled, root / "nodes" / f"{slug}.toml")
+
+    campaign = load_campaign(root)
+    assert _compute_closures(campaign)[slug] is False, (
+        "a direct proof's stored flag is authoritative; a hand-set ruling must survive"
+    )
