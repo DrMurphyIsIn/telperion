@@ -685,6 +685,30 @@ REGISTRY: dict[str, SensitivityStance] = {
         "to corrupt; the winding integer is RE-VERIFIED at doubled precision + density at certify "
         "time and a claimed count the argument principle does not support is REFUSED (the negative "
         "control). conjecture1_proved = False"),
+    # --- 2026-09-19: the Face-7 pilot's Lipschitz-net ZERO-FREENESS emitter
+    #     (kind="grid_modulus_nonvanishing").  A different instrument from
+    #     WindingBoxZeroEmitter: no contour, no argument principle, and it SHIPS kernel
+    #     theorems.  It can only ever certify zero-freeness, never a nonzero count. ---
+    "GridModulusNonvanishingEmitter": _S(CERTIFICATE_SENSITIVE,
+        "Lipschitz-net zero-freeness certificate: |f'| <= M on a convex rational-cornered box, a "
+        "finite grid that is a delta-net of the box, |f| >= L at every node, and the GAP CONDITION "
+        "M*delta < L; the Lean side is the unconditional mean-value argument "
+        "SpeiserBoxProbe.nonvanishing_of_grid. M, delta and L are SUPPLIED numbers that appear in "
+        "the emitted statement AND are what the kernel arithmetic must clear (cover_radius_ok, "
+        "gap_ok, column_span_ok, row_tiling_ok, all norm_num on exact rationals), so an understated "
+        "delta or an inflated L yields a FALSE rational theorem the kernel rejects -- hence an "
+        "adapter, not not_applicable. certify RE-DERIVES every load-bearing quantity from its "
+        "definition and REFUSES: a grid that does not actually net the box (column span / row "
+        "tiling recomputed from geometry), a delta below the exact cell half-diagonal, a violated "
+        "gap, a claimed M the independent |f''| sweep does not support, a claimed L the independent "
+        "per-node |f'| evaluation does not support, and any doubled-precision / doubled-density "
+        "re-run that disagrees. TRUST CLASS mpmath-numeric -- WEAKER than arb: the numeric facts "
+        "are EVIDENCE and remain OPEN Lean hypotheses (SecondDerivBoundOnBox, "
+        "GridModulusLowerBound), proved nowhere. The shipped instance is the Face-7 pilot box for "
+        "deriv riemannZeta on [1/4,3/8]x[6,10]; that is NOT the Speiser wall (Speiser 1935 makes "
+        "the WHOLE open left strip equivalent to RH, and no finite union of boxes exhausts a "
+        "strip) and NOT a step toward RH. conjecture1_proved = False",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     # --- 2026-09-18: MIRRORMERE E4b isolation INSTANCE emitter (the concrete shape the
     #     Rouche/E5 leg consumes; the general lemma is OfflineDiscs.offline_disjoint_discs). ---
     "DisjointDiscsEmitter": _S(CERTIFICATE_SENSITIVE,

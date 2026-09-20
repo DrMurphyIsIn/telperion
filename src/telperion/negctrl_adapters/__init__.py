@@ -1,18 +1,18 @@
 """Negative-control adapters: importing this package registers every adapter."""
 from __future__ import annotations
-
 from . import adapter_bragg_floor  # noqa: F401
 from . import adapter_c_g_round  # noqa: F401
 from . import adapter_concave_stationary_max  # noqa: F401
 from . import adapter_cone_farkas  # noqa: F401
 from . import adapter_consequence  # noqa: F401
-from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
+from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
-from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
+from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
+from . import adapter_grid_modulus_nonvanishing  # noqa: F401
 from . import adapter_handelman  # noqa: F401
 from . import adapter_identity  # noqa: F401
 from . import adapter_infeasibility  # noqa: F401
@@ -50,6 +50,7 @@ __all__ = [
     'adapter_exp_laurent_identity',
     'adapter_finite_argmax',
     'adapter_fwd_telescope',
+    'adapter_grid_modulus_nonvanishing',
     'adapter_handelman',
     'adapter_identity',
     'adapter_infeasibility',

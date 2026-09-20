@@ -379,6 +379,12 @@ _SPECIAL_KINDS = (
     #                            for the Euler-factor family, every zero sits at Im x = 1/2).
     "twofreq_offline",
     "winding_box_zero",
+    #   grid_modulus_nonvanishing -- Lipschitz-net ZERO-FREENESS certificate (NOT a count):
+    #                            |f'| <= M on a convex box, a delta-net grid with |f| >= L
+    #                            at every node, and the gap M*delta < L.  Ships the exact
+    #                            rational arithmetic as kernel theorems; the |f|/|f'| numeric
+    #                            facts stay OPEN Lean hypotheses (mpmath-numeric trust class).
+    "grid_modulus_nonvanishing",
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
     # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
     # numeric fact as an Arb-enclosure HYPOTHESIS (the trust seam); the kernel proves
@@ -646,6 +652,9 @@ _SPECIAL_DISPATCH = {
         ("emit_twofreq_offline", "certify_twofreq_offline_point", "TwoFreqOfflineEmitter"),
     "winding_box_zero":
         ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
+    "grid_modulus_nonvanishing":
+        ("emit_grid_modulus_nonvanishing", "certify_grid_modulus_nonvanishing_point",
+         "GridModulusNonvanishingEmitter"),
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).
     "robin_growth":
         ("emit_robin_growth", "certify_robin_growth_point", "RobinGrowthEmitter"),
