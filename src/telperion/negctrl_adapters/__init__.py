@@ -1,16 +1,15 @@
 """Negative-control adapters: importing this package registers every adapter."""
 from __future__ import annotations
-
 from . import adapter_bragg_floor  # noqa: F401
 from . import adapter_c_g_round  # noqa: F401
 from . import adapter_concave_stationary_max  # noqa: F401
 from . import adapter_cone_farkas  # noqa: F401
 from . import adapter_consequence  # noqa: F401
-from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
+from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
-from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
+from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
 from . import adapter_grid_modulus_nonvanishing  # noqa: F401
@@ -35,6 +34,7 @@ from . import adapter_two_moment_count  # noqa: F401
 from . import adapter_twofreq_offline  # noqa: F401
 from . import adapter_w_z  # noqa: F401
 from . import adapter_weil_form_enclosure  # noqa: F401
+from . import adapter_window_form_floor  # noqa: F401
 from . import adapter_zero_free_cosine  # noqa: F401
 
 __all__ = [
@@ -72,10 +72,6 @@ __all__ = [
     'adapter_twofreq_offline',
     'adapter_w_z',
     'adapter_weil_form_enclosure',
+    'adapter_window_form_floor',
     'adapter_zero_free_cosine',
 ]
-__all__ = ['adapter_bragg_floor', 'adapter_c_g_round', 'adapter_concave_stationary_max', 'adapter_cone_farkas', 'adapter_consequence', 'adapter_constrained_s_o_s', 'adapter_exact_fact', 'adapter_finite_argmax', 'adapter_fwd_telescope', 'adapter_handelman', 'adapter_identity', 'adapter_infeasibility', 'adapter_li_positivity', 'adapter_nullstellensatz', 'adapter_order_balance', 'adapter_rational_identity', 'adapter_rational_s_o_s', 'adapter_real_nullstellensatz', 'adapter_recursive_domination_ratio', 'adapter_s_o_s', 'adapter_s_o_s_refutation', 'adapter_second_order', 'adapter_symmetric_quad_d2', 'adapter_telescoping_potential', 'adapter_transcendental_enclosure', 'adapter_two_moment_count', 'adapter_w_z', 'adapter_weil_form_enclosure', 'adapter_zero_free_cosine']
-__all__ = ['adapter_bragg_floor', 'adapter_c_g_round', 'adapter_concave_stationary_max', 'adapter_cone_farkas', 'adapter_consequence', 'adapter_disjoint_discs', 'adapter_constrained_s_o_s', 'adapter_exact_fact', 'adapter_finite_argmax', 'adapter_fwd_telescope', 'adapter_handelman', 'adapter_identity', 'adapter_infeasibility', 'adapter_li_positivity', 'adapter_nullstellensatz', 'adapter_order_balance', 'adapter_rational_identity', 'adapter_rational_s_o_s', 'adapter_real_nullstellensatz', 'adapter_recursive_domination_ratio', 'adapter_s_o_s', 'adapter_s_o_s_refutation', 'adapter_second_order', 'adapter_symmetric_quad_d2', 'adapter_telescoping_potential', 'adapter_transcendental_enclosure', 'adapter_two_moment_count', 'adapter_w_z', 'adapter_zero_free_cosine']
-__all__ = ['adapter_bragg_floor', 'adapter_c_g_round', 'adapter_concave_stationary_max', 'adapter_cone_farkas', 'adapter_consequence', 'adapter_constrained_s_o_s', 'adapter_exact_fact', 'adapter_exp_laurent_identity', 'adapter_finite_argmax', 'adapter_fwd_telescope', 'adapter_handelman', 'adapter_identity', 'adapter_infeasibility', 'adapter_li_positivity', 'adapter_nullstellensatz', 'adapter_order_balance', 'adapter_rational_identity', 'adapter_rational_s_o_s', 'adapter_real_nullstellensatz', 'adapter_recursive_domination_ratio', 'adapter_s_o_s', 'adapter_s_o_s_refutation', 'adapter_second_order', 'adapter_symmetric_quad_d2', 'adapter_telescoping_potential', 'adapter_transcendental_enclosure', 'adapter_two_moment_count', 'adapter_w_z', 'adapter_zero_free_cosine']
-__all__ = ['adapter_bragg_floor', 'adapter_c_g_round', 'adapter_concave_stationary_max', 'adapter_cone_farkas', 'adapter_consequence', 'adapter_constrained_s_o_s', 'adapter_exact_fact', 'adapter_exp_enclosure', 'adapter_finite_argmax', 'adapter_fwd_telescope', 'adapter_handelman', 'adapter_identity', 'adapter_infeasibility', 'adapter_li_positivity', 'adapter_nullstellensatz', 'adapter_order_balance', 'adapter_rational_identity', 'adapter_rational_s_o_s', 'adapter_real_nullstellensatz', 'adapter_recursive_domination_ratio', 'adapter_s_o_s', 'adapter_s_o_s_refutation', 'adapter_second_order', 'adapter_symmetric_quad_d2', 'adapter_telescoping_potential', 'adapter_transcendental_enclosure', 'adapter_two_moment_count', 'adapter_w_z', 'adapter_zero_free_cosine']
-__all__ = ['adapter_bragg_floor', 'adapter_c_g_round', 'adapter_concave_stationary_max', 'adapter_cone_farkas', 'adapter_consequence', 'adapter_constrained_s_o_s', 'adapter_exact_fact', 'adapter_finite_argmax', 'adapter_fwd_telescope', 'adapter_handelman', 'adapter_identity', 'adapter_infeasibility', 'adapter_li_positivity', 'adapter_nullstellensatz', 'adapter_order_balance', 'adapter_rational_identity', 'adapter_rational_s_o_s', 'adapter_real_nullstellensatz', 'adapter_recursive_domination_ratio', 'adapter_s_o_s', 'adapter_s_o_s_refutation', 'adapter_second_order', 'adapter_symmetric_quad_d2', 'adapter_telescoping_potential', 'adapter_transcendental_enclosure', 'adapter_two_moment_count', 'adapter_twofreq_offline', 'adapter_w_z', 'adapter_zero_free_cosine']
