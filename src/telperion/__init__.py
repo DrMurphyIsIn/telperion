@@ -389,6 +389,11 @@ from .emit_winding_box_zero import (  # noqa: F401
     WindingBoxZeroEmitter, winding_box_zero_certificate,
     winding_box_zero_family, certify_winding_box_zero_point,
 )
+from .emit_grid_modulus_nonvanishing import (  # noqa: F401
+    GridModulusNonvanishingEmitter, grid_modulus_nonvanishing_certificate,
+    grid_modulus_nonvanishing_family, certify_grid_modulus_nonvanishing_point,
+    register_backend,
+)
 # Flint-free emitter previously only imported via the flint-gated rh_jensen
 # modules, making sensitivity-registry discovery depend on whether python-flint
 # was installed.  Imported here unconditionally so the completeness/stray gates
