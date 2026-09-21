@@ -75,6 +75,10 @@ def declarations(path: Path) -> dict[str, str]:
 #: `test_missions_mirror_drift` pins that every exemption is still needed (the two texts still
 #: differ), so a stale entry fails loudly instead of masking a real drift.
 NOT_MIRRORS: dict[tuple[str, str], str] = {
+    ("archSide", "rvm_bridge/lean/E6Bridge15.lean"):
+        "BombieriLagarias.archSide (the rh campaign's Li-face archimedean closed form, mirrored "
+        "verbatim from missions/rh RHDefs into E6Bridge15 for the B7 node) is not a copy of "
+        "WeilExplicit.archSide (MMDefs): same bare name, different namespace and object (2026-09-21).",
     ("autocorr", "weil_form_enclosure/lean/WeilFormDefs.lean"):
         "WeilForm.autocorr is `abbrev autocorr g := crossCorr g g` (the emitter island's own "
         "vocabulary, namespace WeilForm), not a copy of WeilExplicit.autocorr (MMDefs, "
