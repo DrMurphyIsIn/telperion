@@ -69,6 +69,24 @@ def declarations(path: Path) -> dict[str, str]:
     return out
 
 
+#: Same bare name, different object: island declarations that are NOT copies of the
+#: registry definition and must not be compared against it.  Keyed by (bare name, island
+#: file path suffix); the value is the reason, kept here so the exemption is auditable.
+#: `test_missions_mirror_drift` pins that every exemption is still needed (the two texts still
+#: differ), so a stale entry fails loudly instead of masking a real drift.
+NOT_MIRRORS: dict[tuple[str, str], str] = {
+    ("autocorr", "weil_form_enclosure/lean/WeilFormDefs.lean"):
+        "WeilForm.autocorr is `abbrev autocorr g := crossCorr g g` (the emitter island's own "
+        "vocabulary, namespace WeilForm), not a copy of WeilExplicit.autocorr (MMDefs, "
+        "2026-09-20): the same integral written through crossCorr, in another namespace.",
+}
+
+
+def _exempt(name: str, island_file: Path) -> bool:
+    posix = island_file.as_posix()
+    return any(name == n and posix.endswith(suffix) for (n, suffix) in NOT_MIRRORS)
+
+
 @dataclass(frozen=True)
 class Mirror:
     name: str
@@ -81,8 +99,12 @@ def check_mirrors(defs_file: Path, examples_root: Path) -> list[Mirror]:
     base = declarations(defs_file)
     rows: list[Mirror] = []
     for lean in sorted(Path(examples_root).glob("*/lean/**/*.lean")):
+        if ".lake" in lean.parts:
+            continue   # dependency sources (Mathlib, Zeta23) are not island copies of anything
         island = declarations(lean)
         for name in sorted(set(island) & set(base)):
+            if _exempt(name, lean):
+                continue
             rows.append(Mirror(name, str(lean), island[name] == base[name]))
     return rows
 
