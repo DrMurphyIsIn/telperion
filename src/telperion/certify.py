@@ -379,6 +379,12 @@ _SPECIAL_KINDS = (
     #                            for the Euler-factor family, every zero sits at Im x = 1/2).
     "twofreq_offline",
     "winding_box_zero",
+    #   grid_modulus_nonvanishing -- Lipschitz-net ZERO-FREENESS certificate (NOT a count):
+    #                            |f'| <= M on a convex box, a delta-net grid with |f| >= L
+    #                            at every node, and the gap M*delta < L.  Ships the exact
+    #                            rational arithmetic as kernel theorems; the |f|/|f'| numeric
+    #                            facts stay OPEN Lean hypotheses (mpmath-numeric trust class).
+    "grid_modulus_nonvanishing",
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent): per-instance,
     # kernel-checkable shadows of four RH faces.  Each carries the transcendental /
     # numeric fact as an Arb-enclosure HYPOTHESIS (the trust seam); the kernel proves
@@ -407,6 +413,11 @@ _SPECIAL_KINDS = (
     # Interval-inertia certificate (2026-09-18): the exact signature (posIndex, defect)
     # shared by EVERY Hermitian matrix inside a rational interval box, via RHLinalg's
     # Sylvester subspace bounds.  Island-pinned to the ported RHLinalg block (v4.32.0).
+    # Zhu's one-stroke window reduction (2026-09-19, arXiv:2608.24827 Thm 1.1): a finite
+    # Arb-certified Legendre-block floor lam0 lifted to a floor on the Weil form over the WHOLE
+    # window supp f in [-L,L], carrying beta* = log(T#/2pi) - 1/T# - A_L and the tail constants
+    # eps_d / eps_b.  The emitter RE-DERIVES A_L and beta* (the retraction guard).  Category-b.
+    "window_form_floor",
     "interval_gram_inertia",
     # E8 Weil pairing (2026-09-18): the Arb-enclosed value of archSide - primeSide for a
     # concrete compactly supported test function (and the k x k cross-correlation Gram),
@@ -417,6 +428,11 @@ _SPECIAL_KINDS = (
     # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
     # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
     "exp_enclosure",
+    # MIRRORMERE leakage dictionary (2026-09-19, ROUTE A item A2b): the log-derivative
+    # coefficient functional at a COMPOSITE index -- a completely-multiplicative amplitude
+    # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
+    # complete multiplicativity).  Exact symbolic divisor recursion; nothing about RH.
+    "leakage_dictionary",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -636,6 +652,9 @@ _SPECIAL_DISPATCH = {
         ("emit_twofreq_offline", "certify_twofreq_offline_point", "TwoFreqOfflineEmitter"),
     "winding_box_zero":
         ("emit_winding_box_zero", "certify_winding_box_zero_point", "WindingBoxZeroEmitter"),
+    "grid_modulus_nonvanishing":
+        ("emit_grid_modulus_nonvanishing", "certify_grid_modulus_nonvanishing_point",
+         "GridModulusNonvanishingEmitter"),
     # RH SEVEN-FACES instruments (2026-09-14, face-emitters agent).
     "robin_growth":
         ("emit_robin_growth", "certify_robin_growth_point", "RobinGrowthEmitter"),
@@ -652,6 +671,11 @@ _SPECIAL_DISPATCH = {
         ("emit_bragg_floor", "certify_bragg_floor_point", "BraggFloorEmitter"),
     # Interval-Gram inertia (2026-09-18): kernel-certified (posIndex, defect) of every
     # Hermitian matrix in a rational interval box (RHInertia prelude over RHLinalg).
+    # Zhu window-form floor (arXiv:2608.24827 Thm 1.1); onto the WeilExplicit / WeilForm
+    # vocabulary of RH_limit_explicit_formula.
+    "window_form_floor":
+        ("emit_window_form_floor", "certify_window_form_floor_point",
+         "WindowFormFloorEmitter"),
     "interval_gram_inertia":
         ("emit_interval_gram_inertia", "certify_interval_gram_inertia_point",
          "IntervalGramInertiaEmitter"),
@@ -663,6 +687,11 @@ _SPECIAL_DISPATCH = {
     # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
     "exp_enclosure":
         ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
+    # MIRRORMERE leakage dictionary (ROUTE A item A2b): re-derived log-derivative coefficient
+    # rows at a composite index, over the island's LeakageDictionary vocabulary.
+    "leakage_dictionary":
+        ("emit_leakage_dictionary", "certify_leakage_dictionary_point",
+         "LeakageDictionaryEmitter"),
 }
 
 

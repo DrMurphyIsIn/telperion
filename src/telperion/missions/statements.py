@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import re
 from typing import List
 
 from .schema import atomic_write_text, MissionManifest, Node, slug_of
@@ -30,6 +31,52 @@ def statement_path(root: Path, node: Node) -> Path:
 # ---------------------------------------------------------------------------
 # Body normalisation (applied before hashing and writing)
 # ---------------------------------------------------------------------------
+
+_DECL_KEYWORD = re.compile(
+    r"(?m)^(?:@\[[^\]]*\]\s*)?(?:noncomputable\s+|private\s+|protected\s+|scoped\s+)*"
+    r"(?:theorem|lemma|def|abbrev|instance|example)\b"
+)
+
+
+def _last_declaration_has_proof(body: str) -> bool:
+    """Does the final declaration in `body` already carry a proof or definition body?
+
+    True iff a `:=` appears at bracket depth zero within that declaration, ignoring
+    comments and string literals.  Depth matters: `(h : a := b)` is a binder default,
+    not a proof body, and `⟨x, y⟩` must not unbalance the scan.
+    """
+    starts = [m.start() for m in _DECL_KEYWORD.finditer(body)]
+    tail = body[starts[-1]:] if starts else body
+
+    depth = 0
+    i = 0
+    n = len(tail)
+    while i < n:
+        two = tail[i:i + 2]
+        if two == "--":
+            j = tail.find("\n", i)
+            i = n if j < 0 else j + 1
+            continue
+        if two == "/-":
+            j = tail.find("-/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        ch = tail[i]
+        if ch == '"':
+            i += 1
+            while i < n and tail[i] != '"':
+                i += 2 if tail[i] == "\\" else 1
+            i += 1
+            continue
+        if ch in "([{\u27e8":
+            depth += 1
+        elif ch in ")]}\u27e9":
+            depth -= 1
+        elif two == ":=" and depth == 0:
+            return True
+        i += 1
+    return False
+
 
 def _build_body(statement: str) -> str:
     """Split statement into (preamble_lines, declaration_body) and normalize.
@@ -53,8 +100,19 @@ def _build_body(statement: str) -> str:
     body = "\n".join(body_lines)
     body_stripped = body.rstrip()
 
-    # Normalize: append ':= by sorry' only if no proof body present
-    if not (body_stripped.endswith(":= by sorry") or body_stripped.endswith(":= sorry")):
+    # Normalize: append ':= by sorry' only if the FINAL declaration has no proof body.
+    #
+    # This used to test `endswith(":= by sorry") or endswith(":= sorry")`, which
+    # recognises only the two one-line spellings.  A statement whose declaration already
+    # carried a multi-line proof got a SECOND one appended, producing the nonsense
+    # `sorry := by sorry`.  That happened live while authoring
+    # MM_leakage_composite_zero.
+    #
+    # The test is deliberately scoped to the LAST declaration.  A statement module may
+    # open with local `def`s, each with its own `:=`, before the theorem it exists to
+    # state; asking merely whether the body contains a top-level `:=` would see those
+    # and skip the suffix the theorem needs.
+    if not _last_declaration_has_proof(body_stripped):
         body = body_stripped + " := by sorry"
     else:
         body = body_stripped

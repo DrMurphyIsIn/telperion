@@ -334,11 +334,19 @@ def _dep_is_clean(campaign, dep: str, closure: Dict[str, bool], universe=None) -
 def _compute_closures(campaign: Campaign, universe=None) -> Dict[str, bool]:
     """Pure fixpoint: compute closure_clean for every node with a proof link.
 
-    Rules:
-    - A direct-proved node's closure is always clean (True).
+    Rules, as the code below actually behaves:
+    - A direct-proved node's STORED flag is authoritative and is never recomputed
+      here.  It is not a derived fact about discharged hypotheses and must not be
+      read as one.  An earlier version of this docstring claimed such a node "is
+      always clean (True)"; the code deliberately does not do that, and the
+      mismatch is why the real rule is spelled out.
     - A reduction-proved node is clean iff every depends_on target has
-      status 'proved' AND its own closure is clean.
+      status 'proved' AND its own closure is clean.  Only these are recomputed.
     - Nodes without proof: not included in result.
+
+    Extending this fixpoint to direct proofs is ascent-plan ops F1-3/F1-4.  That
+    changes what closure_clean means for every already-clean node, so it is an
+    owner's decision and is deliberately not made here.
 
     Does NOT read or write any files. Uses only campaign.nodes as provided.
     Returns a dict mapping slug -> bool for every node that has a proof link.
@@ -531,7 +539,22 @@ def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
                     f"granted over an unproved premise."
                 )
 
-    # Flip the status
+    # Flip the status.
+    #
+    # This writes closure_clean as a copy of status, so a grant turns a stored False
+    # into True.  That laundered a real ruling in the live corpus: the read-back on
+    # MM_bragg_defect_witness says its off-line leg "CARRIES the Arb
+    # exponential-enclosure hypothesis, hence closure_clean = false until that
+    # enclosure is itself reflected", and the stored flag read True because granting
+    # wrote it.
+    #
+    # It cannot be repaired here, and I tried.  Nodes are authored with
+    # closure_clean = False, so "preserve a stored False" leaves EVERY first-time
+    # grant dirty; there is no way to tell a deliberate False from a default one
+    # without a field that records the ruling.  That field is ascent-plan op
+    # F1-3/F1-4's closure_override_reason, an owner's decision.  Until then a
+    # deliberate dirty flag is set by hand AFTER granting, and it survives, because
+    # _compute_closures treats a direct proof's stored flag as authoritative.
     new_proof = dataclasses.replace(node.proof, closure_clean=(new_status == "proved"))
     new_node = dataclasses.replace(node, status=new_status, proof=new_proof)
     node_path = campaign.root / "nodes" / f"{slug}.toml"
