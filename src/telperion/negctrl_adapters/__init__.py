@@ -10,6 +10,7 @@ from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
+from . import adapter_exp_threshold  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
 from . import adapter_grid_modulus_nonvanishing  # noqa: F401
@@ -48,6 +49,7 @@ __all__ = [
     'adapter_exact_fact',
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',
+    'adapter_exp_threshold',
     'adapter_finite_argmax',
     'adapter_fwd_telescope',
     'adapter_grid_modulus_nonvanishing',

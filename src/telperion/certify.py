@@ -428,6 +428,11 @@ _SPECIAL_KINDS = (
     # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
     # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
     "exp_enclosure",
+    # exp_threshold (2026-09-22, SHAPES_AUDIT_48H section 2 rank 5; B N2, C 4.5): from a rational
+    # or symbolic threshold on the Gaussian width to exponential domination via `1 + t <= e^t`
+    # (linear / log bundles reading a nested-max threshold with the `max 1` guard folded in, plus
+    # the product / inverse / shifted-rate atoms).  Elementary real inequalities; nothing about RH.
+    "exp_threshold",
     # MIRRORMERE leakage dictionary (2026-09-19, ROUTE A item A2b): the log-derivative
     # coefficient functional at a COMPOSITE index -- a completely-multiplicative amplitude
     # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
@@ -687,6 +692,9 @@ _SPECIAL_DISPATCH = {
     # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
     "exp_enclosure":
         ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
+    # exp_threshold (threshold-to-exponential-domination bundles and atoms, Real.add_one_le_exp).
+    "exp_threshold":
+        ("emit_exp_threshold", "certify_exp_threshold_point", "ExpThresholdEmitter"),
     # MIRRORMERE leakage dictionary (ROUTE A item A2b): re-derived log-derivative coefficient
     # rows at a composite index, over the island's LeakageDictionary vocabulary.
     "leakage_dictionary":

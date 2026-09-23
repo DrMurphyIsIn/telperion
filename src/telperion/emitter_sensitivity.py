@@ -266,6 +266,33 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # emitted linarith unprovable, so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_enclosure.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ExpThresholdEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                             "threshold-to-exponential domination via `1 + t <= e^t` "
+                             "(Real.add_one_le_exp): a bundle reads a nested-max threshold "
+                             "hypothesis (the eventual_threshold witness, with the `max 1` guard "
+                             "folded in as a conjunct) and returns each exponential consequence "
+                             "Q <= K exp(s lam a) -- linear mode (div_le_iff0 + add_one_le_exp + "
+                             "linarith) or log mode (exp_log (lt_max_of_lt_left one_pos) + "
+                             "exp_le_exp) -- plus the product (y e^-y <= 1), inverse "
+                             "(e^-x <= 1/x) and affine shifted-rate atoms.  The mode, scale, "
+                             "strictness, arity and guard ARE the statement, re-derived in the "
+                             "kernel; a rational instance also pins the exact threshold and the "
+                             "signs of a, K, s, which the kernel re-decides (positivity / "
+                             "norm_num).  No separately-supplied identity to corrupt, so the "
+                             "shape is structural.  certify REFUSES a rational a <= 0 or K <= 0, "
+                             "a non-positive scale, a declared threshold that does not match the "
+                             "exact recomputation Q/(s a K) or log(max 1 (Q/K))/(s a), strict in "
+                             "log mode, bundling an atom, an inverse bound below 1/x0, a "
+                             "shifted-rate r' >= r or a constant below max(c0, c1/(r-r'), 0), and "
+                             "floats anywhere.  Regenerates E6Bridge7.lean:575-590 (hexpeta, "
+                             "hexpM) and E6Bridge14.lean:78-86 (le_exp_of_log_le); elementary "
+                             "real inequalities, nothing about RH (conjecture1_proved = False)",
+                             # Structural, yet a kernel control exists: a hand-minted rational
+                             # instance with a = -1 (which Layer 1 refuses) states a FALSE
+                             # implication (at lam = 0) and the emitted `positivity` step cannot
+                             # prove 0 < 2 * (-1), so the kernel rejects it.
+                             # See negctrl_adapters/adapter_exp_threshold.py.
+                             neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
