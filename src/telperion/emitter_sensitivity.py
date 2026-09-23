@@ -383,6 +383,32 @@ REGISTRY: dict[str, SensitivityStance] = {
         # leaves `ring` an unprovable identity after `simp only`, so the kernel rejects it.
         # See negctrl_adapters/adapter_complex_re_im_split.py.
         neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ZeroSumMajorantEmitter": _S(CERTIFICATE_SENSITIVE,
+                                 "zero-sum majorant (SHAPES_AUDIT_48H section 2 rank 2; C 3.1 + "
+                                 "B N5): the per-instance certificate is the strip inequality "
+                                 "N/D <= C/(1 + |gamma_rho|^2) on |Im rho - a| >= h, cleared to the "
+                                 "EXACT nonnegative combination C*D - N*(1 + |gamma|^2) = "
+                                 "sum c_alpha x^i (1-x)^j ((w-a)^2 - h^2)^k p^2e S^2m (Bernstein / "
+                                 "Polya after w^2 -> h^2 + t), emitted as `key` and closed by "
+                                 "`ring`, so every coefficient is load-bearing (corrupt one and "
+                                 "`ring` fails); certify runs assert_certificate_sensitive on that "
+                                 "identity.  The majorant / summable faces compose it with the "
+                                 "island atom RvMBridgeXi.zeroBoundAt (finite ordinate window + "
+                                 "local-count tail).  certify REFUSES C < 0 or a non-positivity "
+                                 "C / N, a failed Polya check (FALSE with a located rational "
+                                 "witness -- the h = 0 / 1/|rho|^2 phantom -- or OBSTRUCTED), h "
+                                 "outside {0,1,2}, a non-ordinate window, a conditional support "
+                                 "fact, ordinate_sq with h = 0, a term list that is not the "
+                                 "residual, P >= 0 / E < 0 on the tail faces, and floats.  "
+                                 "Regenerates E6Bridge19 zbound, E6Bridge18 polBound, E6Bridge15 "
+                                 "liBound and E6Bridge12 tail_bound_window; nothing about RH "
+                                 "(conjecture1_proved = False)",
+                                 checked_in="emit_zero_sum_majorant",
+                                 # Kernel control: the 9/4 strip instance forged to C = 1 (false at
+                                 # every point of the strip) -- the emitted `ring` identity fails;
+                                 # the true twin C = 9/4 compiles.  See
+                                 # negctrl_adapters/adapter_zero_sum_majorant.py.
+                                 neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "

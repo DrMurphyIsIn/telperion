@@ -40,6 +40,7 @@ from . import adapter_w_z  # noqa: F401
 from . import adapter_weil_form_enclosure  # noqa: F401
 from . import adapter_window_form_floor  # noqa: F401
 from . import adapter_zero_free_cosine  # noqa: F401
+from . import adapter_zero_sum_majorant  # noqa: F401
 
 __all__ = [
     'adapter_bragg_floor',
@@ -82,4 +83,5 @@ __all__ = [
     'adapter_weil_form_enclosure',
     'adapter_window_form_floor',
     'adapter_zero_free_cosine',
+    'adapter_zero_sum_majorant',
 ]

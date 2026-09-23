@@ -439,6 +439,13 @@ _SPECIAL_KINDS = (
     # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
     # arithmetic facts about real constants; nothing about RH.
     "enclosure_tree",
+    # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
+    # with audit B N5): a zero-supported family is summable through a finite ordinate window
+    # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
+    # The per-instance certificate is ONE two-variable strip inequality, certified as an exact
+    # nonnegative (Bernstein / Polya) combination closed by `ring`; the tail_envelope mode
+    # carries the consumer face and the rate-splitting companion.  Nothing about RH.
+    "zero_sum_majorant",
     # MIRRORMERE leakage dictionary (2026-09-19, ROUTE A item A2b): the log-derivative
     # coefficient functional at a COMPOSITE index -- a completely-multiplicative amplitude
     # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
@@ -718,6 +725,11 @@ _SPECIAL_DISPATCH = {
     # pi-face rate corollary; the log/sqrt face).
     "enclosure_tree":
         ("emit_enclosure_tree", "certify_enclosure_tree_point", "EnclosureTreeEmitter"),
+    # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
+    # the rvm_bridge island; the tail_envelope face is Mathlib-only).
+    "zero_sum_majorant":
+        ("emit_zero_sum_majorant", "certify_zero_sum_majorant_point",
+         "ZeroSumMajorantEmitter"),
     # MIRRORMERE leakage dictionary (ROUTE A item A2b): re-derived log-derivative coefficient
     # rows at a composite index, over the island's LeakageDictionary vocabulary.
     "leakage_dictionary":

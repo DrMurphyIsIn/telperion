@@ -133,6 +133,10 @@ from .emit_complex_re_im_split import (  # noqa: F401
     ComplexReImSplitEmitter, ComplexReImSplitCert, complex_re_im_split_certificate,
     complex_re_im_split_family, certify_complex_re_im_split_point,
 )
+from .emit_zero_sum_majorant import (  # noqa: F401
+    ZeroSumMajorantEmitter, ZeroSumMajorantCert, zero_sum_majorant_certificate,
+    zero_sum_majorant_family, certify_zero_sum_majorant_point, zsm_symbols,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,
