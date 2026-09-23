@@ -115,6 +115,15 @@ from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,
 )
+from .emit_preordering_multiplier import (  # noqa: F401
+    PreorderingMultiplierEmitter, PreorderingMultiplierCert, PreorderingRefusal,
+    PreorderingObstruction, LocusCertificate, ComplexFace,
+    Generator as PreorderingGenerator, preordering_multiplier_certificate,
+    preordering_multiplier_family, certify_preordering_multiplier_point,
+    find_preordering_terms, locate_negative_witness, derive_locus, solve_nonneg_exact,
+    obstruction_refutation_lean, chebyshev_pair_polynomial, li_box_rung_target,
+    li_disk_generators,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

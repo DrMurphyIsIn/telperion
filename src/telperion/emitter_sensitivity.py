@@ -293,6 +293,37 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "PreorderingMultiplierEmitter": _S(CERTIFICATE_SENSITIVE,
+                                      "0 <= p on {g_i >= 0} for POLYNOMIAL generators via a "
+                                      "positive multiplier M = kappa g_j^e and the exact "
+                                      "constant-coefficient preordering identity "
+                                      "M p = sum c_alpha prod g_i^alpha_i (c_alpha >= 0), closed "
+                                      "by `ring` + a `positivity` fold, with the zero set of a "
+                                      "non-constant M certified as ONE point (g_j an exact "
+                                      "positive-weight sum of squared coordinate offsets; "
+                                      "`nlinarith only` pins it, `norm_num` closes p there).  "
+                                      "The coefficients c_alpha ARE the load-bearing "
+                                      "certificate: a corrupted coefficient breaks the `ring` "
+                                      "identity, a negative one breaks the `positivity` fold "
+                                      "(certify also runs assert_certificate_sensitive).  "
+                                      "certify REFUSES the LP infeasible up to the degree cap "
+                                      "(OBSTRUCTED_AND_LOCATED with an exact negative witness "
+                                      "when the scan finds one, e.g. Li Re Q_6 at (4/5, -2/5)), "
+                                      "any c_alpha < 0, a hyp generator that is not literally a "
+                                      "hypothesis, a structural generator positivity cannot "
+                                      "close, a multiplier with an uncertified zero locus, a "
+                                      "multiplier not in the cone, floats and name collisions.  "
+                                      "Regenerates LiBoxRungs re_Q1..re_Q5_nonneg; finite real "
+                                      "polynomial inequalities, nothing about RH "
+                                      "(conjecture1_proved = False)",
+                                      checked_in="emit_preordering_multiplier",
+                                      # A hand-minted FALSE instance (p = d - B on the Li disk,
+                                      # exact identity, coefficient -1 on B, false at
+                                      # (1/2, 1/2)) that Layer 1 refuses: the emitted
+                                      # `positivity` fold cannot prove 0 <= d - B, so the kernel
+                                      # rejects it; the true twin p = d + B compiles.
+                                      # See negctrl_adapters/adapter_preordering_multiplier.py.
+                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "

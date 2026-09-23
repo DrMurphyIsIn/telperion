@@ -438,6 +438,13 @@ _SPECIAL_KINDS = (
     # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
     # complete multiplicativity).  Exact symbolic divisor recursion; nothing about RH.
     "leakage_dictionary",
+    # preordering_multiplier (2026-09-22, SHAPES_AUDIT_48H section 2 rank 3; D 3.1, B C3, C 5.3):
+    # 0 <= p on {g_i >= 0} for POLYNOMIAL generators, via a positive multiplier M = kappa g_j^e
+    # and the exact constant-coefficient identity M p = sum c_alpha prod g_i^{alpha_i} (c >= 0),
+    # plus a certified single-point zero locus of M.  The combination handelman (linear
+    # generators, no multiplier), polya_zeros (simplex only) and rational_sos (no generator
+    # hypotheses) each miss.  Finite real polynomial inequalities; nothing about RH.
+    "preordering_multiplier",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -700,6 +707,12 @@ _SPECIAL_DISPATCH = {
     "leakage_dictionary":
         ("emit_leakage_dictionary", "certify_leakage_dictionary_point",
          "LeakageDictionaryEmitter"),
+    # preordering_multiplier (SHAPES_AUDIT_48H_2026-09-22 section 2 rank 3): positivity on a
+    # semialgebraic set with polynomial generators, a positive multiplier and a certified
+    # multiplier zero locus.  Dogfooded on the Li box rungs Re Q_3 / Q_4 / Q_5 (LiBoxRungs).
+    "preordering_multiplier":
+        ("emit_preordering_multiplier", "certify_preordering_multiplier_point",
+         "PreorderingMultiplierEmitter"),
 }
 
 
