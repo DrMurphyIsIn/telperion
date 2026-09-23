@@ -1029,6 +1029,130 @@ def test_artifact_may_not_assume_what_it_claims_to_prove():
     assert artifact_incompleteness_markers("#print axioms foo\ntheorem t : P := trivial") == []
 
 
+# ---------------------------------------------------------------------------
+# T9b: marker hardening (closure run 2026-09-22, section 2b): the assumption regex was
+# anchored at line start, so every modifier form of `axiom` / `unsafe` passed, and the
+# trust-boundary escapes (opaque, implemented_by, extern, debug.skipKernelTC,
+# ofReduceBool, sorryAx) were not scanned at all.
+# ---------------------------------------------------------------------------
+
+_PROVED = "theorem t : 1 + 1 = 2 := rfl\n"
+
+#: (artifact suffix, marker it must produce). Every one of these returned [] before
+#: 2026-09-23 -- the negative fixtures.
+_MUST_TRIP = [
+    ("private axiom cheat : False", "axiom"),
+    ("protected axiom cheat : False", "axiom"),
+    ("noncomputable axiom cheat : Nat", "axiom"),
+    ("@[simp] axiom cheat : False", "axiom"),
+    ("@[simp]\naxiom cheat : False", "axiom"),
+    ("/-- doc -/ axiom cheat : False", "axiom"),
+    ("@[reducible] private axiom cheat : False", "axiom"),
+    # Lean needs no newline between commands
+    ("theorem ok : True := trivial axiom cheat : False", "axiom"),
+    ("private unsafe def u : Nat := 0", "unsafe"),
+    ("@[inline] unsafe def u : Nat := 0", "unsafe"),
+    ("opaque cheat : Nat", "opaque"),
+    ("private opaque cheat : Nat", "opaque"),
+    ("@[implemented_by id] def f (n : Nat) : Nat := n", "implemented_by"),
+    ('@[extern "c_fn"] def f (n : Nat) : Nat := n', "extern"),
+    ("set_option debug.skipKernelTC true in\ntheorem k : True := trivial", "debug.skipKernelTC"),
+    ("theorem r : True := Lean.ofReduceBool true true rfl ▸ trivial", "ofReduceBool"),
+    ("theorem r : True := ofReduceBool true true rfl ▸ trivial", "ofReduceBool"),
+    ("theorem r : 2 = 2 := Lean.ofReduceNat 2 2 rfl", "ofReduceNat"),
+    ("theorem s : False := sorryAx False", "sorryAx"),
+    ("theorem s : False := sorryAx False true", "sorryAx"),
+]
+
+
+@pytest.mark.parametrize("suffix,marker", _MUST_TRIP)
+def test_hardened_markers_catch_modifier_and_escape_forms(suffix, marker):
+    assert marker in artifact_incompleteness_markers(_PROVED + suffix + "\n")
+
+
+#: Positive fixtures: legitimate Lean that must stay clean. Mentions in comments / doc
+#: comments are prose; longer identifiers that merely CONTAIN a token are not the token;
+#: `#print axioms` is the guards' idiom.
+_MUST_STAY_CLEAN = [
+    "#print axioms t",
+    "-- no axiom, no opaque, no sorryAx, no ofReduceBool, no debug.skipKernelTC\n",
+    "/-- axiom-clean: `#print axioms t` = [propext, Classical.choice, Quot.sound];\n"
+    "    no `opaque`, no `@[implemented_by]`, no `@[extern]`, 0 sorryAx -/\n"
+    "theorem u : True := trivial",
+    "/- nested /- opaque -/ axiom -/ theorem u : True := trivial",
+    "theorem axiom_free : True := trivial",
+    "theorem axiomatic' : True := trivial",
+    "theorem my_axiom : True := trivial",
+    "def opaqueness : Nat := 0",
+    "def externalBound : Nat := 0",
+    "def isUnsafeFree : Bool := true",
+    "def unsafeCount : Nat := 0",
+    "theorem sorryAxFree : True := trivial",
+    "theorem ofReduceBoolish : True := trivial",
+    "theorem skipKernelTCx : True := trivial",
+    "set_option maxHeartbeats 400000 in\ntheorem u : True := trivial",
+    "theorem d : 2 + 2 = 4 := by decide",
+]
+
+
+@pytest.mark.parametrize("suffix", _MUST_STAY_CLEAN)
+def test_hardened_markers_leave_legitimate_lean_clean(suffix):
+    assert artifact_incompleteness_markers(_PROVED + suffix + "\n") == []
+
+
+def test_gate_refuses_grant_against_modifier_axiom(tmp_path):
+    """End to end through `grant_status`: `private axiom` used to pass the gate."""
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    manifest = _manifest()
+    from telperion.missions.schema import save_manifest
+    save_manifest(manifest, root / "mission.toml")
+
+    stmt = "theorem hard_thm : 1 + 1 = 3"
+    node = _open_node_with_proof("Test.cheat", artifact="proof/Test_cheat.lean")
+    save_node(node, root / "nodes" / "Test_cheat.toml")
+    write_statement(root, node, stmt, manifest)
+
+    artifact_path = root / "proof" / "Test_cheat.lean"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(f"@[simp] private axiom cheat : False\n{stmt} := cheat.elim\n")
+
+    campaign = load_campaign(root)
+    with pytest.raises(GateError, match=r"carries axiom in Lean code"):
+        grant_status(campaign, "Test_cheat")
+    assert load_node(root / "nodes" / "Test_cheat.toml").status == "open"
+
+
+def test_verify_campaign_flags_proved_node_with_opaque_artifact(tmp_path):
+    """The read-only battery (what the required `unit` job runs) catches an escape token."""
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    manifest = _manifest()
+    from telperion.missions.schema import save_manifest
+    save_manifest(manifest, root / "mission.toml")
+
+    stmt = "theorem esc_thm : 1 + 1 = 2"
+    node = _open_node_with_proof("Test.esc", artifact="proof/Test_esc.lean")
+    save_node(node, root / "nodes" / "Test_esc.toml")
+    write_statement(root, node, stmt, manifest)
+
+    artifact_path = root / "proof" / "Test_esc.lean"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        "set_option debug.skipKernelTC true in\n"
+        f"{stmt} := by decide\n"
+        "@[implemented_by id] def g (n : Nat) : Nat := n\n"
+    )
+    save_node(dataclasses.replace(node, status="proved"), root / "nodes" / "Test_esc.toml")
+
+    report = verify_campaign(root)
+    assert not report.ok
+    joined = " ".join(report.errors)
+    assert "debug.skipKernelTC" in joined and "implemented_by" in joined
+
+
 def test_island_attribution_survives_path_traversal(tmp_path):
     """`../built/../unbuilt/X.lean` must be judged by where the file IS, not how it is spelled."""
     from telperion.missions.coverage import artifact_coverage_error
