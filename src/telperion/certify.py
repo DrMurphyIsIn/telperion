@@ -433,6 +433,12 @@ _SPECIAL_KINDS = (
     # (linear / log bundles reading a nested-max threshold with the `max 1` guard folded in, plus
     # the product / inverse / shifted-rate atoms).  Elementary real inequalities; nothing about RH.
     "exp_threshold",
+    # enclosure_tree (2026-09-22, SHAPES_AUDIT_48H section 2 rank 1; A N2/N3/N4, B C2, C 4.7,
+    # D 4): rational two-sided enclosures of an expression tree over {+, -, *, /, ^, sqrt, log,
+    # exp, pi, arctan, rationals} by an exact interval fold (one theorem per non-linear node,
+    # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
+    # arithmetic facts about real constants; nothing about RH.
+    "enclosure_tree",
     # MIRRORMERE leakage dictionary (2026-09-19, ROUTE A item A2b): the log-derivative
     # coefficient functional at a COMPOSITE index -- a completely-multiplicative amplitude
     # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
@@ -695,6 +701,10 @@ _SPECIAL_DISPATCH = {
     # exp_threshold (threshold-to-exponential-domination bundles and atoms, Real.add_one_le_exp).
     "exp_threshold":
         ("emit_exp_threshold", "certify_exp_threshold_point", "ExpThresholdEmitter"),
+    # enclosure_tree (rational enclosures of expression trees over transcendental atoms; the
+    # pi-face rate corollary; the log/sqrt face).
+    "enclosure_tree":
+        ("emit_enclosure_tree", "certify_enclosure_tree_point", "EnclosureTreeEmitter"),
     # MIRRORMERE leakage dictionary (ROUTE A item A2b): re-derived log-derivative coefficient
     # rows at a composite index, over the island's LeakageDictionary vocabulary.
     "leakage_dictionary":

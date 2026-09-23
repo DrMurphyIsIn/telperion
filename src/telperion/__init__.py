@@ -115,6 +115,11 @@ from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,
 )
+from .emit_enclosure_tree import (  # noqa: F401
+    EnclosureTreeEmitter, EnclosureTreeCert, EnclosureTreeRefusal, LogSqrtCert,
+    enclosure_tree_certificate, enclosure_tree_family, certify_enclosure_tree_point,
+    log_sqrt_certificate,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

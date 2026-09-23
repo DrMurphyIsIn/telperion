@@ -293,6 +293,39 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "EnclosureTreeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                              "rational two-sided enclosure lo <= E <= hi (per side `<` when "
+                              "the exact fold has slack or an open endpoint) of an expression "
+                              "tree over {+, -, *, /, ^, sqrt, log, exp, pi, arctan, rationals}: "
+                              "the brackets ARE the statements, re-derived in the kernel from "
+                              "one Mathlib fact per atom (Real.pi_gt_dN / pi_lt_dN, "
+                              "log_two_gt_d9, abs_log_sub_add_sum_range_le + the backwards "
+                              "Real.log_mul fold, Real.exp_bound, Real.sq_sqrt, |arctan t| <= "
+                              "|t|) and closed by linarith over the four McCormick corner facts "
+                              "/ le_div_iff0 / pow_le_pow_left0 (nlinarith only at a sqrt "
+                              "node, as the hand proofs do); the pi-face rate corollary n <= "
+                              "cap -> (n + 1 : R) <= E and the log/sqrt face "
+                              "log (y + a) <= c sqrt y ride along.  No separately-supplied "
+                              "identity to corrupt, so the shape is structural.  certify "
+                              "REFUSES a claimed bracket the exact interval fold does not imply "
+                              "at ANY node (the forge case), a strict side without slack or an "
+                              "open endpoint, a radicand not >= 0, a denominator interval "
+                              "containing 0 or negative, log r <= 0 or r = 1, |1 - r| >= 1 "
+                              "without a factorisation, a fold not multiplying to r, Taylor "
+                              "orders outside 1..64, exp at |x| > 1, a negative base under a "
+                              "power, a pi rung off Mathlib's ladder, a rate cap the lower "
+                              "bound does not reach, rational-only trees and floats.  "
+                              "Regenerates LiLadderHeight / LiLadderSharp's pi-face rate steps "
+                              "and LeakageDictionary's nine bracket lemmas; finite arithmetic "
+                              "facts about real constants, nothing about RH "
+                              "(conjecture1_proved = False)",
+                              # Structural, yet a kernel control exists: the dogfood rate
+                              # instance hand-minted one past the truth (root lower bound 18850,
+                              # cap 18849; 6000 pi = 18849.55...), which Layer 1 refuses, states
+                              # a FALSE enclosure and the emitted linarith cannot reach it, so
+                              # the kernel rejects it.
+                              # See negctrl_adapters/adapter_enclosure_tree.py.
+                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
