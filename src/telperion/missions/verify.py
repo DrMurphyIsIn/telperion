@@ -130,19 +130,53 @@ def normalize_lean(text: str) -> str:
 #: outside the trust story every campaign doc claims.
 _INCOMPLETE_TOKENS = ("sorry", "admit", "native_decide")
 
-#: Declaration keywords that let an artifact ASSUME what it claims to prove. Matched only
-#: in declaration position, so a `#print axioms` line (the axiom guards' own idiom) does
-#: not trip them. Audit 2026-09-19 granted a node whose artifact read
-#: `axiom cheat : ...` / `theorem hard_thm := cheat n`.
-_ASSUMPTION_DECL_RE = re.compile(r"(?m)^\s*(axiom|unsafe)\s")
+#: Keywords that let an artifact ASSUME what it claims to prove. Audit 2026-09-19 granted a
+#: node whose artifact read `axiom cheat : ...` / `theorem hard_thm := cheat n`.
+#:
+#: Until 2026-09-23 this was `^\s*(axiom|unsafe)\s`, i.e. line start only, so every
+#: modifier form walked past it: `private axiom`, `protected axiom`, `noncomputable axiom`,
+#: `@[simp] axiom`, `private unsafe def`, and (since Lean commands need no newline between
+#: them) `theorem a : True := trivial axiom cheat : False` on one line. Both words are
+#: reserved keywords in Lean 4, so they cannot occur as ordinary identifiers; matching the
+#: bare keyword anywhere in comment-stripped code is exact, not heuristic. `#print axioms`
+#: (the axiom guards' own idiom) does not trip it: `axioms` is a different word.
+_ASSUMPTION_KEYWORD_RE = re.compile(r"(?<![\w'.])(axiom|unsafe)(?![\w'!?])")
+
+#: Trust-boundary escapes: tokens that replace a kernel-checked term by something the kernel
+#: never sees, or tell the kernel not to look (closure-run audit 2026-09-22, section 2b):
+#:   opaque              -- a constant whose body the kernel never unfolds (and, with
+#:                          `implemented_by`, whose runtime body is unrelated to its type)
+#:   implemented_by      -- `@[implemented_by f]`: compiled code substituted for the def
+#:   extern              -- `@[extern "c_fn"]`: compiled code is foreign C
+#:   debug.skipKernelTC  -- `set_option debug.skipKernelTC true`: kernel type-check OFF
+#:   ofReduceBool / ofReduceNat -- the axioms compiler reflection rests on (`native_decide`
+#:                          elaborates to `Lean.ofReduceBool`); spelt directly they bypass
+#:                          the `native_decide` token check above
+#:   sorryAx             -- the term `sorry` elaborates to; spelt directly it bypasses the
+#:                          `sorry` token check (closure-run finding C1: the scan returned
+#:                          `[]` for it)
+#: A qualified spelling (`Lean.ofReduceBool`) counts, so a preceding `.` is allowed here.
+_TRUST_ESCAPE_TOKENS = (
+    "opaque",
+    "implemented_by",
+    "extern",
+    "debug.skipKernelTC",
+    "ofReduceBool",
+    "ofReduceNat",
+    "sorryAx",
+)
 
 
 def artifact_incompleteness_markers(artifact_text: str) -> List[str]:
     """Return the incompleteness tokens genuinely present in a Lean artifact.
 
-    Comments and string literals are stripped first (via the same lexer-order stripper
-    the containment check uses), so prose such as "no `sorry`" in a docstring does NOT
-    count -- only tokens in real Lean code do.
+    Comments (line, nested block, doc) are stripped first via the same lexer-order stripper
+    the containment check uses, so prose such as "no `sorry`" in a docstring does NOT count.
+    String-literal CONTENTS are kept, not blanked: that stripper keeps them on purpose, and
+    blanking them here would hide code inside interpolations (`s!"{sorry}"`,
+    `throwError "{...}"`) and let a mis-lexed char literal `'"'` swallow real code. A token
+    inside a plain string therefore counts; that errs toward refusing, never toward granting.
+    No proved artifact carried one when this was checked (2026-09-23, 78 artifact files).
 
     WHY (audit 2026-09-18): `grant_status` checked only that the artifact CONTAINS the
     node's statement. It never asked whether the artifact PROVES it, so an artifact whose
@@ -152,7 +186,9 @@ def artifact_incompleteness_markers(artifact_text: str) -> List[str]:
     code = _strip_lean_comments(artifact_text)
     found = [tok for tok in _INCOMPLETE_TOKENS
              if re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w.])", code)]
-    found += sorted({m.group(1) for m in _ASSUMPTION_DECL_RE.finditer(code)})
+    found += sorted({m.group(1) for m in _ASSUMPTION_KEYWORD_RE.finditer(code)})
+    found += [tok for tok in _TRUST_ESCAPE_TOKENS
+              if re.search(rf"(?<![\w']){re.escape(tok)}(?![\w'!?])", code)]
     return found
 
 
