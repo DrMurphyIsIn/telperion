@@ -293,6 +293,32 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ComplexReImSplitEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "real/imaginary-part split of a complex polynomial expression (shapes-audit rank 4, "
+        "B N3 / B D7 / C 2.10 / D 2.2): `(p : C).re = P_re`, `(p : C).im = P_im`, "
+        "`||p||^2 = P_re^2 + P_im^2`, `||exp p|| = exp P_re`, and the B D7 cast face "
+        "`(p : C) = ((P : R) : C)` / its `.re` for a real-valued p over real and natural-number "
+        "atoms.  The claimed real polynomial IS the statement's right-hand side and is the "
+        "corruptible certificate: the emitted proof is the frozen `simp only [Complex.add_re, "
+        "mul_re, ..., natCast_re, I_re, I_im, re_ofNat, pow_succ, pow_zero, one_mul]; all_goals "
+        "ring` of the hand proofs (cast face: `push_cast; all_goals ring`, then "
+        "`Complex.ofReal_re`), so a corrupted claim leaves `ring` a false identity and the kernel "
+        "rejects the file.  certify computes the split with sympy re/im at z = x + i y and "
+        "RE-VERIFIES it three ways (symbolic identity, as_real_imag, an independent exact "
+        "Fraction evaluator at seeded rational points), then REFUSES a supplied claim not "
+        "ring-equal to it (the B N3 forge case), a non-polynomial p (division, transcendental, "
+        "conj/re/im/Abs, a symbolic exponent -- the declared-denominator face is a documented "
+        "follow-on), the cast face on a p with z or I, undeclared, non-real or mis-declared "
+        "natural atoms, floats, degree above the cap, a degenerate bare variable / atom / "
+        "constant, a tie_to that is not a Lean identifier and reserved binder names; "
+        "assert_certificate_sensitive is wired (checked_in).  Finite polynomial "
+        "bookkeeping; nothing about RH (conjecture1_proved = False)",
+        checked_in="emit_complex_re_im_split",
+        # A hand-minted FALSE claim Re((a + b i)^2) = a^2 + b^2 (which Layer 1 refuses)
+        # leaves `ring` an unprovable identity after `simp only`, so the kernel rejects it.
+        # See negctrl_adapters/adapter_complex_re_im_split.py.
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
