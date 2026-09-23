@@ -129,6 +129,10 @@ from .emit_preordering_multiplier import (  # noqa: F401
     obstruction_refutation_lean, chebyshev_pair_polynomial, li_box_rung_target,
     li_disk_generators,
 )
+from .emit_complex_re_im_split import (  # noqa: F401
+    ComplexReImSplitEmitter, ComplexReImSplitCert, complex_re_im_split_certificate,
+    complex_re_im_split_family, certify_complex_re_im_split_point,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

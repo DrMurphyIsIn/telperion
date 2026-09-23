@@ -451,6 +451,12 @@ _SPECIAL_KINDS = (
     # generators, no multiplier), polya_zeros (simplex only) and rational_sos (no generator
     # hypotheses) each miss.  Finite real polynomial inequalities; nothing about RH.
     "preordering_multiplier",
+    # Shapes-audit rank 4 (2026-09-22, B N3 / B D7 / C 2.10 / D 2.2): real and imaginary
+    # parts (and the norm_sq / norm_exp faces) of a complex polynomial expression, the
+    # `simp only [Complex.*_re, ...]; ring` bookkeeping of every complex-analysis island, and
+    # the B D7 cast face `p = ((P : R) : C)` (`push_cast; ring`, then `Complex.ofReal_re`).
+    # Split computed by sympy, re-verified by an independent exact engine; nothing about RH.
+    "complex_re_im_split",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -723,6 +729,11 @@ _SPECIAL_DISPATCH = {
     "preordering_multiplier":
         ("emit_preordering_multiplier", "certify_preordering_multiplier_point",
          "PreorderingMultiplierEmitter"),
+    # Shapes-audit rank 4: real/imaginary-part splits and cast identities of complex
+    # polynomial expressions (dogfood: E6Bridge5 / 7 / 11 / 14 / 28 on the rvm island).
+    "complex_re_im_split":
+        ("emit_complex_re_im_split", "certify_complex_re_im_split_point",
+         "ComplexReImSplitEmitter"),
 }
 
 
