@@ -30,6 +30,14 @@ from .coverage import (
     ci_covered_lean_files,
     islands_with_lean,
 )
+from .provenance import (
+    ProvenanceError,
+    build_grant,
+    comparator_staleness,
+    grant_digest_errors,
+    readback_is_self_audit,
+    require_identity,
+)
 from .registry import Campaign, load_campaign
 from .schema import Node, SchemaError, save_node, slug_of
 from .statements import _SENTINEL, regen_diff, statement_path
@@ -455,8 +463,14 @@ def recompute_closures(campaign: Campaign) -> Dict[str, bool]:
 # grant_status  -- THE GATE
 # ---------------------------------------------------------------------------
 
-def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
+def grant_status(campaign: Campaign, slug: str, universe=None, *,
+                 identity: str = "", session: str = "") -> Node:
     """The ONLY code path that flips a node to proved or refuted.
+
+    `identity` and `session` are who is running the gate (git identity, session id); both
+    are required and are written into the node's `[grant]` block together with the artifact
+    and statement digests (provenance, 2026-09-23). The gate also refuses a read-back whose
+    structured auditor is the node's author.
 
     Preconditions checked (GateError raised if any fail, status left unchanged):
     1. Node must be open.
@@ -482,6 +496,11 @@ def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
     node = campaign.nodes.get(slug)
     if node is None:
         raise GateError(f"Node {slug!r} not found in campaign.")
+
+    try:
+        require_identity(identity, session, "grant")
+    except ProvenanceError as exc:
+        raise GateError(str(exc)) from exc
 
     if node.status != "open":
         raise GateError(
@@ -526,6 +545,16 @@ def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
         raise GateError(
             f"Node {slug!r}: no read-back on record; refusing to grant. Run "
             "`mission audit` with an independent read-back first."
+        )
+    # A read-back written by the author's own session or identity is exactly the testimony
+    # this gate must not rest on (governance 2026-09-23). `mission audit` refuses to write
+    # one, so reaching this means the file was edited by hand; refuse all the same.
+    if readback_is_self_audit(node):
+        raise GateError(
+            f"Node {slug!r}: the read-back's auditor is the node's author "
+            f"(session {node.readback.auditor_session!r}, identity "
+            f"{node.readback.auditor_identity!r}); a self-audit cannot support a grant. "
+            "Obtain a read-back from a different session and identity."
         )
 
     # These two are paid by BOTH outcomes. Until 2026-09-19 they guarded only the `proved`
@@ -597,7 +626,10 @@ def grant_status(campaign: Campaign, slug: str, universe=None) -> Node:
     # deliberate dirty flag is set by hand AFTER granting, and it survives, because
     # _compute_closures treats a direct proof's stored flag as authoritative.
     new_proof = dataclasses.replace(node.proof, closure_clean=(new_status == "proved"))
-    new_node = dataclasses.replace(node, status=new_status, proof=new_proof)
+    # The [grant] block: digests of the artifact and statement THIS gate run checked, the
+    # gate's rule-set version, and who ran it. `verify` recomputes the digests from disk.
+    grant = build_grant(campaign.root, node, identity=identity, session=session)
+    new_node = dataclasses.replace(node, status=new_status, proof=new_proof, grant=grant)
     node_path = campaign.root / "nodes" / f"{slug}.toml"
     save_node(new_node, node_path)
     campaign.nodes[slug] = new_node
@@ -727,6 +759,22 @@ def verify_campaign(
                 f"Node {sl!r}: status is 'refuted' but artifact does not "
                 f"match refutation criteria."
             )
+
+        # 2e. Provenance (2026-09-23). A [grant] block pins the artifact and statement the
+        # gate saw; if either file has changed since, the status rests on unchecked evidence.
+        for err in grant_digest_errors(root, node):
+            errors.append(f"Node {sl!r}: {err}")
+        # A read-back whose structured auditor is the node's author can never support a
+        # proved status. Legacy read-backs (no structured fields) are `unverified`, which
+        # `mission provenance-report` lists; they are not errors here.
+        if node.status == "proved" and readback_is_self_audit(node):
+            errors.append(
+                f"Node {sl!r}: status is 'proved' but its read-back is a self-audit "
+                f"(auditor session/identity matches the [author] block)."
+            )
+        stale = comparator_staleness(root, node)
+        if stale:
+            warnings.append(f"Node {sl!r}: {stale}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":

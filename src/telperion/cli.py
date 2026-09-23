@@ -1101,12 +1101,24 @@ def cmd_mission_add(args) -> int:
     import dataclasses as _dc
     from datetime import date as _date
 
+    from .missions.provenance import ProvenanceError, git_identity, require_identity, session_id
     from .missions.registry import load_campaign
-    from .missions.schema import Node, SchemaError, load_manifest, save_node, slug_of
+    from .missions.schema import Author, Node, SchemaError, load_manifest, save_node, slug_of
     from .missions.statements import write_statement
 
     root = _missions_root(args) / args.campaign
     manifest = load_manifest(root / "mission.toml")
+
+    # Statement authorship (2026-09-23): recorded so `mission audit` can refuse a read-back
+    # from the same session or identity. Both are required; an anonymous statement has no
+    # author to be independent of.
+    identity = (getattr(args, "identity", None) or "").strip() or git_identity(root)
+    session = session_id(getattr(args, "session", None))
+    try:
+        require_identity(identity, session, "add")
+    except ProvenanceError as exc:
+        print(str(exc))
+        return 1
 
     # Load campaign to check for duplicate slugs
     try:
@@ -1148,6 +1160,7 @@ def cmd_mission_add(args) -> int:
         statement_module=f"Statements.{new_slug}",
         created=today,
         updated=today,
+        author=Author(identity=identity, session=session, date=today),
     )
 
     node_path = root / "nodes" / f"{new_slug}.toml"
@@ -1155,6 +1168,7 @@ def cmd_mission_add(args) -> int:
     stmt_path = write_statement(root, node, stmt_text, manifest)
     print(f"node: {node_path}")
     print(f"statement: {stmt_path}")
+    print(f"author: {identity} (session {session})")
     return 0
 
 
@@ -1162,14 +1176,24 @@ def cmd_mission_audit(args) -> int:
     import dataclasses as _dc
     from datetime import date as _date
 
+    from .missions.provenance import (
+        ProvenanceError, SelfAuditError, git_identity, independence_of,
+        readback_text_problem, require_identity, session_id,
+    )
     from .missions.registry import load_campaign, promote_to_open
     from .missions.schema import Readback, SchemaError, save_node, slug_of
 
-    if not (args.text or "").strip() or not (args.auditor or "").strip():
-        print("audit: --text and --auditor must both be non-empty. A read-back is the only "
-              "thing standing between a wrong statement and the registry; an empty one "
-              "promotes a draft while recording nothing.")
+    if not (args.text or "").strip():
+        print("audit: --text must be non-empty. A read-back is the only thing standing "
+              "between a wrong statement and the registry; an empty one promotes a draft "
+              "while recording nothing.")
         return 1
+
+    # The auditor is a structured identity (2026-09-23): git identity + session id, both
+    # required, compared against the node's [author] block below. `--auditor` survives only
+    # as a display label and defaults to the identity.
+    identity = (getattr(args, "identity", None) or "").strip()
+    session = session_id(getattr(args, "session", None))
 
     slug = slug_of(args.slug)
     camp_root = _resolve_campaign(_missions_root(args), slug,
@@ -1188,8 +1212,37 @@ def cmd_mission_audit(args) -> int:
         return 1
 
     node = camp.nodes[slug]
+    identity = identity or git_identity(camp_root)
+    try:
+        require_identity(identity, session, "audit")
+    except ProvenanceError as exc:
+        print(str(exc))
+        return 1
+
+    # Content: a label is not a read-back.
+    problem = readback_text_problem(args.text, node.title)
+    if problem:
+        print(f"audit: refused. {problem}")
+        return 1
+
+    # Independence: refuse the author's own session or identity. Nothing is written on
+    # refusal, so a self-audit leaves no trace that could later pass for testimony.
+    try:
+        independence = independence_of(node.author, identity, session)
+    except SelfAuditError as exc:
+        print(f"audit: refused. {exc}")
+        return 1
+    if independence == "unverified":
+        print(f"audit: WARNING: {slug} has no [author] block (registered before provenance "
+              "was recorded), so the auditor cannot be checked against the author; the "
+              "read-back is recorded as independence = \"unverified\".")
+
     today = _date.today().isoformat()
-    rb = Readback(text=args.text, auditor=args.auditor, date=today)
+    label = (getattr(args, "auditor", None) or "").strip() or identity
+    rb = Readback(
+        text=args.text, auditor=label, date=today,
+        auditor_identity=identity, auditor_session=session, independence=independence,
+    )
     new_node = _dc.replace(node, readback=rb, updated=today)
     node_path = camp_root / "nodes" / f"{slug}.toml"
     save_node(new_node, node_path)
@@ -1285,6 +1338,7 @@ def cmd_mission_attempt(args) -> int:
 
 
 def cmd_mission_grant(args) -> int:
+    from .missions.provenance import git_identity, session_id
     from .missions.registry import load_campaign
     from .missions.schema import SchemaError, slug_of
     from .missions.verify import GateError, grant_status
@@ -1301,8 +1355,10 @@ def cmd_mission_grant(args) -> int:
         print(f"Schema error: {exc}")
         return 1
 
+    identity = (getattr(args, "identity", None) or "").strip() or git_identity(camp_root)
+    session = session_id(getattr(args, "session", None))
     try:
-        node = grant_status(camp, slug)
+        node = grant_status(camp, slug, identity=identity, session=session)
     except GateError as exc:
         print(str(exc))
         return 1
@@ -1311,6 +1367,85 @@ def cmd_mission_grant(args) -> int:
     if node.proof is not None and node.proof.via == "reduction":
         note = f" (closure_clean={node.proof.closure_clean})"
     print(f"{slug}: status -> {node.status}{note}")
+    if node.grant is not None:
+        print(f"grant: artifact sha256 {node.grant.artifact_sha256[:16]}..., gate "
+              f"{node.grant.gate_version}, by {node.grant.identity} (session {node.grant.session})")
+    return 0
+
+
+def cmd_mission_provenance_report(args) -> int:
+    from .missions.provenance import render_provenance_report
+    from .missions.registry import load_campaign
+
+    roots = _campaign_roots(_missions_root(args), getattr(args, "campaign", None))
+    any_flagged = False
+    for camp_root in roots:
+        try:
+            camp = load_campaign(camp_root)
+        except Exception as exc:
+            print(f"Error loading {camp_root.name}: {exc}")
+            any_flagged = True
+            continue
+        text = render_provenance_report(camp)
+        print(text, end="")
+        if "\n  " in text:
+            any_flagged = True
+    return 1 if (any_flagged and getattr(args, "strict", False)) else 0
+
+
+def cmd_mission_provenance_migrate(args) -> int:
+    from .missions.provenance import migrate_unverified
+
+    roots = _campaign_roots(_missions_root(args), getattr(args, "campaign", None))
+    total = 0
+    for camp_root in roots:
+        changed = migrate_unverified(camp_root)
+        total += len(changed)
+        print(f"{camp_root.name}: {len(changed)} read-back(s) marked independence = \"unverified\"")
+    print(f"total: {total}")
+    return 0
+
+
+def cmd_mission_comparator_record(args) -> int:
+    """Record a PASSING Comparator run on a proved node (a sidecar, never a status change)."""
+    import dataclasses as _dc
+    from datetime import date as _date
+
+    from .missions.provenance import sha256_file
+    from .missions.registry import load_campaign
+    from .missions.schema import ComparatorRecord, SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    camp_root = _resolve_campaign(_missions_root(args), slug,
+                                  getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+    if node.status != "proved" or node.proof is None:
+        print(f"{slug}: status is {node.status!r}; a Comparator record only makes sense on a "
+              "proved node with a Lean artifact.")
+        return 1
+    art = camp_root / node.proof.artifact
+    if not art.exists():
+        print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
+        return 1
+    rec = ComparatorRecord(
+        run_id=str(args.run_id).strip(), date=_date.today().isoformat(),
+        artifact_sha256=sha256_file(art), theorem=args.theorem.strip(),
+        run_url=(args.run_url or "").strip(),
+    )
+    new_node = _dc.replace(node, comparator=rec, updated=rec.date)
+    save_node(new_node, camp_root / "nodes" / f"{slug}.toml")
+    print(f"{slug}: comparator run {rec.run_id} recorded for {rec.theorem} "
+          f"(artifact sha256 {rec.artifact_sha256[:16]}...)")
     return 0
 
 
@@ -1659,15 +1794,28 @@ def main(argv=None) -> int:
     p.add_argument("--statement", default=None, help="statement text")
     p.add_argument("--statement-file", default=None, dest="statement_file",
                    help="path to file containing statement text")
+    p.add_argument("--session", default=None,
+                   help="authoring session id (default: $CLAUDE_SESSION_ID); required non-empty")
+    p.add_argument("--identity", default=None,
+                   help="author identity (default: `git config user.email`); required non-empty")
     p.set_defaults(mission_fn=cmd_mission_add)
 
-    # audit SLUG [--campaign C] --text T --auditor A
-    p = msub.add_parser("audit", help="record a readback and promote draft -> open")
+    # audit SLUG [--campaign C] --text T [--auditor LABEL] [--session S] [--identity I]
+    p = msub.add_parser("audit", help="record an INDEPENDENT readback and promote draft -> open")
     p.add_argument("slug")
     p.add_argument("--campaign", default=None,
                    help="campaign name (auto-resolved from slug when omitted)")
-    p.add_argument("--text", required=True)
-    p.add_argument("--auditor", required=True)
+    p.add_argument("--text", required=True,
+                   help="the read-back: your own rendering of the FORMAL statement "
+                        "(at least 120 characters; not the title)")
+    p.add_argument("--auditor", default=None,
+                   help="display label only (default: the identity)")
+    p.add_argument("--session", default=None,
+                   help="auditing session id (default: $CLAUDE_SESSION_ID); refused if it "
+                        "is the author's session")
+    p.add_argument("--identity", default=None,
+                   help="auditor identity (default: `git config user.email`); refused if it "
+                        "is the author's identity")
     p.set_defaults(mission_fn=cmd_mission_audit)
 
     # link SLUG [--campaign C] --artifact P --kind K --via V
@@ -1695,12 +1843,46 @@ def main(argv=None) -> int:
     p.add_argument("--detail", required=True)
     p.set_defaults(mission_fn=cmd_mission_attempt)
 
-    # grant SLUG [--campaign C]
+    # grant SLUG [--campaign C] [--session S] [--identity I]
     p = msub.add_parser("grant", help="flip open -> proved/refuted via the verify gate")
     p.add_argument("slug")
     p.add_argument("--campaign", default=None,
                    help="campaign name (auto-resolved from slug when omitted)")
+    p.add_argument("--session", default=None,
+                   help="granting session id (default: $CLAUDE_SESSION_ID); recorded in [grant]")
+    p.add_argument("--identity", default=None,
+                   help="granting identity (default: `git config user.email`); recorded in [grant]")
     p.set_defaults(mission_fn=cmd_mission_grant)
+
+    # provenance-report [CAMPAIGN] [--strict]
+    p = msub.add_parser("provenance-report",
+                        help="per campaign: proved nodes whose read-back is unverified or "
+                             "self-audited and that no passing Comparator run covers")
+    p.add_argument("campaign", nargs="?", default=None)
+    p.add_argument("--strict", action="store_true",
+                   help="exit 1 when any proved node is flagged")
+    p.set_defaults(mission_fn=cmd_mission_provenance_report)
+
+    # provenance-migrate [CAMPAIGN]
+    p = msub.add_parser("provenance-migrate",
+                        help="mark every read-back without an independence value as "
+                             "\"unverified\" (idempotent; changes no status)")
+    p.add_argument("campaign", nargs="?", default=None)
+    p.set_defaults(mission_fn=cmd_mission_provenance_migrate)
+
+    # comparator-record SLUG [--campaign C] --run-id N --theorem T [--run-url U]
+    p = msub.add_parser("comparator-record",
+                        help="record a PASSING independent-judge (Comparator) run on a proved "
+                             "node; a sidecar, never a status change")
+    p.add_argument("slug")
+    p.add_argument("--campaign", default=None,
+                   help="campaign name (auto-resolved from slug when omitted)")
+    p.add_argument("--run-id", required=True, dest="run_id",
+                   help="the GitHub Actions run id that passed")
+    p.add_argument("--theorem", required=True,
+                   help="fully qualified theorem name the Comparator config asserted")
+    p.add_argument("--run-url", default=None, dest="run_url")
+    p.set_defaults(mission_fn=cmd_mission_comparator_record)
 
     # verify [CAMPAIGN] [--deep-lean]
     p = msub.add_parser("verify", help="run the full invariant battery")
