@@ -30,11 +30,13 @@ A claim reserves a node for one session for a TTL (default: 24 hours). Claims ar
 | `open-leaves [campaign] [--all]` | List nodes ready to work on: open, all dependencies proved, not freshly claimed (or include them with `--all`) |
 | `claim <slug> --session S` | Claim a node; TTL default 24h |
 | `release <slug> --session S` | Release a claim |
-| `add <campaign> <name>` | Scaffold a new node (creates both .toml and statement file in draft status) |
-| `audit <slug> --text "..." --auditor "name"` | Record a human-language read-back and promote draft → open |
+| `add <campaign> <name> --session S` | Scaffold a new node (creates both .toml and statement file in draft status) and record you as its author (`[author]`: git email + session; both required) |
+| `audit <slug> --text "..." --session S` | Record an INDEPENDENT read-back and promote draft → open. Refused if your session or git identity is the node's author, if the text is under 120 characters, or if it only repeats the title. `--auditor` is a display label only |
 | `link <slug> --artifact P --kind K --via V` | Attach a proof/disproof artifact (K: `lean_module` or `frozen_cert`; V: `direct` or `reduction`) |
 | `attempt <slug> --session S --route R --verdict V --detail D` | Log a work attempt; verdict: `Proved`, `Refuted`, `NoGo`, `Stalled` |
-| `grant <slug>` | **Gate verb:** run CI verification and flip `proved`/`refuted` (only verb that changes status) |
+| `grant <slug> --session S` | **Gate verb:** run the verify gate and flip `proved`/`refuted` (only verb that changes status); writes `[grant]` with the artifact/statement digests, gate version and who ran it |
+| `provenance-report [campaign]` | Proved nodes whose read-back is not known-independent and that no passing Comparator run covers |
+| `comparator-record <slug> --run-id N --theorem T` | Record a PASSING `missions-comparator` run on a proved node (sidecar; never a status change) |
 | `verify [campaign]` | Run the shallow coherence battery locally (node schema, DAG acyclicity, artifact existence, normalized statement containment) — read-only; add `--deep-lean` to also lake-build the campaign's statement package |
 | `graph [campaign]` | Emit DOT export of the dependency DAG with node statuses |
 
@@ -91,12 +93,17 @@ Two read-only tools in the Telperion MCP server:
   `audit` (prose or Lean statement rendering) before it can move to `open`. This catches
   "formalized the wrong statement" early. **The renderer must not be the statement's
   author** — an independent session, or the operator (`MISSIONS_DESIGN_2026-09-11.md` §8).
-  Nothing in code enforces this: `promote_to_open` checks only that a read-back EXISTS,
-  and `--auditor` is free text. It is the only thing standing between a wrong or vacuous
-  statement and a `proved` node, because `grant` is containment against the very
-  statement the author wrote. Auditing your own node is the failure this step exists to
-  prevent; as of 2026-09-19, 37 of 47 proved nodes carry a read-back whose declared
-  auditor is the session that registered them.
+  **A subagent you spawn is you**: same session, same git identity. Since 2026-09-23 the CLI
+  enforces this (`AUDIT_INDEPENDENCE_2026-09-23.md`): `add` records `[author]`, `audit`
+  refuses the author's session or identity, a text under 120 characters, or a text that
+  only repeats the title, and `verify` fails a proved node whose read-back is a self-audit.
+  The rule: a read-back is independent only if (i) different session AND different identity,
+  or (ii) the `missions-comparator` job passed on the node and was recorded. Every read-back
+  recorded before 2026-09-23 is `independence = "unverified"`; `mission provenance-report`
+  lists the proved nodes nobody independent has vouched for. It is the only thing standing
+  between a wrong or vacuous statement and a `proved` node, because `grant` is containment
+  against the very statement the author wrote. If no independent session is available,
+  leave the node in `draft`; a draft is honest.
 - **The kernel is the sole authority:** No manual status edits. Only `mission grant` (with CI verification) flips `proved`/`refuted`.
 - **Claims are soft:** Respect TTL and claim-over etiquette, but don't block other sessions.
 
