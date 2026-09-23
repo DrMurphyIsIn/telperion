@@ -24,7 +24,12 @@ from typing import Callable, Dict, List, Optional
 
 from .attempts import AttemptLog
 from .claims import is_stale, load_claims
-from .coverage import artifact_coverage_error, ci_built_islands, islands_with_lean
+from .coverage import (
+    artifact_coverage_error,
+    ci_built_islands,
+    ci_covered_lean_files,
+    islands_with_lean,
+)
 from .registry import Campaign, load_campaign
 from .schema import Node, SchemaError, save_node, slug_of
 from .statements import _SENTINEL, regen_diff, statement_path
@@ -634,6 +639,10 @@ def verify_campaign(
     # Computed once per campaign -- it parses every workflow file.
     repo_root = _repo_root(root)
     built_islands = ci_built_islands(repo_root)
+    # ...and, per file, is the artifact MODULE itself inside what a runnable step compiles?
+    # (closure audit C2: an island-level text match of `lake build` let six nodes rest on a
+    # job that named nonexistent targets and could not run.)
+    covered_files = ci_covered_lean_files(repo_root)
 
     # 2. Status coherence for proved/refuted nodes
     for sl, node in campaign.nodes.items():
@@ -674,7 +683,7 @@ def verify_campaign(
                     f"Node {sl!r}: status is 'proved' but artifact "
                     f"{node.proof.artifact!r} carries {', '.join(markers)} in Lean code."
                 )
-            cov = artifact_coverage_error(artifact_path, repo_root, built_islands)
+            cov = artifact_coverage_error(artifact_path, repo_root, built_islands, covered_files)
             if cov:
                 errors.append(f"Node {sl!r}: status is 'proved' but {cov}")
         elif node.status == "refuted" and not refut_ok:

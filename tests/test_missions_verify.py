@@ -687,9 +687,14 @@ def _fake_repo(tmp_path, island: str, *, wire_ci: bool):
     lean = repo / "telperion" / "examples" / island / "lean"
     lean.mkdir(parents=True)
     (lean / "Art.lean").write_text("theorem art_thm : 1 + 1 = 2 := by norm_num\n")
+    # A real island declares its artifact as a (default) lib; since the closure audit (C2)
+    # coverage is judged per MODULE through the lakefile, not per island directory.
+    (lean / "lakefile.toml").write_text(
+        'name = "Fake"\ndefaultTargets = ["Art"]\n\n[[lean_lib]]\nname = "Art"\n'
+    )
     wf = repo / ".github" / "workflows"
     wf.mkdir(parents=True)
-    body = "jobs:\n  build:\n    steps:\n"
+    body = "on: push\njobs:\n  build:\n    steps:\n"
     if wire_ci:
         body += (f"      - working-directory: telperion/examples/{island}/lean\n"
                  f"        run: lake build\n")
@@ -776,6 +781,213 @@ def test_coverage_refuses_to_report_everything_uncovered(tmp_path):
     # and a repo that genuinely builds nothing is fine either way
     (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: echo hi\n")
     _assert_parser_sane(repo, set(), 0)
+
+
+# ---------------------------------------------------------------------------
+# T10b: MODULE-level coverage (closure audit C2, 2026-09-22). The island-level check was a
+#  text match: the zeta_reflection workflow named five undeclared targets (`unknown target`),
+#  ran a `lake env` that could not spawn `lean`, had never run -- and still vouched for six
+#  proved nodes because the string `lake build` appeared under the island directory.
+# ---------------------------------------------------------------------------
+
+def _island(tmp_path, lakefile: str, files: dict, workflow: str, island: str = "isl"):
+    repo = tmp_path / "repo"
+    lean = repo / "telperion" / "examples" / island / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text(lakefile)
+    for rel, text in files.items():
+        f = lean / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(workflow)
+    return repo, lean
+
+
+_TWO_LIBS = (
+    'name = "Isl"\ndefaultTargets = ["Other"]\n\n'
+    '[[lean_lib]]\nname = "Other"\n\n[[lean_lib]]\nname = "Art"\n'
+)
+_SRC = {"Art.lean": "import Mathlib\ntheorem t : True := trivial\n",
+        "Other.lean": "theorem o : True := trivial\n"}
+
+
+def _wf(run: str, extra: str = "", on: str = "on: push\n") -> str:
+    body = "\n".join("          " + ln for ln in run.splitlines())
+    return (f"{on}jobs:\n  b:\n    steps:\n      - working-directory: telperion/examples/isl/lean\n"
+            f"{extra}        run: |\n{body}\n")
+
+
+def test_island_built_but_artifact_module_not_is_uncovered(tmp_path):
+    """A bare `lake build` whose defaultTargets never reach the artifact does not vouch for it."""
+    from telperion.missions.coverage import artifact_coverage_error, ci_built_islands
+
+    repo, lean = _island(tmp_path, _TWO_LIBS, _SRC, _wf("lake build"))
+    assert ci_built_islands(repo) == {"isl"}  # the old floor passes...
+    err = artifact_coverage_error(lean / "Art.lean", repo)
+    assert err is not None and "compiled by no runnable CI step" in err  # ...the module gate does not
+    assert artifact_coverage_error(lean / "Other.lean", repo) is None
+
+
+def test_named_target_and_transitive_import_cover_the_artifact(tmp_path):
+    from telperion.missions.coverage import artifact_coverage_error
+
+    repo, lean = _island(tmp_path, _TWO_LIBS, _SRC, _wf("lake build Art"))
+    assert artifact_coverage_error(lean / "Art.lean", repo) is None
+    # reached only through an import of a default target
+    src = dict(_SRC, **{"Other.lean": "import Art\n/- import Nope -/\ntheorem o : True := trivial\n"})
+    repo2, lean2 = _island(tmp_path / "b", _TWO_LIBS, src, _wf("lake build"))
+    assert artifact_coverage_error(lean2 / "Art.lean", repo2) is None
+
+
+def test_undeclared_target_vouches_for_nothing_and_dooms_the_job(tmp_path):
+    """The exact old zeta_reflection shape: `lake build <guard>` for a guard that is a .lean file
+    but not a lean_lib (Lake: `unknown target`), followed by a guard-running step."""
+    from telperion.missions.coverage import artifact_coverage_error
+
+    src = dict(_SRC, **{"AxiomGuardArt.lean": "import Art\n#print axioms t\n"})
+    wf = (
+        "on: push\njobs:\n  b:\n    steps:\n"
+        "      - working-directory: telperion/examples/isl/lean\n"
+        "        run: lake build AxiomGuardArt\n"
+        "      - working-directory: telperion/examples/isl/lean\n"
+        "        run: |\n          for g in AxiomGuardArt; do\n"
+        "            lake env lean \"$g.lean\" 2>&1 | tee out\n          done\n"
+        "        shell: bash\n"
+    )
+    repo, lean = _island(tmp_path, _TWO_LIBS, src, wf)
+    err = artifact_coverage_error(lean / "Art.lean", repo)
+    assert err is not None and "compiled by no runnable CI step" in err
+    # Declaring the guard as a lib is the fix: now the build step resolves and vouches.
+    repo2, lean2 = _island(
+        tmp_path / "b", _TWO_LIBS + '\n[[lean_lib]]\nname = "AxiomGuardArt"\n', src, wf
+    )
+    assert artifact_coverage_error(lean2 / "Art.lean", repo2) is None
+
+
+def test_guard_run_by_lean_in_a_for_loop_covers_its_imports(tmp_path):
+    from telperion.missions.coverage import ci_covered_lean_files
+
+    src = dict(_SRC, **{"AxiomGuardArt.lean": "import Art\n#print axioms t\n"})
+    wf = _wf('set -euo pipefail\nfor g in AxiomGuardArt; do\n  lake env lean "$g.lean"\ndone')
+    repo, lean = _island(tmp_path, _TWO_LIBS, src, wf)
+    cov = ci_covered_lean_files(repo)
+    assert (lean / "Art.lean").resolve() in cov
+    # an unknown loop variable cannot be resolved statically: no credit, no guess
+    repo2, lean2 = _island(tmp_path / "b", _TWO_LIBS, src, _wf('lake env lean "$GUARD.lean"'))
+    assert (lean2 / "Art.lean").resolve() not in ci_covered_lean_files(repo2)
+
+
+def test_masked_or_unrunnable_builds_do_not_vouch(tmp_path):
+    from telperion.missions.coverage import ci_covered_lean_files
+
+    def covered(run, extra="", on="on: push\n", sub="x"):
+        repo, lean = _island(tmp_path / sub, _TWO_LIBS, _SRC, _wf(run, extra, on))
+        return (lean / "Art.lean").resolve() in ci_covered_lean_files(repo)
+
+    assert covered("lake build Art", sub="ok")
+    assert not covered("lake build Art || true", sub="ortrue")
+    assert covered("lake build Art || { echo failed; exit 1; }", sub="orexit")
+    # default `run` shell has no pipefail: `lake build | tee` exits with tee's status
+    assert not covered("lake build Art 2>&1 | tee build.log", sub="tee")
+    assert covered("lake build Art 2>&1 | tee build.log", extra="        shell: bash\n", sub="teebash")
+    assert not covered("lake build Art", extra="        continue-on-error: true\n", sub="coe")
+    assert not covered("lake build Art", extra="        if: false\n", sub="iffalse")
+    assert not covered("lake build Art", on="", sub="notrigger")  # no `on:` -- never runs
+    assert not covered('echo "then run lake build Art"', sub="echo")
+    assert not covered("lake build $MODS", sub="var")
+
+
+def test_globs_and_path_requires_resolve(tmp_path):
+    """`globs = ["X.+"]` covers X and its submodules; an import may land in a path-required
+    sibling package -- how zeta_reflection reaches XiLineZeros through zzl_core."""
+    from telperion.missions.coverage import ci_covered_lean_files
+
+    repo = tmp_path / "repo"
+    sib = repo / "telperion" / "examples" / "sib" / "lean"
+    (sib / "core").mkdir(parents=True)
+    (sib / "core" / "lakefile.toml").write_text(
+        'name = "core"\nsrcDir = ".."\n\n[[lean_lib]]\nname = "Xi"\n'
+    )
+    (sib / "Xi.lean").write_text("theorem xi : True := trivial\n")
+    lakefile = (
+        'name = "Isl"\ndefaultTargets = ["Pkg"]\n\n[[require]]\nname = "core"\n'
+        'path = "../../sib/lean/core"\n\n[[lean_lib]]\nname = "Pkg"\nglobs = ["Pkg.+"]\n'
+    )
+    src = {"Pkg.lean": "theorem p : True := trivial\n",
+           "Pkg/Sub.lean": "import Xi\ntheorem s : True := trivial\n"}
+    _, lean = _island(tmp_path, lakefile, src, _wf("lake build"))
+    cov = ci_covered_lean_files(repo)
+    assert (lean / "Pkg" / "Sub.lean").resolve() in cov
+    assert (sib / "Xi.lean").resolve() in cov
+
+
+def test_mini_toml_reads_a_multiline_default_targets_array():
+    from telperion.missions.coverage import _mini_toml
+
+    doc = _mini_toml(
+        'name = "Z"  # c\ndefaultTargets = ["A", "B",\n   "C"]\n[[lean_lib]]\nname = "A"\n'
+        'roots = ["A"]\n[[require]]\nname = "zzl_core"\npath = "../x"\n'
+    )
+    assert doc["defaultTargets"] == ["A", "B", "C"]
+    assert doc["lean_lib"] == [{"name": "A", "roots": ["A"]}]
+    assert doc["require"][0]["path"] == "../x"
+
+
+def test_mini_toml_agrees_with_tomllib_on_every_island_lakefile():
+    """Python < 3.11 has no tomllib; the fallback must read the real lakefiles identically."""
+    import pathlib as _p
+    from telperion.missions.coverage import _mini_toml
+
+    tomllib = pytest.importorskip("tomllib")
+    repo = _p.Path(__file__).resolve().parents[2]
+    files = sorted((repo / "telperion" / "examples").glob("*/lean/**/lakefile.toml"))
+    files = [f for f in files if ".lake" not in f.parts]
+    if not files:
+        pytest.skip("not running inside the repo")
+    keys = ("name", "srcDir", "defaultTargets")
+    for f in files:
+        a, b = tomllib.loads(f.read_text()), _mini_toml(f.read_text())
+        assert {k: a.get(k) for k in keys} == {k: b.get(k) for k in keys}, f
+        for sect, fields in (("lean_lib", ("name", "roots", "globs", "srcDir")),
+                             ("require", ("name", "path"))):
+            assert [{k: x.get(k) for k in fields} for x in a.get(sect, [])] == \
+                   [{k: x.get(k) for k in fields} for x in b.get(sect, [])], (f, sect)
+
+
+def test_module_coverage_without_pyyaml_agrees_on_the_real_repo():
+    """The dependency-free workflow parser must give the same steps and the same covered files
+    as PyYAML on this repo's real workflows (the required `unit` job must not depend on it)."""
+    import pathlib as _p
+    from telperion.missions import coverage as cov
+
+    pytest.importorskip("yaml")
+    repo = _p.Path(__file__).resolve().parents[2]
+    if not (repo / ".github" / "workflows").is_dir():
+        pytest.skip("not running inside the repo")
+    a = [(s.workflow, s.job, s.workdir, s.run.strip(), s.pipefail)
+         for s in cov.ci_runnable_steps(repo)]
+    b = [(s.workflow, s.job, s.workdir, s.run.strip(), s.pipefail)
+         for s in cov.ci_runnable_steps(repo, use_yaml=False)]
+    assert a == b
+    assert set(cov.ci_covered_lean_files(repo)) == set(cov.ci_covered_lean_files(repo, use_yaml=False))
+
+
+def test_every_proved_anduril_artifact_is_module_covered_on_the_real_repo():
+    """The six zeta_reflection artifacts must be compiled by the zeta-reflection job itself."""
+    import pathlib as _p
+    from telperion.missions import coverage as cov
+
+    repo = _p.Path(__file__).resolve().parents[2]
+    lean = repo / "telperion" / "examples" / "zeta_reflection" / "lean"
+    if not lean.is_dir() or not (repo / ".github" / "workflows").is_dir():
+        pytest.skip("not running inside the repo")
+    covered = cov.ci_covered_lean_files(repo)
+    for mod in ("CheckBand", "ReflectedBand_t14", "EMZetaTail", "EMZetaComplex",
+                "ForgeFirstZeroKernel", "StirlingBinet"):
+        jobs = covered.get((lean / f"{mod}.lean").resolve(), set())
+        assert "telperion-zeta-reflection.yml:zeta-reflection-compiles" in jobs, mod
 
 
 # ---------------------------------------------------------------------------
