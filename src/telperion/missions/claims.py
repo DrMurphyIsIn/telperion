@@ -13,10 +13,12 @@ as UTC if naive).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import dataclasses
+import os
 from pathlib import Path
 
 from .registry import load_campaign
-from .schema import Claim, ClaimError, load_claim, save_claim, slug_of
+from .schema import _claim_to_doc, dumps_toml, Claim, ClaimError, load_claim, save_claim, slug_of
 
 
 def is_stale(claim: Claim, _now: datetime | None = None) -> bool:
@@ -163,7 +165,8 @@ def claim(root: Path, slug: str, session: str, ttl_hours: int = 24, note: str = 
                 superseded="",
             )
     else:
-        # No existing claim, create a fresh one
+        # No existing claim seen. Racing sessions all reach this branch, so the file is
+        # created EXCLUSIVELY below and the loser re-reads rather than overwriting.
         new_claim = Claim(
             node=node.name,
             session=session,
@@ -172,8 +175,27 @@ def claim(root: Path, slug: str, session: str, ttl_hours: int = 24, note: str = 
             note=note,
             superseded="",
         )
+        claims_dir = root / "claims"
+        claims_dir.mkdir(exist_ok=True)
+        claim_file = claims_dir / f"{slug}.toml"
+        try:
+            fd = os.open(str(claim_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            # Someone won between our load_claims and now. Re-read and apply the same rules.
+            rival = load_claims(root).get(slug)
+            if rival is not None and not is_stale(rival, _now=_now) and rival.session != session:
+                raise ClaimError(
+                    f"Node {slug!r} is already claimed by session {rival.session!r}."
+                )
+            if rival is not None and is_stale(rival, _now=_now):
+                new_claim = dataclasses.replace(new_claim, superseded=rival.session)
+            save_claim(new_claim, claim_file)
+            return new_claim
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(dumps_toml(_claim_to_doc(new_claim)))
+        return new_claim
 
-    # Write the claim to disk
+    # Write the claim to disk (claim-over or same-session refresh; the file already exists)
     claims_dir = root / "claims"
     claims_dir.mkdir(exist_ok=True)
     claim_file = claims_dir / f"{slug}.toml"

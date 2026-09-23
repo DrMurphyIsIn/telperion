@@ -47,6 +47,16 @@ def _node(tmp, camp, slug, *, status="open", deps=(), proof=None):
         'created = "2026-09-19"',
         'updated = "2026-09-19"',
     ]
+    if status != "draft":
+        # An `open` node always has a readback: promote_to_open is the only draft->open path
+        # and it refuses without one. grant_status re-checks it as of 2026-09-19.
+        body += [
+            "",
+            "[readback]",
+            f'auditor = "test-auditor"',
+            'date = "2026-09-19"',
+            f'text = "read-back of {slug}"',
+        ]
     if proof is not None:
         artifact, via, clean = proof
         body += [
@@ -222,9 +232,21 @@ def test_direct_proof_is_unaffected_by_an_external_dep(root):
 # --------------------------------------------------------------------------- #
 
 def _statement(root, camp, slug, text):
-    d = root / camp / "lean" / "Statements"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{slug}.lean").write_text(text)
+    """Write the statement file THROUGH the generator, header and all.
+
+    Hand-writing it leaves out the DO-NOT-EDIT header, which `regen_diff` reports as
+    "header missing". That went unnoticed while only the read-only battery called
+    regen_diff; since 2026-09-19 `grant_status` calls it too (a hand-edited statement with
+    a re-forged hash was otherwise grantable), so a headerless fixture no longer models a
+    state the registry can reach.
+    """
+    from telperion.missions.registry import load_campaign
+    from telperion.missions.statements import write_statement
+
+    camp_root = root / camp
+    campaign = load_campaign(camp_root)
+    node = campaign.nodes[slug]
+    write_statement(camp_root, node, text, campaign.manifest)
 
 
 def _artifact(root, rel, text):

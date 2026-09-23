@@ -56,7 +56,13 @@ def copy_demo(tmp_path: Path) -> Path:
 
 def _open_node_with_proof(name: str, artifact: str, via: str = "direct",
                           refutation_statement: str = "") -> Node:
-    """Return an open Node with a proof link but status still 'open'."""
+    """Return an open Node with a proof link but status still 'open'.
+
+    The readback is part of the fixture because it is part of reality: `promote_to_open` is
+    the only draft->open path and it refuses without one, so an `open` node always has a
+    readback on record. Since 2026-09-19 `grant_status` re-checks it, which is what caught
+    that these fixtures were modelling a state the registry cannot reach.
+    """
     return Node(
         name=name,
         title=f"Test node {name}",
@@ -66,6 +72,8 @@ def _open_node_with_proof(name: str, artifact: str, via: str = "direct",
         statement_module=f"Statements.{slug_of(name)}",
         proof=Proof(artifact=artifact, artifact_kind="lean_module",
                     via=via, closure_clean=False),
+        readback=Readback(text=f"read-back of {name}", auditor="test-auditor",
+                          date="2026-09-11"),
         refutation_statement=refutation_statement,
         created="2026-09-11",
         updated="2026-09-11",
@@ -164,6 +172,8 @@ def test_gate_refuted_via_refutation_statement(tmp_path):
         proof=Proof(artifact="proof/Test_refuted.lean",
                     artifact_kind="lean_module", via="direct",
                     closure_clean=False),
+        readback=Readback(text="read-back of Test_refuted", auditor="test-auditor",
+                          date="2026-09-11"),
         refutation_statement=refutation,
         created="2026-09-11",
         updated="2026-09-11",
@@ -651,7 +661,10 @@ def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
 
     artifact_path = root / "proof" / "Test_stub2.lean"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text(f"{stmt} := by sorry\n")
+    # A trailing `:= by sorry` is stripped by normalize_lean, so the node would be caught by
+    # the containment check instead. Put a second declaration after it so the sorry is NOT
+    # trailing and the incompleteness scan is the check under test.
+    artifact_path.write_text(f"{stmt} := by sorry\ntheorem other_thm : True := trivial\n")
 
     # Force the node to `proved` on disk WITHOUT going through the gate, which is the
     # state the read-only battery has to be able to catch.
@@ -660,6 +673,245 @@ def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
     report = verify_campaign(root)
     assert not report.ok
     assert any("sorry" in e for e in report.errors)
+
+
+# ---------------------------------------------------------------------------
+# T10: a node may not be granted against Lean that no CI job compiles
+# (audit 2026-09-19: all six proved anduril nodes pointed at the zeta_reflection
+#  island, which no workflow built; two rh nodes had the same shape a day earlier)
+# ---------------------------------------------------------------------------
+
+def _fake_repo(tmp_path, island: str, *, wire_ci: bool):
+    """A miniature repo: one example island, and a workflow that may or may not build it."""
+    repo = tmp_path / "repo"
+    lean = repo / "telperion" / "examples" / island / "lean"
+    lean.mkdir(parents=True)
+    (lean / "Art.lean").write_text("theorem art_thm : 1 + 1 = 2 := by norm_num\n")
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    body = "jobs:\n  build:\n    steps:\n"
+    if wire_ci:
+        body += (f"      - working-directory: telperion/examples/{island}/lean\n"
+                 f"        run: lake build\n")
+    else:
+        # present, but only a python drift check -- no `lake build`, so no verification
+        body += (f"      - working-directory: telperion/examples/{island}/lean\n"
+                 f"        run: python generate.py --check\n")
+    (wf / "ci.yml").write_text(body)
+    return repo
+
+
+def test_coverage_detects_island_ci_never_builds(tmp_path):
+    from telperion.missions.coverage import artifact_coverage_error, ci_built_islands
+
+    repo = _fake_repo(tmp_path, "lonely", wire_ci=False)
+    art = repo / "telperion" / "examples" / "lonely" / "lean" / "Art.lean"
+    assert ci_built_islands(repo) == set()
+    err = artifact_coverage_error(art, repo)
+    assert err is not None and "lonely" in err
+
+    repo2 = _fake_repo(tmp_path / "b", "wired", wire_ci=True)
+    art2 = repo2 / "telperion" / "examples" / "wired" / "lean" / "Art.lean"
+    assert ci_built_islands(repo2) == {"wired"}
+    assert artifact_coverage_error(art2, repo2) is None
+
+
+def test_coverage_ignores_non_lean_and_non_island_artifacts(tmp_path):
+    from telperion.missions.coverage import artifact_coverage_error
+
+    repo = _fake_repo(tmp_path, "lonely", wire_ci=False)
+    # a .md artifact has nothing to compile
+    assert artifact_coverage_error(repo / "telperion" / "examples" / "lonely" / "x.md", repo) is None
+    # campaign-local Lean is covered by the campaign's own build, not by an island job
+    assert artifact_coverage_error(repo / "telperion" / "missions" / "rh" / "lean" / "S.lean", repo) is None
+
+
+def test_coverage_counts_cd_inside_run(tmp_path):
+    """Three jobs in the real repo address their island with `cd`, not working-directory."""
+    from telperion.missions.coverage import ci_built_islands
+
+    repo = tmp_path / "repo"
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - run: |\n"
+        "          cd telperion/examples/viacd/lean\n          lake build\n"
+    )
+    assert "viacd" in ci_built_islands(repo)
+
+
+def test_coverage_fallback_agrees_with_yaml_on_the_real_repo():
+    """The no-PyYAML fallback must not diverge from the YAML parser on this repo.
+
+    The required `unit` job has no PyYAML, so the fallback is what actually runs there.
+    """
+    import pathlib as _p
+    from telperion.missions import coverage as cov
+
+    repo = _p.Path(__file__).resolve().parents[2]
+    if not (repo / ".github" / "workflows").is_dir():
+        pytest.skip("not running inside the repo")
+    assert cov.ci_built_islands(repo) == cov._scan_islands_without_yaml(repo)
+
+
+def test_coverage_refuses_to_report_everything_uncovered(tmp_path):
+    """A broken parser must raise, not flunk every node.
+
+    Regression test for this module's own first revision: it swallowed a missing PyYAML
+    and returned an empty set, which reported every proved node in the registry as
+    uncovered. One loud error beats N confident false ones.
+    """
+    from telperion.missions.coverage import CoverageParseError, _assert_parser_sane
+
+    repo = tmp_path / "repo"
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: lake build\n")
+    # steps_seen == 0 means the parser read nothing: that is the broken-parser signal
+    with pytest.raises(CoverageParseError):
+        _assert_parser_sane(repo, set(), 0)
+    # but an empty answer AFTER genuinely walking steps is correct, not an error --
+    # a repo whose build steps are all disabled is exactly that
+    _assert_parser_sane(repo, set(), 3)
+    # and a repo that genuinely builds nothing is fine either way
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: echo hi\n")
+    _assert_parser_sane(repo, set(), 0)
+
+
+# ---------------------------------------------------------------------------
+# T11: the nine false-`proved` paths found by the 2026-09-19 gate audit.
+# Each test is named for the attack it blocks, not for the function it calls.
+# ---------------------------------------------------------------------------
+
+def test_suffix_extension_does_not_satisfy_a_statement():
+    """`NoZero s ∨ True` must not satisfy a node claiming `NoZero s`.
+
+    The normalized statement ends at the conclusion, so plain containment is a prefix
+    match: an artifact that CONTINUES the conclusion still contains it, and proves
+    something strictly weaker.
+    """
+    from telperion.missions.verify import statement_matches
+
+    stmt = "theorem zeta_nonzero (s : C) : NoZero s"
+    assert not statement_matches("theorem zeta_nonzero (s : C) : NoZero s ∨ True := by simp", stmt)
+    assert not statement_matches("theorem hard : RH → RH := fun h => h", "theorem hard : RH")
+    # the honest forms still match, in both proof-body spellings
+    assert statement_matches("theorem zeta_nonzero (s : C) : NoZero s := by simp", stmt)
+    assert statement_matches("theorem zeta_nonzero (s : C) : NoZero s :=\n  foo", stmt)
+
+
+def test_statement_inside_a_string_literal_does_not_count():
+    from telperion.missions.verify import statement_matches
+
+    stmt = "theorem p : P"
+    assert not statement_matches('def msg : String := "theorem p : P := by trivial"', stmt)
+
+
+def test_artifact_may_not_assume_what_it_claims_to_prove():
+    """A self-supplied `axiom` or `unsafe` is an incompleteness marker."""
+    from telperion.missions.verify import artifact_incompleteness_markers
+
+    assert "axiom" in artifact_incompleteness_markers("axiom cheat : False\ntheorem t : P := cheat.elim")
+    assert "unsafe" in artifact_incompleteness_markers("unsafe def f : Nat := 0")
+    # the axiom guards' own idiom must NOT trip it
+    assert artifact_incompleteness_markers("#print axioms foo\ntheorem t : P := trivial") == []
+
+
+def test_island_attribution_survives_path_traversal(tmp_path):
+    """`../built/../unbuilt/X.lean` must be judged by where the file IS, not how it is spelled."""
+    from telperion.missions.coverage import artifact_coverage_error
+
+    repo = tmp_path / "repo"
+    for isl in ("wired", "unbuilt"):
+        (repo / "telperion" / "examples" / isl / "lean").mkdir(parents=True)
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - working-directory: telperion/examples/wired/lean\n"
+        "        run: lake build\n"
+    )
+    sneaky = repo / "telperion" / "examples" / "wired" / "lean" / ".." / ".." / "unbuilt" / "lean" / "U.lean"
+    err = artifact_coverage_error(sneaky, repo)
+    assert err is not None and "unbuilt" in err
+
+
+def test_disabled_step_does_not_vouch_for_an_island(tmp_path):
+    """A `lake build` under `if: false` never runs, so it is not evidence."""
+    from telperion.missions.coverage import ci_built_islands
+
+    repo = tmp_path / "repo"
+    wf = repo / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - if: false\n"
+        "        working-directory: telperion/examples/ghost/lean\n        run: lake build\n"
+    )
+    assert "ghost" not in ci_built_islands(repo)
+
+
+# ---------------------------------------------------------------------------
+# T12: data-integrity findings from the 2026-09-19 audit.
+# ---------------------------------------------------------------------------
+
+def test_node_write_is_atomic_so_a_reader_never_sees_a_torn_file(tmp_path):
+    """A concurrent reader must see the old file or the new one, never a prefix.
+
+    The audit walked every byte prefix of all 66 live node files and found 201 truncation
+    points that load as a VALID Node with a field missing -- `readback` in 64 of 66 files.
+    Combined with the registry's read-modify-write, a torn read permanently erases the
+    record that gates promote_to_open.
+    """
+    from telperion.missions.schema import atomic_write_text
+
+    target = tmp_path / "n.toml"
+    target.write_text("old")
+    atomic_write_text(target, "new content")
+    assert target.read_text() == "new content"
+    # nothing left behind
+    assert [q.name for q in tmp_path.iterdir()] == ["n.toml"]
+
+
+def test_saving_a_node_preserves_blocks_the_schema_does_not_model(tmp_path):
+    """`[nonvacuity]` and `proof.fidelity_note` must survive a load/save cycle.
+
+    A live node carries both. `fidelity_note` records that its proof is kernel-verified
+    locally and NOT on main CI -- exactly the kind of honesty field whose loss matters --
+    and any CLI mutation used to erase 1978 characters of it silently.
+    """
+    from telperion.missions.schema import load_node, save_node
+
+    src = tmp_path / "n.toml"
+    src.write_text(
+        'name = "T.x"\ntitle = "t"\nkind = "lemma"\nstatus = "open"\n'
+        'statement_module = "Statements.T_x"\ndepends_on = []\n\n'
+        '[proof]\nartifact = "a.lean"\nartifact_kind = "lean_module"\nvia = "direct"\n'
+        'closure_clean = false\nfidelity_note = "verified locally, NOT on main CI"\n\n'
+        '[nonvacuity]\nwitness = "a concrete instance"\n'
+    )
+    before = src.read_text()
+    save_node(load_node(src), src)
+    after = src.read_text()
+    assert "nonvacuity" in after
+    assert "fidelity_note" in after
+    assert "verified locally, NOT on main CI" in after
+    assert "a concrete instance" in after
+    assert len(after) >= len(before) - 8  # ordering may shift; content must not be lost
+
+
+def test_open_leaves_survives_a_cross_campaign_dependency(tmp_path):
+    """A qualified `<campaign>:<slug>` dep must not KeyError the command sessions run first."""
+    from telperion.missions.registry import open_leaves
+    from telperion.missions.schema import Node, Proof
+
+    node = Node(name="T.x", title="t", kind="lemma", status="open",
+                depends_on=("other:OTHER_dep",), statement_module="Statements.T_x")
+
+    class _Campaign:
+        nodes = {"T_x": node}
+        root = tmp_path / "home"
+
+    # unresolvable external dep counts as not proved, so the node is simply not a leaf
+    assert open_leaves(_Campaign()) == []
 
 
 # --- what closure_clean actually is, pinned so the docstring cannot drift again ------

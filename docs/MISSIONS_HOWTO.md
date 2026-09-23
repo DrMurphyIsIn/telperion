@@ -87,7 +87,16 @@ Two read-only tools in the Telperion MCP server:
 ## Key Discipline
 
 - **Always log attempts** (even NoGo / Stalled), so future sessions don't re-walk dead paths.
-- **Read-back before open:** A `draft` node needs a human-language `audit` (prose or Lean statement rendering) before it can move to `open`. This catches "formalized the wrong statement" early.
+- **Read-back before open, and NOT BY THE AUTHOR:** A `draft` node needs a human-language
+  `audit` (prose or Lean statement rendering) before it can move to `open`. This catches
+  "formalized the wrong statement" early. **The renderer must not be the statement's
+  author** — an independent session, or the operator (`MISSIONS_DESIGN_2026-09-11.md` §8).
+  Nothing in code enforces this: `promote_to_open` checks only that a read-back EXISTS,
+  and `--auditor` is free text. It is the only thing standing between a wrong or vacuous
+  statement and a `proved` node, because `grant` is containment against the very
+  statement the author wrote. Auditing your own node is the failure this step exists to
+  prevent; as of 2026-09-19, 37 of 47 proved nodes carry a read-back whose declared
+  auditor is the session that registered them.
 - **The kernel is the sole authority:** No manual status edits. Only `mission grant` (with CI verification) flips `proved`/`refuted`.
 - **Claims are soft:** Respect TTL and claim-over etiquette, but don't block other sessions.
 

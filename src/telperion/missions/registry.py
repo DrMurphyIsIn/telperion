@@ -308,6 +308,7 @@ def open_leaves(
     campaign: Campaign,
     claims: Optional[Dict[str, Claim]] = None,
     include_claimed: bool = False,
+    universe: Optional["CampaignUniverse"] = None,
 ) -> List[Node]:
     """Return open nodes whose every dependency is proved.
 
@@ -340,11 +341,20 @@ def open_leaves(
             continue
         if sl in claimed_slugs:
             continue
-        # All dependencies must be proved
-        all_deps_proved = all(
-            campaign.nodes[dep].status == "proved"
-            for dep in node.depends_on
-        )
+        # All dependencies must be proved. Dependencies may be cross-campaign
+        # ("<campaign>:<slug>"), so they are resolved through parse_dep rather than indexed
+        # directly: a qualified reference used to raise KeyError here and break the command
+        # the how-to tells every session to run first. An unresolvable dependency counts as
+        # NOT proved, which is what _dep_is_clean already does.
+        def _dep_proved(dep: str) -> bool:
+            dcamp, dtarget = parse_dep(dep, campaign.root.name)
+            if dcamp == campaign.root.name:
+                target = campaign.nodes.get(dtarget)
+            else:
+                target = universe.resolve(campaign.root.name, dep) if universe is not None else None
+            return target is not None and target.status == "proved"
+
+        all_deps_proved = all(_dep_proved(dep) for dep in node.depends_on)
         if all_deps_proved:
             result.append(node)
     return result

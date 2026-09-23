@@ -87,6 +87,7 @@ class AttemptLog:
             return []
 
         records: list[Attempt] = []
+        skipped = 0
         with open(self.path, "r") as f:
             for line in f:
                 line = line.rstrip("\n")
@@ -96,9 +97,13 @@ class AttemptLog:
                     d = json.loads(line)
                     records.append(Attempt.from_dict(d))
                 except (json.JSONDecodeError, KeyError, ValueError):
-                    # Corrupt line (truncated JSONL or invalid JSON) — skip with policy
-                    # comment. At most one record lost vs. crashing entire loader.
-                    pass
+                    # Corrupt line (truncated JSONL or invalid JSON) -- skipped so one bad
+                    # line cannot crash the loader. But it is COUNTED and surfaced: audit
+                    # 2026-09-19 fed a five-line ledger with one verdict typo, one missing
+                    # field and one torn line, got two records back and no warning at all,
+                    # and three sessions' work vanished from the digest silently.
+                    skipped += 1
+        self.skipped_lines = skipped
         return records
 
     def for_node(self, slug: str) -> list[Attempt]:
