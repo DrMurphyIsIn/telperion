@@ -433,11 +433,37 @@ _SPECIAL_KINDS = (
     # (linear / log bundles reading a nested-max threshold with the `max 1` guard folded in, plus
     # the product / inverse / shifted-rate atoms).  Elementary real inequalities; nothing about RH.
     "exp_threshold",
+    # enclosure_tree (2026-09-22, SHAPES_AUDIT_48H section 2 rank 1; A N2/N3/N4, B C2, C 4.7,
+    # D 4): rational two-sided enclosures of an expression tree over {+, -, *, /, ^, sqrt, log,
+    # exp, pi, arctan, rationals} by an exact interval fold (one theorem per non-linear node,
+    # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
+    # arithmetic facts about real constants; nothing about RH.
+    "enclosure_tree",
+    # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
+    # with audit B N5): a zero-supported family is summable through a finite ordinate window
+    # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
+    # The per-instance certificate is ONE two-variable strip inequality, certified as an exact
+    # nonnegative (Bernstein / Polya) combination closed by `ring`; the tail_envelope mode
+    # carries the consumer face and the rate-splitting companion.  Nothing about RH.
+    "zero_sum_majorant",
     # MIRRORMERE leakage dictionary (2026-09-19, ROUTE A item A2b): the log-derivative
     # coefficient functional at a COMPOSITE index -- a completely-multiplicative amplitude
     # certifies b n = 0, a non-multiplicative one is certified to LEAK (and is thereby refused
     # complete multiplicativity).  Exact symbolic divisor recursion; nothing about RH.
     "leakage_dictionary",
+    # preordering_multiplier (2026-09-22, SHAPES_AUDIT_48H section 2 rank 3; D 3.1, B C3, C 5.3):
+    # 0 <= p on {g_i >= 0} for POLYNOMIAL generators, via a positive multiplier M = kappa g_j^e
+    # and the exact constant-coefficient identity M p = sum c_alpha prod g_i^{alpha_i} (c >= 0),
+    # plus a certified single-point zero locus of M.  The combination handelman (linear
+    # generators, no multiplier), polya_zeros (simplex only) and rational_sos (no generator
+    # hypotheses) each miss.  Finite real polynomial inequalities; nothing about RH.
+    "preordering_multiplier",
+    # Shapes-audit rank 4 (2026-09-22, B N3 / B D7 / C 2.10 / D 2.2): real and imaginary
+    # parts (and the norm_sq / norm_exp faces) of a complex polynomial expression, the
+    # `simp only [Complex.*_re, ...]; ring` bookkeeping of every complex-analysis island, and
+    # the B D7 cast face `p = ((P : R) : C)` (`push_cast; ring`, then `Complex.ofReal_re`).
+    # Split computed by sympy, re-verified by an independent exact engine; nothing about RH.
+    "complex_re_im_split",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -695,11 +721,31 @@ _SPECIAL_DISPATCH = {
     # exp_threshold (threshold-to-exponential-domination bundles and atoms, Real.add_one_le_exp).
     "exp_threshold":
         ("emit_exp_threshold", "certify_exp_threshold_point", "ExpThresholdEmitter"),
+    # enclosure_tree (rational enclosures of expression trees over transcendental atoms; the
+    # pi-face rate corollary; the log/sqrt face).
+    "enclosure_tree":
+        ("emit_enclosure_tree", "certify_enclosure_tree_point", "EnclosureTreeEmitter"),
+    # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
+    # the rvm_bridge island; the tail_envelope face is Mathlib-only).
+    "zero_sum_majorant":
+        ("emit_zero_sum_majorant", "certify_zero_sum_majorant_point",
+         "ZeroSumMajorantEmitter"),
     # MIRRORMERE leakage dictionary (ROUTE A item A2b): re-derived log-derivative coefficient
     # rows at a composite index, over the island's LeakageDictionary vocabulary.
     "leakage_dictionary":
         ("emit_leakage_dictionary", "certify_leakage_dictionary_point",
          "LeakageDictionaryEmitter"),
+    # preordering_multiplier (SHAPES_AUDIT_48H_2026-09-22 section 2 rank 3): positivity on a
+    # semialgebraic set with polynomial generators, a positive multiplier and a certified
+    # multiplier zero locus.  Dogfooded on the Li box rungs Re Q_3 / Q_4 / Q_5 (LiBoxRungs).
+    "preordering_multiplier":
+        ("emit_preordering_multiplier", "certify_preordering_multiplier_point",
+         "PreorderingMultiplierEmitter"),
+    # Shapes-audit rank 4: real/imaginary-part splits and cast identities of complex
+    # polynomial expressions (dogfood: E6Bridge5 / 7 / 11 / 14 / 28 on the rvm island).
+    "complex_re_im_split":
+        ("emit_complex_re_im_split", "certify_complex_re_im_split_point",
+         "ComplexReImSplitEmitter"),
 }
 
 

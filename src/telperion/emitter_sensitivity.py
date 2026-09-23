@@ -293,6 +293,122 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "EnclosureTreeEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                              "rational two-sided enclosure lo <= E <= hi (per side `<` when "
+                              "the exact fold has slack or an open endpoint) of an expression "
+                              "tree over {+, -, *, /, ^, sqrt, log, exp, pi, arctan, rationals}: "
+                              "the brackets ARE the statements, re-derived in the kernel from "
+                              "one Mathlib fact per atom (Real.pi_gt_dN / pi_lt_dN, "
+                              "log_two_gt_d9, abs_log_sub_add_sum_range_le + the backwards "
+                              "Real.log_mul fold, Real.exp_bound, Real.sq_sqrt, |arctan t| <= "
+                              "|t|) and closed by linarith over the four McCormick corner facts "
+                              "/ le_div_iff0 / pow_le_pow_left0 (nlinarith only at a sqrt "
+                              "node, as the hand proofs do); the pi-face rate corollary n <= "
+                              "cap -> (n + 1 : R) <= E and the log/sqrt face "
+                              "log (y + a) <= c sqrt y ride along.  No separately-supplied "
+                              "identity to corrupt, so the shape is structural.  certify "
+                              "REFUSES a claimed bracket the exact interval fold does not imply "
+                              "at ANY node (the forge case), a strict side without slack or an "
+                              "open endpoint, a radicand not >= 0, a denominator interval "
+                              "containing 0 or negative, log r <= 0 or r = 1, |1 - r| >= 1 "
+                              "without a factorisation, a fold not multiplying to r, Taylor "
+                              "orders outside 1..64, exp at |x| > 1, a negative base under a "
+                              "power, a pi rung off Mathlib's ladder, a rate cap the lower "
+                              "bound does not reach, rational-only trees and floats.  "
+                              "Regenerates LiLadderHeight / LiLadderSharp's pi-face rate steps "
+                              "and LeakageDictionary's nine bracket lemmas; finite arithmetic "
+                              "facts about real constants, nothing about RH "
+                              "(conjecture1_proved = False)",
+                              # Structural, yet a kernel control exists: the dogfood rate
+                              # instance hand-minted one past the truth (root lower bound 18850,
+                              # cap 18849; 6000 pi = 18849.55...), which Layer 1 refuses, states
+                              # a FALSE enclosure and the emitted linarith cannot reach it, so
+                              # the kernel rejects it.
+                              # See negctrl_adapters/adapter_enclosure_tree.py.
+                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "PreorderingMultiplierEmitter": _S(CERTIFICATE_SENSITIVE,
+                                      "0 <= p on {g_i >= 0} for POLYNOMIAL generators via a "
+                                      "positive multiplier M = kappa g_j^e and the exact "
+                                      "constant-coefficient preordering identity "
+                                      "M p = sum c_alpha prod g_i^alpha_i (c_alpha >= 0), closed "
+                                      "by `ring` + a `positivity` fold, with the zero set of a "
+                                      "non-constant M certified as ONE point (g_j an exact "
+                                      "positive-weight sum of squared coordinate offsets; "
+                                      "`nlinarith only` pins it, `norm_num` closes p there).  "
+                                      "The coefficients c_alpha ARE the load-bearing "
+                                      "certificate: a corrupted coefficient breaks the `ring` "
+                                      "identity, a negative one breaks the `positivity` fold "
+                                      "(certify also runs assert_certificate_sensitive).  "
+                                      "certify REFUSES the LP infeasible up to the degree cap "
+                                      "(OBSTRUCTED_AND_LOCATED with an exact negative witness "
+                                      "when the scan finds one, e.g. Li Re Q_6 at (4/5, -2/5)), "
+                                      "any c_alpha < 0, a hyp generator that is not literally a "
+                                      "hypothesis, a structural generator positivity cannot "
+                                      "close, a multiplier with an uncertified zero locus, a "
+                                      "multiplier not in the cone, floats and name collisions.  "
+                                      "Regenerates LiBoxRungs re_Q1..re_Q5_nonneg; finite real "
+                                      "polynomial inequalities, nothing about RH "
+                                      "(conjecture1_proved = False)",
+                                      checked_in="emit_preordering_multiplier",
+                                      # A hand-minted FALSE instance (p = d - B on the Li disk,
+                                      # exact identity, coefficient -1 on B, false at
+                                      # (1/2, 1/2)) that Layer 1 refuses: the emitted
+                                      # `positivity` fold cannot prove 0 <= d - B, so the kernel
+                                      # rejects it; the true twin p = d + B compiles.
+                                      # See negctrl_adapters/adapter_preordering_multiplier.py.
+                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ComplexReImSplitEmitter": _S(
+        CERTIFICATE_SENSITIVE,
+        "real/imaginary-part split of a complex polynomial expression (shapes-audit rank 4, "
+        "B N3 / B D7 / C 2.10 / D 2.2): `(p : C).re = P_re`, `(p : C).im = P_im`, "
+        "`||p||^2 = P_re^2 + P_im^2`, `||exp p|| = exp P_re`, and the B D7 cast face "
+        "`(p : C) = ((P : R) : C)` / its `.re` for a real-valued p over real and natural-number "
+        "atoms.  The claimed real polynomial IS the statement's right-hand side and is the "
+        "corruptible certificate: the emitted proof is the frozen `simp only [Complex.add_re, "
+        "mul_re, ..., natCast_re, I_re, I_im, re_ofNat, pow_succ, pow_zero, one_mul]; all_goals "
+        "ring` of the hand proofs (cast face: `push_cast; all_goals ring`, then "
+        "`Complex.ofReal_re`), so a corrupted claim leaves `ring` a false identity and the kernel "
+        "rejects the file.  certify computes the split with sympy re/im at z = x + i y and "
+        "RE-VERIFIES it three ways (symbolic identity, as_real_imag, an independent exact "
+        "Fraction evaluator at seeded rational points), then REFUSES a supplied claim not "
+        "ring-equal to it (the B N3 forge case), a non-polynomial p (division, transcendental, "
+        "conj/re/im/Abs, a symbolic exponent -- the declared-denominator face is a documented "
+        "follow-on), the cast face on a p with z or I, undeclared, non-real or mis-declared "
+        "natural atoms, floats, degree above the cap, a degenerate bare variable / atom / "
+        "constant, a tie_to that is not a Lean identifier and reserved binder names; "
+        "assert_certificate_sensitive is wired (checked_in).  Finite polynomial "
+        "bookkeeping; nothing about RH (conjecture1_proved = False)",
+        checked_in="emit_complex_re_im_split",
+        # A hand-minted FALSE claim Re((a + b i)^2) = a^2 + b^2 (which Layer 1 refuses)
+        # leaves `ring` an unprovable identity after `simp only`, so the kernel rejects it.
+        # See negctrl_adapters/adapter_complex_re_im_split.py.
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ZeroSumMajorantEmitter": _S(CERTIFICATE_SENSITIVE,
+                                 "zero-sum majorant (SHAPES_AUDIT_48H section 2 rank 2; C 3.1 + "
+                                 "B N5): the per-instance certificate is the strip inequality "
+                                 "N/D <= C/(1 + |gamma_rho|^2) on |Im rho - a| >= h, cleared to the "
+                                 "EXACT nonnegative combination C*D - N*(1 + |gamma|^2) = "
+                                 "sum c_alpha x^i (1-x)^j ((w-a)^2 - h^2)^k p^2e S^2m (Bernstein / "
+                                 "Polya after w^2 -> h^2 + t), emitted as `key` and closed by "
+                                 "`ring`, so every coefficient is load-bearing (corrupt one and "
+                                 "`ring` fails); certify runs assert_certificate_sensitive on that "
+                                 "identity.  The majorant / summable faces compose it with the "
+                                 "island atom RvMBridgeXi.zeroBoundAt (finite ordinate window + "
+                                 "local-count tail).  certify REFUSES C < 0 or a non-positivity "
+                                 "C / N, a failed Polya check (FALSE with a located rational "
+                                 "witness -- the h = 0 / 1/|rho|^2 phantom -- or OBSTRUCTED), h "
+                                 "outside {0,1,2}, a non-ordinate window, a conditional support "
+                                 "fact, ordinate_sq with h = 0, a term list that is not the "
+                                 "residual, P >= 0 / E < 0 on the tail faces, and floats.  "
+                                 "Regenerates E6Bridge19 zbound, E6Bridge18 polBound, E6Bridge15 "
+                                 "liBound and E6Bridge12 tail_bound_window; nothing about RH "
+                                 "(conjecture1_proved = False)",
+                                 checked_in="emit_zero_sum_majorant",
+                                 # Kernel control: the 9/4 strip instance forged to C = 1 (false at
+                                 # every point of the strip) -- the emitted `ring` identity fails;
+                                 # the true twin C = 9/4 compiles.  See
+                                 # negctrl_adapters/adapter_zero_sum_majorant.py.
+                                 neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
