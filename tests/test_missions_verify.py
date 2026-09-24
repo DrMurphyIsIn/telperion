@@ -110,7 +110,7 @@ def test_gate_grants_proved_on_matching_artifact(tmp_path):
     )
 
     campaign = load_campaign(root)
-    result = grant_status(campaign, "Test_foo")
+    result = grant_status(campaign, "Test_foo", identity="gate@test", session="gate-session")
     assert result.status == "proved"
     # On-disk file must also reflect proved
     assert load_node(root / "nodes" / "Test_foo.toml").status == "proved"
@@ -141,7 +141,7 @@ def test_gate_rejects_mismatched_statement(tmp_path):
 
     campaign = load_campaign(root)
     with pytest.raises(GateError):
-        grant_status(campaign, "Test_real")
+        grant_status(campaign, "Test_real", identity="gate@test", session="gate-session")
 
     # On-disk status must remain open
     assert load_node(root / "nodes" / "Test_real.toml").status == "open"
@@ -187,7 +187,7 @@ def test_gate_refuted_via_refutation_statement(tmp_path):
     artifact_path.write_text(f"{refutation} := by\n  simp\n")
 
     campaign = load_campaign(root)
-    result = grant_status(campaign, "Test_refuted")
+    result = grant_status(campaign, "Test_refuted", identity="gate@test", session="gate-session")
     assert result.status == "refuted"
     assert load_node(root / "nodes" / "Test_refuted.toml").status == "refuted"
 
@@ -449,7 +449,7 @@ def test_gate_raises_on_empty_normalized_statement(tmp_path):
 
     campaign = load_campaign(root)
     with pytest.raises(GateError, match="normalized statement is empty"):
-        grant_status(campaign, "Test_empty")
+        grant_status(campaign, "Test_empty", identity="gate@test", session="gate-session")
 
     # Status must remain open
     assert load_node(root / "nodes" / "Test_empty.toml").status == "open"
@@ -642,7 +642,7 @@ def test_gate_refuses_proved_when_artifact_still_has_sorry(tmp_path):
 
     campaign = load_campaign(root)
     with pytest.raises(GateError):
-        grant_status(campaign, "Test_stub")
+        grant_status(campaign, "Test_stub", identity="gate@test", session="gate-session")
     assert load_node(root / "nodes" / "Test_stub.toml").status == "open"
 
 
@@ -1120,7 +1120,7 @@ def test_gate_refuses_grant_against_modifier_axiom(tmp_path):
 
     campaign = load_campaign(root)
     with pytest.raises(GateError, match=r"carries axiom in Lean code"):
-        grant_status(campaign, "Test_cheat")
+        grant_status(campaign, "Test_cheat", identity="gate@test", session="gate-session")
     assert load_node(root / "nodes" / "Test_cheat.toml").status == "open"
 
 
@@ -1282,7 +1282,7 @@ def _granted_node(tmp_path, name, stmt):
 
 def test_grant_writes_closure_clean_as_a_copy_of_status(tmp_path):
     root, slug = _granted_node(tmp_path, "Test.flag", "theorem lemma_flag : 1 + 1 = 2")
-    granted = grant_status(load_campaign(root), slug)
+    granted = grant_status(load_campaign(root), slug, identity="gate@test", session="gate-session")
     assert granted.status == "proved"
     assert granted.proof.closure_clean is True, (
         "granting turns the authored False into True: a copy of status, not a derived "
@@ -1297,7 +1297,7 @@ def test_a_hand_set_dirty_flag_survives_for_a_direct_proof(tmp_path):
     from telperion.missions.verify import _compute_closures
 
     root, slug = _granted_node(tmp_path, "Test.ruled", "theorem lemma_ruled : 2 + 2 = 4")
-    grant_status(load_campaign(root), slug)
+    grant_status(load_campaign(root), slug, identity="gate@test", session="gate-session")
     campaign = load_campaign(root)
     node = campaign.nodes[slug]
     assert node.proof.closure_clean is True

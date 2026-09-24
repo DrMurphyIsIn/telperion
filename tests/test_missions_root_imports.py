@@ -140,6 +140,9 @@ def test_mission_add_appends_root_import(tmp_path, capsys):
         "mission", "--missions-root", str(mroot), "add", "demo", "New.lemma_x",
         "--title", "New lemma X", "--kind", "lemma",
         "--statement", "import Mathlib\ntheorem new_x : 1 = 1",
+        # provenance (2026-09-23): `add` records [author] from `git config user.email` and
+        # $CLAUDE_SESSION_ID; a CI runner has neither, so name them explicitly.
+        "--identity", "author@example.test", "--session", "s-author",
     ])
     assert rc == 0
     assert "Statements.New_lemma_x" in root_imports(campaign_root)

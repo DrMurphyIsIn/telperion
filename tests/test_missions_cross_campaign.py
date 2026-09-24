@@ -267,7 +267,7 @@ def test_reduction_grant_refused_over_unproved_external_premise(root):
 
     camp = load_campaign(root / "down")
     with pytest.raises(GateError, match="not 'proved'"):
-        grant_status(camp, "DOWN_uses", universe=load_universe(root))
+        grant_status(camp, "DOWN_uses", universe=load_universe(root), identity="gate@test", session="gate-session")
     assert camp.nodes["DOWN_uses"].status == "open"
 
 
@@ -284,7 +284,7 @@ def test_reduction_grant_allowed_once_the_premise_is_proved(root):
     _artifact(root, "art/Up.lean", "theorem up_thm : True := by trivial\n")
 
     camp = load_campaign(root / "down")
-    node = grant_status(camp, "DOWN_uses", universe=load_universe(root))
+    node = grant_status(camp, "DOWN_uses", universe=load_universe(root), identity="gate@test", session="gate-session")
     assert node.status == "proved"
 
 
@@ -300,7 +300,7 @@ def test_direct_grant_is_exempt_from_the_dependency_precondition(root):
     _artifact(root, "art/Down.lean", "theorem down_direct : True := by trivial\n")
 
     camp = load_campaign(root / "down")
-    node = grant_status(camp, "DOWN_direct", universe=load_universe(root))
+    node = grant_status(camp, "DOWN_direct", universe=load_universe(root), identity="gate@test", session="gate-session")
     assert node.status == "proved"
 
 
