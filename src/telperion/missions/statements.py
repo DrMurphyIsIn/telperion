@@ -5,13 +5,25 @@ Every file carries a provenance header that encodes a sha256 of the
 normalized post-header body + node slug + manifest env.  regen_diff
 detects hand edits by re-deriving that hash from the on-disk post-header
 content and comparing it to the value stored in the header.
+
+Root import (added 2026-09-24).  A statement module is only ELABORATED by CI if the
+package root `<root>/lean/Statements.lean` imports it: the `mission-statements-compile`
+job runs `lake build` on the default target, and lake builds exactly the root's import
+closure.  Fifteen registered modules (eleven rh, four mirrormere, several of them
+`status = "proved"`) had been written by `write_statement` and never added to the
+root, so the design invariant "a statement that does not elaborate cannot enter the
+graph" was not enforced for them; one (`MM_weil_positivity_window_tenth`) had no
+`import` line at all.  `write_statement` therefore now also appends the module to
+the root (`ensure_root_import`), and `verify_campaign` fails on any module the root
+does not import (`missing_root_imports`) or any statement without an import header
+(`import_header_error`).
 """
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
 import re
-from typing import List
+from typing import List, Sequence, Tuple
 
 from .schema import atomic_write_text, MissionManifest, Node, slug_of
 
@@ -177,11 +189,160 @@ def write_statement(
     statement: str,
     manifest: MissionManifest,
 ) -> Path:
-    """Render and write the statement file; create parent dirs as needed."""
+    """Render and write the statement file; create parent dirs as needed.
+
+    Also appends the module to the package root (`ensure_root_import`) so that CI's
+    `lake build` of the root actually elaborates it.  Writing the file without the
+    import is exactly the hole that left fifteen registered statements unbuilt.
+    """
     path = statement_path(root, node)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, render_statement(node, statement, manifest))
+    ensure_root_import(root, module_of_statement_file(path))
     return path
+
+
+def statement_body(root: Path, node: Node) -> str:
+    """The on-disk statement text minus the provenance header (imports/opens included).
+
+    This is what `write_statement` needs to re-render the file: the post-header content
+    is exactly the `statement` argument after normalization, so feeding it back is
+    idempotent for a well-formed file.
+    """
+    text = statement_path(root, node).read_text()
+    lines = text.split("\n")
+    if lines and _SENTINEL in lines[0]:
+        lines = lines[1:]
+    return "\n".join(lines).strip("\n")
+
+
+def regenerate_statement(
+    root: Path,
+    node: Node,
+    manifest: MissionManifest,
+    prepend_imports: Sequence[str] = (),
+) -> Tuple[Path, str, str]:
+    """Re-render a statement file through the normal tooling from its own body.
+
+    Returns (path, old_hash, new_hash).  The body is `statement_body`, optionally with
+    `import <m>` lines for `prepend_imports` placed first (for a file written without
+    the standard header).  Also appends the module to the package root via
+    `write_statement`.  The hash changes iff the body changes, i.e. iff the old file
+    was malformed; a caller that sees old != new records the change in the node file.
+    """
+    path = statement_path(root, node)
+    old_text = path.read_text()
+    old_hash = old_text.split("\n")[0].split("sha256 ")[-1].strip()[:16] if _SENTINEL in old_text.split("\n")[0] else ""
+    body = statement_body(root, node)
+    if prepend_imports:
+        body = "\n".join(f"import {m}" for m in prepend_imports) + "\n" + body
+    write_statement(root, node, body, manifest)
+    new_hash = path.read_text().split("\n")[0].split("sha256 ")[-1].strip()[:16]
+    return path, old_hash, new_hash
+
+
+# ---------------------------------------------------------------------------
+# Root module (<root>/lean/Statements.lean) — the import list CI actually builds
+# ---------------------------------------------------------------------------
+
+def root_module_path(root: Path) -> Path:
+    """Return <root>/lean/Statements.lean, the package root lake builds."""
+    return Path(root) / "lean" / "Statements.lean"
+
+
+_IMPORT_LINE = re.compile(r"(?m)^\s*import\s+(\S+)")
+
+
+def root_imports(root: Path) -> List[str]:
+    """Module names the package root imports, in file order ([] if the root is absent)."""
+    path = root_module_path(root)
+    if not path.exists():
+        return []
+    return _IMPORT_LINE.findall(path.read_text())
+
+
+def ensure_root_import(root: Path, module: str) -> bool:
+    """Append `import <module>` to the package root unless already present.
+
+    Creates the root file if it does not exist.  Returns True iff a line was added.
+    Appending (not sorting) keeps the diff to the one new line, which is what every
+    hand-maintained root in the tree looks like today.
+    """
+    path = root_module_path(root)
+    present = root_imports(root)
+    if module in present:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = path.read_text() if path.exists() else ""
+    if text and not text.endswith("\n"):
+        text += "\n"
+    atomic_write_text(path, text + f"import {module}\n")
+    return True
+
+
+def module_of_statement_file(path: Path) -> str:
+    """`Statements/<Slug>.lean` -> `Statements.<Slug>`."""
+    return f"Statements.{Path(path).stem}"
+
+
+def missing_root_imports(root: Path, nodes) -> List[str]:
+    """Every module CI would silently skip: statement files on disk, and every node's
+    `statement_module` whose file exists, that the root does not import.
+
+    Both directions of the mismatch are reported: a module the root names but whose
+    file is missing breaks `lake build` outright, so it is included too, prefixed
+    `(no file)`.  Sorted, deduplicated.
+    """
+    root = Path(root)
+    imported = set(root_imports(root))
+    stmts_dir = root / "lean" / "Statements"
+    missing: set = set()
+    if stmts_dir.is_dir():
+        for lean_file in stmts_dir.glob("*.lean"):
+            mod = module_of_statement_file(lean_file)
+            if mod not in imported:
+                missing.add(mod)
+    for node in nodes:
+        if statement_path(root, node).exists() and node.statement_module not in imported:
+            missing.add(node.statement_module)
+    for mod in imported:
+        if mod.startswith("Statements.") and not (stmts_dir / (mod.split(".", 1)[1] + ".lean")).exists():
+            missing.add(f"(no file) {mod}")
+    return sorted(missing)
+
+
+def defs_modules(root: Path) -> List[str]:
+    """The campaign's shared-vocabulary modules: `Statements/*Defs.lean` (e.g. RHDefs)."""
+    stmts_dir = Path(root) / "lean" / "Statements"
+    if not stmts_dir.is_dir():
+        return []
+    return sorted(module_of_statement_file(p) for p in stmts_dir.glob("*Defs.lean"))
+
+
+def import_header_error(root: Path, node: Node) -> str:
+    """"" iff the node's statement file carries the campaign's standard import header.
+
+    The standard header is at least one `import` line, and among them either `Mathlib`
+    or one of the campaign's `*Defs` modules (which import Mathlib themselves).  Every
+    statement in the four live campaigns satisfies this except the one that motivated
+    the check, which had no imports at all and so could only have elaborated by
+    accident of some other module's environment -- it never did, because nothing
+    imported it either.  Missing file -> "" (regen_diff reports that).
+    """
+    path = statement_path(root, node)
+    if not path.exists():
+        return ""
+    imports = _IMPORT_LINE.findall(path.read_text())
+    slug = slug_of(node.name)
+    if not imports:
+        return f"node {slug}: statement file has no `import` line"
+    ok = {"Mathlib", *defs_modules(root)}
+    if not any(m == "Mathlib" or m.startswith("Mathlib.") or m in ok for m in imports):
+        return (
+            f"node {slug}: statement imports {imports!r} but neither Mathlib nor a "
+            f"campaign Defs module ({', '.join(defs_modules(root)) or 'none present'})"
+        )
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -225,12 +386,23 @@ def regen_diff(root: Path, node: Node, manifest: MissionManifest) -> str:
 
     fresh_hash = _body_hash(slug, post_header, manifest)
 
-    if fresh_hash == stored_hash:
-        return ""
-    return (
-        f"node {slug}: hash mismatch "
-        f"(header has {stored_hash!r}, current body hashes to {fresh_hash!r})"
-    )
+    if fresh_hash != stored_hash:
+        return (
+            f"node {slug}: hash mismatch "
+            f"(header has {stored_hash!r}, current body hashes to {fresh_hash!r})"
+        )
+
+    # Staleness of the package ROOT, not just the file (2026-09-24).  A statement file
+    # whose module the root does not import is as unverified as one with a stale hash:
+    # CI builds the root's import closure and nothing else, so the file has never been
+    # elaborated.  Reported here so every regen_diff caller sees it, not only verify.
+    module = module_of_statement_file(path)
+    if module not in root_imports(root):
+        return (
+            f"node {slug}: statement file exists but the package root "
+            f"lean/Statements.lean does not import {module} (CI never elaborates it)"
+        )
+    return ""
 
 
 # ---------------------------------------------------------------------------
