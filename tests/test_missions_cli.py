@@ -330,6 +330,58 @@ def test_verify_clean_fixture(tmp_path, capsys):
     assert rc == 0
 
 
+def test_verify_exits1_when_statement_not_in_root_import_list(tmp_path, capsys):
+    """Staleness of the package root is a verify failure at the CLI (2026-09-24).
+
+    This is the exact on-disk state fifteen live nodes were in: a well-formed statement
+    file with a current provenance hash that the root Statements.lean never imported, so
+    CI's `lake build` had never elaborated it.  Body-level staleness (regen_diff on the
+    hash) was green for all of them; the import list is now part of the same check.
+    """
+    from telperion.missions.registry import load_campaign
+    from telperion.missions.statements import root_imports, root_module_path
+
+    mroot, campaign_root = make_demo_root(tmp_path)
+    camp = load_campaign(campaign_root)
+    node = camp.nodes["Demo_lemma_a"]
+    write_statement(campaign_root, node, "import Mathlib\ntheorem demo_lemma_a : 1 = 1",
+                    _manifest())
+    assert main(["mission", "--missions-root", str(mroot), "verify", "demo"]) == 0
+
+    # drop the one import line: file untouched, hash still current
+    root_file = root_module_path(campaign_root)
+    root_file.write_text("".join(
+        ln for ln in root_file.read_text().splitlines(keepends=True)
+        if "Demo_lemma_a" not in ln))
+    assert "Statements.Demo_lemma_a" not in root_imports(campaign_root)
+
+    rc = main(["mission", "--missions-root", str(mroot), "verify", "demo"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "does not import Statements.Demo_lemma_a" in out
+    assert "hash mismatch" not in out
+
+
+def test_scaffold_package_root_agrees_with_missing_root_imports(tmp_path):
+    """`scaffold_package` regenerates the root from the files on disk (the generate.py
+    --check idiom); after it runs, the verify-side check must find nothing missing, and
+    before it runs the two must disagree on exactly the unwired module."""
+    from telperion.missions.registry import load_campaign
+    from telperion.missions.statements import (
+        missing_root_imports, root_module_path, scaffold_package,
+    )
+
+    mroot, campaign_root = make_demo_root(tmp_path)
+    camp = load_campaign(campaign_root)
+    for sl in ("Demo_lemma_a", "Demo_lemma_b"):
+        write_statement(campaign_root, camp.nodes[sl],
+                        f"import Mathlib\ntheorem {sl.lower()} : 1 = 1", _manifest())
+    root_module_path(campaign_root).write_text("import Statements.Demo_lemma_a\n")
+    assert missing_root_imports(campaign_root, camp.nodes.values()) == ["Statements.Demo_lemma_b"]
+    scaffold_package(campaign_root, _manifest())
+    assert missing_root_imports(campaign_root, camp.nodes.values()) == []
+
+
 def test_verify_exits1_with_mismatch(tmp_path, capsys):
     mroot, campaign_root = make_demo_root(tmp_path)
     manifest = _manifest()
