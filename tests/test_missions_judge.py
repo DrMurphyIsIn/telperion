@@ -13,8 +13,10 @@ Pins, on a synthetic island and on the live registry:
   * the config is self-check over the bridge theorem with the three standard axioms, nanoda on;
   * the Comparator tag follows the island toolchain (not the BG bridge's v4.32.0);
   * `--check` reports a stale, missing or extra file; `--shard I/N` partitions the nodes;
-  * the live dbn and rvm_bridge bundles are committed and in sync with the registry, and
-    li_positivity renders (it is not yet in the CI matrix).
+  * an out-of-tree island (bg: proof/formalization) path-requires its own directory and, with
+    no AxiomGuard lib, imports the vocabulary mirror's home modules instead;
+  * the live dbn, rvm_bridge, zeta_reflection and bg bundles are committed and in sync with
+    the registry, and li_positivity renders (it is not yet in the CI matrix).
 
 conjecture1_proved = False.
 """
@@ -317,6 +319,89 @@ def test_cli_list_configs_check_and_write(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
+# out-of-tree islands (bg: proof/formalization) and the vocabulary-home shadowing guard
+# ---------------------------------------------------------------------------
+
+MIRROR = textwrap.dedent("""\
+    /- vocabulary mirror -/
+    import Mathlib
+    namespace Pkg
+    -- ===== Alpha.lean:3 =====
+    def a : ℕ := 1
+    -- ===== Beta.lean:4 / Sub/Gamma.lean:5-6 (context) =====
+    def b : ℕ := 2
+    -- ===== PROVISIONAL (registry-only; no island counterpart) =====
+    end Pkg
+    """)
+
+
+def _oot_island(tmp_path: Path, monkeypatch) -> Path:
+    """telperion/ + ../proof/pkg (an island outside telperion/examples, no AxiomGuard lib)."""
+    tel = tmp_path / "telperion"
+    pkg = tmp_path / "proof" / "pkg"
+    (pkg / "Pkg" / "Sub").mkdir(parents=True)
+    (pkg / "lakefile.toml").write_text('name = "Pkg"\n\n[[lean_lib]]\nname = "Pkg"\nglobs = ["Pkg.+"]\n')
+    (pkg / "lean-toolchain").write_text("leanprover/lean4:v4.32.0\n")
+    for m in ("Alpha", "Beta", "Sub/Gamma"):
+        (pkg / "Pkg" / f"{m}.lean").write_text("import Mathlib\n")
+    (pkg / "Pkg" / "Art.lean").write_text(
+        "import Pkg.Alpha\n\nnamespace Pkg\ntheorem oot_thm : (1 : ℕ) = 1 := rfl\nend Pkg\n")
+    camp = tel / "missions" / "oc"
+    (camp / "nodes").mkdir(parents=True)
+    (camp / "lean" / "Statements").mkdir(parents=True)
+    (camp / "lean" / "Statements" / "OcDefs.lean").write_text(MIRROR)
+    (camp / "lean" / "Statements" / "OC_node.lean").write_text(
+        HEADER.format(slug="OC_node") + "import Statements.OcDefs\nopen Pkg\n\n"
+        "theorem oot_thm : (1 : ℕ) = 1 := by sorry\n")
+    (camp / "nodes" / "OC_node.toml").write_text(textwrap.dedent("""\
+        name = "OC.node"
+        title = "node"
+        kind = "lemma"
+        status = "proved"
+        statement_module = "Statements.OC_node"
+        depends_on = []
+
+        [proof]
+        artifact = "../../../proof/pkg/Pkg/Art.lean"
+        artifact_kind = "lean_module"
+        """))
+    monkeypatch.setitem(judge.OUT_OF_TREE_ISLANDS, "oot", judge.OutOfTreeIsland(
+        lean_dir="../proof/pkg", vocab_mirror="missions/oc/lean/Statements/OcDefs.lean"))
+    return tel
+
+
+def test_vocabulary_home_modules_from_mirror_headers(tmp_path, monkeypatch):
+    _oot_island(tmp_path, monkeypatch)
+    lean = tmp_path / "proof" / "pkg"
+    assert judge.vocabulary_home_modules(lean, MIRROR) == ["Pkg.Alpha", "Pkg.Beta", "Pkg.Sub.Gamma"]
+    # a header naming no island file is an error, not a silently thinner guard
+    with pytest.raises(judge.JudgeError, match="Delta.lean; 0 match"):
+        judge.vocabulary_home_modules(lean, MIRROR + "-- ===== Delta.lean:1 =====\n")
+
+
+def test_out_of_tree_island_bundle(tmp_path, monkeypatch):
+    tel = _oot_island(tmp_path, monkeypatch)
+    b = judge.build_bundle(tel, "oot")
+    assert b.package == "Pkg" and b.comparator_tag == "v4.32.0"
+    assert b.require_path == "../../../../proof/pkg"
+    assert 'path = "../../../../proof/pkg"' in b.files()["lakefile.toml"]
+    [c] = b.challenges
+    assert c.theorem == "Pkg.oot_thm" and c.solution_module == "Pkg.Art"
+    # the artifact first, then the mirror's home modules; the comment says which guard it is
+    assert "import Pkg.Art\nimport Pkg.Alpha\nimport Pkg.Beta\nimport Pkg.Sub.Gamma\n" in c.challenge_text
+    assert "vocabulary mirror copies" in c.challenge_text
+    assert "AxiomGuard imports" not in c.challenge_text
+    assert ":=\n  Pkg.oot_thm\n" in c.challenge_text
+
+
+def test_in_tree_island_keeps_examples_require_path(tmp_path):
+    tel = _island(tmp_path, artifact=ARTIFACT_NS, statement=STATEMENT_NS)
+    b = judge.build_bundle(tel, "isl")
+    assert 'path = "../../../examples/isl/lean"' in b.files()["lakefile.toml"]
+    assert "AxiomGuard imports load the whole island" in b.challenges[0].challenge_text
+
+
+# ---------------------------------------------------------------------------
 # live registry
 # ---------------------------------------------------------------------------
 
@@ -324,7 +409,7 @@ def _live() -> bool:
     return (TELPERION / "missions" / "rh" / "mission.toml").exists()
 
 
-@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection"])
+@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection", "bg"])
 def test_live_committed_bundle_is_in_sync(island):
     """The committed challenges ARE the registry statements; CI runs the same check."""
     if not _live():
@@ -335,7 +420,8 @@ def test_live_committed_bundle_is_in_sync(island):
     assert judge.check_bundle(b, judge.default_out(TELPERION, island)) == []
 
 
-@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("zeta_reflection", 5), ("li_positivity", 24)])
+@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("zeta_reflection", 5), ("li_positivity", 24),
+                                             ("bg", 9)])
 def test_live_islands_render(island, expected):
     if not _live():
         pytest.skip("live registry not present")
