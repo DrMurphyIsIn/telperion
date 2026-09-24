@@ -261,22 +261,42 @@ def root_imports(root: Path) -> List[str]:
     return _IMPORT_LINE.findall(path.read_text())
 
 
+def root_is_sorted(root: Path) -> bool:
+    """True iff the root's import list is in sorted order (one `import` per line)."""
+    imports = root_imports(root)
+    return imports == sorted(imports)
+
+
 def ensure_root_import(root: Path, module: str) -> bool:
-    """Append `import <module>` to the package root unless already present.
+    """Insert `import <module>` into the package root unless already present.
 
     Creates the root file if it does not exist.  Returns True iff a line was added.
-    Appending (not sorting) keeps the diff to the one new line, which is what every
-    hand-maintained root in the tree looks like today.
+    The line goes in SORTED position when the existing list is sorted (the merge
+    discipline: several branches add nodes to the same root, and sorted lists give
+    line-local, mechanically resolvable conflicts -- resolve by re-sorting, never by
+    union-merge).  An unsorted root gets the line appended and is left as found; the
+    gate accepts any order (`verify_campaign` only warns), so a held branch that
+    appended by hand still passes.  Lean does not care about import order.
     """
     path = root_module_path(root)
     present = root_imports(root)
     if module in present:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = path.read_text() if path.exists() else ""
-    if text and not text.endswith("\n"):
-        text += "\n"
-    atomic_write_text(path, text + f"import {module}\n")
+    if present and present == sorted(present):
+        lines = sorted(present + [module])
+    else:
+        lines = present + [module]
+    atomic_write_text(path, "".join(f"import {m}\n" for m in lines))
+    return True
+
+
+def sort_root_imports(root: Path) -> bool:
+    """Rewrite the root with its import list sorted; True iff the file changed."""
+    imports = root_imports(root)
+    if imports == sorted(imports):
+        return False
+    atomic_write_text(root_module_path(root), "".join(f"import {m}\n" for m in sorted(imports)))
     return True
 
 

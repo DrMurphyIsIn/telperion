@@ -34,7 +34,9 @@ from telperion.missions.statements import (  # noqa: E402
     regen_diff,
     regenerate_statement,
     root_imports,
+    root_is_sorted,
     root_module_path,
+    sort_root_imports,
     statement_path,
     write_statement,
 )
@@ -91,13 +93,45 @@ def test_write_statement_appends_root_import(tmp_path):
     assert root_imports(root) == ["Statements.Demo_lemma_a"]
 
 
-def test_ensure_root_import_appends_without_reordering(tmp_path):
+def test_ensure_root_import_inserts_in_sorted_position(tmp_path):
+    """Sorted roots merge line-locally when parallel branches add nodes; keep them so."""
+    root = tmp_path / "demo"
+    root_module_path(root).parent.mkdir(parents=True)
+    root_module_path(root).write_text("import Statements.Alpha\nimport Statements.Zed\n")
+    assert ensure_root_import(root, "Statements.Mid") is True
+    assert ensure_root_import(root, "Statements.Mid") is False
+    assert root_imports(root) == ["Statements.Alpha", "Statements.Mid", "Statements.Zed"]
+    assert root_is_sorted(root)
+
+
+def test_ensure_root_import_appends_to_an_unsorted_root_and_leaves_it(tmp_path):
+    """A hand-appended (unsorted) root is not silently rewritten under a held branch."""
     root = tmp_path / "demo"
     root_module_path(root).parent.mkdir(parents=True)
     root_module_path(root).write_text("import Statements.Zed\nimport Statements.Alpha\n")
     assert ensure_root_import(root, "Statements.Mid") is True
-    assert ensure_root_import(root, "Statements.Mid") is False
     assert root_imports(root) == ["Statements.Zed", "Statements.Alpha", "Statements.Mid"]
+    assert not root_is_sorted(root)
+    assert sort_root_imports(root) is True
+    assert root_imports(root) == ["Statements.Alpha", "Statements.Mid", "Statements.Zed"]
+    assert sort_root_imports(root) is False
+
+
+def test_verify_accepts_unsorted_root_with_a_warning(tmp_path):
+    """Order is never a gate failure: an unsorted root (a union-merge) passes with a warning."""
+    mroot, campaign_root = make_demo_root(tmp_path)
+    _defs(campaign_root)
+    camp = load_campaign(campaign_root)
+    for sl in ("Demo_lemma_a", "Demo_lemma_b"):
+        write_statement(campaign_root, camp.nodes[sl],
+                        f"import Mathlib\ntheorem {sl.lower()} : 1 = 1", _manifest())
+    assert root_is_sorted(campaign_root)
+    lines = root_module_path(campaign_root).read_text().splitlines(keepends=True)
+    root_module_path(campaign_root).write_text("".join(reversed(lines)))
+    assert not root_is_sorted(campaign_root)
+    report = verify_campaign(campaign_root)
+    assert report.ok, report.errors
+    assert any("not sorted" in w for w in report.warnings), report.warnings
 
 
 def test_mission_add_appends_root_import(tmp_path, capsys):
@@ -269,3 +303,4 @@ def test_live_campaign_root_imports_every_statement(campaign):
     assert missing_root_imports(root, camp.nodes.values()) == []
     bad = {sl: import_header_error(root, n) for sl, n in camp.nodes.items()}
     assert not {k: v for k, v in bad.items() if v}
+    assert root_is_sorted(root), "re-sort lean/Statements.lean (sort_root_imports); never union-merge it"

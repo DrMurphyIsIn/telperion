@@ -38,6 +38,7 @@ from .statements import (
     missing_root_imports,
     module_of_statement_file,
     regen_diff,
+    root_is_sorted,
     root_module_path,
     statement_path,
 )
@@ -801,6 +802,15 @@ def verify_campaign(
         hdr = import_header_error(root, node)
         if hdr:
             errors.append(f"Statement import header: {hdr}")
+    # Order is a WARNING, never an error: parallel branches append to the same root and
+    # a union-merge leaves it unsorted; the fix is to re-sort, and the gate must not
+    # block a held branch over it.
+    if root_module_path(root).exists() and not root_is_sorted(root):
+        warnings.append(
+            f"Package root {root_module_path(root).relative_to(root)} import list is not "
+            f"sorted; re-sort it (sort_root_imports) so concurrent `mission add`s merge "
+            f"line-locally."
+        )
 
     # 4. Claims hygiene (WARNINGS)
     all_claims = load_claims(root)
