@@ -156,11 +156,126 @@ class Proof:
             raise SchemaError(f"via must be one of {VIAS!r}, got {self.via!r}")
 
 
+#: What a read-back's `independence` field may say (governance 2026-09-23, see
+#: docs/AUDIT_INDEPENDENCE_2026-09-23.md):
+#:   unverified  -- recorded before structured provenance existed, or on a node with no
+#:                  `[author]` block, so the gate cannot decide who wrote it. Every read-back
+#:                  that existed on 2026-09-23 was migrated to this value: all of them share
+#:                  the git identity of the proof commits and were written by subagents of the
+#:                  authoring session.
+#:   independent -- `mission audit` compared the auditor's {identity, session} with the node's
+#:                  `[author]` block and both differ.
+#:   self        -- never written by the CLI (it refuses); the value a hand edit would have to
+#:                  admit to, and the value `verify` rejects on a proved node.
+INDEPENDENCE_VALUES = ("unverified", "independent", "self")
+
+
+@dataclass(frozen=True)
+class Author:
+    """Who registered the statement: the identity the gate can later refuse a self-audit against.
+
+    `identity` is `git config user.email` at `mission add` time; `session` is the authoring
+    session id (`$CLAUDE_SESSION_ID` or `--session`). Neither is unforgeable -- a session can
+    supply any string for either -- so this makes self-certification VISIBLE, not impossible
+    (MISSIONS_ARCHITECTURE_AUDIT_2026-09-19.md section 4).
+    """
+    identity: str
+    session: str
+    date: str
+
+    def __post_init__(self):
+        if not self.identity.strip() or not self.session.strip():
+            raise SchemaError("author.identity and author.session must both be non-empty")
+
+
 @dataclass(frozen=True)
 class Readback:
     text: str
     auditor: str
     date: str
+    #: Structured auditor provenance (empty on read-backs recorded before 2026-09-23).
+    auditor_identity: str = ""
+    auditor_session: str = ""
+    #: One of INDEPENDENCE_VALUES, or "" on a read-back that predates the field and has not
+    #: been migrated.
+    independence: str = ""
+
+    def __post_init__(self):
+        if self.independence and self.independence not in INDEPENDENCE_VALUES:
+            raise SchemaError(
+                f"readback.independence must be one of {INDEPENDENCE_VALUES!r}, "
+                f"got {self.independence!r}")
+
+
+@dataclass(frozen=True)
+class Grant:
+    """Provenance of the status flip, written by the gate and nothing else.
+
+    `artifact_sha256` / `statement_sha256` are digests of the artifact file and the statement
+    file AS THE GATE SAW THEM; `verify` recomputes both and fails on a mismatch, so an artifact
+    edited after its grant can no longer hide behind the status. `gate_version` names the
+    gate's rule set, so a grant made under weaker rules is distinguishable from a fresh one.
+    """
+    artifact_sha256: str
+    statement_sha256: str
+    gate_version: str
+    date: str
+    identity: str
+    session: str
+
+    def __post_init__(self):
+        for f in ("artifact_sha256", "statement_sha256", "gate_version", "date",
+                  "identity", "session"):
+            if not getattr(self, f).strip():
+                raise SchemaError(f"grant.{f} must be non-empty")
+
+
+@dataclass(frozen=True)
+class ComparatorRecord:
+    """A passing run of the independent judge (openai/ten-proofs Comparator) over this node.
+
+    Recorded by `mission comparator-record` after the CI job passed; it is NOT written by the
+    grant gate, because the judge runs in CI after the grant lands. `artifact_sha256` pins the
+    artifact the judge saw, so `verify` can say when the verdict has gone stale.
+    """
+    run_id: str
+    date: str
+    artifact_sha256: str
+    theorem: str
+    run_url: str = ""
+
+    def __post_init__(self):
+        for f in ("run_id", "date", "artifact_sha256", "theorem"):
+            if not getattr(self, f).strip():
+                raise SchemaError(f"comparator.{f} must be non-empty")
+
+
+@dataclass(frozen=True)
+class CIRecord:
+    """A passing run of a named CI job on this node's artifact (owner ruling, 2026-09-24).
+
+    Some artifacts are verified only by a job that is not a required check (the anduril
+    kernel ladder). A node may declare `requires_ci_job = "<workflow>:<job>"`; the gate then
+    refuses to grant, and `verify` refuses a proved status, unless a `[ci_record]` names that
+    workflow and job with conclusion "success" on the CURRENT artifact digest.
+    """
+    workflow: str
+    job: str
+    run_id: str
+    head_sha: str
+    artifact_sha256: str
+    conclusion: str
+    date: str
+    run_url: str = ""
+
+    def __post_init__(self):
+        for f in ("workflow", "job", "run_id", "head_sha", "artifact_sha256", "conclusion", "date"):
+            if not getattr(self, f).strip():
+                raise SchemaError(f"ci_record.{f} must be non-empty")
+
+    @property
+    def key(self) -> str:
+        return f"{self.workflow}:{self.job}"
 
 
 @dataclass(frozen=True)
@@ -178,6 +293,18 @@ class Node:
     deprecated_reason: str = ""
     created: str = ""
     updated: str = ""
+    #: Statement authorship, recorded by `mission add` (None on nodes registered before
+    #: 2026-09-23, which is every node then live).
+    author: Optional[Author] = None
+    #: Written by the grant gate only. None on every node granted before 2026-09-23.
+    grant: Optional[Grant] = None
+    #: Sidecar for a passing independent-judge run (see ComparatorRecord).
+    comparator: Optional[ComparatorRecord] = None
+    #: "<workflow file>:<job name>" of a non-required CI job whose passing run on the current
+    #: artifact digest is a precondition for granting (and for staying proved). "" = none.
+    requires_ci_job: str = ""
+    #: The recorded passing run of that job (see CIRecord); written by `mission ci-record`.
+    ci_record: Optional[CIRecord] = None
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -233,7 +360,8 @@ class Claim:
 _MODELLED_NODE_KEYS = frozenset({
     "name", "title", "kind", "status", "statement_module", "source",
     "refutation_statement", "deprecated_reason", "created", "updated",
-    "depends_on", "proof", "readback",
+    "depends_on", "proof", "readback", "author", "grant", "comparator",
+    "requires_ci_job", "ci_record",
 })
 
 
@@ -249,6 +377,8 @@ def _node_to_doc(node: Node) -> dict:
         doc["refutation_statement"] = node.refutation_statement
     if node.deprecated_reason:
         doc["deprecated_reason"] = node.deprecated_reason
+    if node.requires_ci_job:
+        doc["requires_ci_job"] = node.requires_ci_job
     if node.created:
         doc["created"] = node.created
     if node.updated:
@@ -274,6 +404,46 @@ def _node_to_doc(node: Node) -> dict:
             "date": node.readback.date,
             "text": node.readback.text,
         }
+        # Provenance keys are emitted only when set, so a read-back that predates them
+        # round-trips byte-for-byte (the migration commit is the one place they appear).
+        if node.readback.auditor_identity:
+            doc["readback"]["auditor_identity"] = node.readback.auditor_identity
+        if node.readback.auditor_session:
+            doc["readback"]["auditor_session"] = node.readback.auditor_session
+        if node.readback.independence:
+            doc["readback"]["independence"] = node.readback.independence
+    if node.author is not None:
+        doc["author"] = {
+            "date": node.author.date,
+            "identity": node.author.identity,
+            "session": node.author.session,
+        }
+    if node.grant is not None:
+        doc["grant"] = {
+            "artifact_sha256": node.grant.artifact_sha256,
+            "date": node.grant.date,
+            "gate_version": node.grant.gate_version,
+            "identity": node.grant.identity,
+            "session": node.grant.session,
+            "statement_sha256": node.grant.statement_sha256,
+        }
+    if node.comparator is not None:
+        doc["comparator"] = {
+            "artifact_sha256": node.comparator.artifact_sha256,
+            "date": node.comparator.date,
+            "run_id": node.comparator.run_id,
+            "theorem": node.comparator.theorem,
+        }
+        if node.comparator.run_url:
+            doc["comparator"]["run_url"] = node.comparator.run_url
+    if node.ci_record is not None:
+        c = node.ci_record
+        doc["ci_record"] = {
+            "artifact_sha256": c.artifact_sha256, "conclusion": c.conclusion, "date": c.date,
+            "head_sha": c.head_sha, "job": c.job, "run_id": c.run_id, "workflow": c.workflow,
+        }
+        if c.run_url:
+            doc["ci_record"]["run_url"] = c.run_url
     return doc
 
 
@@ -292,7 +462,43 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
         readback = None
         if "readback" in doc:
             r = doc["readback"]
-            readback = Readback(text=r["text"], auditor=r["auditor"], date=r["date"])
+            readback = Readback(
+                text=r["text"], auditor=r["auditor"], date=r["date"],
+                auditor_identity=r.get("auditor_identity", ""),
+                auditor_session=r.get("auditor_session", ""),
+                independence=r.get("independence", ""),
+            )
+        author = None
+        if "author" in doc:
+            a = doc["author"]
+            author = Author(identity=a["identity"], session=a["session"], date=a["date"])
+        grant = None
+        if "grant" in doc:
+            g = doc["grant"]
+            grant = Grant(
+                artifact_sha256=g["artifact_sha256"],
+                statement_sha256=g["statement_sha256"],
+                gate_version=g["gate_version"],
+                date=g["date"],
+                identity=g["identity"],
+                session=g["session"],
+            )
+        comparator = None
+        if "comparator" in doc:
+            c = doc["comparator"]
+            comparator = ComparatorRecord(
+                run_id=str(c["run_id"]), date=c["date"],
+                artifact_sha256=c["artifact_sha256"], theorem=c["theorem"],
+                run_url=c.get("run_url", ""),
+            )
+        ci_record = None
+        if "ci_record" in doc:
+            c = doc["ci_record"]
+            ci_record = CIRecord(
+                workflow=c["workflow"], job=c["job"], run_id=str(c["run_id"]),
+                head_sha=c["head_sha"], artifact_sha256=c["artifact_sha256"],
+                conclusion=c["conclusion"], date=c["date"], run_url=c.get("run_url", ""),
+            )
         depends_on = tuple(doc.get("depends_on", []))
         return Node(
             name=doc["name"],
@@ -308,6 +514,11 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             deprecated_reason=doc.get("deprecated_reason", ""),
             created=doc.get("created", ""),
             updated=doc.get("updated", ""),
+            author=author,
+            grant=grant,
+            comparator=comparator,
+            requires_ci_job=doc.get("requires_ci_job", ""),
+            ci_record=ci_record,
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:
