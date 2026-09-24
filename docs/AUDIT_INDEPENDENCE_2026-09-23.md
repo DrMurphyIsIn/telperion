@@ -90,12 +90,13 @@ islands' `generate.py --check` jobs. Whether the island's `DBN.H` is the de Brui
 `H` is the read-back's job. The judge closes the gap between the two: given the vocabulary,
 the artifact proves this proposition and nothing weaker.
 
-Coverage on 2026-09-23: the `dbn` island (3 nodes) and the `rvm_bridge` island (52 nodes,
-four shards) are wired; `li_positivity` (24 nodes) renders and is listed but not yet run;
-`quasicrystal` (7 of 8: `MM_leakage_composite_zero` carries local `def`s the bridge cannot
-import beside the artifact), `zeta_reflection` (5 of 6: `AND_g2_reflected_band` declares a
-namespace), `zero_free_bridge` (1) and `zeta_zero_localization` (3; monolith lakefile, cannot
-be path-required) are not wired. BG's nine nodes are judged by `proof-comparator.yml` in
+Coverage on 2026-09-23: the `dbn` island (3 nodes), the `rvm_bridge` island (52 nodes,
+four shards) and the `zeta_reflection` island (9 of 10 nodes: `AND_g2_reflected_band`
+declares a namespace inside its statement, which the bridge cannot reproduce beside the
+artifact; it is reported, not skipped) are wired; `li_positivity` (24 nodes) renders and is
+listed but not yet run; `quasicrystal` (7 of 8: `MM_leakage_composite_zero` carries local
+`def`s), `zero_free_bridge` (1) and `zeta_zero_localization` (3; monolith lakefile, cannot be
+path-required) are not wired. BG's nine nodes are judged by `proof-comparator.yml` in
 self-check mode (no independent statement; statement identity there is by human review).
 
 ## 5. What a session should do now

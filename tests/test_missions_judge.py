@@ -295,17 +295,18 @@ def _live() -> bool:
     return (TELPERION / "missions" / "rh" / "mission.toml").exists()
 
 
-@pytest.mark.parametrize("island", ["dbn", "rvm_bridge"])
+@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection"])
 def test_live_committed_bundle_is_in_sync(island):
     """The committed challenges ARE the registry statements; CI runs the same check."""
     if not _live():
         pytest.skip("live registry not present")
     b = judge.build_bundle(TELPERION, island)
-    assert b.skipped == ()
+    # zeta_reflection: AND_g2_reflected_band declares a namespace in its statement (reported)
+    assert len(b.skipped) == (1 if island == "zeta_reflection" else 0)
     assert judge.check_bundle(b, judge.default_out(TELPERION, island)) == []
 
 
-@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("li_positivity", 24)])
+@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("zeta_reflection", 5), ("li_positivity", 24)])
 def test_live_islands_render(island, expected):
     if not _live():
         pytest.skip("live registry not present")
