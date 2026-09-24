@@ -46,6 +46,11 @@ Governance commit `missions: record provenance; refuse self-audits; pin grants t
   fails a proved node whose read-back is a self-audit.
 * Every read-back that existed on 2026-09-23 (117 across the four campaigns) carries
   `independence = "unverified"`. No status changed; no testimony was deleted or edited.
+* A node may declare `requires_ci_job = "<workflow>:<job>"` (owner ruling 2026-09-24, for
+  artifacts verified only by a non-required job such as the anduril kernel ladder). The
+  gate then refuses to grant, and `verify` refuses a proved status, unless `mission
+  ci-record` has stored a `success` run of exactly that job on the current artifact
+  digest (`[ci_record] {workflow, job, run_id, head_sha, artifact_sha256, conclusion, date}`).
 * `mission provenance-report` lists, per campaign, the proved nodes with no independent
   read-back and no passing judge run. On 2026-09-23 that is every proved node:
   anduril 6/6, bg 9/9, mirrormere 38/38, rh 53/53.

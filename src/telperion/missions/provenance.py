@@ -232,6 +232,33 @@ def comparator_staleness(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+def required_ci_problem(campaign_root: Path, node: Node) -> str:
+    """"" when the node declares no `requires_ci_job`, or its `[ci_record]` is a passing run
+    of exactly that job on the artifact digest currently on disk; else why not."""
+    req = (node.requires_ci_job or "").strip()
+    if not req:
+        return ""
+    rec = node.ci_record
+    if rec is None:
+        return (f"requires a recorded passing run of CI job {req!r} (`mission ci-record`), "
+                "and none is recorded")
+    if rec.key != req:
+        return f"requires CI job {req!r} but the record is for {rec.key!r}"
+    if rec.conclusion != "success":
+        return f"the recorded run {rec.run_id} of {req!r} concluded {rec.conclusion!r}, not success"
+    if node.proof is None:
+        return f"requires CI job {req!r} but the node has no artifact"
+    art = Path(campaign_root) / node.proof.artifact
+    if not art.exists():
+        return f"requires CI job {req!r} but artifact {node.proof.artifact!r} does not exist"
+    cur = sha256_file(art)
+    if cur != rec.artifact_sha256:
+        return (f"the recorded run {rec.run_id} of {req!r} was on artifact sha256 "
+                f"{rec.artifact_sha256[:12]}..., but the artifact on disk is {cur[:12]}...; "
+                "record a passing run on the current artifact")
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Migration and report
 # ---------------------------------------------------------------------------

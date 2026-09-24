@@ -37,6 +37,7 @@ from .provenance import (
     grant_digest_errors,
     readback_is_self_audit,
     require_identity,
+    required_ci_problem,
 )
 from .registry import Campaign, load_campaign
 from .schema import Node, SchemaError, save_node, slug_of
@@ -571,6 +572,11 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
     cov = artifact_coverage_error(artifact_path, _repo_root(campaign.root))
     if cov:
         raise GateError(f"Node {slug!r}: {cov}")
+    # Owner ruling 2026-09-24: a node may name a non-required CI job whose passing run on the
+    # exact artifact digest is a precondition for granting.
+    ci = required_ci_problem(campaign.root, node)
+    if ci:
+        raise GateError(f"Node {slug!r}: {ci}")
 
     stmt_ok = statement_matches(artifact_text, norm_stmt)
     refut_ok = refutation_matches(artifact_text, node, campaign.root)
@@ -775,6 +781,9 @@ def verify_campaign(
         stale = comparator_staleness(root, node)
         if stale:
             warnings.append(f"Node {sl!r}: {stale}")
+        ci = required_ci_problem(root, node)
+        if ci and node.status == "proved":
+            errors.append(f"Node {sl!r}: status is 'proved' but it {ci}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":

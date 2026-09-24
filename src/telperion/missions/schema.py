@@ -251,6 +251,34 @@ class ComparatorRecord:
 
 
 @dataclass(frozen=True)
+class CIRecord:
+    """A passing run of a named CI job on this node's artifact (owner ruling, 2026-09-24).
+
+    Some artifacts are verified only by a job that is not a required check (the anduril
+    kernel ladder). A node may declare `requires_ci_job = "<workflow>:<job>"`; the gate then
+    refuses to grant, and `verify` refuses a proved status, unless a `[ci_record]` names that
+    workflow and job with conclusion "success" on the CURRENT artifact digest.
+    """
+    workflow: str
+    job: str
+    run_id: str
+    head_sha: str
+    artifact_sha256: str
+    conclusion: str
+    date: str
+    run_url: str = ""
+
+    def __post_init__(self):
+        for f in ("workflow", "job", "run_id", "head_sha", "artifact_sha256", "conclusion", "date"):
+            if not getattr(self, f).strip():
+                raise SchemaError(f"ci_record.{f} must be non-empty")
+
+    @property
+    def key(self) -> str:
+        return f"{self.workflow}:{self.job}"
+
+
+@dataclass(frozen=True)
 class Node:
     name: str
     title: str
@@ -272,6 +300,11 @@ class Node:
     grant: Optional[Grant] = None
     #: Sidecar for a passing independent-judge run (see ComparatorRecord).
     comparator: Optional[ComparatorRecord] = None
+    #: "<workflow file>:<job name>" of a non-required CI job whose passing run on the current
+    #: artifact digest is a precondition for granting (and for staying proved). "" = none.
+    requires_ci_job: str = ""
+    #: The recorded passing run of that job (see CIRecord); written by `mission ci-record`.
+    ci_record: Optional[CIRecord] = None
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -328,6 +361,7 @@ _MODELLED_NODE_KEYS = frozenset({
     "name", "title", "kind", "status", "statement_module", "source",
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
+    "requires_ci_job", "ci_record",
 })
 
 
@@ -343,6 +377,8 @@ def _node_to_doc(node: Node) -> dict:
         doc["refutation_statement"] = node.refutation_statement
     if node.deprecated_reason:
         doc["deprecated_reason"] = node.deprecated_reason
+    if node.requires_ci_job:
+        doc["requires_ci_job"] = node.requires_ci_job
     if node.created:
         doc["created"] = node.created
     if node.updated:
@@ -400,6 +436,14 @@ def _node_to_doc(node: Node) -> dict:
         }
         if node.comparator.run_url:
             doc["comparator"]["run_url"] = node.comparator.run_url
+    if node.ci_record is not None:
+        c = node.ci_record
+        doc["ci_record"] = {
+            "artifact_sha256": c.artifact_sha256, "conclusion": c.conclusion, "date": c.date,
+            "head_sha": c.head_sha, "job": c.job, "run_id": c.run_id, "workflow": c.workflow,
+        }
+        if c.run_url:
+            doc["ci_record"]["run_url"] = c.run_url
     return doc
 
 
@@ -447,6 +491,14 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 artifact_sha256=c["artifact_sha256"], theorem=c["theorem"],
                 run_url=c.get("run_url", ""),
             )
+        ci_record = None
+        if "ci_record" in doc:
+            c = doc["ci_record"]
+            ci_record = CIRecord(
+                workflow=c["workflow"], job=c["job"], run_id=str(c["run_id"]),
+                head_sha=c["head_sha"], artifact_sha256=c["artifact_sha256"],
+                conclusion=c["conclusion"], date=c["date"], run_url=c.get("run_url", ""),
+            )
         depends_on = tuple(doc.get("depends_on", []))
         return Node(
             name=doc["name"],
@@ -465,6 +517,8 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             author=author,
             grant=grant,
             comparator=comparator,
+            requires_ci_job=doc.get("requires_ci_job", ""),
+            ci_record=ci_record,
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:
