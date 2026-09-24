@@ -88,6 +88,11 @@ NOT_MIRRORS: dict[tuple[str, str], str] = {
         "from missions/rh RHDefs / WeilFormDefs for the Zhu window node (2026-09-23); against "
         "MMDefs's WeilExplicit.autocorr it is the same bare name in another namespace, exactly "
         "as the WeilFormDefs entry above.",
+    ("expLo", "rvm_bridge/lean/KWin2_Window.lean"):
+        "KWin2.expLo is `def expLo (x : ℚ) (n : ℕ) : ℚ`, the rational truncated exp Taylor sum "
+        "used as a lower bound in the KWin2 window certificates (2026-09-24); it is not a copy of "
+        "BraggDefect.expLo (MMDefs), a fixed real constant: same bare name, different namespace "
+        "and object.",
 }
 
 
