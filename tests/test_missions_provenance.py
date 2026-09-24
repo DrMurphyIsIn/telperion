@@ -81,7 +81,7 @@ def _cli(mroot: Path, *args: str) -> int:
 def _add(mroot: Path, name="New.lemma_x", **who) -> int:
     who = {**AUTHOR, **who}
     return _cli(mroot, "add", "demo", name, "--title", "New lemma X", "--kind", "lemma",
-                "--statement", "theorem new_x : 1 = 1",
+                "--statement", "import Mathlib\ntheorem new_x : 1 = 1",
                 "--identity", who["identity"], "--session", who["session"])
 
 
@@ -102,7 +102,8 @@ def _open_with_proof(croot: Path, slug: str, statement: str, artifact_text: str,
         author=author, created="2026-09-23", updated="2026-09-23",
     )
     save_node(node, croot / "nodes" / f"{slug}.toml")
-    write_statement(croot, node, statement, _manifest())
+    # #617: every statement file must open with an `import` line (the battery checks it).
+    write_statement(croot, node, "import Mathlib\n" + statement, _manifest())
     art = croot / "proof" / f"{slug}.lean"
     art.parent.mkdir(parents=True, exist_ok=True)
     art.write_text(artifact_text)
@@ -137,7 +138,7 @@ def test_add_session_from_environment(tmp_path, monkeypatch):
     mroot, croot = _demo(tmp_path)
     monkeypatch.setenv(prov.SESSION_ENV, "env-session")
     rc = _cli(mroot, "add", "demo", "Env.lemma", "--title", "t", "--kind", "lemma",
-              "--statement", "theorem e : 1 = 1", "--identity", "a@b")
+              "--statement", "import Mathlib\ntheorem e : 1 = 1", "--identity", "a@b")
     assert rc == 0
     assert load_node(croot / "nodes" / "Env_lemma.toml").author.session == "env-session"
 
@@ -193,7 +194,7 @@ def test_audit_refuses_title_only(tmp_path, capsys):
     long_title = ("A statement whose title is long enough on its own to clear the length "
                   "floor, so that a lazy read-back could simply repeat it and look substantive")
     rc = _cli(mroot, "add", "demo", "Titled.lemma", "--title", long_title, "--kind", "lemma",
-              "--statement", "theorem titled : 1 = 1", "--identity", AUTHOR["identity"],
+              "--statement", "import Mathlib\ntheorem titled : 1 = 1", "--identity", AUTHOR["identity"],
               "--session", AUTHOR["session"])
     assert rc == 0
     assert _audit(mroot, slug="Titled_lemma", text=long_title.upper() + "!") == 1
