@@ -258,3 +258,14 @@ def test_regenerate_statement_with_prepended_imports_changes_hash(tmp_path):
     assert regen_diff(root, node, _manifest()) == ""
     text = statement_path(root, node).read_text().split("\n")
     assert text[1:3] == ["import Mathlib", "import Statements.DemoDefs"]
+# ---------------------------------------------------------------------------
+# the live campaigns: every registered statement is in its root's import list
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("campaign", LIVE_CAMPAIGNS)
+def test_live_campaign_root_imports_every_statement(campaign):
+    root = MISSIONS / campaign
+    camp = load_campaign(root)
+    assert missing_root_imports(root, camp.nodes.values()) == []
+    bad = {sl: import_header_error(root, n) for sl, n in camp.nodes.items()}
+    assert not {k: v for k, v in bad.items() if v}
