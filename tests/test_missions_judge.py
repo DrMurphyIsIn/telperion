@@ -175,6 +175,35 @@ def test_unconsumable_node_is_reported_not_fatal(tmp_path):
     assert man["not_consumable"] == list(b.skipped)
 
 
+_IDENT = __import__("re").compile(r"^[A-Za-z_][\w'.]*$")
+
+
+def test_configs_stdout_is_machine_readable_even_with_skipped_nodes(tmp_path, capsys):
+    """CI builds lake targets from `--configs` stdout; diagnostics must never land there.
+
+    Regression: a `::warning:: not consumable` line on stdout became the target
+    `MissionChallenges.::warning::zeta_reflection:` and lake died with "too many ':'"."""
+    art_ok = "import Mathlib\n\ntheorem fine : (1 : ℕ) = 1 := rfl\n"
+    stmt_ok = "import Statements.Defs\n\ntheorem fine : (1 : ℕ) = 1 := by sorry\n"
+    art_bad = "import Mathlib\n\ndef k : ℕ := 1\ntheorem bad : k = 1 := rfl\n"
+    stmt_bad = "import Statements.Defs\n\ndef k : ℕ := 1\ntheorem bad : k = 1 := by sorry\n"
+    tel = _island(tmp_path, artifact=art_ok, statement=stmt_ok,
+                  extra_nodes=[("Y_bad", stmt_bad, art_bad, "Bad.lean")])
+    rc = judge.main(["--island", "isl", "--telperion", str(tel), "--configs", "--shard", "0/1"])
+    out, err = capsys.readouterr()
+    assert rc == 0
+    assert "::warning::" in err and "Y_bad" in err
+    assert "::" not in out
+    for line in out.splitlines():
+        slug, cfg, sol, thm, bridge = line.split("\t")
+        assert _IDENT.match(slug) and _IDENT.match(sol) and _IDENT.match(thm) and _IDENT.match(bridge), line
+        assert cfg == f"{slug}.comparator.json"
+    # the other diagnostic paths are stderr too
+    assert judge.main(["--island", "nope", "--telperion", str(tel), "--configs"]) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and "::error::" in err
+
+
 def test_statement_name_not_suffix_of_theorem_is_refused(tmp_path):
     art = "import Mathlib\n\nnamespace A\ntheorem other : True := trivial\nend A\n"
     stmt = "import Statements.Defs\n\ntheorem other : True := by sorry\n"

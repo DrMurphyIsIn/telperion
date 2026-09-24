@@ -534,16 +534,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bundle = build_bundle(args.telperion, args.island, enable_nanoda=not args.no_nanoda,
                               only=args.only)
     except JudgeError as e:
-        print(f"::error::{e}")
+        print(f"::error::{e}", file=sys.stderr)
         return 2
     out = args.out or default_out(args.telperion, args.island)
+    # Diagnostics go to STDERR: `--configs` output is machine-read (the CI job builds lake
+    # targets from it), and a ::warning:: line on stdout once became the target
+    # `MissionChallenges.::warning::zeta_reflection:` ("too many ':'").
     for sk in bundle.skipped:
-        print(f"::warning::{args.island}: not consumable, skipped: {sk}")
+        print(f"::warning::{args.island}: not consumable, skipped: {sk}", file=sys.stderr)
     if args.configs:
         try:
             chosen = shard(bundle.challenges, args.shard)
         except JudgeError as e:
-            print(f"::error::{e}")
+            print(f"::error::{e}", file=sys.stderr)
             return 2
         for c in chosen:
             print(f"{c.slug}\t{c.slug}.comparator.json\t{c.solution_module}\t{c.theorem}\t{c.bridge_theorem}")
@@ -557,7 +560,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.check:
         problems = check_bundle(bundle, out)
         for p in problems:
-            print(f"::error::{args.island}: {p}")
+            print(f"::error::{args.island}: {p}", file=sys.stderr)
         if problems:
             return 1
         print(f"OK: {out} matches the registry ({len(bundle.challenges)} challenge(s))")
