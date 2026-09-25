@@ -249,6 +249,16 @@ class ComparatorRecord:
     #: the Lean kernel replay and the axiom whitelist still ran). Surfaced by
     #: `mission provenance-report` as "Lean kernel only".
     second_kernel: str = "nanoda"
+    #: The shard JOB that printed the PASS line, and its url.  A record pushed onto the same
+    #: pull request supersedes the run that validated the artifact (missions-comparator cancels
+    #: in-progress runs on pull_request), so the RUN's conclusion can be "cancelled" while the
+    #: judging job succeeded -- seen 2026-09-25 on cl/kwin.  The job is what a verifier should
+    #: open, so record it.
+    job_id: str = ""
+    job_url: str = ""
+    #: The literal `kernel=` token from the PASS line ("nanoda" or "lean-kernel-only"), as
+    #: observed rather than inferred from the node's flag.  `second_kernel` is its reading.
+    kernel_mode: str = ""
 
     def __post_init__(self):
         for f in ("run_id", "date", "artifact_sha256", "theorem", "second_kernel"):
@@ -450,6 +460,9 @@ def _node_to_doc(node: Node) -> dict:
             doc["comparator"]["run_url"] = node.comparator.run_url
         if node.comparator.second_kernel != "nanoda":
             doc["comparator"]["second_kernel"] = node.comparator.second_kernel
+        for _f in ("job_id", "job_url", "kernel_mode"):
+            if getattr(node.comparator, _f):
+                doc["comparator"][_f] = getattr(node.comparator, _f)
     if node.ci_record is not None:
         c = node.ci_record
         doc["ci_record"] = {
@@ -505,6 +518,8 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 artifact_sha256=c["artifact_sha256"], theorem=c["theorem"],
                 run_url=c.get("run_url", ""),
                 second_kernel=c.get("second_kernel", "nanoda"),
+                job_id=str(c.get("job_id", "")), job_url=c.get("job_url", ""),
+                kernel_mode=c.get("kernel_mode", ""),
             )
         ci_record = None
         if "ci_record" in doc:

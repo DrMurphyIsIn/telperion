@@ -1507,17 +1507,66 @@ def cmd_mission_comparator_record(args) -> int:
     if not art.exists():
         print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
         return 1
-    second = "nanoda"
-    if getattr(args, "lean_kernel_only", False):
-        second = "none: heavy_certificates"
-    elif node.heavy_certificates:
+    lean_only = bool(getattr(args, "lean_kernel_only", False))
+    if not lean_only and node.heavy_certificates:
         print(f"{slug}: node declares heavy_certificates = true, so the judge config had "
               "enable_nanoda = false; pass --lean-kernel-only to record that honestly.")
         return 1
+
+    # Read the verdict out of the judge's own job log rather than trusting the arguments.
+    # The JOB, never the run's conclusion: pushing this record to the same pull request
+    # supersedes the run that validated the artifact, so the run can read "cancelled" while
+    # the judging job succeeded (cl/kwin, 2026-09-25).
+    from .missions.judge_log import check as _check_log
+    run_id = str(args.run_id).strip()
+    theorem = args.theorem.strip()
+    job_id, job_url, kernel_mode, head_sha = "", "", "", ""
+    log_text = None
+    if getattr(args, "log", None):
+        log_text = Path(args.log).read_text(errors="replace")
+        job_id = str(getattr(args, "job_id", "") or "").strip()
+    elif not getattr(args, "no_verify", False):
+        found = _fetch_judge_job(run_id, slug)
+        if found is None:  # noqa: SIM108
+            print(f"{slug}: could not read the judge log for run {run_id} (is `gh` installed and "
+                  "authenticated?).  Pass --log FILE with the job log, or --no-verify to record "
+                  "without checking -- but then nothing has confirmed the run judged this node.")
+            return 1
+        job_id, job_url, log_text, head_sha = found
+    if log_text is not None:
+        errs = _check_log(log_text, node=slug, theorem=theorem, run_id=run_id,
+                          expect_lean_kernel_only=lean_only)
+        if errs:
+            for e in errs:
+                print(f"{slug}: {e}")
+            return 1
+        from .missions.judge_log import parse_verdicts as _pv
+        kernel_mode = _pv(log_text)[slug].kernel
+        # The judge saw the artifact as of the job's own head commit, which is not necessarily
+        # the working tree.  Hash the blob there and require it to match, so a PASS on an older
+        # version of the artifact cannot be cited for the current one.
+        if head_sha:
+            at_head = _blob_sha256(head_sha, art)
+            here = sha256_file(art)
+            if at_head is None:
+                print(f"{slug}: NOTE could not resolve {art.name} at the judged commit "
+                      f"{head_sha[:9]} (not in this checkout), so the record's hash is the "
+                      "working tree's; the grant's hash still pins the artifact.")
+            elif at_head != here:
+                print(f"{slug}: the judge saw {art.name} at {at_head[:16]}... but the working "
+                      f"tree has {here[:16]}...; that PASS is for a different version of the "
+                      "artifact and must not be recorded for this one.")
+                return 1
+    else:
+        print(f"{slug}: WARNING --no-verify: recording without reading the judge log, so the "
+              "theorem name and the kernel mode are unchecked.")
+    second = "none: heavy_certificates" if lean_only else "nanoda"
     rec = ComparatorRecord(
-        run_id=str(args.run_id).strip(), date=_date.today().isoformat(),
-        artifact_sha256=sha256_file(art), theorem=args.theorem.strip(),
+        run_id=run_id, date=_date.today().isoformat(),
+        artifact_sha256=sha256_file(art), theorem=theorem,
         run_url=(args.run_url or "").strip(), second_kernel=second,
+        job_id=job_id, job_url=(getattr(args, "job_url", "") or job_url or "").strip(),
+        kernel_mode=kernel_mode,
     )
     new_node = _dc.replace(node, comparator=rec, updated=rec.date)
     save_node(new_node, camp_root / "nodes" / f"{slug}.toml")
@@ -1525,6 +1574,80 @@ def cmd_mission_comparator_record(args) -> int:
           f"(artifact sha256 {rec.artifact_sha256[:16]}...; second kernel: {rec.second_kernel})")
     return 0
 
+
+
+
+def _fetch_judge_job(run_id: str, slug: str):
+    """(job_id, job_url, log text, head sha) of the shard whose log holds a verdict for `slug`.
+
+    Walks the run's jobs and reads each log through `gh`, because which shard judged a node is
+    a function of the shard split, not something the caller should have to know.  Returns None
+    when `gh` is unavailable or no job's log mentions the node.
+    """
+    import json
+    import subprocess
+
+    from .missions.judge_log import failed_nodes, parse_verdicts
+
+    def gh(*a):
+        r = subprocess.run(["gh", *a], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else None
+
+    out = gh("api", f"repos/{_gh_repo()}/actions/runs/{run_id}/jobs?per_page=100")
+    if out is None:
+        return None
+    try:
+        jobs = json.loads(out).get("jobs", [])
+    except json.JSONDecodeError:
+        return None
+    for job in jobs:
+        log = gh("api", f"repos/{_gh_repo()}/actions/jobs/{job['id']}/logs")
+        if not log:
+            continue
+        if slug in parse_verdicts(log) or slug in failed_nodes(log):
+            return str(job["id"]), job.get("html_url", ""), log, str(job.get("head_sha", ""))
+    return None
+
+
+def _gh_repo() -> str:
+    """owner/name of the origin remote, for the GitHub API."""
+    import os
+    import re
+    import subprocess
+
+    env = os.environ.get("GITHUB_REPOSITORY")
+    if env:
+        return env
+    r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    m = re.search(r"github\.com[:/](?P<repo>[^/]+/[^/.]+)", r.stdout or "")
+    return m.group("repo") if m else "DrMurphyIsIn/Arda"
+
+
+
+def _blob_sha256(commit: str, path: Path):
+    """sha256 of `path` as of `commit`, or None when it cannot be resolved here."""
+    import hashlib
+    import subprocess
+
+    # Resolve the repository from the ARTIFACT's own location, not the process's cwd: the
+    # registry and the artifact can live in a different checkout than the one we run in
+    # (e.g. `mission --missions-root <other worktree>`), and a cwd-based lookup would then
+    # silently report "cannot check".
+    art = path.resolve()
+    top = subprocess.run(["git", "-C", str(art.parent), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if top.returncode != 0:
+        return None
+    root = Path(top.stdout.strip()).resolve()
+    try:
+        rel = art.relative_to(root)
+    except ValueError:
+        return None
+    blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob",
+                           f"{commit}:{rel.as_posix()}"], capture_output=True)
+    if blob.returncode != 0:
+        return None
+    return hashlib.sha256(blob.stdout).hexdigest()
 
 def cmd_mission_verify(args) -> int:
     from .missions.verify import verify_campaign
@@ -1962,6 +2085,15 @@ def main(argv=None) -> int:
     p.add_argument("--lean-kernel-only", action="store_true", dest="lean_kernel_only",
                    help="the judge ran with enable_nanoda = false for this node "
                         "(heavy_certificates = true); the record says so")
+    p.add_argument("--job-id", default=None, dest="job_id",
+                   help="the shard job that printed the PASS line (found automatically when the "
+                        "log is fetched; required with --log to make the record point at a job)")
+    p.add_argument("--job-url", default=None, dest="job_url")
+    p.add_argument("--log", default=None,
+                   help="read the judge verdict from this file instead of fetching it (offline)")
+    p.add_argument("--no-verify", action="store_true", dest="no_verify",
+                   help="record WITHOUT reading the judge log: the theorem name and the kernel "
+                        "mode are then unchecked.  Last resort; say why in the commit message")
     p.set_defaults(mission_fn=cmd_mission_comparator_record)
 
     # ci-record SLUG [--campaign C] --workflow W --job J --run-id N [--head-sha S] [--conclusion C]
