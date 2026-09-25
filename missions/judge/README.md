@@ -16,7 +16,9 @@ end <namespace>
 ```
 
 `<Slug>.comparator.json` asks openai/ten-proofs Comparator to certify `MissionJudge.<Slug>`
-under `[propext, Quot.sound, Classical.choice]` with nanoda on. The module elaborates only
+under `[propext, Quot.sound, Classical.choice]` with nanoda on. A node whose toml says `heavy_certificates = true` (exact certificates that exhaust a
+16 GB runner under nanoda) gets `enable_nanoda = false`, is marked `lean-kernel-only` by
+`--configs`, and its record must say so (`mission comparator-record --lean-kernel-only`). The module elaborates only
 if the artifact's theorem has exactly the registered statement's type; the Comparator then
 checks the axiom whitelist on the export and replays the proof through the Lean kernel and
 nanoda. `MANIFEST.json` lists the nodes, the toolchain and the Comparator tag (which follows

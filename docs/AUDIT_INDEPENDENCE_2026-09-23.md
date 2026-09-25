@@ -94,7 +94,14 @@ workspace. The judge step raises the process stack limit (`ulimit -s unlimited`,
 fallback) before invoking the Comparator: nanoda replays proofs recursively and the large
 `decide +kernel` certificates of the KWin artifacts overflowed the 8 MB main-thread stack
 (#615, run 36055910789); a stack overflow is a runner limit, not a verdict, and the job
-says so. Whether the mirror still matches the island is `missions/mirrors.py` and the
+says so. With the stack raised, the same certificates exhaust the runner's 16 GB under
+nanoda instead (the runner is killed mid-replay). A node may therefore declare
+`heavy_certificates = true`: the judge then asserts it with `enable_nanoda = false` (Lean
+kernel replay and axiom whitelist still run), the shard provisions swap for the Lean
+replay, and the record must be written with `mission comparator-record --lean-kernel-only`,
+which stores `second_kernel = "none: heavy_certificates"`; `provenance-report` prints such
+nodes as "Lean kernel only". One kernel instead of two is a weaker verdict and is
+labelled as such, never silently. Whether the mirror still matches the island is `missions/mirrors.py` and the
 islands' `generate.py --check` jobs. Whether the island's `DBN.H` is the de Bruijn-Newman
 `H` is the read-back's job. The judge closes the gap between the two: given the vocabulary,
 the artifact proves this proposition and nothing weaker.
