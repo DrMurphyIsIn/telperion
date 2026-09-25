@@ -79,12 +79,17 @@ def _pipeline(block: str, text: str, fixture: Path) -> str:
     cmd = re.sub(r";\s*then$", "", cmd)
     cmd = re.sub(r'^\w+="\$\(', "", cmd)                  # bad="$( ... )"
     cmd = re.sub(r'(\|\|\s*true\s*)?\)"$', "", cmd.rstrip())
+    joins_itself = 'tr "\\n" " "' in cmd
     if re.search(r"<<<\s*\"\$\w+\"", cmd):
-        # Input is a shell variable the job joined in an earlier statement; check that.
-        var = re.search(r"<<<\s*\"\$(\w+)\"", cmd).group(1)
-        assert re.search(rf"{var}=\"\$\(tr\s+'?\\n'?", text), (
-            f"gate reads ${var} but nothing joins wrapped lines into it")
-        cmd = re.sub(r"<<<\s*\"\$\w+\"", f'<<< "$(tr "\\\\n" " " < {fixture})"', cmd)
+        if joins_itself:
+            # The gate joins the wrapped lines itself; feed it the fixture verbatim.
+            cmd = re.sub(r"<<<\s*\"\$\w+\"", f'<<< "$(cat {fixture})"', cmd)
+        else:
+            # Input is a variable an earlier statement joined; require that, then emulate it.
+            var = re.search(r"<<<\s*\"\$(\w+)\"", cmd).group(1)
+            assert re.search(rf"{var}=\"\$\(tr\s+'?\\n'?", text), (
+                f"gate reads ${var} but nothing joins wrapped lines into it")
+            cmd = re.sub(r"<<<\s*\"\$\w+\"", f'<<< "$(tr "\\\\n" " " < {fixture})"', cmd)
     elif re.search(r"<\s*\S+", cmd):
         cmd = re.sub(r"<\s*\S+", f"< {fixture}", cmd, count=1)
     elif re.search(r"echo\s+\"\$\w+\"", cmd):
@@ -176,3 +181,43 @@ def test_harness_would_catch_the_equality_shape(tmp_path):
     """The exact-match shape must read as firing on a clean subset (a false alarm)."""
     fx = _fixture(tmp_path, "legacy_subset.out", "".join(_SUBSET.format(i) for i in range(5)))
     assert _fires(_LEGACY_EQ, "", fx), "harness has no teeth: the equality shape looked subset-safe"
+
+
+_VERIFY_MARKS = ("sorryAx", "depends on axioms", "does not depend on any axioms",
+                 "lean-kernel-only")
+
+
+def test_no_verification_check_is_a_pipe_fed_grep_q():
+    """A pipe-fed `grep -q` stops meaning "found" once the producer outruns the pipe buffer.
+
+    `grep -q` exits at its first match; the producer then takes SIGPIPE, and under
+    `pipefail` the pipeline status goes non-zero, so `if <pipeline>` does not fire.  Every
+    such check must read a file or a here-string instead (`grep -q PAT <<< "$out"`).
+    """
+    bad = []
+    for p in sorted(_WF_DIR.glob("*.yml")):
+        for i, ln in enumerate(p.read_text().split("\n"), 1):
+            if not any(m in ln for m in _VERIFY_MARKS):
+                continue
+            if re.search(r"[|]\s*(grep|cut|tr|sed)[^|]*\bgrep\s+-[A-Za-z]*q", ln) or \
+               re.search(r"[|]\s*grep\s+-[A-Za-z]*q", ln):
+                bad.append(f"{p.name}:{i}: {ln.strip()}")
+    assert not bad, "verification check pipes into grep -q (silent-pass hazard):\n" + "\n".join(bad)
+
+
+def test_harness_would_catch_the_echo_pipe_shape(tmp_path):
+    """`echo "$out" | grep -q sorryAx` passes silently once $out exceeds the pipe buffer."""
+    big = "'Cheat' depends on axioms: [propext, sorryAx]\n" + ("x" * 80 + "\n") * 16000
+    fx = _fixture(tmp_path, "big.out", big)
+    r = subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-o", "pipefail", "-c",
+         f'out="$(cat {fx})"; if echo "$out" | grep -q sorryAx; then echo FIRED; fi'],
+        capture_output=True, text=True)
+    assert "FIRED" not in r.stdout, (
+        "the echo-pipe shape fired here, so this meta-test no longer demonstrates the hazard "
+        "(pipe buffer or grep behaviour changed); keep the here-string rule anyway")
+    r2 = subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-o", "pipefail", "-c",
+         f'out="$(cat {fx})"; if grep -q sorryAx <<< "$out"; then echo FIRED; fi'],
+        capture_output=True, text=True)
+    assert "FIRED" in r2.stdout, "the here-string form must catch sorryAx"
