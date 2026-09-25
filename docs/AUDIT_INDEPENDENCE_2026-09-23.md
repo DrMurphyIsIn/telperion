@@ -90,7 +90,11 @@ on a GitHub-hosted runner from a clean checkout. It is **not** independent of th
 vocabulary: the registered statement is elaborated in the artifact's own namespace and
 `open` context on the island, not against the campaign's vocabulary mirror
 (`Statements.RHDefs`, `MMDefs`), because the Comparator needs both sides in one Lake
-workspace. Whether the mirror still matches the island is `missions/mirrors.py` and the
+workspace. The judge step raises the process stack limit (`ulimit -s unlimited`, 4 GB
+fallback) before invoking the Comparator: nanoda replays proofs recursively and the large
+`decide +kernel` certificates of the KWin artifacts overflowed the 8 MB main-thread stack
+(#615, run 36055910789); a stack overflow is a runner limit, not a verdict, and the job
+says so. Whether the mirror still matches the island is `missions/mirrors.py` and the
 islands' `generate.py --check` jobs. Whether the island's `DBN.H` is the de Bruijn-Newman
 `H` is the read-back's job. The judge closes the gap between the two: given the vocabulary,
 the artifact proves this proposition and nothing weaker.
