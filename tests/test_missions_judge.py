@@ -195,8 +195,9 @@ def test_configs_stdout_is_machine_readable_even_with_skipped_nodes(tmp_path, ca
     assert "::warning::" in err and "Y_bad" in err
     assert "::" not in out
     for line in out.splitlines():
-        slug, cfg, sol, thm, bridge = line.split("\t")
+        slug, cfg, sol, thm, bridge, kernel = line.split("\t")
         assert _IDENT.match(slug) and _IDENT.match(sol) and _IDENT.match(thm) and _IDENT.match(bridge), line
+        assert kernel in ("nanoda", "lean-kernel-only")
         assert cfg == f"{slug}.comparator.json"
     # the other diagnostic paths are stderr too
     assert judge.main(["--island", "nope", "--telperion", str(tel), "--configs"]) == 2
@@ -240,6 +241,28 @@ def test_artifact_context_collects_namespace_and_opens():
         judge.artifact_context("import Mathlib\ntheorem other : True := trivial\n", stmt)
 
 
+def test_heavy_certificates_turns_nanoda_off_for_that_node_only(tmp_path, capsys):
+    """`heavy_certificates = true` in a node toml -> enable_nanoda false in ITS config and a
+    `lean-kernel-only` column in --configs; other nodes keep nanoda."""
+    art_a = "import Mathlib\n\ntheorem a : (1 : ℕ) = 1 := rfl\n"
+    stmt_a = "import Statements.Defs\n\ntheorem a : (1 : ℕ) = 1 := by sorry\n"
+    art_b = "import Mathlib\n\ntheorem b : (2 : ℕ) = 2 := rfl\n"
+    stmt_b = "import Statements.Defs\n\ntheorem b : (2 : ℕ) = 2 := by sorry\n"
+    tel = _island(tmp_path, artifact=art_a, statement=stmt_a,
+                  extra_nodes=[("Y_heavy", stmt_b, art_b, "Heavy.lean")])
+    toml = tel / "missions" / "x" / "nodes" / "Y_heavy.toml"
+    toml.write_text("heavy_certificates = true\n" + toml.read_text())   # top-level, not under [proof]
+    b = judge.build_bundle(tel, "isl")
+    by = {c.slug: c for c in b.challenges}
+    assert by["X_node"].nanoda is True and by["X_node"].config["enable_nanoda"] is True
+    assert by["Y_heavy"].nanoda is False and by["Y_heavy"].config["enable_nanoda"] is False
+    man = json.loads(b.files()["MANIFEST.json"])
+    assert {n["slug"]: n["nanoda"] for n in man["nodes"]} == {"X_node": True, "Y_heavy": False}
+    assert judge.main(["--island", "isl", "--telperion", str(tel), "--configs"]) == 0
+    cols = {ln.split("\t")[0]: ln.split("\t")[5] for ln in capsys.readouterr().out.splitlines()}
+    assert cols == {"X_node": "nanoda", "Y_heavy": "lean-kernel-only"}
+
+
 def test_unknown_toolchain_is_refused():
     with pytest.raises(judge.JudgeError, match="no known Comparator tag"):
         judge.comparator_tag("leanprover/lean4:v4.99.0")
@@ -259,7 +282,7 @@ def test_nanoda_off_when_requested(tmp_path):
 
 def test_shard_partitions_slug_order():
     def ch(slug):
-        return judge.Challenge(slug, "c", "t", "s", "m", "b", "", {}, "a", "s")
+        return judge.Challenge(slug, "c", "t", "s", "m", "b", True, "", {}, "a", "s")
     cs = [ch("c"), ch("a"), ch("b"), ch("d"), ch("e")]
     assert [c.slug for c in judge.shard(cs, None)] == ["a", "b", "c", "d", "e"]
     parts = [[c.slug for c in judge.shard(cs, f"{i}/3")] for i in range(3)]
@@ -309,7 +332,7 @@ def test_cli_list_configs_check_and_write(tmp_path, capsys):
     assert "Isl.Deep.node_thm" in capsys.readouterr().out
     assert judge.main([*common, "--configs", "--shard", "0/1"]) == 0
     line = capsys.readouterr().out.strip().split("\t")
-    assert line == ["X_node", "X_node.comparator.json", "Art", "Isl.Deep.node_thm", "MissionJudge.X_node"]
+    assert line == ["X_node", "X_node.comparator.json", "Art", "Isl.Deep.node_thm", "MissionJudge.X_node", "nanoda"]
     assert judge.main([*common, "--check"]) == 1
     assert judge.main(common) == 0
     assert judge.main([*common, "--check"]) == 0

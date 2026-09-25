@@ -296,6 +296,7 @@ class ProvenanceRow:
     self_audit: bool
     comparator_run: str    # "" when no passing run is recorded
     comparator_stale: bool
+    lean_kernel_only: bool
     has_grant: bool
 
     @property
@@ -325,6 +326,7 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             self_audit=readback_is_self_audit(n),
             comparator_run=n.comparator.run_id if n.comparator else "",
             comparator_stale=bool(comparator_staleness(campaign.root, n)),
+            lean_kernel_only=bool(n.comparator and n.comparator.second_kernel != "nanoda"),
             has_grant=n.grant is not None,
         ))
     return rows
@@ -346,4 +348,8 @@ def render_provenance_report(campaign) -> str:
     covered = [r for r in proved if r.comparator_run and not r.comparator_stale]
     if covered:
         lines.append(f"  ({len(covered)} proved node(s) covered by a passing Comparator run)")
+    lko = [r for r in covered if r.lean_kernel_only]
+    for r in lko:
+        lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
+                     "(heavy_certificates: nanoda not run)")
     return "\n".join(lines) + "\n"
