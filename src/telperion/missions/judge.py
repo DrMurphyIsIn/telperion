@@ -355,6 +355,8 @@ class Challenge:
     solution_module: str
     challenge_module: str
     bridge_theorem: str
+    #: False when the node declares `heavy_certificates = true` (nanoda off for this node).
+    nanoda: bool
     challenge_text: str
     config: "OrderedDict[str, object]"
     artifact_sha256: str
@@ -400,11 +402,21 @@ class Bundle:
                 slug=c.slug, campaign=c.campaign, theorem=c.theorem,
                 solution_module=c.solution_module, challenge_module=c.challenge_module,
                 bridge_theorem=c.bridge_theorem, config=f"{c.slug}.comparator.json",
+                nanoda=c.nanoda,
                 artifact_sha256=c.artifact_sha256, statement_sha256=c.statement_sha256,
             ) for c in self.challenges],
         )
         files["MANIFEST.json"] = json.dumps(manifest, indent=2) + "\n"
         return files
+
+
+def _heavy_certificates(node_toml: Path) -> bool:
+    """The node's `heavy_certificates` flag (False when absent or unreadable)."""
+    import tomllib
+    try:
+        return bool(tomllib.loads(Path(node_toml).read_text()).get("heavy_certificates", False))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
 
 
 def _sha256(path: Path) -> str:
@@ -444,12 +456,18 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
             problems.append(f"{a.campaign}/{a.node}: {e}")
             continue
         bridge = bridge_theorem_name(a.node)
+        # Per-node: `heavy_certificates = true` in the node toml turns nanoda off for that
+        # node only (its exact certificates exhaust a 16 GB runner under nanoda; the Lean
+        # kernel replay and the axiom whitelist still run). Recorded as "Lean kernel only".
+        heavy = _heavy_certificates(telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
+        node_nanoda = enable_nanoda and not heavy
         cfg = challenge_config(
             challenge_module=chal, solution_module=chal, theorem_names=[bridge],
-            permitted_axioms=CLEAN_AXIOMS, enable_nanoda=enable_nanoda)
+            permitted_axioms=CLEAN_AXIOMS, enable_nanoda=node_nanoda)
         challenges.append(Challenge(
             slug=a.node, campaign=a.campaign, theorem=a.theorem, solution_module=sol,
-            challenge_module=chal, bridge_theorem=bridge, challenge_text=text, config=cfg,
+            challenge_module=chal, bridge_theorem=bridge, nanoda=node_nanoda,
+            challenge_text=text, config=cfg,
             artifact_sha256=_sha256(a.artifact), statement_sha256=_sha256(stmt_path)))
     if problems and not challenges:
         raise JudgeError(f"island {island!r}: no consumable node:\n  " + "\n  ".join(problems))
@@ -525,8 +543,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these node slugs")
     ap.add_argument("--list", action="store_true", help="print the nodes and exit")
     ap.add_argument("--configs", action="store_true",
-                    help="print `slug<TAB>config<TAB>solution_module<TAB>theorem` for the "
-                         "(sharded) node set and exit -- what the CI job iterates over")
+                    help="print `slug<TAB>config<TAB>solution_module<TAB>theorem<TAB>bridge<TAB>"
+                         "nanoda|lean-kernel-only` for the (sharded) node set and exit -- what "
+                         "the CI job iterates over")
     ap.add_argument("--shard", default=None, metavar="I/N",
                     help="with --configs: only nodes whose sorted index mod N == I")
     args = ap.parse_args(list(argv) if argv is not None else None)
@@ -549,7 +568,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"::error::{e}", file=sys.stderr)
             return 2
         for c in chosen:
-            print(f"{c.slug}\t{c.slug}.comparator.json\t{c.solution_module}\t{c.theorem}\t{c.bridge_theorem}")
+            print(f"{c.slug}\t{c.slug}.comparator.json\t{c.solution_module}\t{c.theorem}\t{c.bridge_theorem}\t{'nanoda' if c.nanoda else 'lean-kernel-only'}")
         return 0
     if args.list:
         for c in bundle.challenges:

@@ -1507,15 +1507,22 @@ def cmd_mission_comparator_record(args) -> int:
     if not art.exists():
         print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
         return 1
+    second = "nanoda"
+    if getattr(args, "lean_kernel_only", False):
+        second = "none: heavy_certificates"
+    elif node.heavy_certificates:
+        print(f"{slug}: node declares heavy_certificates = true, so the judge config had "
+              "enable_nanoda = false; pass --lean-kernel-only to record that honestly.")
+        return 1
     rec = ComparatorRecord(
         run_id=str(args.run_id).strip(), date=_date.today().isoformat(),
         artifact_sha256=sha256_file(art), theorem=args.theorem.strip(),
-        run_url=(args.run_url or "").strip(),
+        run_url=(args.run_url or "").strip(), second_kernel=second,
     )
     new_node = _dc.replace(node, comparator=rec, updated=rec.date)
     save_node(new_node, camp_root / "nodes" / f"{slug}.toml")
     print(f"{slug}: comparator run {rec.run_id} recorded for {rec.theorem} "
-          f"(artifact sha256 {rec.artifact_sha256[:16]}...)")
+          f"(artifact sha256 {rec.artifact_sha256[:16]}...; second kernel: {rec.second_kernel})")
     return 0
 
 
@@ -1952,6 +1959,9 @@ def main(argv=None) -> int:
     p.add_argument("--theorem", required=True,
                    help="fully qualified theorem name the Comparator config asserted")
     p.add_argument("--run-url", default=None, dest="run_url")
+    p.add_argument("--lean-kernel-only", action="store_true", dest="lean_kernel_only",
+                   help="the judge ran with enable_nanoda = false for this node "
+                        "(heavy_certificates = true); the record says so")
     p.set_defaults(mission_fn=cmd_mission_comparator_record)
 
     # ci-record SLUG [--campaign C] --workflow W --job J --run-id N [--head-sha S] [--conclusion C]

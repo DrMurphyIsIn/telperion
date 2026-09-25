@@ -436,6 +436,46 @@ def test_ci_record_round_trips_and_refuses_empty_fields(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# heavy_certificates: Lean-kernel-only records are labelled, never silent
+# ---------------------------------------------------------------------------
+
+def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem hv : 1 = 1"
+    node = _open_with_proof(croot, "HV_one", stmt, f"{stmt} := by rfl\n")
+    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_one.toml")
+    assert "heavy_certificates = true" in (croot / "nodes" / "HV_one.toml").read_text()
+    grant_status(load_campaign(croot), "HV_one", **GATE)
+    # a plain record is refused: the judge did not run nanoda on this node
+    assert _cli(mroot, "comparator-record", "HV_one", "--campaign", "demo",
+                "--run-id", "9", "--theorem", "hv") == 1
+    assert "heavy_certificates" in capsys.readouterr().out
+    assert load_node(croot / "nodes" / "HV_one.toml").comparator is None
+    assert _cli(mroot, "comparator-record", "HV_one", "--campaign", "demo",
+                "--run-id", "9", "--theorem", "hv", "--lean-kernel-only") == 0
+    n = load_node(croot / "nodes" / "HV_one.toml")
+    assert n.comparator.second_kernel == "none: heavy_certificates"
+    assert 'second_kernel = "none: heavy_certificates"' in (croot / "nodes" / "HV_one.toml").read_text()
+    assert n.heavy_certificates is True
+    capsys.readouterr()
+    assert _cli(mroot, "provenance-report", "demo") == 0
+    out = capsys.readouterr().out
+    assert "HV_one" in out and "Lean kernel only" in out
+    assert verify_campaign(croot).ok
+
+
+def test_ordinary_record_round_trips_without_second_kernel_key(tmp_path):
+    from telperion.missions.schema import ComparatorRecord
+    node = Node(name="S.k", title="t", kind="lemma", status="open", depends_on=(),
+                statement_module="Statements.S_k",
+                comparator=ComparatorRecord("1", "d", "a", "S.k"))
+    p = tmp_path / "S_k.toml"
+    save_node(node, p)
+    assert "second_kernel" not in p.read_text()
+    assert load_node(p).comparator.second_kernel == "nanoda"
+
+
+# ---------------------------------------------------------------------------
 # migration and report
 # ---------------------------------------------------------------------------
 

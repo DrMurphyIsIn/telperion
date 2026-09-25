@@ -243,9 +243,15 @@ class ComparatorRecord:
     artifact_sha256: str
     theorem: str
     run_url: str = ""
+    #: Which second kernel replayed the export: "nanoda" (the default judge config) or
+    #: "none: heavy_certificates" when the node's `heavy_certificates = true` turned nanoda
+    #: off (its exact `decide +kernel` certificates exhaust a 16 GB runner under nanoda;
+    #: the Lean kernel replay and the axiom whitelist still ran). Surfaced by
+    #: `mission provenance-report` as "Lean kernel only".
+    second_kernel: str = "nanoda"
 
     def __post_init__(self):
-        for f in ("run_id", "date", "artifact_sha256", "theorem"):
+        for f in ("run_id", "date", "artifact_sha256", "theorem", "second_kernel"):
             if not getattr(self, f).strip():
                 raise SchemaError(f"comparator.{f} must be non-empty")
 
@@ -305,6 +311,10 @@ class Node:
     requires_ci_job: str = ""
     #: The recorded passing run of that job (see CIRecord); written by `mission ci-record`.
     ci_record: Optional[CIRecord] = None
+    #: True when the artifact's exact certificates (`decide +kernel` LDL^T blocks, ~16 GB to
+    #: replay) cannot be run through nanoda on a hosted runner: the judge then asserts the
+    #: node with `enable_nanoda = false` and the record says "Lean kernel only".
+    heavy_certificates: bool = False
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -361,7 +371,7 @@ _MODELLED_NODE_KEYS = frozenset({
     "name", "title", "kind", "status", "statement_module", "source",
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
-    "requires_ci_job", "ci_record",
+    "requires_ci_job", "ci_record", "heavy_certificates",
 })
 
 
@@ -379,6 +389,8 @@ def _node_to_doc(node: Node) -> dict:
         doc["deprecated_reason"] = node.deprecated_reason
     if node.requires_ci_job:
         doc["requires_ci_job"] = node.requires_ci_job
+    if node.heavy_certificates:
+        doc["heavy_certificates"] = True
     if node.created:
         doc["created"] = node.created
     if node.updated:
@@ -436,6 +448,8 @@ def _node_to_doc(node: Node) -> dict:
         }
         if node.comparator.run_url:
             doc["comparator"]["run_url"] = node.comparator.run_url
+        if node.comparator.second_kernel != "nanoda":
+            doc["comparator"]["second_kernel"] = node.comparator.second_kernel
     if node.ci_record is not None:
         c = node.ci_record
         doc["ci_record"] = {
@@ -490,6 +504,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 run_id=str(c["run_id"]), date=c["date"],
                 artifact_sha256=c["artifact_sha256"], theorem=c["theorem"],
                 run_url=c.get("run_url", ""),
+                second_kernel=c.get("second_kernel", "nanoda"),
             )
         ci_record = None
         if "ci_record" in doc:
@@ -519,6 +534,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             comparator=comparator,
             requires_ci_job=doc.get("requires_ci_job", ""),
             ci_record=ci_record,
+            heavy_certificates=bool(doc.get("heavy_certificates", False)),
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:
