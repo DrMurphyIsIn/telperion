@@ -678,6 +678,7 @@ def verify_campaign(
     deep_lean: bool = False,
     runner: Optional[Callable] = None,
     universe=None,
+    strict_provenance: bool = False,
 ) -> VerifyReport:
     """Full invariant battery (read-only). Returns VerifyReport(errors, warnings, ok).
 
@@ -799,6 +800,19 @@ def verify_campaign(
         stale = comparator_staleness(root, node)
         if stale:
             warnings.append(f"Node {sl!r}: {stale}")
+        # A Comparator record whose own checks were skipped or could not complete is not
+        # wrong, but it must not read like a fully checked one.  `--strict-provenance` turns
+        # that into a failure, so a campaign can require fully checked records.
+        if node.comparator is not None:
+            from .provenance import ProvenanceRow, weak_record_reasons
+            row = ProvenanceRow(
+                campaign=root.name, slug=sl, status=node.status, independence="",
+                self_audit=False, comparator_run=node.comparator.run_id,
+                comparator_stale=bool(stale), lean_kernel_only=False, has_grant=True,
+                log_check=node.comparator.log_check, head_check=node.comparator.head_check)
+            for why in weak_record_reasons(row):
+                msg = f"Node {sl!r}: Comparator record is weakly checked -- {why}"
+                (errors if strict_provenance else warnings).append(msg)
         ci = required_ci_problem(root, node)
         if ci and node.status == "proved":
             errors.append(f"Node {sl!r}: status is 'proved' but it {ci}")

@@ -1528,6 +1528,12 @@ def cmd_mission_comparator_record(args) -> int:
     if getattr(args, "log", None):
         log_text = Path(args.log).read_text(errors="replace")
         log_check = "verified-offline"
+        # When `gh` is reachable the caller's --head-sha is not taken on trust either.
+        api_sha = _job_head_sha(job_id) if job_id else None
+        if api_sha and head_sha and not (api_sha == head_sha or api_sha.startswith(head_sha)):
+            print(f"{slug}: --head-sha {head_sha} is not the head of job {job_id}, which the "
+                  f"API says is {api_sha}.")
+            return 1
         if not head_sha:
             print(f"{slug}: --log needs --head-sha, the commit the judging job checked out, or "
                   "the artifact-at-that-commit check silently does not happen.  Find it with "
@@ -1563,6 +1569,9 @@ def cmd_mission_comparator_record(args) -> int:
         if at_head is None:
             _try_fetch(art, head_sha)          # a PR head is normally fetchable
             at_head = _blob_sha256(head_sha, art)
+        # Store the FULL 40-hex commit: a provenance field must not leave a verifier
+        # disambiguating an abbreviation years later.
+        head_sha = _full_sha(art, head_sha) or head_sha
         here = sha256_file(art)
         if at_head is None:
             if not getattr(args, "allow_unresolved_head", False):
@@ -1642,6 +1651,38 @@ def _fetch_judge_job(run_id: str, slug: str):
     return choose(seen, slug)
 
 
+
+
+def _full_sha(path: Path, commit: str):
+    """`commit` as a full 40-hex commit id in the artifact's repository, or None."""
+    import subprocess
+
+    if not commit:
+        return None
+    top = subprocess.run(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if top.returncode != 0:
+        return None
+    r = subprocess.run(["git", "-C", top.stdout.strip(), "rev-parse", f"{commit}^{{commit}}"],
+                       capture_output=True, text=True)
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and len(out) == 40 else None
+
+
+def _job_head_sha(job_id: str):
+    """The head commit GitHub reports for a job, or None when `gh` cannot answer."""
+    import json
+    import subprocess
+
+    r = subprocess.run(["gh", "api", f"repos/{_gh_repo()}/actions/jobs/{job_id}"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        return str(json.loads(r.stdout).get("head_sha") or "") or None
+    except json.JSONDecodeError:
+        return None
+
 def _try_fetch(path: Path, commit: str) -> None:
     """Best-effort `git fetch origin <commit>`, so an unfetched PR head stops being a dead end."""
     import subprocess
@@ -1706,7 +1747,8 @@ def cmd_mission_verify(args) -> int:
     seen_warnings: set[str] = set()
     for camp_root in roots:
         deep = getattr(args, "deep_lean", False)
-        report = verify_campaign(camp_root, deep_lean=deep)
+        report = verify_campaign(camp_root, deep_lean=deep,
+                                 strict_provenance=getattr(args, 'strict_provenance', False))
         if report.errors:
             for e in report.errors:
                 print(f"ERROR [{camp_root.name}]: {e}")
@@ -2174,6 +2216,10 @@ def main(argv=None) -> int:
     p.add_argument("campaign", nargs="?", default=None)
     p.add_argument("--deep-lean", action="store_true", dest="deep_lean",
                    help="run lake build in lean/")
+    p.add_argument("--strict-provenance", action="store_true", dest="strict_provenance",
+                   help="treat a weakly checked Comparator record (written with --no-verify, "
+                        "from a supplied log, or without the artifact check at the judged "
+                        "commit) as an ERROR rather than a warning")
     p.set_defaults(mission_fn=cmd_mission_verify)
 
     # graph [CAMPAIGN]

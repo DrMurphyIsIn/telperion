@@ -297,6 +297,9 @@ class ProvenanceRow:
     comparator_run: str    # "" when no passing run is recorded
     comparator_stale: bool
     lean_kernel_only: bool
+    #: How the record was checked when written ("" for records predating the checks).
+    log_check: str
+    head_check: str
     has_grant: bool
 
     @property
@@ -328,6 +331,8 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             comparator_stale=bool(comparator_staleness(campaign.root, n)),
             lean_kernel_only=bool(n.comparator and n.comparator.second_kernel != "nanoda"),
             has_grant=n.grant is not None,
+            log_check=(n.comparator.log_check if n.comparator else ""),
+            head_check=(n.comparator.head_check if n.comparator else ""),
         ))
     return rows
 
@@ -352,4 +357,27 @@ def render_provenance_report(campaign) -> str:
     for r in lko:
         lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
                      "(heavy_certificates: nanoda not run)")
+    for r in covered:
+        weak = weak_record_reasons(r)
+        if weak:
+            lines.append(f"  {r.slug:<48} comparator={r.comparator_run} "
+                         f"WEAKLY CHECKED: {'; '.join(weak)}")
     return "\n".join(lines) + "\n"
+
+
+#: A Comparator record whose own checks were skipped or could not complete.  Not an error --
+#: the record may be perfectly true -- but it must never read like a fully checked one.
+def weak_record_reasons(row) -> List[str]:
+    out = []
+    if row.log_check == "skipped":
+        out.append("written with --no-verify, so no judge log confirmed the theorem or kernel")
+    elif row.log_check == "verified-offline":
+        out.append("verified against a supplied log file; the job id is the recorder's word")
+    if row.head_check == "unresolved":
+        out.append("the artifact could not be hashed at the judged commit, so only the grant "
+                   "pins the artifact")
+    elif row.head_check == "skipped":
+        out.append("the artifact was not checked at the judged commit")
+    if row.comparator_run and not row.log_check and not row.head_check:
+        out.append("predates the record checks (no log_check/head_check)")
+    return out
