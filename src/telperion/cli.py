@@ -1624,8 +1624,8 @@ def _fetch_judge_job(run_id: str, slug: str):
     from .missions.judge_log import JobVerdict, choose, failed_nodes, parse_verdicts
 
     def gh(*a):
-        r = subprocess.run(["gh", *a], capture_output=True, text=True)
-        return r.stdout if r.returncode == 0 else None
+        r = _run_ok(["gh", *a], text=True)
+        return r.stdout if r is not None else None
 
     out = gh("api", f"repos/{_gh_repo()}/actions/runs/{run_id}/jobs?per_page=100")
     if out is None:
@@ -1653,20 +1653,33 @@ def _fetch_judge_job(run_id: str, slug: str):
 
 
 
+def _run_ok(cmd, **kw):
+    """subprocess.run that returns None when the tool is absent or fails.
+
+    A missing `gh` or `git` must surface as "cannot check", which callers turn into a clean
+    refusal; a traceback out of a provenance command helps nobody.
+    """
+    import subprocess
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, **kw)
+    except (FileNotFoundError, OSError):
+        return None
+    return r if r.returncode == 0 else None
+
 def _full_sha(path: Path, commit: str):
     """`commit` as a full 40-hex commit id in the artifact's repository, or None."""
     import subprocess
 
     if not commit:
         return None
-    top = subprocess.run(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True)
-    if top.returncode != 0:
+    top = _run_ok(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"],
+                  text=True)
+    if top is None:
         return None
-    r = subprocess.run(["git", "-C", top.stdout.strip(), "rev-parse", f"{commit}^{{commit}}"],
-                       capture_output=True, text=True)
-    out = r.stdout.strip()
-    return out if r.returncode == 0 and len(out) == 40 else None
+    r = _run_ok(["git", "-C", top.stdout.strip(), "rev-parse", f"{commit}^{{commit}}"], text=True)
+    out = r.stdout.strip() if r is not None else ""
+    return out if len(out) == 40 else None
 
 
 def _job_head_sha(job_id: str):
@@ -1674,9 +1687,8 @@ def _job_head_sha(job_id: str):
     import json
     import subprocess
 
-    r = subprocess.run(["gh", "api", f"repos/{_gh_repo()}/actions/jobs/{job_id}"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
+    r = _run_ok(["gh", "api", f"repos/{_gh_repo()}/actions/jobs/{job_id}"], text=True)
+    if r is None:
         return None
     try:
         return str(json.loads(r.stdout).get("head_sha") or "") or None
@@ -1689,12 +1701,11 @@ def _try_fetch(path: Path, commit: str) -> None:
 
     if not commit:
         return
-    top = subprocess.run(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True)
-    if top.returncode != 0:
+    top = _run_ok(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"],
+                  text=True)
+    if top is None:
         return
-    subprocess.run(["git", "-C", top.stdout.strip(), "fetch", "--quiet", "origin", commit],
-                   capture_output=True)
+    _run_ok(["git", "-C", top.stdout.strip(), "fetch", "--quiet", "origin", commit])
 
 
 def _gh_repo() -> str:
@@ -1706,8 +1717,8 @@ def _gh_repo() -> str:
     env = os.environ.get("GITHUB_REPOSITORY")
     if env:
         return env
-    r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
-    m = re.search(r"github\.com[:/](?P<repo>[^/]+/[^/.]+)", r.stdout or "")
+    r = _run_ok(["git", "remote", "get-url", "origin"], text=True)
+    m = re.search(r"github\.com[:/](?P<repo>[^/]+/[^/.]+)", (r.stdout if r else "") or "")
     return m.group("repo") if m else "DrMurphyIsIn/Arda"
 
 
@@ -1722,18 +1733,16 @@ def _blob_sha256(commit: str, path: Path):
     # (e.g. `mission --missions-root <other worktree>`), and a cwd-based lookup would then
     # silently report "cannot check".
     art = path.resolve()
-    top = subprocess.run(["git", "-C", str(art.parent), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True)
-    if top.returncode != 0:
+    top = _run_ok(["git", "-C", str(art.parent), "rev-parse", "--show-toplevel"], text=True)
+    if top is None:
         return None
     root = Path(top.stdout.strip()).resolve()
     try:
         rel = art.relative_to(root)
     except ValueError:
         return None
-    blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob",
-                           f"{commit}:{rel.as_posix()}"], capture_output=True)
-    if blob.returncode != 0:
+    blob = _run_ok(["git", "-C", str(root), "cat-file", "blob", f"{commit}:{rel.as_posix()}"])
+    if blob is None:
         return None
     return hashlib.sha256(blob.stdout).hexdigest()
 
