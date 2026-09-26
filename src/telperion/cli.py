@@ -1561,7 +1561,9 @@ def cmd_mission_comparator_record(args) -> int:
                 print(f"{slug}: {e}")
             return 1
         from .missions.judge_log import parse_verdicts as _pv
-        kernel_mode = _pv(log_text)[slug].kernel
+        _v = _pv(log_text)[slug]
+        #: A pre-#632 log states no mode; say so instead of inferring one from the switch.
+        kernel_mode = _v.kernel or "unstated"
         # The judge saw the artifact as of the job's own head commit, which is not necessarily
         # the working tree.  Hash the blob there and require it to match, so a PASS on an older
         # version of the artifact cannot be cited for the current one.

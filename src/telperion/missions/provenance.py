@@ -301,6 +301,8 @@ class ProvenanceRow:
     log_check: str
     head_check: str
     has_grant: bool
+    #: The literal `kernel=` token the log printed, or "unstated" for a pre-#632 log.
+    kernel_mode: str = ""
 
     @property
     def flagged(self) -> bool:
@@ -333,6 +335,7 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             has_grant=n.grant is not None,
             log_check=(n.comparator.log_check if n.comparator else ""),
             head_check=(n.comparator.head_check if n.comparator else ""),
+            kernel_mode=(n.comparator.kernel_mode if n.comparator else ""),
         ))
     return rows
 
@@ -378,6 +381,9 @@ def weak_record_reasons(row) -> List[str]:
                    "pins the artifact")
     elif row.head_check == "skipped":
         out.append("the artifact was not checked at the judged commit")
+    if row.kernel_mode == "unstated":
+        out.append("the judge log predates the kernel field (#632), so the recorded second "
+                   "kernel is the recorder's reading, not the log's word")
     if row.comparator_run and not row.log_check and not row.head_check:
         out.append("predates the record checks (no log_check/head_check)")
     return out

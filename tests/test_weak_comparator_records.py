@@ -79,3 +79,13 @@ def test_report_lists_weak_records(tmp_path):
     rows = [_row(slug="Weak", log_check="skipped", head_check="skipped")]
     line = "; ".join(prov.weak_record_reasons(rows[0]))
     assert "no judge log confirmed" in line
+
+
+def test_an_unstated_kernel_is_surfaced_not_assumed():
+    """A pre-#632 log states no kernel mode; the record must not present one as confirmed."""
+    why = prov.weak_record_reasons(_row(kernel_mode="unstated"))
+    assert why and "predates the kernel field" in why[0]
+
+
+def test_a_stated_kernel_is_not_flagged():
+    assert prov.weak_record_reasons(_row(kernel_mode="nanoda")) == []
