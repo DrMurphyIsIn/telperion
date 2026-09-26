@@ -46,6 +46,11 @@ Governance commit `missions: record provenance; refuse self-audits; pin grants t
   fails a proved node whose read-back is a self-audit.
 * Every read-back that existed on 2026-09-23 (117 across the four campaigns) carries
   `independence = "unverified"`. No status changed; no testimony was deleted or edited.
+* A node may declare `requires_ci_job = "<workflow>:<job>"` (owner ruling 2026-09-24, for
+  artifacts verified only by a non-required job such as the anduril kernel ladder). The
+  gate then refuses to grant, and `verify` refuses a proved status, unless `mission
+  ci-record` has stored a `success` run of exactly that job on the current artifact
+  digest (`[ci_record] {workflow, job, run_id, head_sha, artifact_sha256, conclusion, date}`).
 * `mission provenance-report` lists, per campaign, the proved nodes with no independent
   read-back and no passing judge run. On 2026-09-23 that is every proved node:
   anduril 6/6, bg 9/9, mirrormere 38/38, rh 53/53.
@@ -85,7 +90,18 @@ on a GitHub-hosted runner from a clean checkout. It is **not** independent of th
 vocabulary: the registered statement is elaborated in the artifact's own namespace and
 `open` context on the island, not against the campaign's vocabulary mirror
 (`Statements.RHDefs`, `MMDefs`), because the Comparator needs both sides in one Lake
-workspace. Whether the mirror still matches the island is `missions/mirrors.py` and the
+workspace. The judge step raises the process stack limit (`ulimit -s unlimited`, 4 GB
+fallback) before invoking the Comparator: nanoda replays proofs recursively and the large
+`decide +kernel` certificates of the KWin artifacts overflowed the 8 MB main-thread stack
+(#615, run 36055910789); a stack overflow is a runner limit, not a verdict, and the job
+says so. With the stack raised, the same certificates exhaust the runner's 16 GB under
+nanoda instead (the runner is killed mid-replay). A node may therefore declare
+`heavy_certificates = true`: the judge then asserts it with `enable_nanoda = false` (Lean
+kernel replay and axiom whitelist still run), the shard provisions swap for the Lean
+replay, and the record must be written with `mission comparator-record --lean-kernel-only`,
+which stores `second_kernel = "none: heavy_certificates"`; `provenance-report` prints such
+nodes as "Lean kernel only". One kernel instead of two is a weaker verdict and is
+labelled as such, never silently. Whether the mirror still matches the island is `missions/mirrors.py` and the
 islands' `generate.py --check` jobs. Whether the island's `DBN.H` is the de Bruijn-Newman
 `H` is the read-back's job. The judge closes the gap between the two: given the vocabulary,
 the artifact proves this proposition and nothing weaker.

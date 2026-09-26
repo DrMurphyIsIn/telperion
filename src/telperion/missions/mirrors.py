@@ -44,7 +44,7 @@ from pathlib import Path
 _TERMINATORS = (
     "def|abbrev|theorem|lemma|instance|structure|inductive|class|example|end|namespace|"
     "section|open|variable|import|universe|attribute|macro|notation|syntax|elab|"
-    "set_option|deriving|omit|include|local"
+    "set_option|deriving|omit|include|local|opaque|axiom"
 )
 _MODIFIERS = r"(?:@\[[^\]]*\]\s*)?(?:noncomputable\s+|private\s+|protected\s+|scoped\s+)*"
 _DECL_START = re.compile(r"(?m)^" + _MODIFIERS + r"(?:" + _TERMINATORS + r")\b")
@@ -83,6 +83,11 @@ NOT_MIRRORS: dict[tuple[str, str], str] = {
         "WeilForm.autocorr is `abbrev autocorr g := crossCorr g g` (the emitter island's own "
         "vocabulary, namespace WeilForm), not a copy of WeilExplicit.autocorr (MMDefs, "
         "2026-09-20): the same integral written through crossCorr, in another namespace.",
+    ("autocorr", "rvm_bridge/lean/ZhuSymbol.lean"):
+        "ZhuSymbol re-declares the WeilForm block (weilForm, crossCorr, abbrev autocorr) verbatim "
+        "from missions/rh RHDefs / WeilFormDefs for the Zhu window node (2026-09-23); against "
+        "MMDefs's WeilExplicit.autocorr it is the same bare name in another namespace, exactly "
+        "as the WeilFormDefs entry above.",
 }
 
 

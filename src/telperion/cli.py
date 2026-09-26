@@ -1406,6 +1406,76 @@ def cmd_mission_provenance_migrate(args) -> int:
     return 0
 
 
+def cmd_mission_ci_record(args) -> int:
+    """Record a run of a named CI job on a node's CURRENT artifact (owner ruling 2026-09-24).
+
+    head_sha and conclusion come from `gh run view` unless given explicitly; the run must
+    contain the named job. The record is a sidecar and never changes status; the gate and
+    `verify` consult it when the node declares `requires_ci_job`.
+    """
+    import dataclasses as _dc
+    import json as _json
+    import subprocess as _sp
+    from datetime import date as _date
+
+    from .missions.provenance import sha256_file
+    from .missions.registry import load_campaign
+    from .missions.schema import CIRecord, SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    camp_root = _resolve_campaign(_missions_root(args), slug,
+                                  getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+    if node.proof is None:
+        print(f"{slug}: no artifact linked; a CI record is about an artifact.")
+        return 1
+    art = camp_root / node.proof.artifact
+    if not art.exists():
+        print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
+        return 1
+    head_sha = (getattr(args, "head_sha", None) or "").strip()
+    conclusion = (getattr(args, "conclusion", None) or "").strip()
+    if not head_sha or not conclusion:
+        try:
+            out = _sp.run(["gh", "run", "view", str(args.run_id), "--json", "headSha,conclusion,jobs"],
+                          capture_output=True, text=True, timeout=60, check=True).stdout
+            info = _json.loads(out)
+        except Exception as exc:  # gh missing, offline, bad id
+            print(f"{slug}: could not read run {args.run_id} via gh ({exc}); pass --head-sha "
+                  "and --conclusion explicitly.")
+            return 1
+        jobs = {j.get("name"): j.get("conclusion") for j in info.get("jobs", [])}
+        if args.job not in jobs:
+            print(f"{slug}: run {args.run_id} has no job named {args.job!r} "
+                  f"(jobs: {', '.join(sorted(k for k in jobs if k))})")
+            return 1
+        head_sha = head_sha or str(info.get("headSha", ""))
+        conclusion = conclusion or str(jobs[args.job] or info.get("conclusion") or "")
+    try:
+        rec = CIRecord(
+            workflow=args.workflow.strip(), job=args.job.strip(), run_id=str(args.run_id).strip(),
+            head_sha=head_sha, artifact_sha256=sha256_file(art), conclusion=conclusion,
+            date=_date.today().isoformat(), run_url=(getattr(args, "run_url", None) or "").strip(),
+        )
+    except SchemaError as exc:
+        print(f"{slug}: {exc}")
+        return 1
+    save_node(_dc.replace(node, ci_record=rec, updated=rec.date), camp_root / "nodes" / f"{slug}.toml")
+    print(f"{slug}: CI record {rec.key} run {rec.run_id} ({rec.conclusion}) on artifact sha256 "
+          f"{rec.artifact_sha256[:16]}... head {rec.head_sha[:9]}")
+    return 0 if rec.conclusion == "success" else 1
+
+
 def cmd_mission_comparator_record(args) -> int:
     """Record a PASSING Comparator run on a proved node (a sidecar, never a status change)."""
     import dataclasses as _dc
@@ -1437,15 +1507,22 @@ def cmd_mission_comparator_record(args) -> int:
     if not art.exists():
         print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
         return 1
+    second = "nanoda"
+    if getattr(args, "lean_kernel_only", False):
+        second = "none: heavy_certificates"
+    elif node.heavy_certificates:
+        print(f"{slug}: node declares heavy_certificates = true, so the judge config had "
+              "enable_nanoda = false; pass --lean-kernel-only to record that honestly.")
+        return 1
     rec = ComparatorRecord(
         run_id=str(args.run_id).strip(), date=_date.today().isoformat(),
         artifact_sha256=sha256_file(art), theorem=args.theorem.strip(),
-        run_url=(args.run_url or "").strip(),
+        run_url=(args.run_url or "").strip(), second_kernel=second,
     )
     new_node = _dc.replace(node, comparator=rec, updated=rec.date)
     save_node(new_node, camp_root / "nodes" / f"{slug}.toml")
     print(f"{slug}: comparator run {rec.run_id} recorded for {rec.theorem} "
-          f"(artifact sha256 {rec.artifact_sha256[:16]}...)")
+          f"(artifact sha256 {rec.artifact_sha256[:16]}...; second kernel: {rec.second_kernel})")
     return 0
 
 
@@ -1882,7 +1959,29 @@ def main(argv=None) -> int:
     p.add_argument("--theorem", required=True,
                    help="fully qualified theorem name the Comparator config asserted")
     p.add_argument("--run-url", default=None, dest="run_url")
+    p.add_argument("--lean-kernel-only", action="store_true", dest="lean_kernel_only",
+                   help="the judge ran with enable_nanoda = false for this node "
+                        "(heavy_certificates = true); the record says so")
     p.set_defaults(mission_fn=cmd_mission_comparator_record)
+
+    # ci-record SLUG [--campaign C] --workflow W --job J --run-id N [--head-sha S] [--conclusion C]
+    p = msub.add_parser("ci-record",
+                        help="record a run of a named (non-required) CI job on the node's "
+                             "current artifact; consulted by grant/verify when the node "
+                             "declares requires_ci_job = \"<workflow>:<job>\"")
+    p.add_argument("slug")
+    p.add_argument("--campaign", default=None,
+                   help="campaign name (auto-resolved from slug when omitted)")
+    p.add_argument("--workflow", required=True, help="workflow file, e.g. telperion-zeta-reflection.yml")
+    p.add_argument("--job", required=True, help="job name, e.g. anduril-kernel-ladder")
+    p.add_argument("--run-id", required=True, dest="run_id")
+    p.add_argument("--head-sha", default=None, dest="head_sha",
+                   help="commit the run built (default: from `gh run view`)")
+    p.add_argument("--conclusion", default=None,
+                   help="the job's conclusion (default: from `gh run view`); the record only "
+                        "satisfies requires_ci_job when it is \"success\"")
+    p.add_argument("--run-url", default=None, dest="run_url")
+    p.set_defaults(mission_fn=cmd_mission_ci_record)
 
     # verify [CAMPAIGN] [--deep-lean]
     p = msub.add_parser("verify", help="run the full invariant battery")

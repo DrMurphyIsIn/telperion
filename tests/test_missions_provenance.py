@@ -81,7 +81,7 @@ def _cli(mroot: Path, *args: str) -> int:
 def _add(mroot: Path, name="New.lemma_x", **who) -> int:
     who = {**AUTHOR, **who}
     return _cli(mroot, "add", "demo", name, "--title", "New lemma X", "--kind", "lemma",
-                "--statement", "theorem new_x : 1 = 1",
+                "--statement", "import Mathlib\ntheorem new_x : 1 = 1",
                 "--identity", who["identity"], "--session", who["session"])
 
 
@@ -102,7 +102,8 @@ def _open_with_proof(croot: Path, slug: str, statement: str, artifact_text: str,
         author=author, created="2026-09-23", updated="2026-09-23",
     )
     save_node(node, croot / "nodes" / f"{slug}.toml")
-    write_statement(croot, node, statement, _manifest())
+    # #617: every statement file must open with an `import` line (the battery checks it).
+    write_statement(croot, node, "import Mathlib\n" + statement, _manifest())
     art = croot / "proof" / f"{slug}.lean"
     art.parent.mkdir(parents=True, exist_ok=True)
     art.write_text(artifact_text)
@@ -137,7 +138,7 @@ def test_add_session_from_environment(tmp_path, monkeypatch):
     mroot, croot = _demo(tmp_path)
     monkeypatch.setenv(prov.SESSION_ENV, "env-session")
     rc = _cli(mroot, "add", "demo", "Env.lemma", "--title", "t", "--kind", "lemma",
-              "--statement", "theorem e : 1 = 1", "--identity", "a@b")
+              "--statement", "import Mathlib\ntheorem e : 1 = 1", "--identity", "a@b")
     assert rc == 0
     assert load_node(croot / "nodes" / "Env_lemma.toml").author.session == "env-session"
 
@@ -193,7 +194,7 @@ def test_audit_refuses_title_only(tmp_path, capsys):
     long_title = ("A statement whose title is long enough on its own to clear the length "
                   "floor, so that a lazy read-back could simply repeat it and look substantive")
     rc = _cli(mroot, "add", "demo", "Titled.lemma", "--title", long_title, "--kind", "lemma",
-              "--statement", "theorem titled : 1 = 1", "--identity", AUTHOR["identity"],
+              "--statement", "import Mathlib\ntheorem titled : 1 = 1", "--identity", AUTHOR["identity"],
               "--session", AUTHOR["session"])
     assert rc == 0
     assert _audit(mroot, slug="Titled_lemma", text=long_title.upper() + "!") == 1
@@ -350,6 +351,128 @@ def test_comparator_record_refuses_non_proved(tmp_path, capsys):
               "--run-id", "1", "--theorem", "x")
     assert rc == 1
     assert "proved" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# requires_ci_job / ci-record (owner ruling 2026-09-24)
+# ---------------------------------------------------------------------------
+
+def _ci_node(croot: Path, slug: str, stmt: str, requires: str = "wf.yml:kernel-ladder") -> Node:
+    node = _open_with_proof(croot, slug, stmt, f"{stmt} := by rfl\n")
+    node = dataclasses.replace(node, requires_ci_job=requires)
+    save_node(node, croot / "nodes" / f"{slug}.toml")
+    return node
+
+
+def _ci_record(mroot: Path, slug: str, *, conclusion="success", job="kernel-ladder",
+               workflow="wf.yml", run_id="4242") -> int:
+    return _cli(mroot, "ci-record", slug, "--campaign", "demo", "--workflow", workflow,
+                "--job", job, "--run-id", run_id, "--head-sha", "abc123def", "--conclusion", conclusion)
+
+
+def test_requires_ci_job_blocks_grant_until_a_passing_record_on_the_current_artifact(tmp_path):
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem ci_one : 1 = 1"
+    _ci_node(croot, "CI_one", stmt)
+    with pytest.raises(GateError, match="requires a recorded passing run of CI job 'wf.yml:kernel-ladder'"):
+        grant_status(load_campaign(croot), "CI_one", **GATE)
+    # a record of the WRONG job does not count
+    assert _ci_record(mroot, "CI_one", job="other-job") == 0
+    with pytest.raises(GateError, match="record is for 'wf.yml:other-job'"):
+        grant_status(load_campaign(croot), "CI_one", **GATE)
+    # a FAILED run of the right job does not count (and the verb exits 1 to say so)
+    assert _ci_record(mroot, "CI_one", conclusion="failure") == 1
+    with pytest.raises(GateError, match="concluded 'failure'"):
+        grant_status(load_campaign(croot), "CI_one", **GATE)
+    # a passing run on the current artifact does
+    assert _ci_record(mroot, "CI_one") == 0
+    node = grant_status(load_campaign(croot), "CI_one", **GATE)
+    assert node.status == "proved"
+    rec = node.ci_record
+    assert (rec.workflow, rec.job, rec.run_id, rec.head_sha, rec.conclusion) == \
+        ("wf.yml", "kernel-ladder", "4242", "abc123def", "success")
+    assert rec.artifact_sha256 == node.grant.artifact_sha256
+    on_disk = (croot / "nodes" / "CI_one.toml").read_text()
+    assert "[ci_record]" in on_disk and 'requires_ci_job = "wf.yml:kernel-ladder"' in on_disk
+    assert verify_campaign(croot).ok
+
+
+def test_ci_record_on_a_stale_artifact_blocks_grant_and_fails_verify(tmp_path):
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem ci_two : 2 = 2"
+    _ci_node(croot, "CI_two", stmt)
+    assert _ci_record(mroot, "CI_two") == 0
+    (croot / "proof" / "CI_two.lean").write_text(f"{stmt} := by decide\n")   # artifact edited
+    with pytest.raises(GateError, match="was on artifact sha256"):
+        grant_status(load_campaign(croot), "CI_two", **GATE)
+    assert _ci_record(mroot, "CI_two", run_id="4343") == 0                    # re-recorded
+    grant_status(load_campaign(croot), "CI_two", **GATE)
+    assert verify_campaign(croot).ok
+    # a proved node whose artifact drifts under its ci_record is an error in the battery
+    # (alongside the [grant] digest error)
+    (croot / "proof" / "CI_two.lean").write_text(f"{stmt} := by simp\n")
+    rep = verify_campaign(croot)
+    assert any("record" in e and "kernel-ladder" in e for e in rep.errors)
+
+
+def test_nodes_without_requires_ci_job_are_unaffected(tmp_path):
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem ci_free : 3 = 3"
+    _open_with_proof(croot, "CI_free", stmt, f"{stmt} := by rfl\n")
+    assert grant_status(load_campaign(croot), "CI_free", **GATE).status == "proved"
+    assert prov.required_ci_problem(croot, load_node(croot / "nodes" / "CI_free.toml")) == ""
+
+
+def test_ci_record_round_trips_and_refuses_empty_fields(tmp_path):
+    from telperion.missions.schema import CIRecord
+    rec = CIRecord("w.yml", "j", "1", "sha", "art", "success", "2026-09-24", run_url="u")
+    node = Node(name="S.ci", title="t", kind="lemma", status="open", depends_on=(),
+                statement_module="Statements.S_ci", requires_ci_job="w.yml:j", ci_record=rec)
+    p = tmp_path / "S_ci.toml"
+    save_node(node, p)
+    assert load_node(p) == node
+    with pytest.raises(SchemaError):
+        CIRecord("w.yml", "", "1", "sha", "art", "success", "d")
+
+
+# ---------------------------------------------------------------------------
+# heavy_certificates: Lean-kernel-only records are labelled, never silent
+# ---------------------------------------------------------------------------
+
+def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem hv : 1 = 1"
+    node = _open_with_proof(croot, "HV_one", stmt, f"{stmt} := by rfl\n")
+    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_one.toml")
+    assert "heavy_certificates = true" in (croot / "nodes" / "HV_one.toml").read_text()
+    grant_status(load_campaign(croot), "HV_one", **GATE)
+    # a plain record is refused: the judge did not run nanoda on this node
+    assert _cli(mroot, "comparator-record", "HV_one", "--campaign", "demo",
+                "--run-id", "9", "--theorem", "hv") == 1
+    assert "heavy_certificates" in capsys.readouterr().out
+    assert load_node(croot / "nodes" / "HV_one.toml").comparator is None
+    assert _cli(mroot, "comparator-record", "HV_one", "--campaign", "demo",
+                "--run-id", "9", "--theorem", "hv", "--lean-kernel-only") == 0
+    n = load_node(croot / "nodes" / "HV_one.toml")
+    assert n.comparator.second_kernel == "none: heavy_certificates"
+    assert 'second_kernel = "none: heavy_certificates"' in (croot / "nodes" / "HV_one.toml").read_text()
+    assert n.heavy_certificates is True
+    capsys.readouterr()
+    assert _cli(mroot, "provenance-report", "demo") == 0
+    out = capsys.readouterr().out
+    assert "HV_one" in out and "Lean kernel only" in out
+    assert verify_campaign(croot).ok
+
+
+def test_ordinary_record_round_trips_without_second_kernel_key(tmp_path):
+    from telperion.missions.schema import ComparatorRecord
+    node = Node(name="S.k", title="t", kind="lemma", status="open", depends_on=(),
+                statement_module="Statements.S_k",
+                comparator=ComparatorRecord("1", "d", "a", "S.k"))
+    p = tmp_path / "S_k.toml"
+    save_node(node, p)
+    assert "second_kernel" not in p.read_text()
+    assert load_node(p).comparator.second_kernel == "nanoda"
 
 
 # ---------------------------------------------------------------------------

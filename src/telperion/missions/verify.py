@@ -37,10 +37,20 @@ from .provenance import (
     grant_digest_errors,
     readback_is_self_audit,
     require_identity,
+    required_ci_problem,
 )
 from .registry import Campaign, load_campaign
 from .schema import Node, SchemaError, save_node, slug_of
-from .statements import _SENTINEL, regen_diff, statement_path
+from .statements import (
+    _SENTINEL,
+    import_header_error,
+    missing_root_imports,
+    module_of_statement_file,
+    regen_diff,
+    root_is_sorted,
+    root_module_path,
+    statement_path,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +581,11 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
     cov = artifact_coverage_error(artifact_path, _repo_root(campaign.root))
     if cov:
         raise GateError(f"Node {slug!r}: {cov}")
+    # Owner ruling 2026-09-24: a node may name a non-required CI job whose passing run on the
+    # exact artifact digest is a precondition for granting.
+    ci = required_ci_problem(campaign.root, node)
+    if ci:
+        raise GateError(f"Node {slug!r}: {ci}")
 
     stmt_ok = statement_matches(artifact_text, norm_stmt)
     refut_ok = refutation_matches(artifact_text, node, campaign.root)
@@ -677,6 +692,15 @@ def verify_campaign(
        c. Closure flags consistent with a fresh _compute_closures result
           (compares against stored values; does NOT repair them).
     3. regen_diff clean for every node that has a statement file.
+    3b. Root import closure (added 2026-09-24): every statement file on disk, and
+        every node's statement_module whose file exists, is imported by the package
+        root lean/Statements.lean -- the only thing CI's `lake build` elaborates.
+        Every statement file carries the standard import header (Mathlib or a
+        campaign *Defs module).  Both are errors: an un-imported statement has never
+        been elaborated, so "a statement that does not elaborate cannot enter the
+        graph" (MISSIONS_DESIGN section 2) was not enforced for it.  Fifteen
+        registered modules, several `proved`, were in that state when this check
+        was added.
     4. Claims hygiene (WARNINGS): stale claims; claims on non-open nodes.
     5. Attempts ledger parses (errors on parse failure).
     6. Every deprecated node has a reason (caught by schema load).
@@ -775,6 +799,9 @@ def verify_campaign(
         stale = comparator_staleness(root, node)
         if stale:
             warnings.append(f"Node {sl!r}: {stale}")
+        ci = required_ci_problem(root, node)
+        if ci and node.status == "proved":
+            errors.append(f"Node {sl!r}: status is 'proved' but it {ci}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":
@@ -806,6 +833,41 @@ def verify_campaign(
             diff = regen_diff(root, node, manifest)
             if diff:
                 errors.append(f"Statement file drift: {diff}")
+
+    # 3b. Root import closure + import header.  CI builds the root's import closure and
+    # nothing else, so a statement file the root does not name is unelaborated no matter
+    # what the node's status says.  A campaign with no statement files at all (a bare
+    # fixture) has nothing to import and passes vacuously.
+    # The per-node direction is regen_diff's job (check 3 above reports it as drift, so
+    # every regen_diff caller sees it); this pass covers what no node owns: stray files
+    # in lean/Statements/ and modules the root names that have no file.
+    node_owned = {
+        module_of_statement_file(statement_path(root, n))
+        for n in campaign.nodes.values() if statement_path(root, n).exists()
+    }
+    unimported = [m for m in missing_root_imports(root, campaign.nodes.values())
+                  if m not in node_owned]
+    if unimported:
+        root_mod = root_module_path(root)
+        where = root_mod.relative_to(root) if root_mod.exists() else f"{root_mod.relative_to(root)} (absent)"
+        for mod in unimported:
+            errors.append(
+                f"Package root {where} and lean/Statements/ disagree: {mod} -- CI's "
+                f"`lake build` compiles the root's import closure and nothing else."
+            )
+    for sl, node in campaign.nodes.items():
+        hdr = import_header_error(root, node)
+        if hdr:
+            errors.append(f"Statement import header: {hdr}")
+    # Order is a WARNING, never an error: parallel branches append to the same root and
+    # a union-merge leaves it unsorted; the fix is to re-sort, and the gate must not
+    # block a held branch over it.
+    if root_module_path(root).exists() and not root_is_sorted(root):
+        warnings.append(
+            f"Package root {root_module_path(root).relative_to(root)} import list is not "
+            f"sorted; re-sort it (sort_root_imports) so concurrent `mission add`s merge "
+            f"line-locally."
+        )
 
     # 4. Claims hygiene (WARNINGS)
     all_claims = load_claims(root)

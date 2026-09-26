@@ -232,6 +232,33 @@ def comparator_staleness(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+def required_ci_problem(campaign_root: Path, node: Node) -> str:
+    """"" when the node declares no `requires_ci_job`, or its `[ci_record]` is a passing run
+    of exactly that job on the artifact digest currently on disk; else why not."""
+    req = (node.requires_ci_job or "").strip()
+    if not req:
+        return ""
+    rec = node.ci_record
+    if rec is None:
+        return (f"requires a recorded passing run of CI job {req!r} (`mission ci-record`), "
+                "and none is recorded")
+    if rec.key != req:
+        return f"requires CI job {req!r} but the record is for {rec.key!r}"
+    if rec.conclusion != "success":
+        return f"the recorded run {rec.run_id} of {req!r} concluded {rec.conclusion!r}, not success"
+    if node.proof is None:
+        return f"requires CI job {req!r} but the node has no artifact"
+    art = Path(campaign_root) / node.proof.artifact
+    if not art.exists():
+        return f"requires CI job {req!r} but artifact {node.proof.artifact!r} does not exist"
+    cur = sha256_file(art)
+    if cur != rec.artifact_sha256:
+        return (f"the recorded run {rec.run_id} of {req!r} was on artifact sha256 "
+                f"{rec.artifact_sha256[:12]}..., but the artifact on disk is {cur[:12]}...; "
+                "record a passing run on the current artifact")
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Migration and report
 # ---------------------------------------------------------------------------
@@ -269,6 +296,7 @@ class ProvenanceRow:
     self_audit: bool
     comparator_run: str    # "" when no passing run is recorded
     comparator_stale: bool
+    lean_kernel_only: bool
     has_grant: bool
 
     @property
@@ -298,6 +326,7 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             self_audit=readback_is_self_audit(n),
             comparator_run=n.comparator.run_id if n.comparator else "",
             comparator_stale=bool(comparator_staleness(campaign.root, n)),
+            lean_kernel_only=bool(n.comparator and n.comparator.second_kernel != "nanoda"),
             has_grant=n.grant is not None,
         ))
     return rows
@@ -319,4 +348,8 @@ def render_provenance_report(campaign) -> str:
     covered = [r for r in proved if r.comparator_run and not r.comparator_stale]
     if covered:
         lines.append(f"  ({len(covered)} proved node(s) covered by a passing Comparator run)")
+    lko = [r for r in covered if r.lean_kernel_only]
+    for r in lko:
+        lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
+                     "(heavy_certificates: nanoda not run)")
     return "\n".join(lines) + "\n"
