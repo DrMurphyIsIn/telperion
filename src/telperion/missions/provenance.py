@@ -301,6 +301,9 @@ class ProvenanceRow:
     log_check: str
     head_check: str
     has_grant: bool
+    #: "" = judged by the per-PR bundle; "heavy" = excluded from it by rule and judged by the
+    #: dispatch-only heavy workflow (see judge.HEAVY_WORKFLOW).
+    judge_via: str = ""
 
     @property
     def flagged(self) -> bool:
@@ -333,6 +336,7 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             has_grant=n.grant is not None,
             log_check=(n.comparator.log_check if n.comparator else ""),
             head_check=(n.comparator.head_check if n.comparator else ""),
+            judge_via=getattr(n, "judge_via", "") or "",
         ))
     return rows
 
@@ -350,6 +354,11 @@ def render_provenance_report(campaign) -> str:
             if r.comparator_run else "comparator=-"
         lines.append(f"  {r.slug:<48} readback={r.independence:<11} {comp}"
                      f"{'' if r.has_grant else '  grant=legacy'}")
+        if r.judge_via == "heavy":
+            # A known state, not an oversight: the per-PR bundle excludes this node BY RULE.
+            lines.append(f"  {'':<48} per-PR Comparator: not run by rule (judge_via = heavy); "
+                         "judged by missions-comparator-heavy.yml"
+                         f"{'' if r.comparator_run else ' -- no heavy-judge run recorded yet'}")
     covered = [r for r in proved if r.comparator_run and not r.comparator_stale]
     if covered:
         lines.append(f"  ({len(covered)} proved node(s) covered by a passing Comparator run)")
