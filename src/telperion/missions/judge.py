@@ -196,6 +196,12 @@ def island_guard_modules(lean_dir: Path) -> List[str]:
     """The island's `AxiomGuard*` lean_libs, which by convention import every island module.
     Importing them into a challenge makes a shadowed vocabulary constant a build error."""
     text = (lean_dir / "lakefile.toml").read_text()
+    # PREFIX MATCH ON PURPOSE (2026-09-26): only `AxiomGuard*` libs are imported. The ladder's
+    # per-segment guards (Arb4_AxiomGuard_h*, RS5_AxiomGuard, H11K_AxiomGuard) do NOT match, so
+    # ordinary challenges stay light; only a challenge whose OWN artifact is a ladder capstone
+    # (e.g. Arb4_h8000, whose import closure is every segment's edge certificates) needs the
+    # ladder built -- those nodes carry `judge_via = "heavy"` and are judged by
+    # missions-comparator-heavy.yml, not here.
     return sorted(m.group(1) for m in _LIB_RE.finditer(text) if m.group(1).startswith("AxiomGuard"))
 
 
@@ -496,8 +502,13 @@ class Bundle:
     challenges: List[Challenge]
     #: "campaign/slug: why" for proved nodes on this island the judge cannot consume.
     skipped: tuple
-    #: The island's package directory relative to the default bundle directory.
+    #: The island's package directory relative to the bundle directory (the committed bundle's by
+    #: default; a heavy bundle rendered to a temp `--out` replaces it with the path from there).
     require_path: str
+    #: "campaign/slug" of proved nodes EXCLUDED BY RULE (`judge_via = "heavy"`): judged by
+    #: missions-comparator-heavy.yml instead. Written into MANIFEST.json so the bundle itself
+    #: says which nodes it does not judge and where they are judged.
+    excluded: tuple = ()
 
     def files(self) -> "OrderedDict[str, str]":
         """Relative path -> text for everything the bundle writes."""
@@ -532,6 +543,9 @@ class Bundle:
                 artifact_sha256=c.artifact_sha256, statement_sha256=c.statement_sha256,
             ) for c in self.challenges],
         )
+        if self.excluded:
+            manifest["judged_elsewhere"] = [
+                dict(node=e, judge_via="heavy", workflow=HEAVY_WORKFLOW) for e in self.excluded]
         files["MANIFEST.json"] = json.dumps(manifest, indent=2) + "\n"
         return files
 
@@ -545,12 +559,35 @@ def _heavy_certificates(node_toml: Path) -> bool:
         return False
 
 
+#: The dispatch-only workflow that judges `judge_via = "heavy"` nodes.
+HEAVY_WORKFLOW = "missions-comparator-heavy.yml"
+
+
+def _judge_via(node_toml: Path) -> str:
+    """The node's `judge_via` ("" = per-PR bundle; "heavy" = the dispatch-only heavy path)."""
+    import tomllib
+    try:
+        return str(tomllib.loads(Path(node_toml).read_text()).get("judge_via", "") or "").strip()
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = True,
-                 only: Optional[Sequence[str]] = None) -> Bundle:
+                 only: Optional[Sequence[str]] = None, heavy: bool = False) -> Bundle:
+    """Render the challenge bundle.
+
+    Per-PR mode (heavy=False): nodes with `judge_via = "heavy"` are EXCLUDED BY RULE (listed in
+    `Bundle.excluded`, never rendered), so the committed bundle and `--check` stay consistent.
+    Heavy mode (heavy=True): render ONLY the `--only` nodes, and REFUSE any of them that is not
+    `judge_via = "heavy"` -- the heavy path must never become a way to route an ordinary node
+    around the per-PR judge. A heavy bundle is written to a temp `--out`, never committed.
+    """
+    if heavy and not only:
+        raise JudgeError("--heavy needs --only <slug>: the heavy path judges named nodes only")
     telperion_root = Path(telperion_root)
     ga = _guard_anchors()
     lean_dir = island_dir(telperion_root, island)
@@ -566,8 +603,16 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
     challenges: List[Challenge] = []
     guards, vocab_guard = challenge_guard_modules(telperion_root, island, lean_dir)
     problems: List[str] = []
+    excluded: List[str] = []
     for a in anchors:
         if only and a.node not in only:
+            continue
+        via = _judge_via(telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
+        if heavy and via != "heavy":
+            raise JudgeError(f"{a.campaign}/{a.node}: judge_via = {via!r}, not 'heavy'; the heavy "
+                             "path refuses ordinary nodes (they are judged by the per-PR bundle)")
+        if not heavy and via == "heavy":
+            excluded.append(f"{a.campaign}/{a.node}")
             continue
         stmt_path = telperion_root / "missions" / a.campaign / "lean" / "Statements" / f"{a.node}.lean"
         statement_text = stmt_path.read_text()
@@ -601,7 +646,8 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         raise JudgeError(f"island {island!r}: --only matched no proved node")
     require = os.path.relpath(lean_dir.resolve(), default_out(telperion_root, island).resolve())
     return Bundle(island=island, package=package, toolchain=toolchain, comparator_tag=tag,
-                  challenges=challenges, skipped=tuple(problems), require_path=require)
+                  challenges=challenges, skipped=tuple(problems), require_path=require,
+                  excluded=tuple(excluded))
 
 
 def shard(challenges: Sequence[Challenge], spec: Optional[str]) -> List[Challenge]:
@@ -668,6 +714,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="verify the committed bundle matches the registry; write nothing")
     ap.add_argument("--no-nanoda", action="store_true", help="enable_nanoda = false")
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these node slugs")
+    ap.add_argument("--heavy", action="store_true",
+                    help="render ONLY the --only nodes, each of which must be judge_via = \"heavy\" "
+                         "(refused otherwise); write it with --out to a temp dir, never commit it. "
+                         "Without --heavy, judge_via = \"heavy\" nodes are excluded by rule.")
     ap.add_argument("--list", action="store_true", help="print the nodes and exit")
     ap.add_argument("--configs", action="store_true",
                     help="print `slug<TAB>config<TAB>solution_module<TAB>theorem<TAB>bridge<TAB>"
@@ -678,16 +728,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = ap.parse_args(list(argv) if argv is not None else None)
     try:
         bundle = build_bundle(args.telperion, args.island, enable_nanoda=not args.no_nanoda,
-                              only=args.only)
+                              only=args.only, heavy=args.heavy)
     except JudgeError as e:
         print(f"::error::{e}", file=sys.stderr)
         return 2
     out = args.out or default_out(args.telperion, args.island)
+    if args.heavy:
+        import os
+        import dataclasses
+        bundle = dataclasses.replace(bundle, require_path=os.path.relpath(
+            island_dir(args.telperion, args.island), Path(out).resolve()))
     # Diagnostics go to STDERR: `--configs` output is machine-read (the CI job builds lake
     # targets from it), and a ::warning:: line on stdout once became the target
     # `MissionChallenges.::warning::zeta_reflection:` ("too many ':'").
     for sk in bundle.skipped:
         print(f"::warning::{args.island}: not consumable, skipped: {sk}", file=sys.stderr)
+    for ex in bundle.excluded:
+        print(f"::notice::{args.island}: {ex} is judge_via = \"heavy\": excluded from this bundle "
+              f"by rule, judged by {HEAVY_WORKFLOW}", file=sys.stderr)
+    if args.heavy and args.check:
+        print("::error::--heavy bundles are never committed, so there is nothing to --check",
+              file=sys.stderr)
+        return 2
+    if args.heavy and not args.out and not (args.configs or args.list):
+        print("::error::--heavy needs --out <temp dir>: a heavy bundle must never be written "
+              "over the committed per-PR bundle", file=sys.stderr)
+        return 2
     if args.configs:
         try:
             chosen = shard(bundle.challenges, args.shard)

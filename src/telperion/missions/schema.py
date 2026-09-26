@@ -339,6 +339,12 @@ class Node:
     #: replay) cannot be run through nanoda on a hosted runner: the judge then asserts the
     #: node with `enable_nanoda = false` and the record says "Lean kernel only".
     heavy_certificates: bool = False
+    #: WHERE the node is independently judged. "" (default) = the per-PR missions-comparator
+    #: bundle. "heavy" = excluded from the per-PR bundle BY RULE and judged by the dispatch-only
+    #: missions-comparator-heavy.yml, because building its challenge needs more than one hosted
+    #: runner can do (e.g. a ladder capstone whose import closure is every segment's edge
+    #: certificates). `heavy_certificates` says HOW (nanoda off); this says WHERE.
+    judge_via: str = ""
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -395,8 +401,19 @@ _MODELLED_NODE_KEYS = frozenset({
     "name", "title", "kind", "status", "statement_module", "source",
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
-    "requires_ci_job", "ci_record", "heavy_certificates",
+    "requires_ci_job", "ci_record", "heavy_certificates", "judge_via",
 })
+
+
+#: Allowed values of `judge_via` ("" = the per-PR Comparator bundle).
+JUDGE_VIA = ("", "heavy")
+
+
+def _judge_via(v) -> str:
+    v = str(v or "").strip()
+    if v not in JUDGE_VIA:
+        raise SchemaError(f"judge_via must be one of {JUDGE_VIA!r}, got {v!r}")
+    return v
 
 
 def _node_to_doc(node: Node) -> dict:
@@ -415,6 +432,8 @@ def _node_to_doc(node: Node) -> dict:
         doc["requires_ci_job"] = node.requires_ci_job
     if node.heavy_certificates:
         doc["heavy_certificates"] = True
+    if node.judge_via:
+        doc["judge_via"] = node.judge_via
     if node.created:
         doc["created"] = node.created
     if node.updated:
@@ -567,6 +586,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             requires_ci_job=doc.get("requires_ci_job", ""),
             ci_record=ci_record,
             heavy_certificates=bool(doc.get("heavy_certificates", False)),
+            judge_via=_judge_via(doc.get("judge_via", "")),
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:
