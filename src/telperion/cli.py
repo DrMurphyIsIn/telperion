@@ -1596,7 +1596,14 @@ def cmd_mission_comparator_record(args) -> int:
         print(f"{slug}: WARNING --no-verify: recording without reading the judge log, so the "
               "theorem name and the kernel mode are unchecked.  The record says "
               "log_check = \"skipped\".")
-    second = "none: heavy_certificates" if lean_only else "nanoda"
+    if lean_only:
+        second = "none: heavy_certificates"
+    elif kernel_mode == "unstated":
+        # The log predates the field, so nothing read here says nanoda replayed the export.
+        # Do not write the default, which would assert it.
+        second = "unstated (pre-#632 log)"
+    else:
+        second = "nanoda"
     rec = ComparatorRecord(
         run_id=run_id, date=_date.today().isoformat(),
         artifact_sha256=sha256_file(art), theorem=theorem,
