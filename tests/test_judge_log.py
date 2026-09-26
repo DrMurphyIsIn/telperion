@@ -104,3 +104,45 @@ def test_kernel_modes_cover_what_the_workflow_can_print():
     text = wf.read_text()
     for mode in jl.KERNEL_MODES:
         assert mode in text, f"{mode} is mapped here but the workflow never prints it"
+
+
+def _jv(job_id, **kw):
+    return jl.JobVerdict(job_id, **kw)
+
+
+def test_choose_picks_the_job_that_judged_the_node():
+    v = jl.parse_verdicts(LOG)[HEAVY]
+    job, errs = jl.choose([_jv("1"), _jv("2", verdict=v)], HEAVY)
+    assert errs == [] and job.job_id == "2"
+
+
+def test_choose_refuses_when_another_job_failed_the_node():
+    """A PASS in one shard must not paper over a FAIL in another."""
+    v = jl.parse_verdicts(LOG)[HEAVY]
+    job, errs = jl.choose([_jv("1", verdict=v), _jv("2", failed=True)], HEAVY)
+    assert job is None and any("COMPARATOR FAIL" in e for e in errs)
+
+
+def test_choose_refuses_when_a_log_could_not_be_read():
+    """Silence from an unreadable job is not consent: it may hold the FAIL."""
+    v = jl.parse_verdicts(LOG)[HEAVY]
+    job, errs = jl.choose([_jv("1", verdict=v), _jv("2", readable=False)], HEAVY)
+    assert job is None and any("could not read the log" in e for e in errs)
+
+
+def test_choose_refuses_disagreeing_duplicate_verdicts():
+    a = jl.parse_verdicts(LOG)[HEAVY]
+    b = jl.Verdict(a.island, a.node, a.theorem, a.run, "nanoda")
+    job, errs = jl.choose([_jv("1", verdict=a), _jv("2", verdict=b)], HEAVY)
+    assert job is None and any("disagreeing verdicts" in e for e in errs)
+
+
+def test_choose_accepts_agreeing_duplicate_verdicts():
+    v = jl.parse_verdicts(LOG)[HEAVY]
+    job, errs = jl.choose([_jv("1", verdict=v), _jv("2", verdict=v)], HEAVY)
+    assert errs == [] and job.job_id == "1"
+
+
+def test_choose_refuses_when_no_job_passed_the_node():
+    job, errs = jl.choose([_jv("1"), _jv("2")], HEAVY)
+    assert job is None and any("no job in this run" in e for e in errs)

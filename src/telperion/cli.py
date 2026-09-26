@@ -1520,19 +1520,33 @@ def cmd_mission_comparator_record(args) -> int:
     from .missions.judge_log import check as _check_log
     run_id = str(args.run_id).strip()
     theorem = args.theorem.strip()
-    job_id, job_url, kernel_mode, head_sha = "", "", "", ""
+    job_id = str(getattr(args, "job_id", "") or "").strip()
+    job_url = str(getattr(args, "job_url", "") or "").strip()
+    head_sha = str(getattr(args, "head_sha", "") or "").strip()
+    kernel_mode, log_check, head_check = "", "skipped", "skipped"
     log_text = None
     if getattr(args, "log", None):
         log_text = Path(args.log).read_text(errors="replace")
-        job_id = str(getattr(args, "job_id", "") or "").strip()
+        log_check = "verified-offline"
+        if not head_sha:
+            print(f"{slug}: --log needs --head-sha, the commit the judging job checked out, or "
+                  "the artifact-at-that-commit check silently does not happen.  Find it with "
+                  f"`gh api repos/<owner>/<repo>/actions/jobs/<job-id> --jq .head_sha`.")
+            return 1
     elif not getattr(args, "no_verify", False):
         found = _fetch_judge_job(run_id, slug)
-        if found is None:  # noqa: SIM108
-            print(f"{slug}: could not read the judge log for run {run_id} (is `gh` installed and "
-                  "authenticated?).  Pass --log FILE with the job log, or --no-verify to record "
-                  "without checking -- but then nothing has confirmed the run judged this node.")
+        if found is None:
+            print(f"{slug}: could not read the judge logs for run {run_id} (is `gh` installed and "
+                  "authenticated?).  Pass --log FILE with the job log and --head-sha, or "
+                  "--no-verify to record without checking -- which the record will then say.")
             return 1
-        job_id, job_url, log_text, head_sha = found
+        job, errs = found
+        if errs:
+            for e in errs:
+                print(f"{slug}: {e}")
+            return 1
+        job_id, job_url, head_sha, log_text = job.job_id, job.job_url, job.head_sha, job.log
+        log_check = "verified"
     if log_text is not None:
         errs = _check_log(log_text, node=slug, theorem=theorem, run_id=run_id,
                           expect_lean_kernel_only=lean_only)
@@ -1545,28 +1559,39 @@ def cmd_mission_comparator_record(args) -> int:
         # The judge saw the artifact as of the job's own head commit, which is not necessarily
         # the working tree.  Hash the blob there and require it to match, so a PASS on an older
         # version of the artifact cannot be cited for the current one.
-        if head_sha:
+        at_head = _blob_sha256(head_sha, art)
+        if at_head is None:
+            _try_fetch(art, head_sha)          # a PR head is normally fetchable
             at_head = _blob_sha256(head_sha, art)
-            here = sha256_file(art)
-            if at_head is None:
-                print(f"{slug}: NOTE could not resolve {art.name} at the judged commit "
-                      f"{head_sha[:9]} (not in this checkout), so the record's hash is the "
-                      "working tree's; the grant's hash still pins the artifact.")
-            elif at_head != here:
-                print(f"{slug}: the judge saw {art.name} at {at_head[:16]}... but the working "
-                      f"tree has {here[:16]}...; that PASS is for a different version of the "
-                      "artifact and must not be recorded for this one.")
+        here = sha256_file(art)
+        if at_head is None:
+            if not getattr(args, "allow_unresolved_head", False):
+                print(f"{slug}: cannot resolve {art.name} at the judged commit {head_sha[:9]} "
+                      "even after fetching it, so nothing here confirms the judge saw THIS "
+                      "version of the artifact.  Fetch that commit, or pass "
+                      "--allow-unresolved-head, which records head_check = \"unresolved\".")
                 return 1
+            print(f"{slug}: NOTE recording with head_check = \"unresolved\": {art.name} could not "
+                  f"be resolved at {head_sha[:9]}, so the hash below is the working tree's.")
+            head_check = "unresolved"
+        elif at_head != here:
+            print(f"{slug}: the judge saw {art.name} at {at_head[:16]}... but the working "
+                  f"tree has {here[:16]}...; that PASS is for a different version of the "
+                  "artifact and must not be recorded for this one.")
+            return 1
+        else:
+            head_check = "matched"
     else:
         print(f"{slug}: WARNING --no-verify: recording without reading the judge log, so the "
-              "theorem name and the kernel mode are unchecked.")
+              "theorem name and the kernel mode are unchecked.  The record says "
+              "log_check = \"skipped\".")
     second = "none: heavy_certificates" if lean_only else "nanoda"
     rec = ComparatorRecord(
         run_id=run_id, date=_date.today().isoformat(),
         artifact_sha256=sha256_file(art), theorem=theorem,
         run_url=(args.run_url or "").strip(), second_kernel=second,
-        job_id=job_id, job_url=(getattr(args, "job_url", "") or job_url or "").strip(),
-        kernel_mode=kernel_mode,
+        job_id=job_id, job_url=job_url, kernel_mode=kernel_mode,
+        judged_head_sha=head_sha, log_check=log_check, head_check=head_check,
     )
     new_node = _dc.replace(node, comparator=rec, updated=rec.date)
     save_node(new_node, camp_root / "nodes" / f"{slug}.toml")
@@ -1578,16 +1603,16 @@ def cmd_mission_comparator_record(args) -> int:
 
 
 def _fetch_judge_job(run_id: str, slug: str):
-    """(job_id, job_url, log text, head sha) of the shard whose log holds a verdict for `slug`.
+    """((the job to cite), errors) for `slug` in this run, or None when `gh` cannot be used.
 
-    Walks the run's jobs and reads each log through `gh`, because which shard judged a node is
-    a function of the shard split, not something the caller should have to know.  Returns None
-    when `gh` is unavailable or no job's log mentions the node.
+    Reads EVERY job of the run, not the first one that mentions the node: a job whose log we
+    could not download is not a job that said nothing, and a node judged by two shards could
+    pass in one and fail in the other.  `judge_log.choose` applies those rules.
     """
     import json
     import subprocess
 
-    from .missions.judge_log import failed_nodes, parse_verdicts
+    from .missions.judge_log import JobVerdict, choose, failed_nodes, parse_verdicts
 
     def gh(*a):
         r = subprocess.run(["gh", *a], capture_output=True, text=True)
@@ -1600,13 +1625,35 @@ def _fetch_judge_job(run_id: str, slug: str):
         jobs = json.loads(out).get("jobs", [])
     except json.JSONDecodeError:
         return None
+    seen = []
     for job in jobs:
         log = gh("api", f"repos/{_gh_repo()}/actions/jobs/{job['id']}/logs")
-        if not log:
+        jid = str(job["id"])
+        if log is None:
+            seen.append(JobVerdict(jid, job.get("html_url", ""), str(job.get("head_sha", "")),
+                                   None, False, False))
             continue
-        if slug in parse_verdicts(log) or slug in failed_nodes(log):
-            return str(job["id"]), job.get("html_url", ""), log, str(job.get("head_sha", ""))
-    return None
+        v = parse_verdicts(log).get(slug)
+        failed = slug in failed_nodes(log)
+        if v is None and not failed:
+            continue                      # this shard simply did not judge the node
+        seen.append(JobVerdict(jid, job.get("html_url", ""), str(job.get("head_sha", "")),
+                               v, failed, True, log))
+    return choose(seen, slug)
+
+
+def _try_fetch(path: Path, commit: str) -> None:
+    """Best-effort `git fetch origin <commit>`, so an unfetched PR head stops being a dead end."""
+    import subprocess
+
+    if not commit:
+        return
+    top = subprocess.run(["git", "-C", str(path.resolve().parent), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if top.returncode != 0:
+        return
+    subprocess.run(["git", "-C", top.stdout.strip(), "fetch", "--quiet", "origin", commit],
+                   capture_output=True)
 
 
 def _gh_repo() -> str:
@@ -2090,7 +2137,14 @@ def main(argv=None) -> int:
                         "log is fetched; required with --log to make the record point at a job)")
     p.add_argument("--job-url", default=None, dest="job_url")
     p.add_argument("--log", default=None,
-                   help="read the judge verdict from this file instead of fetching it (offline)")
+                   help="read the judge verdict from this file instead of fetching it (offline); "
+                        "requires --head-sha")
+    p.add_argument("--head-sha", default=None, dest="head_sha",
+                   help="the commit the judging job checked out (with --log); the artifact is "
+                        "hashed at that commit and must match")
+    p.add_argument("--allow-unresolved-head", action="store_true", dest="allow_unresolved_head",
+                   help="record even when the judged commit cannot be resolved here; the record "
+                        "then says head_check = \"unresolved\"")
     p.add_argument("--no-verify", action="store_true", dest="no_verify",
                    help="record WITHOUT reading the judge log: the theorem name and the kernel "
                         "mode are then unchecked.  Last resort; say why in the commit message")

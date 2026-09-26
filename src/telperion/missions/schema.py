@@ -259,6 +259,20 @@ class ComparatorRecord:
     #: The literal `kernel=` token from the PASS line ("nanoda" or "lean-kernel-only"), as
     #: observed rather than inferred from the node's flag.  `second_kernel` is its reading.
     kernel_mode: str = ""
+    #: The commit the judging job checked out.  Recorded so any later verifier can re-hash the
+    #: artifact blob at that commit without asking the API what the job's head was.
+    judged_head_sha: str = ""
+    #: How thoroughly this record was checked when written.  A degraded check must leave a mark
+    #: in the RECORD, not only in the terminal of whoever ran the command:
+    #:   log_check  "verified"          the judge's own job logs were read and agreed
+    #:              "verified-offline"  a supplied log file agreed; the job id is the caller's word
+    #:              "skipped"           --no-verify: nothing confirmed this record
+    #:   head_check "matched"           the artifact blob at `judged_head_sha` equals the recorded hash
+    #:              "unresolved"        that commit could not be resolved, so the hash is the
+    #:                                  working tree's and only the grant still pins the artifact
+    #:              "skipped"           not attempted (--no-verify)
+    log_check: str = ""
+    head_check: str = ""
 
     def __post_init__(self):
         for f in ("run_id", "date", "artifact_sha256", "theorem", "second_kernel"):
@@ -460,7 +474,8 @@ def _node_to_doc(node: Node) -> dict:
             doc["comparator"]["run_url"] = node.comparator.run_url
         if node.comparator.second_kernel != "nanoda":
             doc["comparator"]["second_kernel"] = node.comparator.second_kernel
-        for _f in ("job_id", "job_url", "kernel_mode"):
+        for _f in ("job_id", "job_url", "kernel_mode", "judged_head_sha", "log_check",
+                   "head_check"):
             if getattr(node.comparator, _f):
                 doc["comparator"][_f] = getattr(node.comparator, _f)
     if node.ci_record is not None:
@@ -520,6 +535,8 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 second_kernel=c.get("second_kernel", "nanoda"),
                 job_id=str(c.get("job_id", "")), job_url=c.get("job_url", ""),
                 kernel_mode=c.get("kernel_mode", ""),
+                judged_head_sha=c.get("judged_head_sha", ""),
+                log_check=c.get("log_check", ""), head_check=c.get("head_check", ""),
             )
         ci_record = None
         if "ci_record" in doc:

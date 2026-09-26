@@ -111,3 +111,46 @@ def check(text: str, *, node: str, theorem: str, run_id: str = "",
             errs.append(f"--lean-kernel-only was given but the log says {node} was judged with "
                         f"kernel={v.kernel}, i.e. the second kernel DID run; drop the switch")
     return errs
+
+
+@dataclass(frozen=True)
+class JobVerdict:
+    """What one shard job of a run says about a node."""
+    job_id: str
+    job_url: str = ""
+    head_sha: str = ""
+    verdict: Optional[Verdict] = None
+    failed: bool = False
+    #: False when the job's log could not be downloaded.  A job we could not read is not a
+    #: job that said nothing: it may be the one holding the FAIL.
+    readable: bool = True
+    #: The log itself, so the caller can re-check the chosen job without downloading it twice.
+    log: str = ""
+
+
+def choose(jobs: List[JobVerdict], node: str):
+    """(the job to cite, errors).  Scans EVERY job: silence from one is not consent.
+
+    Refuses when any job reports the node as failed, when no job passed it, when two jobs
+    disagree about the theorem or the kernel mode (a shard-split change or a matrix bug could
+    judge one node twice), or when any job's log was unreadable -- that job could be the one
+    with the FAIL.
+    """
+    errs: List[str] = []
+    unreadable = [j.job_id for j in jobs if not j.readable]
+    if unreadable:
+        errs.append(f"could not read the log of job(s) {', '.join(unreadable)} in this run; one of "
+                    "them may hold a FAIL for this node, so the run cannot be certified from here")
+    failed = [j.job_id for j in jobs if j.failed]
+    if failed:
+        errs.append(f"job(s) {', '.join(failed)} report COMPARATOR FAIL for {node}: "
+                    "a failing run must never be recorded")
+    hits = [j for j in jobs if j.verdict is not None]
+    if not hits:
+        errs.append(f"no job in this run printed a COMPARATOR PASS for {node}")
+        return None, errs
+    shapes = {(j.verdict.theorem, j.verdict.kernel) for j in hits}
+    if len(shapes) > 1:
+        errs.append(f"{node} was judged by {len(hits)} jobs with disagreeing verdicts "
+                    f"({sorted(shapes)}); refusing to pick one")
+    return (None if errs else hits[0]), errs
