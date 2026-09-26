@@ -42,6 +42,16 @@ own `DBN.H` would make the registered statement resolve to the impostor. The cha
 therefore also imports the island's AxiomGuard modules (which import every island module):
 a constant declared twice on the island is a duplicate-declaration error, so the challenge
 fails to build and the judge fails.
+On an island with no AxiomGuard lean_lib (bg: the R3Cert package, whose AxiomGuard.lean is a
+loose file and whose full library includes R47PC6Cells, ~70 min / 18 GB that no node needs)
+the challenge instead imports the island modules its campaign's vocabulary mirror cites as
+the source of each copied block (`-- ===== ExactCruxes.lean:70 =====` in BGDefs.lean). That
+catches an artifact re-declaring a mirrored vocabulary constant; it does NOT catch a
+shadowed constant that is not in the mirror (the whole-island import would).
+
+OUT-OF-TREE ISLANDS (`OUT_OF_TREE_ISLANDS`): bg lives at proof/formalization, not
+telperion/examples/<island>/lean. Its proved nodes are the registry nodes whose [proof]
+artifact lies under that directory; everything else is the same.
 
 NOT CONSUMABLE (reported, never skipped silently): a statement that declares anything besides
 its final theorem (local `def`s would collide with the artifact's copies; 2 of 97 nodes,
@@ -64,8 +74,10 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
+import tomllib
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,8 +126,32 @@ _IMPORT_RE = re.compile(r"(?m)^import\s+(\S+)[ \t]*$")
 _OPEN_RE = re.compile(r"(?m)^open\b.*$")
 
 
+@dataclass(frozen=True)
+class OutOfTreeIsland:
+    """An island that is not `telperion/examples/<island>/lean`."""
+    #: Lake package directory, relative to telperion/.
+    lean_dir: str
+    #: Vocabulary mirror (relative to telperion/) whose `-- ===== <Module>.lean... =====` block
+    #: headers name the island modules the vocabulary is copied from. Used for the shadowing
+    #: guard when the island has no `AxiomGuard*` lean_lib (see `island_guard_modules`).
+    vocab_mirror: str
+
+
+#: The BG island is the R3Cert package under proof/formalization (toolchain v4.32.0). It has no
+#: AxiomGuard lean_lib (its AxiomGuard.lean is a loose file CI runs with `lake env lean`), and
+#: importing every R3Cert module would drag in R47PC6Cells (~70 min, 18 GB) that no BG node
+#: needs, so its challenges import the vocabulary's home modules instead.
+OUT_OF_TREE_ISLANDS = {
+    "bg": OutOfTreeIsland(lean_dir="../proof/formalization",
+                          vocab_mirror="missions/bg/lean/Statements/BGDefs.lean"),
+}
+
+
 def island_dir(telperion_root: Path, island: str) -> Path:
-    d = Path(telperion_root) / "examples" / island / "lean"
+    if island in OUT_OF_TREE_ISLANDS:
+        d = (Path(telperion_root) / OUT_OF_TREE_ISLANDS[island].lean_dir).resolve()
+    else:
+        d = Path(telperion_root) / "examples" / island / "lean"
     if not (d / "lakefile.toml").is_file():
         raise JudgeError(f"island {island!r}: no lakefile.toml under {d}")
     return d
@@ -161,6 +197,83 @@ def island_guard_modules(lean_dir: Path) -> List[str]:
     Importing them into a challenge makes a shadowed vocabulary constant a build error."""
     text = (lean_dir / "lakefile.toml").read_text()
     return sorted(m.group(1) for m in _LIB_RE.finditer(text) if m.group(1).startswith("AxiomGuard"))
+
+
+_MIRROR_HEADER_RE = re.compile(r"(?m)^--\s*=====(.*)$")
+_MIRROR_FILE_RE = re.compile(r"([\w/]+)\.lean\b")
+
+
+def vocabulary_home_modules(lean_dir: Path, mirror_text: str) -> List[str]:
+    """Island modules named in a vocabulary mirror's block headers
+    (`-- ===== GStepCore.lean:25 / CappedJointConfig.lean:33-46 =====`), as module names.
+
+    The shadowing guard for an island without an AxiomGuard lean_lib: an artifact that
+    re-declares `R3Cert.rhoB` instead of importing ExactCruxes is a duplicate declaration once
+    the challenge also imports ExactCruxes. A header naming no unique island file is an error
+    (the mirror and the island disagree, which missions/mirrors.py should also report)."""
+    lean_dir = Path(lean_dir).resolve()
+    names: List[str] = []
+    for hm in _MIRROR_HEADER_RE.finditer(mirror_text):
+        for fm in _MIRROR_FILE_RE.finditer(hm.group(1)):
+            if fm.group(1) not in names:
+                names.append(fm.group(1))
+    mods: List[str] = []
+    for n in names:
+        hits = [p for p in lean_dir.rglob(f"{n}.lean")
+                if ".lake" not in p.relative_to(lean_dir).parts]
+        if len(hits) != 1:
+            raise JudgeError(f"vocabulary mirror cites {n}.lean; {len(hits)} match(es) on the "
+                             f"island {lean_dir}")
+        m = module_name_of(lean_dir, hits[0])
+        if m not in mods:
+            mods.append(m)
+    return sorted(mods)
+
+
+def island_anchors(telperion_root: Path, island: str, lean_dir: Path) -> list:
+    """The grant gate's anchors (proved node -> artifact theorem) on this island. For an
+    out-of-tree island this is guard_anchors.load_anchors with the island test replaced by
+    "the artifact lies under the island's package directory"."""
+    ga = _guard_anchors()
+    if island not in OUT_OF_TREE_ISLANDS:
+        return ga.load_anchors(telperion_root, island)
+    lean_dir = Path(lean_dir).resolve()
+    anchors, errors = [], []
+    for toml_path in sorted((Path(telperion_root) / "missions").glob("*/nodes/*.toml")):
+        campaign_root = toml_path.parent.parent
+        try:
+            doc = tomllib.loads(toml_path.read_text())
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            errors.append(f"{toml_path}: unreadable ({e})")
+            continue
+        art = (doc.get("proof") or {}).get("artifact")
+        if doc.get("status") != "proved" or not art or not str(art).endswith(".lean"):
+            continue
+        artifact = (campaign_root / art).resolve()
+        if not artifact.is_relative_to(lean_dir):
+            continue
+        slug = str(doc.get("name", toml_path.stem)).replace(".", "_")
+        stmt = campaign_root / "lean" / "Statements" / f"{slug}.lean"
+        try:
+            thm = ga.resolve_theorem(artifact.read_text(), stmt.read_text())
+        except (OSError, ga.RegistryError) as e:
+            errors.append(f"{campaign_root.name}/{slug}: {e}")
+            continue
+        anchors.append(ga.Anchor(slug, campaign_root.name, artifact, thm))
+    if errors:
+        raise ga.RegistryError("\n".join(errors))
+    return anchors
+
+
+def challenge_guard_modules(telperion_root: Path, island: str,
+                            lean_dir: Path) -> tuple[List[str], bool]:
+    """(modules every challenge imports for the shadowing guard, whether they are the
+    vocabulary-home fallback rather than the island's AxiomGuard libs)."""
+    guards = island_guard_modules(lean_dir)
+    if guards or island not in OUT_OF_TREE_ISLANDS:
+        return guards, False
+    mirror = Path(telperion_root) / OUT_OF_TREE_ISLANDS[island].vocab_mirror
+    return vocabulary_home_modules(lean_dir, mirror.read_text()), True
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +413,7 @@ def bridge_theorem_name(slug: str) -> str:
 
 def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module: str,
                      guard_modules: Sequence[str], statement_text: str,
-                     artifact_text: str) -> str:
+                     artifact_text: str, vocab_guard: bool = False) -> str:
     stmt_hash, _mirror_opens, body = statement_parts(statement_text)
     short, binders, concl = split_signature(body)
     ns, opens = artifact_context(artifact_text, statement_text)
@@ -317,8 +430,19 @@ def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module:
         f"   {slug}.lean (header sha256 {stmt_hash}), binders and conclusion verbatim; the",
         f"   PROOF is the artifact constant `{theorem}` from {solution_module}. Both kernels",
         "   accept this module only if the artifact proves exactly the registered proposition.",
-        "   The AxiomGuard imports load the whole island, so a vocabulary constant shadowed by",
-        "   the artifact is a duplicate declaration here, not a silent substitution. The",
+    ]
+    if vocab_guard:
+        out += [
+            "   The other imports are the island modules the campaign's vocabulary mirror copies",
+            "   from, so a vocabulary constant shadowed by the artifact is a duplicate",
+            "   declaration here, not a silent substitution. The",
+        ]
+    else:
+        out += [
+            "   The AxiomGuard imports load the whole island, so a vocabulary constant shadowed by",
+            "   the artifact is a duplicate declaration here, not a silent substitution. The",
+        ]
+    out += [
         "   `namespace` and the `open` lines inside it are the artifact's own at its",
         "   declaration, so every name in the statement resolves exactly as it does there. -/",
     ]
@@ -371,7 +495,9 @@ class Bundle:
     comparator_tag: str
     challenges: List[Challenge]
     #: "campaign/slug: why" for proved nodes on this island the judge cannot consume.
-    skipped: tuple = ()
+    skipped: tuple
+    #: The island's package directory relative to the default bundle directory.
+    require_path: str
 
     def files(self) -> "OrderedDict[str, str]":
         """Relative path -> text for everything the bundle writes."""
@@ -385,7 +511,7 @@ class Bundle:
             'defaultTargets = ["MissionChallenges"]\n\n'
             "[[require]]\n"
             f'name = "{self.package}"\n'
-            f'path = "../../../examples/{self.island}/lean"\n\n'
+            f'path = "{self.require_path}"\n\n'
             "[[lean_lib]]\n"
             'name = "MissionChallenges"\n'
         )
@@ -432,13 +558,13 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
     toolchain = island_toolchain(lean_dir)
     tag = comparator_tag(toolchain)
     try:
-        anchors = ga.load_anchors(telperion_root, island)
+        anchors = island_anchors(telperion_root, island, lean_dir)
     except ga.RegistryError as e:
         raise JudgeError(f"island {island!r}: {e}") from e
     if not anchors:
         raise JudgeError(f"island {island!r}: no proved registry node has its artifact here")
     challenges: List[Challenge] = []
-    guards = island_guard_modules(lean_dir)
+    guards, vocab_guard = challenge_guard_modules(telperion_root, island, lean_dir)
     problems: List[str] = []
     for a in anchors:
         if only and a.node not in only:
@@ -451,7 +577,7 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
             text = render_challenge(
                 slug=a.node, campaign=a.campaign, theorem=a.theorem, solution_module=sol,
                 guard_modules=guards, statement_text=statement_text,
-                artifact_text=a.artifact.read_text())
+                artifact_text=a.artifact.read_text(), vocab_guard=vocab_guard)
         except JudgeError as e:
             problems.append(f"{a.campaign}/{a.node}: {e}")
             continue
@@ -473,8 +599,9 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         raise JudgeError(f"island {island!r}: no consumable node:\n  " + "\n  ".join(problems))
     if not challenges:
         raise JudgeError(f"island {island!r}: --only matched no proved node")
+    require = os.path.relpath(lean_dir.resolve(), default_out(telperion_root, island).resolve())
     return Bundle(island=island, package=package, toolchain=toolchain, comparator_tag=tag,
-                  challenges=challenges, skipped=tuple(problems))
+                  challenges=challenges, skipped=tuple(problems), require_path=require)
 
 
 def shard(challenges: Sequence[Challenge], spec: Optional[str]) -> List[Challenge]:
