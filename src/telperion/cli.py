@@ -1524,6 +1524,12 @@ def cmd_mission_comparator_record(args) -> int:
     job_url = str(getattr(args, "job_url", "") or "").strip()
     head_sha = str(getattr(args, "head_sha", "") or "").strip()
     kernel_mode, log_check, head_check = "", "skipped", "skipped"
+    judge_mode, parts = "", ()
+    if node.compose is not None and (getattr(args, "no_verify", False) or getattr(args, "log", None)):
+        print(f"{slug}: this node is judged COMPOSITIONALLY; its record must be read from the "
+              "judge's own job logs (every part's job is located and checked), so neither "
+              "--log nor --no-verify is accepted.")
+        return 1
     log_text = None
     if getattr(args, "log", None):
         log_text = Path(args.log).read_text(errors="replace")
@@ -1561,9 +1567,16 @@ def cmd_mission_comparator_record(args) -> int:
                 print(f"{slug}: {e}")
             return 1
         from .missions.judge_log import parse_verdicts as _pv
-        _v = _pv(log_text)[slug]
-        #: A pre-#632 log states no mode; say so instead of inferring one from the switch.
-        kernel_mode = _v.kernel or "unstated"
+        verdict = _pv(log_text)[slug]
+        # A pre-#632 log states no kernel mode; say so instead of inferring one from the switch.
+        kernel_mode = verdict.kernel or "unstated"
+        if verdict.judge or node.compose is not None:
+            parts_or_errs = _compositional_parts(node, slug, verdict, log_text, run_id, head_sha,
+                                                 art, offline=(log_check != "verified"))
+            if isinstance(parts_or_errs, str):
+                print(f"{slug}: {parts_or_errs}")
+                return 1
+            judge_mode, parts = "compositional", parts_or_errs
         # The judge saw the artifact as of the job's own head commit, which is not necessarily
         # the working tree.  Hash the blob there and require it to match, so a PASS on an older
         # version of the artifact cannot be cited for the current one.
@@ -1610,6 +1623,7 @@ def cmd_mission_comparator_record(args) -> int:
         run_url=(args.run_url or "").strip(), second_kernel=second,
         job_id=job_id, job_url=job_url, kernel_mode=kernel_mode,
         judged_head_sha=head_sha, log_check=log_check, head_check=head_check,
+        judge_mode=judge_mode, parts=tuple(parts),
     )
     new_node = _dc.replace(node, comparator=rec, updated=rec.date)
     save_node(new_node, camp_root / "nodes" / f"{slug}.toml")
@@ -1618,6 +1632,91 @@ def cmd_mission_comparator_record(args) -> int:
     return 0
 
 
+
+
+def _compositional_parts(node, slug, verdict, log_text, run_id, head_sha, art, *, offline):
+    """The record's `parts` for a compositional verdict, or a refusal string.
+
+    The verdict line must say `judge=compositional` with the right part count; the verdict
+    job's `COMPOSE PART` lines must list exactly the node's parts, all PASS and axiom-clean; and
+    EVERY part slug must have its own passing Comparator job in the same run (located here, not
+    taken from the verdict job's word).  Each part module is pinned by its sha256 at the judged
+    commit, so `comparator_staleness` can tell when any of them changes.
+    """
+    from .missions.compose import CLEAN_AXIOMS, expected_parts
+    from .missions.judge_log import parse_parts
+    spec = node.compose
+    if spec is None:
+        return (f"the log calls this verdict judge={verdict.judge!r}, but the node has no "
+                "[compose] table; refusing to record a compositional verdict for it")
+    if verdict.judge != "compositional":
+        return (f"the node is judged compositionally, but the PASS line says "
+                f"judge={verdict.judge or '(none)'}; that is not the compositional verdict")
+    if offline:
+        return "a compositional verdict can only be recorded from the judge's own job logs"
+    if verdict.theorem != spec.theorem:
+        return (f"the verdict names theorem {verdict.theorem!r}, not the node's implication "
+                f"{spec.theorem!r}")
+    want = expected_parts(slug, spec)
+    if verdict.parts != len(want):
+        return f"the verdict glued {verdict.parts} part(s); the node's spec has {len(want)}"
+    # Re-run the glue HERE on the part files the run uploaded, rather than taking the verdict
+    # job's word for it: identity by export bytes, closure, axioms -- all re-checked locally.
+    import tempfile
+    from .missions.compose import load_parts, verify as _verify_parts
+    with tempfile.TemporaryDirectory() as td:
+        if not _download_compose_parts(run_id, Path(td)):
+            return (f"could not download the compose-part-* artifacts of run {run_id}, so the "
+                    "glue cannot be re-checked here; refusing to record on the verdict job's word")
+        errs = _verify_parts(slug, spec, load_parts(Path(td)))
+    if errs:
+        return "re-checking the uploaded parts FAILED: " + "; ".join(errs)
+    lines = {d["part"]: d for d in parse_parts(log_text, slug)}
+    if set(lines) != set(want):
+        return (f"the verdict job lists parts {sorted(lines)}, the node's spec "
+                f"{sorted(want)}")
+    theorems = {f"seg:{nm}": thm for nm, _s, thm, _m in spec.segments}
+    theorems["compose"] = spec.theorem
+    modules = {f"seg:{nm}": mod for nm, _s, _t, mod in spec.segments}
+    modules["compose"] = spec.module
+    out = []
+    for label in sorted(want):
+        d = lines[label]
+        if d["slug"] != want[label] or d["comparator"] != "PASS":
+            return f"part {label}: the verdict job reports {d['slug']} comparator={d['comparator']}"
+        if not set(d["axioms"].split(",")) <= CLEAN_AXIOMS:
+            return f"part {label}: axioms {d['axioms']} are not all whitelisted"
+        found = _fetch_judge_job(run_id, want[label])
+        if found is None:
+            return f"could not read the judge logs of run {run_id} for part {label}"
+        job, errs = found
+        if errs:
+            return f"part {label}: " + "; ".join(errs)
+        if job.verdict.kernel != verdict.kernel:
+            return (f"part {label} was judged with kernel={job.verdict.kernel}, the verdict says "
+                    f"{verdict.kernel}")
+        src = art.parent / (modules[label].replace(".", "/") + ".lean")
+        sha = _blob_sha256(head_sha, src)
+        if sha is None:
+            _try_fetch(src, head_sha)
+            sha = _blob_sha256(head_sha, src)
+        if sha is None:
+            return f"part {label}: cannot resolve {src.name} at the judged commit {head_sha[:9]}"
+        from .missions.provenance import sha256_file
+        if sha256_file(src) != sha:
+            return (f"part {label}: {src.name} on disk differs from the judged commit's; that "
+                    "verdict is for a different version and must not be recorded")
+        out.append(f"part={label} slug={want[label]} theorem={theorems[label]} "
+                   f"module={modules[label]} sha256={sha} job={job.job_id}")
+    return out
+
+
+def _download_compose_parts(run_id: str, dest: Path) -> bool:
+    """Download a heavy-judge run's `compose-part-*` artifacts into `dest`; False when `gh`
+    cannot (absent, unauthenticated, artifacts expired)."""
+    r = _run_ok(["gh", "run", "download", str(run_id), "-R", _gh_repo(), "-p", "compose-part-*",
+                 "-D", str(dest)], text=True)
+    return r is not None and any(Path(dest).rglob("*.part.json"))
 
 
 def _fetch_judge_job(run_id: str, slug: str):

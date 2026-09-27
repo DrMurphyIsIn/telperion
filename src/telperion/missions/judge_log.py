@@ -39,7 +39,17 @@ KERNEL_MODES = {
 #: refusing it with "no PASS line" would be simply untrue about a log that does contain one.
 _PASS = re.compile(
     r"COMPARATOR PASS\s+island=(?P<island>\S+)\s+node=(?P<node>\S+)\s+"
-    r"theorem=(?P<theorem>\S+)\s+run=(?P<run>\S+)(?:\s+kernel=(?P<kernel>\S+))?")
+    r"theorem=(?P<theorem>\S+)\s+run=(?P<run>\S+)"
+    # `kernel=` arrived with #632 and the `judge=/parts=` tail with the compositional judge, so
+    # both are optional: a pre-#632 line ends at `run=`, an ordinary modern line at `kernel=`.
+    r"(?:\s+kernel=(?P<kernel>\S+))?"
+    r"(?:\s+judge=(?P<judge>\S+)\s+parts=(?P<parts>\d+))?")
+
+#: One line per judged part, printed by `telperion.missions.compose verify` before its verdict.
+_PART = re.compile(
+    r"COMPOSE PART\s+node=(?P<node>\S+)\s+part=(?P<part>\S+)\s+slug=(?P<slug>\S+)\s+"
+    r"theorem=(?P<theorem>\S+)\s+axioms=(?P<axioms>\S+)\s+closure=(?P<closure>\S+)\s+"
+    r"comparator=(?P<comparator>\S+)")
 _FAIL = re.compile(r"COMPARATOR FAIL\s+island=(?P<island>\S+)\s+node=(?P<node>\S+)")
 _UNEXPANDED = re.compile(r"\$\{?[A-Za-z_]")
 
@@ -53,6 +63,9 @@ class Verdict:
     run: str
     #: "" for a pre-#632 log, which did not print the field at all.
     kernel: str = ""
+    #: "" = one closure replayed; "compositional" = glued from `parts` judged parts (compose.py).
+    judge: str = ""
+    parts: int = 0
 
     @property
     def legacy(self) -> bool:
@@ -75,7 +88,20 @@ def parse_verdicts(text: str) -> Dict[str, Verdict]:
         if m:
             out[m.group("node")] = Verdict(m.group("island"), m.group("node"),
                                            m.group("theorem"), m.group("run"),
-                                           m.group("kernel") or "")
+                                           m.group("kernel") or "",
+                                           m.group("judge") or "", int(m.group("parts") or 0))
+    return out
+
+
+def parse_parts(text: str, node: str) -> List[dict]:
+    """The `COMPOSE PART` lines for `node` (templates skipped), in log order."""
+    out: List[dict] = []
+    for line in text.splitlines():
+        if _UNEXPANDED.search(line):
+            continue
+        m = _PART.search(line)
+        if m and m.group("node") == node:
+            out.append(m.groupdict())
     return out
 
 
