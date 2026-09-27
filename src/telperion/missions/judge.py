@@ -703,8 +703,14 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         # Per-node: `heavy_certificates = true` in the node toml turns nanoda off for that
         # node only (its exact certificates exhaust a 16 GB runner under nanoda; the Lean
         # kernel replay and the axiom whitelist still run). Recorded as "Lean kernel only".
-        heavy = _heavy_certificates(telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
-        node_nanoda = enable_nanoda and not heavy
+        # NOT `heavy`: that is this function's PARAMETER (the heavy-judge mode).  Reassigning it
+        # here made the first node with `heavy_certificates = true` flip the mode for every node
+        # after it, so the next ordinary node hit the heavy path's "judge_via is not heavy"
+        # refusal and the whole bundle failed to build -- latent on main, where no node carries
+        # the flag, and fatal on any branch that sets it (cl/kwin, cl/kwin2).
+        node_heavy = _heavy_certificates(
+            telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
+        node_nanoda = enable_nanoda and not node_heavy
         cfg = challenge_config(
             challenge_module=chal, solution_module=chal, theorem_names=[bridge],
             permitted_axioms=CLEAN_AXIOMS, enable_nanoda=node_nanoda)

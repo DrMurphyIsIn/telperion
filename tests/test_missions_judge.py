@@ -268,6 +268,33 @@ def test_heavy_certificates_turns_nanoda_off_for_that_node_only(tmp_path, capsys
     assert cols == {"X_node": "nanoda", "Y_heavy": "lean-kernel-only"}
 
 
+def test_a_heavy_node_does_not_poison_the_nodes_after_it(tmp_path):
+    """The bug this pins: `heavy` is `build_bundle`'s PARAMETER (the heavy-judge mode), and the
+    per-node `heavy_certificates` read used to reassign it.  The first node carrying the flag
+    then flipped the mode for every node SORTED AFTER it, so the next ordinary node hit the heavy
+    path's "judge_via is not heavy" refusal and the whole bundle failed to build.
+
+    It was invisible on main, where no node carries the flag, and invisible to the test above,
+    whose heavy node sorts last.  It was fatal on exactly the branches that use the flag."""
+    art_a = "import Mathlib\n\ntheorem a : (1 : ℕ) = 1 := rfl\n"
+    stmt_a = "import Statements.Defs\n\ntheorem a : (1 : ℕ) = 1 := by sorry\n"
+    art_b = "import Mathlib\n\ntheorem b : (2 : ℕ) = 2 := rfl\n"
+    stmt_b = "import Statements.Defs\n\ntheorem b : (2 : ℕ) = 2 := by sorry\n"
+    art_c = "import Mathlib\n\ntheorem c : (3 : ℕ) = 3 := rfl\n"
+    stmt_c = "import Statements.Defs\n\ntheorem c : (3 : ℕ) = 3 := by sorry\n"
+    tel = _island(tmp_path, artifact=art_a, statement=stmt_a,
+                  extra_nodes=[("Y_heavy", stmt_b, art_b, "Heavy.lean"),
+                               ("Z_after", stmt_c, art_c, "After.lean")])
+    toml = tel / "missions" / "x" / "nodes" / "Y_heavy.toml"
+    toml.write_text("heavy_certificates = true\n" + toml.read_text())
+    b = judge.build_bundle(tel, "isl")          # must not raise
+    by = {c.slug: c for c in b.challenges}
+    assert set(by) == {"X_node", "Y_heavy", "Z_after"}
+    assert by["Y_heavy"].nanoda is False, "the flagged node keeps nanoda off"
+    assert by["Z_after"].nanoda is True, "a node sorted after it must be unaffected"
+    assert b.excluded == (), "nothing is excluded by rule here"
+
+
 def test_unknown_toolchain_is_refused():
     with pytest.raises(judge.JudgeError, match="no known Comparator tag"):
         judge.comparator_tag("leanprover/lean4:v4.99.0")
