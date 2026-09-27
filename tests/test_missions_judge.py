@@ -197,9 +197,12 @@ def test_configs_stdout_is_machine_readable_even_with_skipped_nodes(tmp_path, ca
     assert "::warning::" in err and "Y_bad" in err
     assert "::" not in out
     for line in out.splitlines():
-        slug, cfg, sol, thm, bridge, kernel = line.split("\t")
+        # Columns 7-8 name a compositional part and its statement exports; an ordinary node
+        # leaves them empty (the per-PR workflow reads only the first six).
+        slug, cfg, sol, thm, bridge, kernel, part, exports = line.split("\t")
         assert _IDENT.match(slug) and _IDENT.match(sol) and _IDENT.match(thm) and _IDENT.match(bridge), line
         assert kernel in ("nanoda", "lean-kernel-only")
+        assert part == "" and exports == "", line
         assert cfg == f"{slug}.comparator.json"
     # the other diagnostic paths are stderr too
     assert judge.main(["--island", "nope", "--telperion", str(tel), "--configs"]) == 2

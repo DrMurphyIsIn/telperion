@@ -229,7 +229,26 @@ def comparator_staleness(campaign_root: Path, node: Node) -> str:
         return (f"[comparator] run {c.run_id} judged a different artifact "
                 f"(sha256 {c.artifact_sha256[:12]}..., on disk {sha256_file(art)[:12]}...); "
                 "the independent verdict is stale until the job passes again")
+    # A compositional verdict judged the PART modules (the implication and each segment), not
+    # the artifact file: each one must still be the file the judge saw.
+    for part in c.parts:
+        f = parse_part_entry(part)
+        mod, want = f.get("module", ""), f.get("sha256", "")
+        if not mod or not want:
+            return f"[comparator] compositional part entry without module/sha256: {part!r}"
+        src = art.parent / (mod.replace(".", "/") + ".lean")
+        if not src.exists():
+            return f"[comparator] compositional part module {mod} no longer exists ({src.name})"
+        if sha256_file(src) != want:
+            return (f"[comparator] run {c.run_id} judged part {f.get('part')} with {mod} at "
+                    f"sha256 {want[:12]}..., on disk {sha256_file(src)[:12]}...; the "
+                    "compositional verdict is stale until the heavy judge passes again")
     return ""
+
+
+def parse_part_entry(entry: str) -> dict:
+    """`part=seg:h1000 slug=... theorem=... module=... sha256=... job=...` -> dict."""
+    return dict(kv.split("=", 1) for kv in entry.split() if "=" in kv)
 
 
 def required_ci_problem(campaign_root: Path, node: Node) -> str:
@@ -304,6 +323,9 @@ class ProvenanceRow:
     #: "" = judged by the per-PR bundle; "heavy" = excluded from it by rule and judged by the
     #: dispatch-only heavy workflow (see judge.HEAVY_WORKFLOW).
     judge_via: str = ""
+    #: "compositional" when the recorded verdict glued separately judged parts (compose.py).
+    judge_mode: str = ""
+    parts: int = 0
 
     @property
     def flagged(self) -> bool:
@@ -337,6 +359,8 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             log_check=(n.comparator.log_check if n.comparator else ""),
             head_check=(n.comparator.head_check if n.comparator else ""),
             judge_via=getattr(n, "judge_via", "") or "",
+            judge_mode=(n.comparator.judge_mode if n.comparator else ""),
+            parts=(len(n.comparator.parts) if n.comparator else 0),
         ))
     return rows
 
@@ -389,4 +413,11 @@ def weak_record_reasons(row) -> List[str]:
         out.append("the artifact was not checked at the judged commit")
     if row.comparator_run and not row.log_check and not row.head_check:
         out.append("predates the record checks (no log_check/head_check)")
+    if getattr(row, "judge_mode", "") == "compositional":
+        out.append(f"COMPOSITIONAL: the capstone's own proof was not replayed; its statement "
+                   f"follows by a Comparator-checked implication from {max(row.parts - 1, 0)} "
+                   "Comparator-checked segment statements, glued in telperion.missions.compose "
+                   "(statement identity "
+                   "by lean4export bytes, no certificate module in the implication's closure, "
+                   "axioms per part)")
     return out
