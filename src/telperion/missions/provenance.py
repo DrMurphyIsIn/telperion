@@ -229,7 +229,26 @@ def comparator_staleness(campaign_root: Path, node: Node) -> str:
         return (f"[comparator] run {c.run_id} judged a different artifact "
                 f"(sha256 {c.artifact_sha256[:12]}..., on disk {sha256_file(art)[:12]}...); "
                 "the independent verdict is stale until the job passes again")
+    # A compositional verdict judged the PART modules (the implication and each segment), not
+    # the artifact file: each one must still be the file the judge saw.
+    for part in c.parts:
+        f = parse_part_entry(part)
+        mod, want = f.get("module", ""), f.get("sha256", "")
+        if not mod or not want:
+            return f"[comparator] compositional part entry without module/sha256: {part!r}"
+        src = art.parent / (mod.replace(".", "/") + ".lean")
+        if not src.exists():
+            return f"[comparator] compositional part module {mod} no longer exists ({src.name})"
+        if sha256_file(src) != want:
+            return (f"[comparator] run {c.run_id} judged part {f.get('part')} with {mod} at "
+                    f"sha256 {want[:12]}..., on disk {sha256_file(src)[:12]}...; the "
+                    "compositional verdict is stale until the heavy judge passes again")
     return ""
+
+
+def parse_part_entry(entry: str) -> dict:
+    """`part=seg:h1000 slug=... theorem=... module=... sha256=... job=...` -> dict."""
+    return dict(kv.split("=", 1) for kv in entry.split() if "=" in kv)
 
 
 def required_ci_problem(campaign_root: Path, node: Node) -> str:
@@ -297,7 +316,16 @@ class ProvenanceRow:
     comparator_run: str    # "" when no passing run is recorded
     comparator_stale: bool
     lean_kernel_only: bool
+    #: How the record was checked when written ("" for records predating the checks).
+    log_check: str
+    head_check: str
     has_grant: bool
+    #: "" = judged by the per-PR bundle; "heavy" = excluded from it by rule and judged by the
+    #: dispatch-only heavy workflow (see judge.HEAVY_WORKFLOW).
+    judge_via: str = ""
+    #: "compositional" when the recorded verdict glued separately judged parts (compose.py).
+    judge_mode: str = ""
+    parts: int = 0
 
     @property
     def flagged(self) -> bool:
@@ -328,6 +356,11 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             comparator_stale=bool(comparator_staleness(campaign.root, n)),
             lean_kernel_only=bool(n.comparator and n.comparator.second_kernel != "nanoda"),
             has_grant=n.grant is not None,
+            log_check=(n.comparator.log_check if n.comparator else ""),
+            head_check=(n.comparator.head_check if n.comparator else ""),
+            judge_via=getattr(n, "judge_via", "") or "",
+            judge_mode=(n.comparator.judge_mode if n.comparator else ""),
+            parts=(len(n.comparator.parts) if n.comparator else 0),
         ))
     return rows
 
@@ -345,6 +378,11 @@ def render_provenance_report(campaign) -> str:
             if r.comparator_run else "comparator=-"
         lines.append(f"  {r.slug:<48} readback={r.independence:<11} {comp}"
                      f"{'' if r.has_grant else '  grant=legacy'}")
+        if r.judge_via == "heavy":
+            # A known state, not an oversight: the per-PR bundle excludes this node BY RULE.
+            lines.append(f"  {'':<48} per-PR Comparator: not run by rule (judge_via = heavy); "
+                         "judged by missions-comparator-heavy.yml"
+                         f"{'' if r.comparator_run else ' -- no heavy-judge run recorded yet'}")
     covered = [r for r in proved if r.comparator_run and not r.comparator_stale]
     if covered:
         lines.append(f"  ({len(covered)} proved node(s) covered by a passing Comparator run)")
@@ -352,4 +390,34 @@ def render_provenance_report(campaign) -> str:
     for r in lko:
         lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
                      "(heavy_certificates: nanoda not run)")
+    for r in covered:
+        weak = weak_record_reasons(r)
+        if weak:
+            lines.append(f"  {r.slug:<48} comparator={r.comparator_run} "
+                         f"WEAKLY CHECKED: {'; '.join(weak)}")
     return "\n".join(lines) + "\n"
+
+
+#: A Comparator record whose own checks were skipped or could not complete.  Not an error --
+#: the record may be perfectly true -- but it must never read like a fully checked one.
+def weak_record_reasons(row) -> List[str]:
+    out = []
+    if row.log_check == "skipped":
+        out.append("written with --no-verify, so no judge log confirmed the theorem or kernel")
+    elif row.log_check == "verified-offline":
+        out.append("verified against a supplied log file; the job id is the recorder's word")
+    if row.head_check == "unresolved":
+        out.append("the artifact could not be hashed at the judged commit, so only the grant "
+                   "pins the artifact")
+    elif row.head_check == "skipped":
+        out.append("the artifact was not checked at the judged commit")
+    if row.comparator_run and not row.log_check and not row.head_check:
+        out.append("predates the record checks (no log_check/head_check)")
+    if getattr(row, "judge_mode", "") == "compositional":
+        out.append(f"COMPOSITIONAL: the capstone's own proof was not replayed; its statement "
+                   f"follows by a Comparator-checked implication from {max(row.parts - 1, 0)} "
+                   "Comparator-checked segment statements, glued in telperion.missions.compose "
+                   "(statement identity "
+                   "by lean4export bytes, no certificate module in the implication's closure, "
+                   "axioms per part)")
+    return out

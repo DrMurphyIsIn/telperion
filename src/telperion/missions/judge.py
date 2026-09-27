@@ -42,6 +42,16 @@ own `DBN.H` would make the registered statement resolve to the impostor. The cha
 therefore also imports the island's AxiomGuard modules (which import every island module):
 a constant declared twice on the island is a duplicate-declaration error, so the challenge
 fails to build and the judge fails.
+On an island with no AxiomGuard lean_lib (bg: the R3Cert package, whose AxiomGuard.lean is a
+loose file and whose full library includes R47PC6Cells, ~70 min / 18 GB that no node needs)
+the challenge instead imports the island modules its campaign's vocabulary mirror cites as
+the source of each copied block (`-- ===== ExactCruxes.lean:70 =====` in BGDefs.lean). That
+catches an artifact re-declaring a mirrored vocabulary constant; it does NOT catch a
+shadowed constant that is not in the mirror (the whole-island import would).
+
+OUT-OF-TREE ISLANDS (`OUT_OF_TREE_ISLANDS`): bg lives at proof/formalization, not
+telperion/examples/<island>/lean. Its proved nodes are the registry nodes whose [proof]
+artifact lies under that directory; everything else is the same.
 
 NOT CONSUMABLE (reported, never skipped silently): a statement that declares anything besides
 its final theorem (local `def`s would collide with the artifact's copies; 2 of 97 nodes,
@@ -64,8 +74,10 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
+import tomllib
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,8 +126,32 @@ _IMPORT_RE = re.compile(r"(?m)^import\s+(\S+)[ \t]*$")
 _OPEN_RE = re.compile(r"(?m)^open\b.*$")
 
 
+@dataclass(frozen=True)
+class OutOfTreeIsland:
+    """An island that is not `telperion/examples/<island>/lean`."""
+    #: Lake package directory, relative to telperion/.
+    lean_dir: str
+    #: Vocabulary mirror (relative to telperion/) whose `-- ===== <Module>.lean... =====` block
+    #: headers name the island modules the vocabulary is copied from. Used for the shadowing
+    #: guard when the island has no `AxiomGuard*` lean_lib (see `island_guard_modules`).
+    vocab_mirror: str
+
+
+#: The BG island is the R3Cert package under proof/formalization (toolchain v4.32.0). It has no
+#: AxiomGuard lean_lib (its AxiomGuard.lean is a loose file CI runs with `lake env lean`), and
+#: importing every R3Cert module would drag in R47PC6Cells (~70 min, 18 GB) that no BG node
+#: needs, so its challenges import the vocabulary's home modules instead.
+OUT_OF_TREE_ISLANDS = {
+    "bg": OutOfTreeIsland(lean_dir="../proof/formalization",
+                          vocab_mirror="missions/bg/lean/Statements/BGDefs.lean"),
+}
+
+
 def island_dir(telperion_root: Path, island: str) -> Path:
-    d = Path(telperion_root) / "examples" / island / "lean"
+    if island in OUT_OF_TREE_ISLANDS:
+        d = (Path(telperion_root) / OUT_OF_TREE_ISLANDS[island].lean_dir).resolve()
+    else:
+        d = Path(telperion_root) / "examples" / island / "lean"
     if not (d / "lakefile.toml").is_file():
         raise JudgeError(f"island {island!r}: no lakefile.toml under {d}")
     return d
@@ -160,7 +196,90 @@ def island_guard_modules(lean_dir: Path) -> List[str]:
     """The island's `AxiomGuard*` lean_libs, which by convention import every island module.
     Importing them into a challenge makes a shadowed vocabulary constant a build error."""
     text = (lean_dir / "lakefile.toml").read_text()
+    # PREFIX MATCH ON PURPOSE (2026-09-26): only `AxiomGuard*` libs are imported. The ladder's
+    # per-segment guards (Arb4_AxiomGuard_h*, RS5_AxiomGuard, H11K_AxiomGuard) do NOT match, so
+    # ordinary challenges stay light; only a challenge whose OWN artifact is a ladder capstone
+    # (e.g. Arb4_h8000, whose import closure is every segment's edge certificates) needs the
+    # ladder built -- those nodes carry `judge_via = "heavy"` and are judged by
+    # missions-comparator-heavy.yml, not here.
     return sorted(m.group(1) for m in _LIB_RE.finditer(text) if m.group(1).startswith("AxiomGuard"))
+
+
+_MIRROR_HEADER_RE = re.compile(r"(?m)^--\s*=====(.*)$")
+_MIRROR_FILE_RE = re.compile(r"([\w/]+)\.lean\b")
+
+
+def vocabulary_home_modules(lean_dir: Path, mirror_text: str) -> List[str]:
+    """Island modules named in a vocabulary mirror's block headers
+    (`-- ===== GStepCore.lean:25 / CappedJointConfig.lean:33-46 =====`), as module names.
+
+    The shadowing guard for an island without an AxiomGuard lean_lib: an artifact that
+    re-declares `R3Cert.rhoB` instead of importing ExactCruxes is a duplicate declaration once
+    the challenge also imports ExactCruxes. A header naming no unique island file is an error
+    (the mirror and the island disagree, which missions/mirrors.py should also report)."""
+    lean_dir = Path(lean_dir).resolve()
+    names: List[str] = []
+    for hm in _MIRROR_HEADER_RE.finditer(mirror_text):
+        for fm in _MIRROR_FILE_RE.finditer(hm.group(1)):
+            if fm.group(1) not in names:
+                names.append(fm.group(1))
+    mods: List[str] = []
+    for n in names:
+        hits = [p for p in lean_dir.rglob(f"{n}.lean")
+                if ".lake" not in p.relative_to(lean_dir).parts]
+        if len(hits) != 1:
+            raise JudgeError(f"vocabulary mirror cites {n}.lean; {len(hits)} match(es) on the "
+                             f"island {lean_dir}")
+        m = module_name_of(lean_dir, hits[0])
+        if m not in mods:
+            mods.append(m)
+    return sorted(mods)
+
+
+def island_anchors(telperion_root: Path, island: str, lean_dir: Path) -> list:
+    """The grant gate's anchors (proved node -> artifact theorem) on this island. For an
+    out-of-tree island this is guard_anchors.load_anchors with the island test replaced by
+    "the artifact lies under the island's package directory"."""
+    ga = _guard_anchors()
+    if island not in OUT_OF_TREE_ISLANDS:
+        return ga.load_anchors(telperion_root, island)
+    lean_dir = Path(lean_dir).resolve()
+    anchors, errors = [], []
+    for toml_path in sorted((Path(telperion_root) / "missions").glob("*/nodes/*.toml")):
+        campaign_root = toml_path.parent.parent
+        try:
+            doc = tomllib.loads(toml_path.read_text())
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            errors.append(f"{toml_path}: unreadable ({e})")
+            continue
+        art = (doc.get("proof") or {}).get("artifact")
+        if doc.get("status") != "proved" or not art or not str(art).endswith(".lean"):
+            continue
+        artifact = (campaign_root / art).resolve()
+        if not artifact.is_relative_to(lean_dir):
+            continue
+        slug = str(doc.get("name", toml_path.stem)).replace(".", "_")
+        stmt = campaign_root / "lean" / "Statements" / f"{slug}.lean"
+        try:
+            thm = ga.resolve_theorem(artifact.read_text(), stmt.read_text())
+        except (OSError, ga.RegistryError) as e:
+            errors.append(f"{campaign_root.name}/{slug}: {e}")
+            continue
+        anchors.append(ga.Anchor(slug, campaign_root.name, artifact, thm))
+    if errors:
+        raise ga.RegistryError("\n".join(errors))
+    return anchors
+
+
+def challenge_guard_modules(telperion_root: Path, island: str,
+                            lean_dir: Path) -> tuple[List[str], bool]:
+    """(modules every challenge imports for the shadowing guard, whether they are the
+    vocabulary-home fallback rather than the island's AxiomGuard libs)."""
+    guards = island_guard_modules(lean_dir)
+    if guards or island not in OUT_OF_TREE_ISLANDS:
+        return guards, False
+    mirror = Path(telperion_root) / OUT_OF_TREE_ISLANDS[island].vocab_mirror
+    return vocabulary_home_modules(lean_dir, mirror.read_text()), True
 
 
 # ---------------------------------------------------------------------------
@@ -294,17 +413,45 @@ def artifact_context(artifact_text: str, statement_text: str) -> tuple[str, List
     raise JudgeError(f"artifact does not declare the registered statement `{short}`")
 
 
+def decl_context(module_text: str, theorem: str) -> tuple[str, List[str]]:
+    """(namespace, open lines) in force where `module_text` declares `theorem` -- for the
+    IMPLICATION part of a compositional judgement, whose module does not declare the registered
+    statement itself.  The statement then resolves in the implication's own context, exactly as
+    `artifact_context` makes it resolve in the artifact's."""
+    ga = _guard_anchors()
+    short = theorem.rsplit(".", 1)[-1]
+    code = ga.strip_string_literals(ga.strip_lean_comments(module_text))
+    pat = re.compile(r"(?<![\w.'])(theorem|lemma)\s+" + re.escape(short) + r"(?![\w.'])")
+    for m in pat.finditer(code):
+        ns = ".".join(ga._namespace_at(code, m.start()))
+        if (ns + "." + short if ns else short) != theorem:
+            continue
+        opens: List[str] = []
+        for om in _OPEN_LINE_RE.finditer(code, 0, m.start()):
+            line = re.sub(r"\s+", " ", om.group(1)).strip()
+            if line not in opens:
+                opens.append(line)
+        return ns, opens
+    raise JudgeError(f"implication module does not declare `{theorem}`")
+
+
 def bridge_theorem_name(slug: str) -> str:
     return f"MissionJudge.{slug}"
 
 
 def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module: str,
                      guard_modules: Sequence[str], statement_text: str,
-                     artifact_text: str) -> str:
+                     artifact_text: str, vocab_guard: bool = False,
+                     hypotheses: Sequence[tuple] = ()) -> str:
+    """The Comparator challenge for one node.  With `hypotheses` [(binder, constant), ...] it is
+    instead the IMPLICATION part of a compositional judgement (see compose.py): the registered
+    statement under those leading hypotheses, proved by the island's implication `theorem`."""
     stmt_hash, _mirror_opens, body = statement_parts(statement_text)
     short, binders, concl = split_signature(body)
-    ns, opens = artifact_context(artifact_text, statement_text)
-    if theorem != short and not theorem.endswith("." + short.removeprefix("_root_.")):
+    ns, opens = (decl_context(artifact_text, theorem) if hypotheses
+                 else artifact_context(artifact_text, statement_text))
+    if not hypotheses and theorem != short and \
+            not theorem.endswith("." + short.removeprefix("_root_.")):
         raise JudgeError(
             f"artifact theorem {theorem!r} does not end with the statement's declared name "
             f"{short!r}")
@@ -317,8 +464,19 @@ def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module:
         f"   {slug}.lean (header sha256 {stmt_hash}), binders and conclusion verbatim; the",
         f"   PROOF is the artifact constant `{theorem}` from {solution_module}. Both kernels",
         "   accept this module only if the artifact proves exactly the registered proposition.",
-        "   The AxiomGuard imports load the whole island, so a vocabulary constant shadowed by",
-        "   the artifact is a duplicate declaration here, not a silent substitution. The",
+    ]
+    if vocab_guard:
+        out += [
+            "   The other imports are the island modules the campaign's vocabulary mirror copies",
+            "   from, so a vocabulary constant shadowed by the artifact is a duplicate",
+            "   declaration here, not a silent substitution. The",
+        ]
+    else:
+        out += [
+            "   The AxiomGuard imports load the whole island, so a vocabulary constant shadowed by",
+            "   the artifact is a duplicate declaration here, not a silent substitution. The",
+        ]
+    out += [
         "   `namespace` and the `open` lines inside it are the artifact's own at its",
         "   declaration, so every name in the statement resolves exactly as it does there. -/",
     ]
@@ -334,13 +492,39 @@ def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module:
         out += opens
         out.append("")
     name = ("_root_." if ns else "") + bridge_theorem_name(slug)
-    out.append(f"theorem {name} :")
+    if hypotheses:
+        out.append(f"theorem {name}")
+        for b, c in hypotheses:
+            out.append(f"    ({b} : _root_.{c})")
+        out.append("    :")
+    else:
+        out.append(f"theorem {name} :")
     out.append(f"    {prop} :=")
-    out.append(f"  {theorem}")
+    out.append(f"  {theorem}" + "".join(f" {b}" for b, _c in hypotheses))
     if ns:
         out.append("")
         out.append(f"end {ns}")
     return "\n".join(out) + "\n"
+
+
+def render_segment_challenge(*, node: str, campaign: str, name: str, statement: str,
+                             theorem: str, module: str) -> str:
+    """A SEGMENT part of a compositional judgement: the bare statement constant, proved by the
+    segment theorem.  The type is written `_root_.<statement>` so nothing can re-resolve it;
+    ComposeInspect then confirms the judged type IS that constant."""
+    from .compose import seg_slug
+    slug = seg_slug(node, name)
+    return "\n".join([
+        f"/- {_SENTINEL} -- generated by telperion.missions.judge.",
+        f"   Comparator CHALLENGE, compositional part: segment {name} of registry node",
+        f"   {campaign}/{node}.  The TYPE is the bare constant `{statement}`, the PROOF the",
+        f"   segment theorem `{theorem}` from {module}.  The implication part must take exactly",
+        "   this constant as a hypothesis; compose.py checks the two by lean4export bytes. -/",
+        f"import {module}",
+        "",
+        f"theorem {bridge_theorem_name(slug)} : _root_.{statement} :=",
+        f"  {theorem}",
+    ]) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +545,13 @@ class Challenge:
     config: "OrderedDict[str, object]"
     artifact_sha256: str
     statement_sha256: str
+    #: "" for an ordinary node; "seg:<name>" or "compose" for a part of a compositional one.
+    part: str = ""
+    #: The statement constants this part's job exports (lean4export) for compose.py's identity
+    #: check: a segment's own statement, or every segment statement for the implication.
+    exports: tuple = ()
+    #: The registry node a part belongs to ("" = the challenge IS the node).
+    node: str = ""
 
 
 @dataclass(frozen=True)
@@ -371,7 +562,14 @@ class Bundle:
     comparator_tag: str
     challenges: List[Challenge]
     #: "campaign/slug: why" for proved nodes on this island the judge cannot consume.
-    skipped: tuple = ()
+    skipped: tuple
+    #: The island's package directory relative to the bundle directory (the committed bundle's by
+    #: default; a heavy bundle rendered to a temp `--out` replaces it with the path from there).
+    require_path: str
+    #: "campaign/slug" of proved nodes EXCLUDED BY RULE (`judge_via = "heavy"`): judged by
+    #: missions-comparator-heavy.yml instead. Written into MANIFEST.json so the bundle itself
+    #: says which nodes it does not judge and where they are judged.
+    excluded: tuple = ()
 
     def files(self) -> "OrderedDict[str, str]":
         """Relative path -> text for everything the bundle writes."""
@@ -385,7 +583,7 @@ class Bundle:
             'defaultTargets = ["MissionChallenges"]\n\n'
             "[[require]]\n"
             f'name = "{self.package}"\n'
-            f'path = "../../../examples/{self.island}/lean"\n\n'
+            f'path = "{self.require_path}"\n\n'
             "[[lean_lib]]\n"
             'name = "MissionChallenges"\n'
         )
@@ -404,8 +602,13 @@ class Bundle:
                 bridge_theorem=c.bridge_theorem, config=f"{c.slug}.comparator.json",
                 nanoda=c.nanoda,
                 artifact_sha256=c.artifact_sha256, statement_sha256=c.statement_sha256,
+                **({"part_of": c.node, "part": c.part, "exports": list(c.exports)}
+                   if c.part else {}),
             ) for c in self.challenges],
         )
+        if self.excluded:
+            manifest["judged_elsewhere"] = [
+                dict(node=e, judge_via="heavy", workflow=HEAVY_WORKFLOW) for e in self.excluded]
         files["MANIFEST.json"] = json.dumps(manifest, indent=2) + "\n"
         return files
 
@@ -419,12 +622,35 @@ def _heavy_certificates(node_toml: Path) -> bool:
         return False
 
 
+#: The dispatch-only workflow that judges `judge_via = "heavy"` nodes.
+HEAVY_WORKFLOW = "missions-comparator-heavy.yml"
+
+
+def _judge_via(node_toml: Path) -> str:
+    """The node's `judge_via` ("" = per-PR bundle; "heavy" = the dispatch-only heavy path)."""
+    import tomllib
+    try:
+        return str(tomllib.loads(Path(node_toml).read_text()).get("judge_via", "") or "").strip()
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = True,
-                 only: Optional[Sequence[str]] = None) -> Bundle:
+                 only: Optional[Sequence[str]] = None, heavy: bool = False) -> Bundle:
+    """Render the challenge bundle.
+
+    Per-PR mode (heavy=False): nodes with `judge_via = "heavy"` are EXCLUDED BY RULE (listed in
+    `Bundle.excluded`, never rendered), so the committed bundle and `--check` stay consistent.
+    Heavy mode (heavy=True): render ONLY the `--only` nodes, and REFUSE any of them that is not
+    `judge_via = "heavy"` -- the heavy path must never become a way to route an ordinary node
+    around the per-PR judge. A heavy bundle is written to a temp `--out`, never committed.
+    """
+    if heavy and not only:
+        raise JudgeError("--heavy needs --only <slug>: the heavy path judges named nodes only")
     telperion_root = Path(telperion_root)
     ga = _guard_anchors()
     lean_dir = island_dir(telperion_root, island)
@@ -432,26 +658,44 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
     toolchain = island_toolchain(lean_dir)
     tag = comparator_tag(toolchain)
     try:
-        anchors = ga.load_anchors(telperion_root, island)
+        anchors = island_anchors(telperion_root, island, lean_dir)
     except ga.RegistryError as e:
         raise JudgeError(f"island {island!r}: {e}") from e
     if not anchors:
         raise JudgeError(f"island {island!r}: no proved registry node has its artifact here")
     challenges: List[Challenge] = []
-    guards = island_guard_modules(lean_dir)
+    guards, vocab_guard = challenge_guard_modules(telperion_root, island, lean_dir)
     problems: List[str] = []
+    excluded: List[str] = []
     for a in anchors:
         if only and a.node not in only:
             continue
+        via = _judge_via(telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
+        if heavy and via != "heavy":
+            raise JudgeError(f"{a.campaign}/{a.node}: judge_via = {via!r}, not 'heavy'; the heavy "
+                             "path refuses ordinary nodes (they are judged by the per-PR bundle)")
+        if not heavy and via == "heavy":
+            excluded.append(f"{a.campaign}/{a.node}")
+            continue
         stmt_path = telperion_root / "missions" / a.campaign / "lean" / "Statements" / f"{a.node}.lean"
         statement_text = stmt_path.read_text()
+        if heavy:
+            from .schema import load_node
+            spec = load_node(telperion_root / "missions" / a.campaign / "nodes"
+                             / f"{a.node}.toml").compose
+            if spec is not None:
+                challenges += compose_parts(
+                    node=a.node, campaign=a.campaign, spec=spec, lean_dir=lean_dir,
+                    guards=guards, vocab_guard=vocab_guard, statement_text=statement_text,
+                    artifact_sha256=_sha256(a.artifact), statement_sha256=_sha256(stmt_path))
+                continue
         sol = module_name_of(lean_dir, a.artifact)
         chal = f"MissionChallenges.{a.node}"
         try:
             text = render_challenge(
                 slug=a.node, campaign=a.campaign, theorem=a.theorem, solution_module=sol,
                 guard_modules=guards, statement_text=statement_text,
-                artifact_text=a.artifact.read_text())
+                artifact_text=a.artifact.read_text(), vocab_guard=vocab_guard)
         except JudgeError as e:
             problems.append(f"{a.campaign}/{a.node}: {e}")
             continue
@@ -459,8 +703,14 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         # Per-node: `heavy_certificates = true` in the node toml turns nanoda off for that
         # node only (its exact certificates exhaust a 16 GB runner under nanoda; the Lean
         # kernel replay and the axiom whitelist still run). Recorded as "Lean kernel only".
-        heavy = _heavy_certificates(telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
-        node_nanoda = enable_nanoda and not heavy
+        # NOT `heavy`: that is this function's PARAMETER (the heavy-judge mode).  Reassigning it
+        # here made the first node with `heavy_certificates = true` flip the mode for every node
+        # after it, so the next ordinary node hit the heavy path's "judge_via is not heavy"
+        # refusal and the whole bundle failed to build -- latent on main, where no node carries
+        # the flag, and fatal on any branch that sets it (cl/kwin, cl/kwin2).
+        node_heavy = _heavy_certificates(
+            telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml")
+        node_nanoda = enable_nanoda and not node_heavy
         cfg = challenge_config(
             challenge_module=chal, solution_module=chal, theorem_names=[bridge],
             permitted_axioms=CLEAN_AXIOMS, enable_nanoda=node_nanoda)
@@ -473,8 +723,54 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         raise JudgeError(f"island {island!r}: no consumable node:\n  " + "\n  ".join(problems))
     if not challenges:
         raise JudgeError(f"island {island!r}: --only matched no proved node")
+    require = os.path.relpath(lean_dir.resolve(), default_out(telperion_root, island).resolve())
     return Bundle(island=island, package=package, toolchain=toolchain, comparator_tag=tag,
-                  challenges=challenges, skipped=tuple(problems))
+                  challenges=challenges, skipped=tuple(problems), require_path=require,
+                  excluded=tuple(excluded))
+
+
+def compose_parts(*, node: str, campaign: str, spec, lean_dir: Path, guards: Sequence[str],
+                  vocab_guard: bool, statement_text: str, artifact_sha256: str,
+                  statement_sha256: str) -> List[Challenge]:
+    """The challenges of a COMPOSITIONAL judgement (see compose.py): one per segment, plus the
+    implication.  Every part is Lean-kernel-only: the segments carry the heavy certificates, and
+    one kernel mode per verdict keeps the record honest."""
+    from .compose import compose_slug, seg_slug
+    out: List[Challenge] = []
+    for nm, stmt, thm, mod in spec.segments:
+        slug = seg_slug(node, nm)
+        chal = f"MissionChallenges.{slug}"
+        br = bridge_theorem_name(slug)
+        out.append(Challenge(
+            slug=slug, campaign=campaign, theorem=thm, solution_module=mod,
+            challenge_module=chal, bridge_theorem=br, nanoda=False,
+            challenge_text=render_segment_challenge(node=node, campaign=campaign, name=nm,
+                                                    statement=stmt, theorem=thm, module=mod),
+            config=challenge_config(challenge_module=chal, solution_module=chal,
+                                    theorem_names=[br], permitted_axioms=CLEAN_AXIOMS,
+                                    enable_nanoda=False),
+            artifact_sha256=artifact_sha256, statement_sha256=statement_sha256,
+            part=f"seg:{nm}", exports=(stmt,), node=node))
+    slug = compose_slug(node)
+    chal = f"MissionChallenges.{slug}"
+    br = bridge_theorem_name(slug)
+    comp_path = lean_dir / (spec.module.replace(".", "/") + ".lean")
+    if not comp_path.is_file():
+        raise JudgeError(f"{campaign}/{node}: compose.module {spec.module!r} has no source file "
+                         f"{comp_path}")
+    text = render_challenge(
+        slug=slug, campaign=campaign, theorem=spec.theorem, solution_module=spec.module,
+        guard_modules=guards, statement_text=statement_text, artifact_text=comp_path.read_text(),
+        vocab_guard=vocab_guard,
+        hypotheses=[(f"b_{nm}", stmt) for nm, stmt, _t, _m in spec.segments])
+    out.append(Challenge(
+        slug=slug, campaign=campaign, theorem=spec.theorem, solution_module=spec.module,
+        challenge_module=chal, bridge_theorem=br, nanoda=False, challenge_text=text,
+        config=challenge_config(challenge_module=chal, solution_module=chal, theorem_names=[br],
+                                permitted_axioms=CLEAN_AXIOMS, enable_nanoda=False),
+        artifact_sha256=artifact_sha256, statement_sha256=statement_sha256,
+        part="compose", exports=tuple(spec.segment_statements), node=node))
+    return out
 
 
 def shard(challenges: Sequence[Challenge], spec: Optional[str]) -> List[Challenge]:
@@ -541,6 +837,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="verify the committed bundle matches the registry; write nothing")
     ap.add_argument("--no-nanoda", action="store_true", help="enable_nanoda = false")
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these node slugs")
+    ap.add_argument("--heavy", action="store_true",
+                    help="render ONLY the --only nodes, each of which must be judge_via = \"heavy\" "
+                         "(refused otherwise); write it with --out to a temp dir, never commit it. "
+                         "Without --heavy, judge_via = \"heavy\" nodes are excluded by rule.")
     ap.add_argument("--list", action="store_true", help="print the nodes and exit")
     ap.add_argument("--configs", action="store_true",
                     help="print `slug<TAB>config<TAB>solution_module<TAB>theorem<TAB>bridge<TAB>"
@@ -551,16 +851,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = ap.parse_args(list(argv) if argv is not None else None)
     try:
         bundle = build_bundle(args.telperion, args.island, enable_nanoda=not args.no_nanoda,
-                              only=args.only)
+                              only=args.only, heavy=args.heavy)
     except JudgeError as e:
         print(f"::error::{e}", file=sys.stderr)
         return 2
     out = args.out or default_out(args.telperion, args.island)
+    if args.heavy:
+        import os
+        import dataclasses
+        bundle = dataclasses.replace(bundle, require_path=os.path.relpath(
+            island_dir(args.telperion, args.island), Path(out).resolve()))
     # Diagnostics go to STDERR: `--configs` output is machine-read (the CI job builds lake
     # targets from it), and a ::warning:: line on stdout once became the target
     # `MissionChallenges.::warning::zeta_reflection:` ("too many ':'").
     for sk in bundle.skipped:
         print(f"::warning::{args.island}: not consumable, skipped: {sk}", file=sys.stderr)
+    for ex in bundle.excluded:
+        print(f"::notice::{args.island}: {ex} is judge_via = \"heavy\": excluded from this bundle "
+              f"by rule, judged by {HEAVY_WORKFLOW}", file=sys.stderr)
+    if args.heavy and args.check:
+        print("::error::--heavy bundles are never committed, so there is nothing to --check",
+              file=sys.stderr)
+        return 2
+    if args.heavy and not args.out and not (args.configs or args.list):
+        print("::error::--heavy needs --out <temp dir>: a heavy bundle must never be written "
+              "over the committed per-PR bundle", file=sys.stderr)
+        return 2
     if args.configs:
         try:
             chosen = shard(bundle.challenges, args.shard)
@@ -568,7 +884,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"::error::{e}", file=sys.stderr)
             return 2
         for c in chosen:
-            print(f"{c.slug}\t{c.slug}.comparator.json\t{c.solution_module}\t{c.theorem}\t{c.bridge_theorem}\t{'nanoda' if c.nanoda else 'lean-kernel-only'}")
+            # Columns 7-8 (compositional parts only): the part label and the statement
+            # constants its job must lean4export, comma-separated.  Empty for ordinary nodes.
+            print(f"{c.slug}\t{c.slug}.comparator.json\t{c.solution_module}\t{c.theorem}\t{c.bridge_theorem}\t{'nanoda' if c.nanoda else 'lean-kernel-only'}\t{c.part}\t{','.join(c.exports)}")
         return 0
     if args.list:
         for c in bundle.challenges:

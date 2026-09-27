@@ -7,8 +7,9 @@ and holds one bridge module per proved node:
 ```lean
 import <artifact module>            -- the solution
 import <island AxiomGuard modules>  -- the whole island: a shadowed constant is a build error
-<the artifact's own `open` lines>
+                                    -- (bg: the vocabulary mirror's home modules, see below)
 namespace <the artifact's namespace at the declaration>
+<the artifact's own `open` lines>   -- inside the namespace, as at the declaration
 theorem _root_.MissionJudge.<Slug> :
     ∀ <registered binders>, <registered conclusion> :=   -- the registry statement, verbatim
   <artifact theorem>                                     -- the artifact's constant
@@ -23,6 +24,20 @@ if the artifact's theorem has exactly the registered statement's type; the Compa
 checks the axiom whitelist on the export and replays the proof through the Lean kernel and
 nanoda. `MANIFEST.json` lists the nodes, the toolchain and the Comparator tag (which follows
 the island toolchain), and any proved node on the island the judge cannot consume.
+
+**bg** (the Brualdi-Goldwasser campaign) is the one island outside `telperion/examples`: its
+package is R3Cert at `proof/formalization` (toolchain v4.32.0, Comparator tag v4.32.0), listed
+in `judge.OUT_OF_TREE_ISLANDS`, so `bg/lakefile.toml` path-requires
+`../../../../proof/formalization`. Its proved nodes are the registry nodes whose `[proof]
+artifact` lies under that directory; a node the lead marks proved later is picked up by
+re-running `python -m telperion.missions.judge --island bg` (then `--check` is clean again).
+R3Cert has no AxiomGuard lean_lib, and importing the whole library would pull in R47PC6Cells
+(~70 min, 18 GB) that no node needs, so each bg challenge instead imports the island modules
+that `missions/bg/lean/Statements/BGDefs.lean` cites as the source of its vocabulary blocks
+(`-- ===== ExactCruxes.lean:70 =====`). That catches an artifact that re-declares mirrored
+vocabulary; it does not catch a shadowed constant the mirror does not copy. In CI the bg job
+restores proof-lean.yml's incremental R3Cert build (a path dependency builds in place, into
+`proof/formalization/.lake/build`) and checkpoints what it compiles.
 
 CI: `.github/workflows/missions-comparator.yml` (regenerates and diffs these files first, then
 judges each shard). Why this is independent of the proof's author, and what it does not

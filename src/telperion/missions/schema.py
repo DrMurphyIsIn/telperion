@@ -249,11 +249,102 @@ class ComparatorRecord:
     #: the Lean kernel replay and the axiom whitelist still ran). Surfaced by
     #: `mission provenance-report` as "Lean kernel only".
     second_kernel: str = "nanoda"
+    #: The shard JOB that printed the PASS line, and its url.  A record pushed onto the same
+    #: pull request supersedes the run that validated the artifact (missions-comparator cancels
+    #: in-progress runs on pull_request), so the RUN's conclusion can be "cancelled" while the
+    #: judging job succeeded -- seen 2026-09-25 on cl/kwin.  The job is what a verifier should
+    #: open, so record it.
+    job_id: str = ""
+    job_url: str = ""
+    #: The literal `kernel=` token from the PASS line ("nanoda" or "lean-kernel-only"), as
+    #: observed rather than inferred from the node's flag.  `second_kernel` is its reading.
+    kernel_mode: str = ""
+    #: The commit the judging job checked out.  Recorded so any later verifier can re-hash the
+    #: artifact blob at that commit without asking the API what the job's head was.
+    judged_head_sha: str = ""
+    #: How thoroughly this record was checked when written.  A degraded check must leave a mark
+    #: in the RECORD, not only in the terminal of whoever ran the command:
+    #:   log_check  "verified"          the judge's own job logs were read and agreed
+    #:              "verified-offline"  a supplied log file agreed; the job id is the caller's word
+    #:              "skipped"           --no-verify: nothing confirmed this record
+    #:   head_check "matched"           the artifact blob at `judged_head_sha` equals the recorded hash
+    #:              "unresolved"        that commit could not be resolved, so the hash is the
+    #:                                  working tree's and only the grant still pins the artifact
+    #:              "skipped"           not attempted (--no-verify)
+    log_check: str = ""
+    head_check: str = ""
+    #: "" = the judge replayed the node's theorem as ONE closure.  "compositional" = the
+    #: capstone's own proof was NOT replayed at all: an independent proof of the same statement
+    #: was assembled from parts -- it follows by a Comparator-checked implication (`theorem`) from
+    #: Comparator-checked segment statements, each judged in its own job, glued by
+    #: `telperion.missions.compose` (statement identity by lean4export bytes, closure check,
+    #: per-part axioms).  Read from the verdict line (`judge=compositional`), never inferred.
+    judge_mode: str = ""
+    #: For a compositional record: one "part=<slug> theorem=<thm> job=<id>" per judged part
+    #: (the implication and every segment), so no reader has to infer the shape from job ids.
+    parts: tuple = ()
 
     def __post_init__(self):
         for f in ("run_id", "date", "artifact_sha256", "theorem", "second_kernel"):
             if not getattr(self, f).strip():
                 raise SchemaError(f"comparator.{f} must be non-empty")
+        if self.judge_mode not in ("", "compositional"):
+            raise SchemaError(f"comparator.judge_mode must be '' or 'compositional', "
+                              f"got {self.judge_mode!r}")
+        if not isinstance(self.parts, tuple):
+            object.__setattr__(self, "parts", tuple(self.parts))
+        if (self.judge_mode == "compositional") != bool(self.parts):
+            raise SchemaError("comparator.parts must be listed exactly when judge_mode = "
+                              "'compositional'")
+
+
+@dataclass(frozen=True)
+class ComposeSpec:
+    """How a `judge_via = "heavy"` node is judged COMPOSITIONALLY (2026-09-27).
+
+    One Comparator run cannot replay a ladder capstone: its closure is every segment's
+    certificates, replayed serially in one kernel (run 36274981386: > 4 h, cancelled). The judge
+    instead checks, each in its own job, every segment theorem `segment_theorems[i] :
+    segment_statements[i]`, and once the IMPLICATION `theorem : segment_statements[0] -> ... ->
+    <the node statement>`, whose closure must contain no module matching `forbidden_modules`
+    (the certificate modules). `telperion.missions.compose` then glues them: each implication
+    binder must be exactly the statement a segment job judged, identical by lean4export bytes.
+    The record says `judge_mode = "compositional"`: the capstone was NOT replayed as one closure.
+    """
+    module: str
+    theorem: str
+    forbidden_modules: str
+    segment_names: tuple
+    segment_statements: tuple
+    segment_theorems: tuple
+    segment_modules: tuple
+
+    def __post_init__(self):
+        import re as _re
+        for f in ("module", "theorem", "forbidden_modules"):
+            if not str(getattr(self, f)).strip():
+                raise SchemaError(f"compose.{f} must be non-empty")
+        try:
+            _re.compile(self.forbidden_modules)
+        except _re.error as exc:
+            raise SchemaError(f"compose.forbidden_modules is not a regex: {exc}") from exc
+        cols = (self.segment_names, self.segment_statements, self.segment_theorems,
+                self.segment_modules)
+        n = len(self.segment_names)
+        if n == 0 or any(len(c) != n for c in cols):
+            raise SchemaError("compose.segment_* must be non-empty arrays of equal length")
+        if len(set(self.segment_names)) != n:
+            raise SchemaError("compose.segment_names must be distinct")
+        for nm in self.segment_names:
+            if not _re.fullmatch(r"[A-Za-z0-9_]+", nm):
+                raise SchemaError(f"compose.segment_names: {nm!r} is not [A-Za-z0-9_]+")
+        if len(set(self.segment_statements)) != n:
+            raise SchemaError("compose.segment_statements must be distinct (one binder each)")
+
+    @property
+    def segments(self):
+        return list(zip(self.segment_names, self.segment_statements, self.segment_theorems,
+                        self.segment_modules))
 
 
 @dataclass(frozen=True)
@@ -315,6 +406,14 @@ class Node:
     #: replay) cannot be run through nanoda on a hosted runner: the judge then asserts the
     #: node with `enable_nanoda = false` and the record says "Lean kernel only".
     heavy_certificates: bool = False
+    #: WHERE the node is independently judged. "" (default) = the per-PR missions-comparator
+    #: bundle. "heavy" = excluded from the per-PR bundle BY RULE and judged by the dispatch-only
+    #: missions-comparator-heavy.yml, because building its challenge needs more than one hosted
+    #: runner can do (e.g. a ladder capstone whose import closure is every segment's edge
+    #: certificates). `heavy_certificates` says HOW (nanoda off); this says WHERE.
+    judge_via: str = ""
+    #: For a `judge_via = "heavy"` node judged in parts (see ComposeSpec); None = one closure.
+    compose: Optional[ComposeSpec] = None
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -331,6 +430,9 @@ class Node:
             raise SchemaError("deprecated_reason must be set when status is 'deprecated'")
         if self.status in ("proved", "refuted") and self.proof is None:
             raise SchemaError("proof must be set when status is 'proved' or 'refuted'")
+        if self.compose is not None and self.judge_via != "heavy":
+            raise SchemaError("a [compose] table needs judge_via = \"heavy\": compositional "
+                              "judging is only for nodes the per-PR bundle excludes by rule")
         # Coerce depends_on to tuple if a list was passed
         if not isinstance(self.depends_on, tuple):
             object.__setattr__(self, "depends_on", tuple(self.depends_on))
@@ -371,8 +473,19 @@ _MODELLED_NODE_KEYS = frozenset({
     "name", "title", "kind", "status", "statement_module", "source",
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
-    "requires_ci_job", "ci_record", "heavy_certificates",
+    "requires_ci_job", "ci_record", "heavy_certificates", "judge_via", "compose",
 })
+
+
+#: Allowed values of `judge_via` ("" = the per-PR Comparator bundle).
+JUDGE_VIA = ("", "heavy")
+
+
+def _judge_via(v) -> str:
+    v = str(v or "").strip()
+    if v not in JUDGE_VIA:
+        raise SchemaError(f"judge_via must be one of {JUDGE_VIA!r}, got {v!r}")
+    return v
 
 
 def _node_to_doc(node: Node) -> dict:
@@ -391,6 +504,17 @@ def _node_to_doc(node: Node) -> dict:
         doc["requires_ci_job"] = node.requires_ci_job
     if node.heavy_certificates:
         doc["heavy_certificates"] = True
+    if node.judge_via:
+        doc["judge_via"] = node.judge_via
+    if node.compose is not None:
+        c = node.compose
+        doc["compose"] = {
+            "module": c.module, "theorem": c.theorem, "forbidden_modules": c.forbidden_modules,
+            "segment_names": list(c.segment_names),
+            "segment_statements": list(c.segment_statements),
+            "segment_theorems": list(c.segment_theorems),
+            "segment_modules": list(c.segment_modules),
+        }
     if node.created:
         doc["created"] = node.created
     if node.updated:
@@ -450,6 +574,13 @@ def _node_to_doc(node: Node) -> dict:
             doc["comparator"]["run_url"] = node.comparator.run_url
         if node.comparator.second_kernel != "nanoda":
             doc["comparator"]["second_kernel"] = node.comparator.second_kernel
+        for _f in ("job_id", "job_url", "kernel_mode", "judged_head_sha", "log_check",
+                   "head_check"):
+            if getattr(node.comparator, _f):
+                doc["comparator"][_f] = getattr(node.comparator, _f)
+        if node.comparator.judge_mode:
+            doc["comparator"]["judge_mode"] = node.comparator.judge_mode
+            doc["comparator"]["parts"] = list(node.comparator.parts)
     if node.ci_record is not None:
         c = node.ci_record
         doc["ci_record"] = {
@@ -505,6 +636,11 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 artifact_sha256=c["artifact_sha256"], theorem=c["theorem"],
                 run_url=c.get("run_url", ""),
                 second_kernel=c.get("second_kernel", "nanoda"),
+                job_id=str(c.get("job_id", "")), job_url=c.get("job_url", ""),
+                kernel_mode=c.get("kernel_mode", ""),
+                judged_head_sha=c.get("judged_head_sha", ""),
+                log_check=c.get("log_check", ""), head_check=c.get("head_check", ""),
+                judge_mode=c.get("judge_mode", ""), parts=tuple(c.get("parts", ())),
             )
         ci_record = None
         if "ci_record" in doc:
@@ -513,6 +649,17 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 workflow=c["workflow"], job=c["job"], run_id=str(c["run_id"]),
                 head_sha=c["head_sha"], artifact_sha256=c["artifact_sha256"],
                 conclusion=c["conclusion"], date=c["date"], run_url=c.get("run_url", ""),
+            )
+        compose = None
+        if "compose" in doc:
+            c = doc["compose"]
+            compose = ComposeSpec(
+                module=c["module"], theorem=c["theorem"],
+                forbidden_modules=c["forbidden_modules"],
+                segment_names=tuple(c["segment_names"]),
+                segment_statements=tuple(c["segment_statements"]),
+                segment_theorems=tuple(c["segment_theorems"]),
+                segment_modules=tuple(c["segment_modules"]),
             )
         depends_on = tuple(doc.get("depends_on", []))
         return Node(
@@ -535,6 +682,8 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             requires_ci_job=doc.get("requires_ci_job", ""),
             ci_record=ci_record,
             heavy_certificates=bool(doc.get("heavy_certificates", False)),
+            judge_via=_judge_via(doc.get("judge_via", "")),
+            compose=compose,
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:

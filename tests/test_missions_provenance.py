@@ -327,8 +327,9 @@ def test_verify_warns_when_comparator_record_is_stale(tmp_path):
     stmt = "theorem v_cmp : 1 = 1"
     _open_with_proof(croot, "V_cmp", stmt, f"{stmt} := by rfl\n")
     grant_status(load_campaign(croot), "V_cmp", **GATE)
+    # --no-verify: this test is about staleness, not about reading a judge log.
     rc = _cli(mroot, "comparator-record", "V_cmp", "--campaign", "demo",
-              "--run-id", "12345", "--theorem", "v_cmp")
+              "--run-id", "12345", "--theorem", "v_cmp", "--no-verify")
     assert rc == 0
     node = load_node(croot / "nodes" / "V_cmp.toml")
     assert node.comparator.run_id == "12345"
@@ -452,9 +453,12 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
     assert "heavy_certificates" in capsys.readouterr().out
     assert load_node(croot / "nodes" / "HV_one.toml").comparator is None
     assert _cli(mroot, "comparator-record", "HV_one", "--campaign", "demo",
-                "--run-id", "9", "--theorem", "hv", "--lean-kernel-only") == 0
+                "--run-id", "9", "--theorem", "hv", "--lean-kernel-only", "--no-verify") == 0
     n = load_node(croot / "nodes" / "HV_one.toml")
     assert n.comparator.second_kernel == "none: heavy_certificates"
+    # --no-verify must leave a mark in the RECORD, not only in the terminal
+    assert n.comparator.log_check == "skipped"
+    assert 'log_check = "skipped"' in (croot / "nodes" / "HV_one.toml").read_text()
     assert 'second_kernel = "none: heavy_certificates"' in (croot / "nodes" / "HV_one.toml").read_text()
     assert n.heavy_certificates is True
     capsys.readouterr()
@@ -524,7 +528,7 @@ def test_provenance_report_lists_unverified_and_self_audits_only_when_proved(tmp
     _open_with_proof(croot, "R_cmp", stmt3, f"{stmt3} := by rfl\n")
     grant_status(load_campaign(croot), "R_cmp", **GATE)
     assert _cli(mroot, "comparator-record", "R_cmp", "--campaign", "demo",
-                "--run-id", "777", "--theorem", "r_cmp") == 0
+                "--run-id", "777", "--theorem", "r_cmp", "--no-verify") == 0
     prov.migrate_unverified(croot)
     capsys.readouterr()
 
@@ -621,3 +625,38 @@ def test_live_registry_every_readback_is_labelled_and_no_grant_digest_is_stale()
                     f"{camp_dir.name}/{sl}: read-back has no independence label (run provenance-migrate)"
             assert not prov.readback_is_self_audit(node), f"{camp_dir.name}/{sl} is a self-audit"
             assert prov.grant_digest_errors(camp_dir, node) == [], f"{camp_dir.name}/{sl}"
+
+
+def test_comparator_record_refuses_rather_than_skipping_the_check_silently(tmp_path, capsys,
+                                                                          monkeypatch):
+    """Without a log and without --no-verify, the command must NOT quietly record.
+
+    The whole point of the checks is that a record nobody verified cannot look like one that
+    was verified, so an unusable `gh` has to be a refusal, not a silent pass.
+    """
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem n_cmp : 5 = 5"
+    _open_with_proof(croot, "N_cmp", stmt, f"{stmt} := by rfl\n")
+    grant_status(load_campaign(croot), "N_cmp", **GATE)
+    monkeypatch.setenv("PATH", str(tmp_path))          # no `gh` on PATH
+    rc = _cli(mroot, "comparator-record", "N_cmp", "--campaign", "demo",
+              "--run-id", "42", "--theorem", "n_cmp")
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "--no-verify" in out and "could not read the judge logs" in out
+    assert load_node(croot / "nodes" / "N_cmp.toml").comparator is None
+
+
+def test_log_path_requires_the_judged_commit(tmp_path, capsys):
+    """--log without --head-sha used to skip the artifact check with no message at all."""
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem l_cmp : 6 = 6"
+    _open_with_proof(croot, "L_cmp", stmt, f"{stmt} := by rfl\n")
+    grant_status(load_campaign(croot), "L_cmp", **GATE)
+    log = tmp_path / "job.log"
+    log.write_text("COMPARATOR PASS island=demo node=L_cmp theorem=l_cmp run=42 kernel=nanoda\n")
+    rc = _cli(mroot, "comparator-record", "L_cmp", "--campaign", "demo",
+              "--run-id", "42", "--theorem", "l_cmp", "--log", str(log))
+    assert rc == 1
+    assert "--head-sha" in capsys.readouterr().out
+    assert load_node(croot / "nodes" / "L_cmp.toml").comparator is None
