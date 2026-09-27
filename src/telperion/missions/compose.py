@@ -248,6 +248,47 @@ def cmd_verify(args) -> int:
     return 0
 
 
+def island_check(spec, ins: dict) -> List[str]:
+    """PR-time twin of the implication checks, on the ISLAND theorem itself (not a judge
+    bundle): its leading hypotheses are exactly the segment statements, in order; its closure
+    is axiom-clean and contains no certificate module.  Run by the ladder CI job after it
+    compiles the implication, so a recorded compositional verdict cannot outlive a module that
+    no longer builds or no longer has this shape."""
+    errs: List[str] = []
+    stmts = list(spec.segment_statements)
+    if ins.get("theorem") != spec.theorem:
+        errs.append(f"inspected {ins.get('theorem')!r}, not {spec.theorem!r}")
+    if list(ins.get("binders") or [])[:len(stmts)] != stmts:
+        errs.append(f"leading hypotheses {ins.get('binders')} are not exactly {stmts} in order")
+    ax = set(ins.get("axioms") or [])
+    if "axioms" not in ins or not ax <= CLEAN_AXIOMS:
+        errs.append(f"axioms {sorted(ax)} are not within {sorted(CLEAN_AXIOMS)}")
+    mods = ins.get("closure_modules") or []
+    hits = sorted(m for m in mods if re.match(spec.forbidden_modules, m))
+    if not mods:
+        errs.append("no closure-module report")
+    elif hits:
+        errs.append(f"closure contains certificate module(s) {hits[:6]}")
+    return errs
+
+
+def cmd_island_check(args) -> int:
+    from .schema import load_node
+    node = load_node(args.telperion / "missions" / args.campaign / "nodes" / f"{args.node}.toml")
+    if node.compose is None:
+        print(f"::error::{args.node} has no [compose] table", file=sys.stderr)
+        return 2
+    ins = inspect(args.lean_dir, node.compose.module, node.compose.theorem)
+    errs = island_check(node.compose, ins)
+    for e in errs:
+        print(f"::error::{args.node} implication {node.compose.theorem}: {e}")
+    if not errs:
+        print(f"OK {node.compose.theorem}: hypotheses = the {len(node.compose.segment_names)} "
+              f"segment statements; axioms {ins['axioms']}; closure {ins['closure_size']} "
+              f"constants in {len(ins['closure_modules'])} modules, no certificate module")
+    return 1 if errs else 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="the compositional judge: write a part, or glue them")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -271,6 +312,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     v.add_argument("--parts", type=Path, required=True, help="directory of *.part.json files")
     v.add_argument("--run-id", required=True)
     v.set_defaults(fn=cmd_verify)
+    c = sub.add_parser("island-check", help="PR-time: inspect the island's implication theorem")
+    c.add_argument("--telperion", type=Path, default=Path(__file__).resolve().parents[3])
+    c.add_argument("--campaign", required=True)
+    c.add_argument("--node", required=True)
+    c.add_argument("--lean-dir", type=Path, required=True, help="the island's lean directory")
+    c.set_defaults(fn=cmd_island_check)
     args = ap.parse_args(list(argv) if argv is not None else None)
     return args.fn(args)
 

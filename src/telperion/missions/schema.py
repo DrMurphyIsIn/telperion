@@ -273,8 +273,9 @@ class ComparatorRecord:
     #:              "skipped"           not attempted (--no-verify)
     log_check: str = ""
     head_check: str = ""
-    #: "" = the judge replayed the node's theorem as ONE closure.  "compositional" = it did not:
-    #: the node statement follows by a Comparator-checked implication (`theorem`) from
+    #: "" = the judge replayed the node's theorem as ONE closure.  "compositional" = the
+    #: capstone's own proof was NOT replayed at all: an independent proof of the same statement
+    #: was assembled from parts -- it follows by a Comparator-checked implication (`theorem`) from
     #: Comparator-checked segment statements, each judged in its own job, glued by
     #: `telperion.missions.compose` (statement identity by lean4export bytes, closure check,
     #: per-part axioms).  Read from the verdict line (`judge=compositional`), never inferred.

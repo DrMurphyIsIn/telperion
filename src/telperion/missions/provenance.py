@@ -414,9 +414,10 @@ def weak_record_reasons(row) -> List[str]:
     if row.comparator_run and not row.log_check and not row.head_check:
         out.append("predates the record checks (no log_check/head_check)")
     if getattr(row, "judge_mode", "") == "compositional":
-        out.append(f"COMPOSITIONAL: the capstone was not replayed as one closure; it follows by a "
-                   f"Comparator-checked implication from {max(row.parts - 1, 0)} Comparator-checked "
-                   "segment statements, glued in telperion.missions.compose (statement identity "
+        out.append(f"COMPOSITIONAL: the capstone's own proof was not replayed; its statement "
+                   f"follows by a Comparator-checked implication from {max(row.parts - 1, 0)} "
+                   "Comparator-checked segment statements, glued in telperion.missions.compose "
+                   "(statement identity "
                    "by lean4export bytes, no certificate module in the implication's closure, "
                    "axioms per part)")
     return out
