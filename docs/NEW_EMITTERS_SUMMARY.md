@@ -311,3 +311,40 @@ control:
 `adapter_zero_sum_majorant` (the 9/4 strip instance forged to `C = 1`, false at every point of the
 strip, rejected at the `ring` identity; true twin `C = 9/4` compiles). Nothing here bears on RH;
 `conjecture1_proved = False`.
+
+## Session 2026-09-29 — concave-witness faces (fold-ins to existing kinds)
+
+Three faces folded into existing kinds rather than new emitters. The certificate shapes (exact
+cancellation, the piecewise-linear node condition, and the quadratic sign race pattern) are
+distilled from a draft communicated by Prof. John L. Goldwasser ("The maximum Laplacian ratio of a
+tree for all n >= 303: concave witnesses and one-variable certificates", 28 Sep 2026; author: his
+London colleague). Only the generic shapes are used: no data from the draft, and nothing from its
+Brualdi-Goldwasser sections is formalized. `conjecture1_proved = False`.
+
+### `log_combination` — exact cancellation (routes `exact`, `mixed`)
+
+The existing routes certify `Σ cᵢ·log rᵢ ≤ q` with a rational margin. At a tie point the value is
+forced to be exactly zero (the motivating shape: `11·F* = 5·log(3/2) + log(23/18)` with
+`F* = log(621/64)/11`, because `(3/2)^5·(23/18) = 621/64`), and every enclosure-based check fails
+there at zero margin. The face adds:
+
+* `exact`: `Σ cᵢ·log rᵢ = 0` for any number of terms with rational `cᵢ`, from the rational identity
+  `∏ rᵢ^{D·cᵢ} = 1` (`D` = lcm of the coefficient denominators), split into two natural-power
+  products `∏pos = ∏neg` and closed by `norm_num`; `Real.log_pow` / `Real.log_mul` expand both sides
+  and `linarith` finishes.
+* `mixed`: `lo ≤ V` and/or `V ≤ hi` for `V = (exact group) + (remainder logs) (+ R)`. The exact group
+  cancels as above. The remainder folds to `log(X)/D'` and is enclosed by
+  `1 − 1/X ≤ log X ≤ X − 1`. An optional opaque real `R` is carried with hypothesis bounds `R_lo ≤ R ≤ R_hi`,
+  for the "bounded part" some other certificate supplies.
+
+Entry points: `log_cancellation_certificate`, `LogCancellationCertificate`; the same `certify` / `emit`
+path, dispatched by `spec["route"]`. Layer-1 refusals: a group that does not cancel exactly,
+a nonpositive argument, a zero coefficient, a claimed bound that the tangent enclosure does not carry,
+or no bound claimed. Dogfood: `examples/log_combination` instances 6-9 (`log 12 = 2 log 2 + log 3`,
+`(1/2)log(9/4) + (1/3)log(8/27) = 0`, and two mixed instances, one with `R`), all
+`[propext, Classical.choice, Quot.sound]`. Kernel negative controls live in
+`tests/test_log_cancellation.py` (forged `log 12 = 2 log 2 + log 5`, and a mixed bound `≤ 1/200`
+below the true `log 1.01`). Both are rejected and their true twins compile. They are face-specific adapters run through
+`generic_negative_control`, not registered, because the registry keeps one adapter per emitter.
+Limitation: the remainder enclosure is the degree-1 tangent pair only, and a remainder that needs the
+`tight` degree-3 route is refused.
