@@ -439,6 +439,12 @@ _SPECIAL_KINDS = (
     # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
     # arithmetic facts about real constants; nothing about RH.
     "enclosure_tree",
+    # mobius_tangent_cell (2026-09-29, Lemma 3.3 of a draft communicated by J. L. Goldwasser):
+    # "linear + concave logs + one Mobius term <= 0" on a rational interval, by tangent-line
+    # cells whose convex majorant is checked at the two cell endpoints (bisection generator, one
+    # theorem per cell, union by a le_or_lt chain).  Elementary one-variable inequalities;
+    # nothing about RH.
+    "mobius_tangent_cell",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -725,6 +731,10 @@ _SPECIAL_DISPATCH = {
     # pi-face rate corollary; the log/sqrt face).
     "enclosure_tree":
         ("emit_enclosure_tree", "certify_enclosure_tree_point", "EnclosureTreeEmitter"),
+    # mobius_tangent_cell (tangent-line cells with a Mobius term, convex majorant at endpoints).
+    "mobius_tangent_cell":
+        ("emit_mobius_tangent_cell", "certify_mobius_tangent_cell_point",
+         "MobiusTangentCellEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":
