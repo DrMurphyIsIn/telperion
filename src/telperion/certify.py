@@ -439,6 +439,12 @@ _SPECIAL_KINDS = (
     # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
     # arithmetic facts about real constants; nothing about RH.
     "enclosure_tree",
+    # concave_pooled_induction (2026-09-29): a bound on a branching (tree) recursion via a
+    # concave one-scalar witness checked at the pooled mean for m = 1..M plus a one-variable
+    # tail for every m > M.  Method credit: concave-witness induction, from a draft
+    # communicated by Professor John L. Goldwasser (author: his London colleague; name to be
+    # added).  Dogfood: the classical matching message.  Nothing about BG or RH.
+    "concave_pooled_induction",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -710,6 +716,10 @@ _SPECIAL_DISPATCH = {
     "interval_gram_inertia":
         ("emit_interval_gram_inertia", "certify_interval_gram_inertia_point",
          "IntervalGramInertiaEmitter"),
+    # concave_pooled_induction (tree recursion bound by a concave pooled-mean witness).
+    "concave_pooled_induction":
+        ("emit_concave_pooled_induction", "certify_concave_pooled_induction_point",
+         "ConcavePooledInductionEmitter"),
     # E8 Weil pairing enclosure (onto the WeilExplicit vocabulary of RH_limit_explicit_formula).
     "weil_form_enclosure":
         ("emit_weil_form_enclosure", "certify_weil_form_enclosure_point",

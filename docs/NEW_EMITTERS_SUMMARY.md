@@ -311,3 +311,35 @@ control:
 `adapter_zero_sum_majorant` (the 9/4 strip instance forged to `C = 1`, false at every point of the
 strip, rejected at the `ring` identity; true twin `C = 9/4` compiles). Nothing here bears on RH;
 `conjecture1_proved = False`.
+
+## Session 2026-09-29 — `concave_pooled_induction` (tree-recursion bounds by a concave pooled-mean witness)
+
+`ConcavePooledInductionEmitter` (kind `concave_pooled_induction`). **Method credit: concave-witness
+induction, from the draft "The maximum Laplacian ratio of a tree for all n >= 303: concave witnesses
+and one-variable certificates" (28 September 2026), communicated by Professor John L. Goldwasser
+(author: his London colleague; name to be added).** For a branching recursion on finite rooted
+trees -- message `y_v = h(m, R)`, profit `l(v) = sum l(c) + g(m, R)`, `R = sum y_c`, leaf pair
+`(y_leaf, l_leaf)`, `h` and `g` rational -- it certifies `l(b) + alpha |b| <= U(y_b)` for every
+tree, with `U` concave piecewise-linear (strictly decreasing slopes). In Lean `U` is the MINIMUM of
+its affine pieces, so Jensen at the pooled mean is one generic lemma (`minPieces_jensen`), and the
+induction is one generic theorem over `PTree` (`pooled_induction_core`; it also takes a carried
+`U` below a pooling `V`, which this emitter instantiates as `U = V`). Per child count `m = 1..M`
+and per cell of `R`, each piece of `U(h)` and the closure `lo <= h <= hi` is one polynomial
+inequality with exact Bernstein coefficients, closed by `linarith` over the product facts; the
+tail `m >= M + 1` (m-free `h`, `g`, `lo >= 0`) reduces to one variable through a piece with
+`b_j <= 0` (`m b_j <= (M+1) b_j` or `m b_j <= (R/hi) b_j`), with a Taylor certificate on the
+unbounded last cell. Without a tail the claim is stated for child count `<= M`. Not supported:
+exempt "atom" children, a carried `U` different from `V` at the emitter level, non-rational
+`g`/`h` (log cells are the sibling `mobius_tangent_cell` kind). The tail is our own sufficient
+condition, not the draft's Lemma 3.4 node condition.
+
+Design doc: [`EMITTER_CONCAVE_POOLED_INDUCTION_DESIGN_2026-09-29.md`](EMITTER_CONCAVE_POOLED_INDUCTION_DESIGN_2026-09-29.md).
+Dogfood: `examples/concave_pooled_induction/` (`generate.py --check`; lake project on Mathlib
+v4.32.0): the classical matching message `y_u = Z(T_u - u)/Z(T_u)` with `l = -sum_u y_u` and
+`alpha = 3/5`, i.e. `sum_u y_u >= (3/5)|T|` for every finite rooted tree (the path shows the sharp
+constant is `1/phi`), the same recursion on paths (bounded mode), and a clearly synthetic
+m-dependent instance; 134 theorems, all `[propext, Classical.choice, Quot.sound]`. It is NOT the
+Brualdi-Goldwasser problem; nothing from the draft's Sections 4-9 is used. Negative control:
+`adapter_concave_pooled_induction` (the paths instance forged to `alpha = 13/20 > 1/phi`, a false
+claim; its cells carry a negative Bernstein coefficient and the kernel rejects the `linarith`;
+the true twin compiles). `conjecture1_proved = False`.

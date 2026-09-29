@@ -293,6 +293,36 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ConcavePooledInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                       "bound l(b) + alpha |b| <= U(y_b) on every finite rooted "
+                                       "tree (or every tree of child count <= M) for a rational "
+                                       "branching recursion, by induction with a concave "
+                                       "piecewise-linear witness U represented as the MINIMUM of "
+                                       "its affine pieces (Jensen at the pooled mean is then a "
+                                       "sum-of-minima inequality, proved generically): the "
+                                       "per-(cell, piece) obligations ARE the statements, each a "
+                                       "one-variable polynomial inequality closed by linarith "
+                                       "from Bernstein / Taylor product facts on its cell; no "
+                                       "separately-supplied identity to corrupt.  certify "
+                                       "REFUSES a non-concave witness (slopes not strictly "
+                                       "decreasing), a failing base, y_leaf outside I, a "
+                                       "denominator not certified positive, any cell obligation "
+                                       "without nonnegative Bernstein coefficients down to the "
+                                       "subdivision limit, a tail with m-dependent h/g, lo < 0, "
+                                       "hi <= 0 or no piece with b_j <= 0, a non-covering cell "
+                                       "layout, degree > 12, and floats.  Method credit: "
+                                       "concave-witness induction, from a draft communicated by "
+                                       "Professor John L. Goldwasser (author: his London "
+                                       "colleague; name to be added).  Dogfood: the matching "
+                                       "message, sum_u y_u >= (3/5)|T|; nothing about BG or RH "
+                                       "(conjecture1_proved = False)",
+                                       # Structural, yet a kernel control exists: the bounded-
+                                       # degree dogfood (paths) at alpha = 13/20 > 1/phi, which
+                                       # Layer 1 refuses, is FALSE, and its forged cells carry a
+                                       # negative Bernstein coefficient the emitted linarith
+                                       # cannot absorb, so the kernel rejects it.
+                                       # See negctrl_adapters/adapter_concave_pooled_induction.py.
+                                       neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureTreeEmitter": _S(STRUCTURALLY_NONVACUOUS,
                               "rational two-sided enclosure lo <= E <= hi (per side `<` when "
                               "the exact fold has slack or an open endpoint) of an expression "
