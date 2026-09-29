@@ -337,3 +337,87 @@ refused) and `log(1 + x) >= 2x/(2 + x)` (convex log, refused). Negative control:
 `adapter_mobius_tangent_cell` (the log-mean cell with its constant raised `-2 -> -19/10`, false at
 `x = 1/2`, rejected at the cell `linarith`; the true twin compiles). Nothing here bears on RH;
 `conjecture1_proved = False`.
+## Session 2026-09-29 — concave-witness faces (fold-ins to existing kinds)
+
+Three faces folded into existing kinds rather than new emitters. The certificate shapes (exact
+cancellation, the piecewise-linear node condition, and the quadratic sign race pattern) are
+distilled from a draft communicated by Prof. John L. Goldwasser ("The maximum Laplacian ratio of a
+tree for all n >= 303: concave witnesses and one-variable certificates", 28 Sep 2026; author: his
+London colleague). Only the generic shapes are used: no data from the draft, and nothing from its
+Brualdi-Goldwasser sections is formalized. `conjecture1_proved = False`.
+
+### `log_combination` — exact cancellation (routes `exact`, `mixed`)
+
+The existing routes certify `Σ cᵢ·log rᵢ ≤ q` with a rational margin. At a tie point the value is
+forced to be exactly zero (the motivating shape: `11·F* = 5·log(3/2) + log(23/18)` with
+`F* = log(621/64)/11`, because `(3/2)^5·(23/18) = 621/64`), and every enclosure-based check fails
+there at zero margin. The face adds:
+
+* `exact`: `Σ cᵢ·log rᵢ = 0` for any number of terms with rational `cᵢ`, from the rational identity
+  `∏ rᵢ^{D·cᵢ} = 1` (`D` = lcm of the coefficient denominators), split into two natural-power
+  products `∏pos = ∏neg` and closed by `norm_num`; `Real.log_pow` / `Real.log_mul` expand both sides
+  and `linarith` finishes.
+* `mixed`: `lo ≤ V` and/or `V ≤ hi` for `V = (exact group) + (remainder logs) (+ R)`. The exact group
+  cancels as above. The remainder folds to `log(X)/D'` and is enclosed by
+  `1 − 1/X ≤ log X ≤ X − 1`. An optional opaque real `R` is carried with hypothesis bounds `R_lo ≤ R ≤ R_hi`,
+  for the "bounded part" some other certificate supplies.
+
+Entry points: `log_cancellation_certificate`, `LogCancellationCertificate`; the same `certify` / `emit`
+path, dispatched by `spec["route"]`. Layer-1 refusals: a group that does not cancel exactly,
+a nonpositive argument, a zero coefficient, a claimed bound that the tangent enclosure does not carry,
+or no bound claimed. Dogfood: `examples/log_combination` instances 6-9 (`log 12 = 2 log 2 + log 3`,
+`(1/2)log(9/4) + (1/3)log(8/27) = 0`, and two mixed instances, one with `R`), all
+`[propext, Classical.choice, Quot.sound]`. Kernel negative controls live in
+`tests/test_log_cancellation.py` (forged `log 12 = 2 log 2 + log 5`, and a mixed bound `≤ 1/200`
+below the true `log 1.01`). Both are rejected and their true twins compile. They are face-specific adapters run through
+`generic_negative_control`, not registered, because the registry keeps one adapter per emitter.
+Limitation: the remainder enclosure is the degree-1 tangent pair only, and a remainder that needs the
+`tight` degree-3 route is refused.
+
+### `eventual_threshold` — quadratic sign race (`QuadraticSignRaceCert`)
+
+For `P(m) = a·m² + b·m + c` with rational coefficients, this face certifies the exact sign pattern on the integers
+`m ≥ m₀` with no hypotheses. Modes: `switch` (`a > 0`; `P < 0` on `[m₀, r]`, `P > 0` from `r+1`, so
+the eventual threshold is sharp), `positive` (`a > 0`) and `negative` (`a < 0`, one sign
+throughout). Each mode also proves the conjunct `P(m) ≠ 0` for every integer `m ≥ m₀`. The certificate is the vertex condition
+`-b/(2a) ≤ m₀`, which makes `P` monotone on the range, plus the endpoint signs (`P(r) < 0 < P(r+1)`, or the sign of `P(m₀)`).
+The kernel re-checks it with two `ring` identities that carry the certificate's literals. The first is the Taylor
+expansion at the anchor `k`, `P(m) = a(m−k)² + P'(k)(m−k) + P(k)`, whose three summands are
+sign-definite. The second, for the head of a switch, is `P(r) − P(m) = (r−m)(a(r+m)+b)`.
+
+Why here: this is an eventual-threshold claim with an explicit, computed witness (and the
+complementary sign below it). It does not fit `sturm_positive`, which is bounded-interval Bernstein root exclusion, or
+`tails.py`, which is a Polya adapter over a shifted variable. `EventualThresholdEmitter`'s sensitivity stance is now
+`CERTIFICATE_SENSITIVE`. The arity face still has no corruptible data, but this face does. The stance comes with a registered adapter
+(`adapter_eventual_threshold`): the switch of `m² − 10m − 7` is forged one step late (`r = 11`, which claims
+`P(11) < 0` although `P(11) = 4`). The kernel rejects that forgery, and the true `r = 10` twin compiles. Dogfood:
+`examples/quadratic_sign_race` (new v4.32.0 project, generic instances: `m² − 10m − 7` switching
+between 10 and 11; `C(m,2)` overtaking `3m + 20` between 10 and 11; `m² − 3m + 1 > 0` for `m ≥ 3`;
+`−m² − 8m − 17 < 0` for `m ≥ −3`), all `[propext, Classical.choice, Quot.sound]`. Limitations: the
+face covers degree 2 only, uses the sufficient vertex condition `-b/(2a) ≤ m₀` (not the weaker
+integer condition `-b/(2a) ≤ m₀ + 1/2`), and proves `P ≠ 0` only on `m ≥ m₀`, not on all of ℤ.
+
+### `monotone_tail` — piecewise-linear node-condition tail (`PLNodeTailPayload`)
+
+This face closes a two-parameter family in one step: for all integers `m ≥ M+1` and all `y ∈ (0, 1]`,
+`m·U(y) + L(y) ≤ 0`. Here `U ≤ 0` lies below a piecewise-linear function with rational nodes `(y_i, U_i)`
+(`0 < y_0 < … < y_K = 1`, `U_0 = 0`, `U = 0` on `(0, y_0]`). `L ≤ 0` for `y ≤ y†` and
+`L(y) ≤ s·(y − y†)` above. The certificate is the node condition `(M+1)·|U_i| ≥ s·(y_i − y†)` at every node
+beyond `y†`. On each segment beyond `y†`, `h = m·U + s·(y − y†)` is linear and `≤ 0` at both ends, so it is
+`≤ 0` throughout. The kernel checks this per segment through the exact identity
+`(b − a)·h(y) = (b − y)·h(a) + (y − a)·h(b)` (`ring`), with `h(a), h(b) ≤ 0` from the node literals.
+
+Why here: this is the ratio tail's monotone-plus-base shape with the roles moved. `m·U(y)` is nonincreasing in `m`
+because `U ≤ 0`, and the node condition is the base case `m = M+1` for every `y` at once.
+The core theorem takes `U`, `L` abstractly with their conditions as HYPOTHESES (the honest seam). With
+`L = "log_tangent"` the emitter also discharges them for `L(y) = log(1+y) − log(1+y†)` (monotone below `y†`;
+`log x ≤ x − 1` above, which needs `s ≥ 1/(1+y†)`). It then states a hypothesis-free corollary for the
+concrete `U = min(0, segment lines)`, which lies below every segment line. `MonotoneRatioTailEmitter`'s stance is now
+`CERTIFICATE_SENSITIVE` with a registered adapter (`adapter_monotone_tail`): `M` is forged from 1 to 0, and
+the claim is genuinely false at `m = 1, y = 1` (`−1/5 + log(4/3) > 0`). The kernel rejects the forgery, and the
+true twin compiles. Dogfood: `examples/pl_node_tail` (new v4.32.0 project; generic instances with
+`y† = 1/2, s = 2/3, M = 1` and `y† = 1/3, s = 3/4, M = 14`, plus the abstract-`L` core), all
+`[propext, Classical.choice, Quot.sound]`. Limitations: `U` enters only through the upper hypotheses
+(or the min-of-lines instance). The only concrete `L` is the log tangent, and any other concave `L` must
+supply `hL1`/`hL2` itself. `U_0 = 0` is required. The concrete corollary is for the min-of-lines `U`,
+which equals the piecewise-linear interpolant only when the node sequence is concave.

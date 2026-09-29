@@ -9,6 +9,7 @@ from . import adapter_consequence  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
 from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_enclosure_tree  # noqa: F401
+from . import adapter_eventual_threshold  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
@@ -22,6 +23,7 @@ from . import adapter_infeasibility  # noqa: F401
 from . import adapter_interval_gram_inertia  # noqa: F401
 from . import adapter_li_positivity  # noqa: F401
 from . import adapter_mobius_tangent_cell  # noqa: F401
+from . import adapter_monotone_tail  # noqa: F401
 from . import adapter_nullstellensatz  # noqa: F401
 from . import adapter_order_balance  # noqa: F401
 from . import adapter_preordering_multiplier  # noqa: F401
@@ -53,6 +55,7 @@ __all__ = [
     'adapter_constrained_s_o_s',
     'adapter_disjoint_discs',
     'adapter_enclosure_tree',
+    'adapter_eventual_threshold',
     'adapter_exact_fact',
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',
@@ -66,6 +69,7 @@ __all__ = [
     'adapter_interval_gram_inertia',
     'adapter_li_positivity',
     'adapter_mobius_tangent_cell',
+    'adapter_monotone_tail',
     'adapter_nullstellensatz',
     'adapter_order_balance',
     'adapter_preordering_multiplier',

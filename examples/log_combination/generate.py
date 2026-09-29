@@ -28,6 +28,9 @@ structure, the two kernel-green BG theorems at
 
 with FSTAR := Real.log (621/64)/11 matching BGSCLInduction.  Instance 2 is a
 generic non-BG reuse (2·log(3/2) ≤ log(9/4)) showing the same fold beyond BG.
+Instances 6-9 dogfood the EXACT-CANCELLATION face on generic identities:
+log 12 = 2 log 2 + log 3, (1/2)log(9/4) + (1/3)log(8/27) = 0, and two mixed
+"exact part + bounded part" instances (one with an opaque hypothesis-bounded R).
 
 conjecture1_proved=False.
 """
@@ -73,17 +76,29 @@ _SPECS = {
     # NOTE the ADDED +FSTAR term: encoded as a POSITIVE fstar coefficient (+1) ⇒
     # k = −1, folded as (7/9)^11·(621/64)^1.  Builds GREEN against BGSCLInduction.
     5: {"terms": [(1, "7/9"), (1, "621/64")], "q": "-1/24", "route": "tight"},
+    # EXACT-CANCELLATION face (2026-09-29): equalities at zero margin from the
+    # rational identity ∏ rᵢ^{D·cᵢ} = 1, and the mixed "exact + bounded" form.
+    # Generic instances (no BG data).
+    6: {"route": "exact", "terms": [(1, "12"), (-2, "2"), (-1, "3")]},
+    7: {"route": "exact", "terms": [("1/2", "9/4"), ("1/3", "8/27")]},
+    8: {"route": "mixed", "exact_terms": [(1, "12"), (-2, "2"), (-1, "3")],
+        "rem_terms": [(1, "101/100")], "lo": "0", "hi": "1/100"},
+    9: {"route": "mixed", "exact_terms": [("1/2", "9/4"), (-1, "3/2")],
+        "rem_terms": [("1/3", "5/4")], "opaque": ("-1/100", "1/100"),
+        "lo": "1/20", "hi": "1/10"},
 }
 _NAMES = {0: "log74_le_4fstar", 1: "log54_sub_fstar_le", 2: "log32_sq_le_log94",
           3: "log54_sub_fstar_le_40", 4: "log74_le_4fstar_broom",
-          5: "log79_add_fstar"}
+          5: "log79_add_fstar", 6: "log12_eq_2log2_add_log3",
+          7: "half_log94_add_third_log827_eq_zero", 8: "log12_cancel_add_log101_mixed",
+          9: "log94_cancel_add_log54_R_mixed"}
 _OUT = Path(__file__).resolve().parent / "lean" / "LogCombination.lean"
 
 
 def build() -> str:
     fam = log_combination_family(
         "LogCombination",
-        GridSpec([("case", [0, 1, 2, 3, 4, 5])]),
+        GridSpec([("case", list(range(10)))]),
         lambda pt: _NAMES[pt["case"]],
         spec=lambda pt: _SPECS[pt["case"]],
     )
