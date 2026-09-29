@@ -25,7 +25,7 @@ from .schema import (
     load_manifest, load_node, save_node, slug_of,
 )
 
-# Status display glyphs (emitted in string output; never enter QuantConnect code)
+# Status display glyphs (emitted in string output; never enter source code)
 _GLYPHS = {
     "draft":      "·",
     "open":       "○",

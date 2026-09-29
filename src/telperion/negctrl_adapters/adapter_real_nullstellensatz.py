@@ -8,7 +8,7 @@ twin compiles clean.
 Canonical instance: p = x vanishes on the REAL variety of x^2 + y^2 (the
 origin), certified by p^{2*1} + y^2 = 1*(x^2 + y^2).  The FALSE twin corrupts
 the load-bearing cofactor 1 -> 3, breaking the emitted `linear_combination`
-step's `ring` closure.  No emoji anywhere (Lean/QuantConnect constraint).
+step's `ring` closure.  No emoji anywhere (project rule).
 
 conjecture1_proved = False.
 """

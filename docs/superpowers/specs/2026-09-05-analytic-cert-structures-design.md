@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-05
 **Status:** Design (pre-plan)
-**Branch:** `telperion/analytic-cert-structures` (worktree `/Users/peterwmurphy/telperion-analytic`, off `origin/main`)
+**Branch:** `telperion/analytic-cert-structures` (worktree `~/telperion-analytic`, off `origin/main`)
 **Honesty flag:** `conjecture1_proved = False` on every artifact.
 
 ---
