@@ -137,6 +137,11 @@ from .emit_zero_sum_majorant import (  # noqa: F401
     ZeroSumMajorantEmitter, ZeroSumMajorantCert, zero_sum_majorant_certificate,
     zero_sum_majorant_family, certify_zero_sum_majorant_point, zsm_symbols,
 )
+from .emit_gap_budget_multiplicity import (  # noqa: F401
+    GapBudgetMultiplicityEmitter, GapBudgetCert, GapBudgetRefusal, gb_log, gb_logk,
+    gap_budget_multiplicity_certificate, gap_budget_multiplicity_family,
+    certify_gap_budget_multiplicity_point,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

@@ -409,6 +409,30 @@ REGISTRY: dict[str, SensitivityStance] = {
                                  # the true twin C = 9/4 compiles.  See
                                  # negctrl_adapters/adapter_zero_sum_majorant.py.
                                  neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "GapBudgetMultiplicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                       "tangent-price GAP BUDGET pruning of a multiset "
+                                       "optimisation (kind gap_budget_multiplicity): from a "
+                                       "separable or c * log (c >= 0) concave model, "
+                                       "sum gamma(k) <= theta <= theta_hi is re-derived in the "
+                                       "kernel (Multiset sums + the log tangent lemma), the "
+                                       "rational gap lower bounds and theta_hi are enclosure_tree "
+                                       "statements, and the caps / exclusions / tail / decided "
+                                       "knapsack follow by gapBudget_nat_cap and decide.  The "
+                                       "claimed bounds ARE the statements; no separately-"
+                                       "supplied identity to corrupt, so the shape is "
+                                       "structural.  certify REFUSES a gap bound or theta_hi the "
+                                       "fold does not imply, a negative or unprovable gap, a "
+                                       "convex / non-log concave part, a non-uniform theta, a "
+                                       "tail without certified monotonicity, a benchmark that "
+                                       "violates its own consequences, floats.  Classical "
+                                       "max-product dogfood; nothing about RH "
+                                       "(conjecture1_proved = False)",
+                                       # Structural, yet a kernel control exists: gamma(2) >= 1/20
+                                       # forged in the N = 3t + 2 max-product budget claims
+                                       # count 2 = 0, refuted by the benchmark {2} + 3^t; the
+                                       # kernel rejects it.  See
+                                       # negctrl_adapters/adapter_gap_budget_multiplicity.py.
+                                       neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "

@@ -439,6 +439,12 @@ _SPECIAL_KINDS = (
     # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
     # arithmetic facts about real constants; nothing about RH.
     "enclosure_tree",
+    # gap_budget_multiplicity (2026-09-29): pruning a multiset optimisation by a tangent-price
+    # gap budget (caps, exclusions, a decided knapsack) with the budget from a separable or
+    # c * log concave model and enclosure_tree bounds on the gaps.  Tangent-gap pricing pattern
+    # from a draft communicated by J. L. Goldwasser; dogfood is the classical max-product
+    # partition.  Elementary real inequalities; nothing about RH.
+    "gap_budget_multiplicity",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -725,6 +731,10 @@ _SPECIAL_DISPATCH = {
     # pi-face rate corollary; the log/sqrt face).
     "enclosure_tree":
         ("emit_enclosure_tree", "certify_enclosure_tree_point", "EnclosureTreeEmitter"),
+    # gap_budget_multiplicity (tangent-price gap budget: caps, exclusions, knapsack).
+    "gap_budget_multiplicity":
+        ("emit_gap_budget_multiplicity", "certify_gap_budget_multiplicity_point",
+         "GapBudgetMultiplicityEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":
