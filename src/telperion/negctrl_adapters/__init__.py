@@ -9,6 +9,7 @@ from . import adapter_consequence  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
 from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_enclosure_tree  # noqa: F401
+from . import adapter_eventual_threshold  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
@@ -52,6 +53,7 @@ __all__ = [
     'adapter_constrained_s_o_s',
     'adapter_disjoint_discs',
     'adapter_enclosure_tree',
+    'adapter_eventual_threshold',
     'adapter_exact_fact',
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',

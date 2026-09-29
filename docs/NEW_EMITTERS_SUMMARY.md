@@ -348,3 +348,26 @@ below the true `log 1.01`). Both are rejected and their true twins compile. They
 `generic_negative_control`, not registered, because the registry keeps one adapter per emitter.
 Limitation: the remainder enclosure is the degree-1 tangent pair only, and a remainder that needs the
 `tight` degree-3 route is refused.
+
+### `eventual_threshold` — quadratic sign race (`QuadraticSignRaceCert`)
+
+For `P(m) = a·m² + b·m + c` with rational coefficients, this face certifies the exact sign pattern on the integers
+`m ≥ m₀` with no hypotheses. Modes: `switch` (`a > 0`; `P < 0` on `[m₀, r]`, `P > 0` from `r+1`, so
+the eventual threshold is sharp), `positive` (`a > 0`) and `negative` (`a < 0`, one sign
+throughout). Each mode also proves the conjunct `P(m) ≠ 0` for every integer `m ≥ m₀`. The certificate is the vertex condition
+`-b/(2a) ≤ m₀`, which makes `P` monotone on the range, plus the endpoint signs (`P(r) < 0 < P(r+1)`, or the sign of `P(m₀)`).
+The kernel re-checks it with two `ring` identities that carry the certificate's literals. The first is the Taylor
+expansion at the anchor `k`, `P(m) = a(m−k)² + P'(k)(m−k) + P(k)`, whose three summands are
+sign-definite. The second, for the head of a switch, is `P(r) − P(m) = (r−m)(a(r+m)+b)`.
+
+Why here: this is an eventual-threshold claim with an explicit, computed witness (and the
+complementary sign below it). It does not fit `sturm_positive`, which is bounded-interval Bernstein root exclusion, or
+`tails.py`, which is a Polya adapter over a shifted variable. `EventualThresholdEmitter`'s sensitivity stance is now
+`CERTIFICATE_SENSITIVE`. The arity face still has no corruptible data, but this face does. The stance comes with a registered adapter
+(`adapter_eventual_threshold`): the switch of `m² − 10m − 7` is forged one step late (`r = 11`, which claims
+`P(11) < 0` although `P(11) = 4`). The kernel rejects that forgery, and the true `r = 10` twin compiles. Dogfood:
+`examples/quadratic_sign_race` (new v4.32.0 project, generic instances: `m² − 10m − 7` switching
+between 10 and 11; `C(m,2)` overtaking `3m + 20` between 10 and 11; `m² − 3m + 1 > 0` for `m ≥ 3`;
+`−m² − 8m − 17 < 0` for `m ≥ −3`), all `[propext, Classical.choice, Quot.sound]`. Limitations: the
+face covers degree 2 only, uses the sufficient vertex condition `-b/(2a) ≤ m₀` (not the weaker
+integer condition `-b/(2a) ≤ m₀ + 1/2`), and proves `P ≠ 0` only on `m ≥ m₀`, not on all of ℤ.

@@ -726,10 +726,13 @@ REGISTRY: dict[str, SensitivityStance] = {
         "low-order grades + doubled geometric tail hybrid: fully-generic fixed "
         "atoms (geometric sums <= 2 / <= 2q^a + the assembled bound); no "
         "corruptible cofactor"),
-    "EventualThresholdEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "eventual scaling threshold with explicit nested-max-of-ratios witness: "
-        "the arity IS the statement; witness assembly re-derived in-kernel by "
-        "le_max chains + div_lt_iff0; no corruptible cofactor"),
+    "EventualThresholdEmitter": _S(CERTIFICATE_SENSITIVE,
+        "two faces. Arity face: explicit nested-max-of-ratios witness, the arity IS "
+        "the statement (le_max chains + div_lt_iff0, no corruptible cofactor). "
+        "Quadratic-sign-race face (2026-09-29): the switch point r and the Taylor "
+        "literals P'(k), P(k) are baked into norm_num endpoint facts and a ring "
+        "identity, so a forged switch point is kernel-rejected",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ComparabilityEnvelopeEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "comparability/Lipschitz envelope atoms (rpow both-signs, sqrt "
         "conjugate-multiply, 1+x^2 denominator kill): fully-generic fixed atoms, "
