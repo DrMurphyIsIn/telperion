@@ -371,3 +371,28 @@ between 10 and 11; `C(m,2)` overtaking `3m + 20` between 10 and 11; `m² − 3m 
 `−m² − 8m − 17 < 0` for `m ≥ −3`), all `[propext, Classical.choice, Quot.sound]`. Limitations: the
 face covers degree 2 only, uses the sufficient vertex condition `-b/(2a) ≤ m₀` (not the weaker
 integer condition `-b/(2a) ≤ m₀ + 1/2`), and proves `P ≠ 0` only on `m ≥ m₀`, not on all of ℤ.
+
+### `monotone_tail` — piecewise-linear node-condition tail (`PLNodeTailPayload`)
+
+This face closes a two-parameter family in one step: for all integers `m ≥ M+1` and all `y ∈ (0, 1]`,
+`m·U(y) + L(y) ≤ 0`. Here `U ≤ 0` lies below a piecewise-linear function with rational nodes `(y_i, U_i)`
+(`0 < y_0 < … < y_K = 1`, `U_0 = 0`, `U = 0` on `(0, y_0]`). `L ≤ 0` for `y ≤ y†` and
+`L(y) ≤ s·(y − y†)` above. The certificate is the node condition `(M+1)·|U_i| ≥ s·(y_i − y†)` at every node
+beyond `y†`. On each segment beyond `y†`, `h = m·U + s·(y − y†)` is linear and `≤ 0` at both ends, so it is
+`≤ 0` throughout. The kernel checks this per segment through the exact identity
+`(b − a)·h(y) = (b − y)·h(a) + (y − a)·h(b)` (`ring`), with `h(a), h(b) ≤ 0` from the node literals.
+
+Why here: this is the ratio tail's monotone-plus-base shape with the roles moved. `m·U(y)` is nonincreasing in `m`
+because `U ≤ 0`, and the node condition is the base case `m = M+1` for every `y` at once.
+The core theorem takes `U`, `L` abstractly with their conditions as HYPOTHESES (the honest seam). With
+`L = "log_tangent"` the emitter also discharges them for `L(y) = log(1+y) − log(1+y†)` (monotone below `y†`;
+`log x ≤ x − 1` above, which needs `s ≥ 1/(1+y†)`). It then states a hypothesis-free corollary for the
+concrete `U = min(0, segment lines)`, which lies below every segment line. `MonotoneRatioTailEmitter`'s stance is now
+`CERTIFICATE_SENSITIVE` with a registered adapter (`adapter_monotone_tail`): `M` is forged from 1 to 0, and
+the claim is genuinely false at `m = 1, y = 1` (`−1/5 + log(4/3) > 0`). The kernel rejects the forgery, and the
+true twin compiles. Dogfood: `examples/pl_node_tail` (new v4.32.0 project; generic instances with
+`y† = 1/2, s = 2/3, M = 1` and `y† = 1/3, s = 3/4, M = 14`, plus the abstract-`L` core), all
+`[propext, Classical.choice, Quot.sound]`. Limitations: `U` enters only through the upper hypotheses
+(or the min-of-lines instance). The only concrete `L` is the log tangent, and any other concave `L` must
+supply `hL1`/`hL2` itself. `U_0 = 0` is required. The concrete corollary is for the min-of-lines `U`,
+which equals the piecewise-linear interpolant only when the node sequence is concave.

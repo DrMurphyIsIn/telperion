@@ -460,9 +460,14 @@ REGISTRY: dict[str, SensitivityStance] = {
     "LogConcaveSinglePointEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "max reduced to a single point k* by "
                                        "log-concavity; per-step norm_num facts"),
-    "MonotoneRatioTailEmitter": _S(STRUCTURALLY_NONVACUOUS,
-                                   "b(s) ≤ B via a nonincreasing tail; tail-step "
-                                   "positivity + base norm_num + induction"),
+    "MonotoneRatioTailEmitter": _S(CERTIFICATE_SENSITIVE,
+                                   "two faces. Ratio face: b(s) ≤ B via a nonincreasing "
+                                   "tail (tail-step positivity + base norm_num + "
+                                   "induction). Piecewise-linear node-condition face "
+                                   "(2026-09-29): the threshold M and the node values are "
+                                   "baked into linarith node facts, so a forged M is "
+                                   "kernel-rejected",
+                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "LatticeBoxEmitter": _S(STRUCTURALLY_NONVACUOUS,
                             "f ≤ B on ℤ^d_{≥0}: finite base box + per-axis "
                             "monotone tail; no corruptible identity"),
