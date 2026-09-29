@@ -311,3 +311,29 @@ control:
 `adapter_zero_sum_majorant` (the 9/4 strip instance forged to `C = 1`, false at every point of the
 strip, rejected at the `ring` identity; true twin `C = 9/4` compiles). Nothing here bears on RH;
 `conjecture1_proved = False`.
+
+## Session 2026-09-29 — `mobius_tangent_cell` (tangent-line cells with a Mobius term)
+
+`MobiusTangentCellEmitter` (kind `mobius_tangent_cell`): `F(x) = a + b x + sum kappa_i log(alpha_i +
+beta_i x) + sigma/(B + A x) <= 0` on a rational interval, `kappa_i > 0`, by tangent-line cells. Per
+cell and rational tangent point `t`, each concave log is replaced by its tangent (with a rational
+`H >= log u` from `Real.abs_log_sub_add_sum_range_le` plus `Real.log_two_{lt,gt}_d9`); the Mobius
+term is kept when `sigma >= 0` (convex) or replaced by its tangent when `sigma < 0` (concave); the
+convex majorant is checked at the two cell endpoints by `norm_num`. The generator bisects until
+every cell passes; the union over the interval is a kernel-checked `le_or_gt` chain. The problem
+can be given as two sides `lhs <= rhs` (exact `sp.apart` split; the original form is emitted as
+`<name>_sides`). Technique: Lemma 3.3 of a draft communicated by J. L. Goldwasser (28 Sep 2026;
+author his London colleague, name to be added). Refusals: convex logs (`kappa < 0`), sign changes
+of a log argument or of `B + A x`, more than one simple pole, non-affine log arguments, floats,
+tampered cells or tilings, and false or order-`>= 2`-tight claims at the bisection cap.
+
+Design doc: [`EMITTER_MOBIUS_TANGENT_CELL_DESIGN_2026-09-29.md`](EMITTER_MOBIUS_TANGENT_CELL_DESIGN_2026-09-29.md).
+Dogfood: `examples/mobius_tangent_cell/` (the [2/1] Pade bound `log(1 + x) <= x(6 + x)/(6 + 4x)` on
+`[1/4, 1]` in 11 cells, the log-mean bound `log x <= 2(x - 1)/(x + 1)` on `[1/10, 1/2]`, and a
+synthetic two-log concave-Mobius instance and a synthetic no-Mobius instance; 48 theorems, axiom
+list pinned by `#guard_msgs`). Not
+covered: the Pade bound near `x = 0` (tight to order 4; the tangent majorant loses a quadratic term,
+refused) and `log(1 + x) >= 2x/(2 + x)` (convex log, refused). Negative control:
+`adapter_mobius_tangent_cell` (the log-mean cell with its constant raised `-2 -> -19/10`, false at
+`x = 1/2`, rejected at the cell `linarith`; the true twin compiles). Nothing here bears on RH;
+`conjecture1_proved = False`.

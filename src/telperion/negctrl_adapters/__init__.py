@@ -21,6 +21,7 @@ from . import adapter_identity  # noqa: F401
 from . import adapter_infeasibility  # noqa: F401
 from . import adapter_interval_gram_inertia  # noqa: F401
 from . import adapter_li_positivity  # noqa: F401
+from . import adapter_mobius_tangent_cell  # noqa: F401
 from . import adapter_nullstellensatz  # noqa: F401
 from . import adapter_order_balance  # noqa: F401
 from . import adapter_preordering_multiplier  # noqa: F401
@@ -64,6 +65,7 @@ __all__ = [
     'adapter_infeasibility',
     'adapter_interval_gram_inertia',
     'adapter_li_positivity',
+    'adapter_mobius_tangent_cell',
     'adapter_nullstellensatz',
     'adapter_order_balance',
     'adapter_preordering_multiplier',

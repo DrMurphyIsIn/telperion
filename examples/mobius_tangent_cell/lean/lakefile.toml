@@ -1,0 +1,13 @@
+name = "MobiusTangentCell"
+defaultTargets = ["MobiusTangentCell", "AxiomGuardMobiusTangentCell"]
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+[[lean_lib]]
+name = "MobiusTangentCell"
+
+[[lean_lib]]
+name = "AxiomGuardMobiusTangentCell"

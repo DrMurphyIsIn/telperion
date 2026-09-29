@@ -409,6 +409,32 @@ REGISTRY: dict[str, SensitivityStance] = {
                                  # the true twin C = 9/4 compiles.  See
                                  # negctrl_adapters/adapter_zero_sum_majorant.py.
                                  neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "MobiusTangentCellEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                   "F(x) = a + b x + sum kappa_i log(alpha_i + beta_i x) + "
+                                   "sigma/(B + A x) <= 0 on [P, Q] by tangent-line cells "
+                                   "(Lemma 3.3 of a draft communicated by J. L. Goldwasser): "
+                                   "per cell the concave logs are replaced by their tangents "
+                                   "at a rational t (Real.log_le_sub_one_of_pos, with a "
+                                   "rational H >= log u from abs_log_sub_add_sum_range_le + "
+                                   "Real.log_two_{lt,gt}_d9), the Mobius term is kept (sigma "
+                                   ">= 0, convex endpoint lemma) or replaced by its tangent "
+                                   "(sigma < 0), and the majorant is checked at the two cell "
+                                   "endpoints by norm_num; the union over [P, Q] is a "
+                                   "le_or_gt chain the kernel checks for gaps.  The stated F "
+                                   "IS the claim; no separately-supplied identity to "
+                                   "corrupt.  certify REFUSES kappa <= 0, a log argument or "
+                                   "Mobius denominator not positive at both endpoints, "
+                                   "floats, a tiling with a gap or overlap, log bounds or "
+                                   "majorant data not matching their exact recomputation, a "
+                                   "positive majorant endpoint value, and (bisection cap) a "
+                                   "false claim or one tight to order >= 2.  Elementary "
+                                   "one-variable inequalities, nothing about RH "
+                                   "(conjecture1_proved = False)",
+                                   # Structural, yet a kernel control exists: the log-mean
+                                   # cell with its constant raised -2 -> -19/10 is FALSE at
+                                   # x = 1/2 and the cell's linarith cannot close it.
+                                   # See negctrl_adapters/adapter_mobius_tangent_cell.py.
+                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
