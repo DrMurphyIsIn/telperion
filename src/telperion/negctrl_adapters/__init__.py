@@ -12,6 +12,7 @@ from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_enclosure_tree  # noqa: F401
 from . import adapter_eventual_threshold  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
+from . import adapter_gap_budget_multiplicity  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_threshold  # noqa: F401
@@ -59,6 +60,7 @@ __all__ = [
     'adapter_enclosure_tree',
     'adapter_eventual_threshold',
     'adapter_exact_fact',
+    'adapter_gap_budget_multiplicity',
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',
     'adapter_exp_threshold',
