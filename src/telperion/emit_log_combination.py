@@ -38,6 +38,11 @@ instances of the same parameterized ``emit_body``: an ``FSTAR``-scaled log
 combination ``c·log(r) − k·FSTAR ≤ q`` where ``FSTAR = log(B)/N``, folded via the
 ``N``-th power against ``B``.
 
+EXACT-CANCELLATION face (routes ``exact`` / ``mixed``, see the section below
+``log_combination_certificate``): ``Σ cᵢ·log rᵢ = 0`` from the rational identity
+``∏ rᵢ^{D·cᵢ} = 1`` (zero margin, for tie points where any enclosure fails), and
+"value = exact part + bounded part" where only the remainder is enclosed.
+
 Untrusted sympy generator emits Lean 4; the Lean KERNEL is the sole arbiter.  A
 wrong certificate is a ``lake build`` FAILURE, never a false theorem.  The
 generation-time ``log_combination_certificate`` self-check RAISES ``ValueError``
@@ -293,14 +298,185 @@ def log_combination_certificate(
     )
 
 
+# ---------------------------------------------------------------------------
+# EXACT-CANCELLATION face (routes "exact" and "mixed")
+# ---------------------------------------------------------------------------
+#
+# The three routes above certify an INEQUALITY with a rational margin.  At a tie
+# point the value is forced to be EXACTLY zero, e.g.
+#
+#     11·F* = 5·log(3/2) + log(23/18),   F* = log(621/64)/11,
+#
+# because (3/2)^5·(23/18) = 621/64.  Any enclosure-based check fails there at zero
+# margin.  This face certifies the equality itself from the rational identity
+# ∏ rᵢ^{eᵢ} = 1 (eᵢ = D·cᵢ integers, D the lcm of the cᵢ denominators), and the
+# MIXED form "value = exact part + bounded part": the exact group cancels to 0 and
+# only the remainder (further logs of rationals, folded and enclosed by the two
+# tangent bounds 1 − 1/X ≤ log X ≤ X − 1, plus an optional opaque real R carried
+# with hypothesis bounds) needs an enclosure.
+#
+# Acknowledgement: distilled from a draft communicated by Prof. John L. Goldwasser
+# (28 Sep 2026, "The maximum Laplacian ratio of a tree for all n >= 303"; author: his
+# London colleague).  Only the generic certificate shape is taken; no data from the
+# draft is used.
+
+
+@dataclass(frozen=True)
+class LogCancellationCertificate:
+    """Exact-cancellation certificate (``route`` ``"exact"`` or ``"mixed"``).
+
+    * ``exact_terms`` — ``((cᵢ, rᵢ), ...)`` with ``Σ cᵢ·log rᵢ = 0`` exactly.
+    * ``exact_pos`` / ``exact_neg`` — ``((rᵢ, eᵢ), ...)``: the integer-exponent
+      split of ``∏ rᵢ^{D·cᵢ} = 1`` into ``∏_pos rᵢ^{eᵢ} = ∏_neg rᵢ^{eᵢ}``
+      (all ``eᵢ > 0``); ``exact_scale`` is ``D``.
+    * ``rem_terms`` / ``rem_pos`` / ``rem_neg`` / ``rem_scale`` — the same data for
+      the remainder group (mixed route only), and ``rem_fold`` the rational
+      ``X = ∏_pos / ∏_neg`` with ``Σ dⱼ·log sⱼ = log(X)/D'``.
+    * ``opaque`` — ``None`` or ``(R_lo, R_hi)``: an extra real ``R`` with
+      hypotheses ``R_lo ≤ R ≤ R_hi`` (the "bounded part" supplied by another
+      certificate).
+    * ``lo`` / ``hi`` — the certified bounds on the total (``None`` = not claimed).
+    """
+
+    route: str
+    exact_terms: tuple
+    exact_scale: object
+    exact_pos: tuple
+    exact_neg: tuple
+    rem_terms: tuple = ()
+    rem_scale: object = 1
+    rem_pos: tuple = ()
+    rem_neg: tuple = ()
+    rem_fold: object = 1
+    opaque: object = None
+    lo: object = None
+    hi: object = None
+
+
+def _integer_split(terms):
+    """``[(c, r)]`` -> ``(D, pos, neg)`` with ``Σ c·log r = (log ∏pos − log ∏neg)/D``."""
+    D = sp.Integer(1)
+    for c, _ in terms:
+        D = sp.ilcm(D, sp.Rational(c).q)
+    pos, neg = [], []
+    for c, r in terms:
+        e = sp.Integer(sp.Rational(c) * D)
+        (pos if e > 0 else neg).append((r, abs(e)))
+    return sp.Integer(D), tuple(pos), tuple(neg)
+
+
+def _normalize_terms(terms, what):
+    out = []
+    for c, r in terms:
+        c, r = sp.Rational(c), sp.Rational(r)
+        if c == 0:
+            raise ValueError(f"REFUSED: zero coefficient in the {what} group")
+        if not (r > 0):
+            raise ValueError(f"REFUSED: log argument must be > 0 in the {what} group, got {r}")
+        out.append((c, r))
+    return tuple(out)
+
+
+def _side_product(side):
+    prod = sp.Integer(1)
+    for r, e in side:
+        prod *= sp.Rational(r) ** int(e)
+    return prod
+
+
+def log_cancellation_certificate(
+    *, route, exact_terms, rem_terms=(), opaque=None, lo=None, hi=None,
+):
+    """Build and EXACTLY self-check an exact-cancellation certificate.
+
+    ``route="exact"``: certify ``Σ cᵢ·log rᵢ = 0`` from ``∏ rᵢ^{D·cᵢ} = 1`` (exact
+    over ℚ).  REFUSE if the product is not exactly 1 — the negative control.
+
+    ``route="mixed"``: certify ``lo ≤ V`` and/or ``V ≤ hi`` for
+    ``V = Σ_exact cᵢ·log rᵢ + Σ_rem dⱼ·log sⱼ (+ R)``.  The exact group must
+    cancel exactly (as above); the remainder folds to ``log(X)/D'`` and is
+    enclosed by ``(1 − 1/X)/D' ≤ rem ≤ (X − 1)/D'``; ``R`` (if given) by its
+    hypothesis bounds.  REFUSE if the exact group does not cancel, if neither
+    bound is claimed, or if a claimed bound does not follow from the enclosure
+    (sufficient condition, exact over ℚ).
+    """
+    if route not in ("exact", "mixed"):
+        raise ValueError(f"REFUSED: unknown cancellation route {route!r} (exact|mixed)")
+    ex = _normalize_terms(exact_terms, "exact")
+    if not ex:
+        raise ValueError("REFUSED: the exact group is empty")
+    D, pos, neg = _integer_split(ex)
+    if _side_product(pos) != _side_product(neg):
+        ratio = _side_product(pos) / _side_product(neg)
+        raise ValueError(
+            f"REFUSED: exact group does not cancel — ∏ rᵢ^(D·cᵢ) = {ratio} ≠ 1 "
+            f"(D = {D}); Σ cᵢ·log rᵢ ≠ 0 (negative control)"
+        )
+    if route == "exact":
+        if rem_terms or opaque is not None or lo is not None or hi is not None:
+            raise ValueError(
+                "REFUSED: route='exact' takes only exact_terms (use route='mixed')")
+        return LogCancellationCertificate(
+            route="exact", exact_terms=ex, exact_scale=D, exact_pos=pos, exact_neg=neg)
+
+    rem = _normalize_terms(rem_terms, "remainder")
+    if not rem and opaque is None:
+        raise ValueError(
+            "REFUSED: mixed route needs a remainder (log terms and/or an opaque R)")
+    if lo is None and hi is None:
+        raise ValueError("REFUSED: mixed route needs at least one of lo / hi")
+    Dr, rpos, rneg = _integer_split(rem)
+    X = _side_product(rpos) / _side_product(rneg)
+    rem_hi = (X - 1) / Dr if rem else sp.Integer(0)
+    rem_lo = (1 - 1 / X) / Dr if rem else sp.Integer(0)
+    if opaque is not None:
+        R_lo, R_hi = sp.Rational(opaque[0]), sp.Rational(opaque[1])
+        if R_lo > R_hi:
+            raise ValueError(f"REFUSED: opaque bounds R_lo = {R_lo} > R_hi = {R_hi}")
+        opaque = (R_lo, R_hi)
+        rem_hi, rem_lo = rem_hi + R_hi, rem_lo + R_lo
+    if hi is not None:
+        hi = sp.Rational(hi)
+        if not (rem_hi <= hi):
+            raise ValueError(
+                f"REFUSED: upper enclosure fails — remainder ≤ {rem_hi} > hi = {hi} "
+                f"(tangent log X ≤ X − 1 too loose or bound false; negative control)")
+    if lo is not None:
+        lo = sp.Rational(lo)
+        if not (lo <= rem_lo):
+            raise ValueError(
+                f"REFUSED: lower enclosure fails — remainder ≥ {rem_lo} < lo = {lo} "
+                f"(tangent 1 − 1/X ≤ log X too loose or bound false; negative control)")
+    return LogCancellationCertificate(
+        route="mixed", exact_terms=ex, exact_scale=D, exact_pos=pos, exact_neg=neg,
+        rem_terms=rem, rem_scale=Dr, rem_pos=rpos, rem_neg=rneg, rem_fold=X,
+        opaque=opaque, lo=lo, hi=hi,
+    )
+
+
 def certify_log_combination_point(family, pt, name):
     """Certify one log-combination instance from ``family.special[1](pt)``.
 
     ``spec`` is a dict ``{"terms": [(c, r), (-k, fstar_base)], "q": ...,
     "route": "monotone"|"tangent", "fstar_base": ..., "fstar_den": ...}``
     (``fstar_base``/``fstar_den`` optional; default the BG ``621/64`` and ``11``).
+
+    Exact-cancellation face: ``{"route": "exact", "terms": [(c, r), ...]}`` or
+    ``{"route": "mixed", "exact_terms": [...], "rem_terms": [...],
+    "opaque": (R_lo, R_hi) | None, "lo": ..., "hi": ...}``.
     """
     spec = family.special[1](pt)
+    if spec["route"] in ("exact", "mixed"):
+        if spec["route"] == "exact":
+            cert = log_cancellation_certificate(route="exact", exact_terms=spec["terms"])
+        else:
+            cert = log_cancellation_certificate(
+                route="mixed", exact_terms=spec["exact_terms"],
+                rem_terms=spec.get("rem_terms", ()), opaque=spec.get("opaque"),
+                lo=spec.get("lo"), hi=spec.get("hi"),
+            )
+        inst = CertifiedInstance(point=dict(pt), lean_name=name, corners=(), payload=cert)
+        return inst, 1
     kwargs = dict(terms=spec["terms"], q=spec["q"], route=spec["route"])
     if "fstar_base" in spec:
         kwargs["fstar_base"] = spec["fstar_base"]
@@ -582,13 +758,118 @@ class LogCombinationEmitter(Emitter):
             f"  linarith\n"
         )
 
+    @staticmethod
+    def _side_haves(side, tag) -> tuple[str, list[str]]:
+        """Lean haves expanding ``log(∏ rᵢ^{eᵢ})`` into ``Σ eᵢ·log rᵢ`` for one side.
+
+        Returns the product expression and the ``have`` lines (per-factor
+        ``Real.log_pow`` and left-associated ``Real.log_mul`` steps)."""
+        if not side:
+            return "(1 : ℝ)", [f"  have {tag}_one : Real.log (1 : ℝ) = 0 := Real.log_one"]
+        factors = [f"({_lean_rat(r)} : ℝ) ^ ({int(e)} : ℕ)" for r, e in side]
+        out = []
+        for j, ((r, e), F) in enumerate(zip(side, factors)):
+            out.append(
+                f"  have {tag}_f{j} : Real.log ({F}) = ({int(e)} : ℝ) * "
+                f"Real.log ({_lean_rat(r)} : ℝ) := by\n"
+                f"    rw [Real.log_pow]; norm_num")
+        prod = factors[0]
+        for j in range(1, len(factors)):
+            new = f"{prod} * {factors[j]}"
+            out.append(
+                f"  have {tag}_m{j} : Real.log ({new})\n"
+                f"      = Real.log ({prod}) + Real.log ({factors[j]}) :=\n"
+                f"    Real.log_mul (by positivity) (by positivity)")
+            prod = new
+        return prod, out
+
+    @staticmethod
+    def _sum_expr(terms) -> str:
+        return " + ".join(
+            f"({_lean_rat(c)} : ℝ) * Real.log ({_lean_rat(r)} : ℝ)" for c, r in terms)
+
+    def _emit_cancellation(self, cert: LogCancellationCertificate, name: str) -> str:
+        """Emit the exact-cancellation face (``route`` exact | mixed).
+
+        exact:  ``theorem name : Σ cᵢ * Real.log rᵢ = 0`` — per-factor
+        ``Real.log_pow``, ``Real.log_mul`` chains on each side, the rational
+        identity ``∏pos = ∏neg`` by ``norm_num`` (the load-bearing fact), then
+        ``linarith``.  mixed: the same exact block, plus the remainder fold
+        ``log(∏pos/∏neg) = log X`` (``Real.log_div`` + ``norm_num``), the tangent
+        enclosures ``Real.log_le_sub_one_of_pos`` / ``Real.one_sub_inv_le_log_of_pos``
+        and the opaque ``R`` hypotheses, closed by ``linarith``."""
+        body: list[str] = []
+        ppos, hp = self._side_haves(cert.exact_pos, "ep")
+        pneg, hn = self._side_haves(cert.exact_neg, "en")
+        body += hp + hn
+        body.append(f"  have e_num : ({ppos}) = ({pneg}) := by norm_num")
+        body.append(f"  have e_log : Real.log ({ppos}) = Real.log ({pneg}) := by rw [e_num]")
+        V = self._sum_expr(cert.exact_terms)
+        binders = ""
+        if cert.route == "exact":
+            head = (
+                f"-- ===== log_combination EXACT CANCELLATION: {V} = 0 =====\n"
+                f"-- Scale D = {cert.exact_scale}: ∏ rᵢ^(D·cᵢ) = 1 is the rational identity "
+                f"below (norm_num);\n"
+                f"-- no enclosure, so the certificate holds at ZERO margin.\n")
+            stmt = f"{V} = 0"
+            body.append("  linarith")
+        else:
+            if cert.rem_terms:
+                V += " + " + self._sum_expr(cert.rem_terms)
+                rpos, hrp = self._side_haves(cert.rem_pos, "rp")
+                rneg, hrn = self._side_haves(cert.rem_neg, "rn")
+                X = _lean_rat(cert.rem_fold)
+                body += hrp + hrn
+                body.append(
+                    f"  have r_div : Real.log (({rpos}) / ({rneg}))\n"
+                    f"      = Real.log ({rpos}) - Real.log ({rneg}) :=\n"
+                    f"    Real.log_div (by positivity) (by positivity)")
+                body.append(f"  have r_fold : (({rpos}) / ({rneg})) = ({X} : ℝ) := by norm_num")
+                body.append("  rw [r_fold] at r_div")
+                if cert.hi is not None:
+                    body.append(f"  have r_up := Real.log_le_sub_one_of_pos "
+                                f"(by norm_num : (0 : ℝ) < {X})")
+                if cert.lo is not None:
+                    inv = _lean_rat(1 - 1 / sp.Rational(cert.rem_fold))
+                    body.append(f"  have r_lo := Real.one_sub_inv_le_log_of_pos "
+                                f"(by norm_num : (0 : ℝ) < {X})")
+                    body.append(f"  have r_inv : (1 : ℝ) - ({X} : ℝ)⁻¹ = {inv} := by norm_num")
+            if cert.opaque is not None:
+                R_lo, R_hi = cert.opaque
+                V += " + R"
+                binders = (f" (R : ℝ) (hR_lo : ({_lean_rat(R_lo)} : ℝ) ≤ R)"
+                           f" (hR_hi : R ≤ ({_lean_rat(R_hi)} : ℝ))")
+            parts = []
+            if cert.lo is not None:
+                parts.append(f"({_lean_rat(cert.lo)} : ℝ) ≤ {V}")
+            if cert.hi is not None:
+                parts.append(f"{V} ≤ ({_lean_rat(cert.hi)} : ℝ)")
+            stmt = " ∧\n    ".join(parts)
+            head = (
+                f"-- ===== log_combination MIXED (exact + bounded): "
+                f"lo = {cert.lo}, hi = {cert.hi} =====\n"
+                f"-- Exact group cancels to 0 (rational identity, zero margin); the "
+                f"remainder folds to\n"
+                f"-- log({_lean_rat(cert.rem_fold)})/{cert.rem_scale} and is enclosed by "
+                f"1 − 1/X ≤ log X ≤ X − 1"
+                + (" plus the R hypotheses" if cert.opaque is not None else "") + ".\n")
+            body.append("  constructor <;> linarith" if len(parts) == 2 else "  linarith")
+        return (
+            head
+            + f"theorem {name}{binders} :\n    {stmt} := by\n"
+            + "\n".join(body) + "\n"
+        )
+
     def emit_body(self, fam, profile: LeanProfile) -> tuple[str, int]:
         lines: list[str] = []
         nthm = 0
         for inst in fam.instances:
             cert: LogCombinationCertificate = inst.payload  # type: ignore[assignment]
             name = inst.lean_name
-            if cert.route == "monotone":
+            if isinstance(cert, LogCancellationCertificate):
+                lines.append(self._emit_cancellation(cert, name))
+            elif cert.route == "monotone":
                 lines.append(self._emit_monotone(cert, name))
             elif cert.route == "tangent":
                 lines.append(self._emit_tangent(cert, name))

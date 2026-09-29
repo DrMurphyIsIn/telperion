@@ -293,6 +293,36 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ConcavePooledInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                       "bound l(b) + alpha |b| <= U(y_b) on every finite rooted "
+                                       "tree (or every tree of child count <= M) for a rational "
+                                       "branching recursion, by induction with a concave "
+                                       "piecewise-linear witness U represented as the MINIMUM of "
+                                       "its affine pieces (Jensen at the pooled mean is then a "
+                                       "sum-of-minima inequality, proved generically): the "
+                                       "per-(cell, piece) obligations ARE the statements, each a "
+                                       "one-variable polynomial inequality closed by linarith "
+                                       "from Bernstein / Taylor product facts on its cell; no "
+                                       "separately-supplied identity to corrupt.  certify "
+                                       "REFUSES a non-concave witness (slopes not strictly "
+                                       "decreasing), a failing base, y_leaf outside I, a "
+                                       "denominator not certified positive, any cell obligation "
+                                       "without nonnegative Bernstein coefficients down to the "
+                                       "subdivision limit, a tail with m-dependent h/g, lo < 0, "
+                                       "hi <= 0 or no piece with b_j <= 0, a non-covering cell "
+                                       "layout, degree > 12, and floats.  Method credit: "
+                                       "concave-witness induction, from a draft communicated by "
+                                       "Professor John L. Goldwasser (author: his London "
+                                       "colleague; name to be added).  Dogfood: the matching "
+                                       "message, sum_u y_u >= (3/5)|T|; nothing about BG or RH "
+                                       "(conjecture1_proved = False)",
+                                       # Structural, yet a kernel control exists: the bounded-
+                                       # degree dogfood (paths) at alpha = 13/20 > 1/phi, which
+                                       # Layer 1 refuses, is FALSE, and its forged cells carry a
+                                       # negative Bernstein coefficient the emitted linarith
+                                       # cannot absorb, so the kernel rejects it.
+                                       # See negctrl_adapters/adapter_concave_pooled_induction.py.
+                                       neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureTreeEmitter": _S(STRUCTURALLY_NONVACUOUS,
                               "rational two-sided enclosure lo <= E <= hi (per side `<` when "
                               "the exact fold has slack or an open endpoint) of an expression "
@@ -409,6 +439,56 @@ REGISTRY: dict[str, SensitivityStance] = {
                                  # the true twin C = 9/4 compiles.  See
                                  # negctrl_adapters/adapter_zero_sum_majorant.py.
                                  neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "MobiusTangentCellEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                   "F(x) = a + b x + sum kappa_i log(alpha_i + beta_i x) + "
+                                   "sigma/(B + A x) <= 0 on [P, Q] by tangent-line cells "
+                                   "(Lemma 3.3 of a draft communicated by J. L. Goldwasser): "
+                                   "per cell the concave logs are replaced by their tangents "
+                                   "at a rational t (Real.log_le_sub_one_of_pos, with a "
+                                   "rational H >= log u from abs_log_sub_add_sum_range_le + "
+                                   "Real.log_two_{lt,gt}_d9), the Mobius term is kept (sigma "
+                                   ">= 0, convex endpoint lemma) or replaced by its tangent "
+                                   "(sigma < 0), and the majorant is checked at the two cell "
+                                   "endpoints by norm_num; the union over [P, Q] is a "
+                                   "le_or_gt chain the kernel checks for gaps.  The stated F "
+                                   "IS the claim; no separately-supplied identity to "
+                                   "corrupt.  certify REFUSES kappa <= 0, a log argument or "
+                                   "Mobius denominator not positive at both endpoints, "
+                                   "floats, a tiling with a gap or overlap, log bounds or "
+                                   "majorant data not matching their exact recomputation, a "
+                                   "positive majorant endpoint value, and (bisection cap) a "
+                                   "false claim or one tight to order >= 2.  Elementary "
+                                   "one-variable inequalities, nothing about RH "
+                                   "(conjecture1_proved = False)",
+                                   # Structural, yet a kernel control exists: the log-mean
+                                   # cell with its constant raised -2 -> -19/10 is FALSE at
+                                   # x = 1/2 and the cell's linarith cannot close it.
+                                   # See negctrl_adapters/adapter_mobius_tangent_cell.py.
+                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "GapBudgetMultiplicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                       "tangent-price GAP BUDGET pruning of a multiset "
+                                       "optimisation (kind gap_budget_multiplicity): from a "
+                                       "separable or c * log (c >= 0) concave model, "
+                                       "sum gamma(k) <= theta <= theta_hi is re-derived in the "
+                                       "kernel (Multiset sums + the log tangent lemma), the "
+                                       "rational gap lower bounds and theta_hi are enclosure_tree "
+                                       "statements, and the caps / exclusions / tail / decided "
+                                       "knapsack follow by gapBudget_nat_cap and decide.  The "
+                                       "claimed bounds ARE the statements; no separately-"
+                                       "supplied identity to corrupt, so the shape is "
+                                       "structural.  certify REFUSES a gap bound or theta_hi the "
+                                       "fold does not imply, a negative or unprovable gap, a "
+                                       "convex / non-log concave part, a non-uniform theta, a "
+                                       "tail without certified monotonicity, a benchmark that "
+                                       "violates its own consequences, floats.  Classical "
+                                       "max-product dogfood; nothing about RH "
+                                       "(conjecture1_proved = False)",
+                                       # Structural, yet a kernel control exists: gamma(2) >= 1/20
+                                       # forged in the N = 3t + 2 max-product budget claims
+                                       # count 2 = 0, refuted by the benchmark {2} + 3^t; the
+                                       # kernel rejects it.  See
+                                       # negctrl_adapters/adapter_gap_budget_multiplicity.py.
+                                       neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "EnclosureIntervalFoldEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "integer near-CUE row-band check rowsOK…=true by decide; "
                                        "the Arb enclosures are the input trust seam, the kernel "
@@ -460,9 +540,14 @@ REGISTRY: dict[str, SensitivityStance] = {
     "LogConcaveSinglePointEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "max reduced to a single point k* by "
                                        "log-concavity; per-step norm_num facts"),
-    "MonotoneRatioTailEmitter": _S(STRUCTURALLY_NONVACUOUS,
-                                   "b(s) ≤ B via a nonincreasing tail; tail-step "
-                                   "positivity + base norm_num + induction"),
+    "MonotoneRatioTailEmitter": _S(CERTIFICATE_SENSITIVE,
+                                   "two faces. Ratio face: b(s) ≤ B via a nonincreasing "
+                                   "tail (tail-step positivity + base norm_num + "
+                                   "induction). Piecewise-linear node-condition face "
+                                   "(2026-09-29): the threshold M and the node values are "
+                                   "baked into linarith node facts, so a forged M is "
+                                   "kernel-rejected",
+                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "LatticeBoxEmitter": _S(STRUCTURALLY_NONVACUOUS,
                             "f ≤ B on ℤ^d_{≥0}: finite base box + per-axis "
                             "monotone tail; no corruptible identity"),
@@ -726,10 +811,13 @@ REGISTRY: dict[str, SensitivityStance] = {
         "low-order grades + doubled geometric tail hybrid: fully-generic fixed "
         "atoms (geometric sums <= 2 / <= 2q^a + the assembled bound); no "
         "corruptible cofactor"),
-    "EventualThresholdEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "eventual scaling threshold with explicit nested-max-of-ratios witness: "
-        "the arity IS the statement; witness assembly re-derived in-kernel by "
-        "le_max chains + div_lt_iff0; no corruptible cofactor"),
+    "EventualThresholdEmitter": _S(CERTIFICATE_SENSITIVE,
+        "two faces. Arity face: explicit nested-max-of-ratios witness, the arity IS "
+        "the statement (le_max chains + div_lt_iff0, no corruptible cofactor). "
+        "Quadratic-sign-race face (2026-09-29): the switch point r and the Taylor "
+        "literals P'(k), P(k) are baked into norm_num endpoint facts and a ring "
+        "identity, so a forged switch point is kernel-rejected",
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ComparabilityEnvelopeEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "comparability/Lipschitz envelope atoms (rpow both-signs, sqrt "
         "conjugate-multiply, 1+x^2 denominator kill): fully-generic fixed atoms, "

@@ -1,5 +1,5 @@
-/- telperion 0.1.6 | family LogCombination | input-hash 8c16195fecd03a46
-   6 theorems, 6 generation-time self-checks passed.
+/- telperion 0.1.6 | family LogCombination | input-hash 99a479c3c1abeae3
+   10 theorems, 10 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
 
@@ -127,5 +127,95 @@ theorem log79_add_fstar : Real.log (7/9 : ℝ) - (-1 * FSTAR : ℝ) ≤ (-1/24 :
     rw [hEq] at hXle; exact hXle
   rw [hsplit] at hlogle
   linarith
+
+-- ===== log_combination EXACT CANCELLATION: (1 : ℝ) * Real.log (12 : ℝ) + (-2 : ℝ) * Real.log (2 : ℝ) + (-1 : ℝ) * Real.log (3 : ℝ) = 0 =====
+-- Scale D = 1: ∏ rᵢ^(D·cᵢ) = 1 is the rational identity below (norm_num);
+-- no enclosure, so the certificate holds at ZERO margin.
+theorem log12_eq_2log2_add_log3 :
+    (1 : ℝ) * Real.log (12 : ℝ) + (-2 : ℝ) * Real.log (2 : ℝ) + (-1 : ℝ) * Real.log (3 : ℝ) = 0 := by
+  have ep_f0 : Real.log ((12 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (12 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_f0 : Real.log ((2 : ℝ) ^ (2 : ℕ)) = (2 : ℝ) * Real.log (2 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_f1 : Real.log ((3 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (3 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_m1 : Real.log ((2 : ℝ) ^ (2 : ℕ) * (3 : ℝ) ^ (1 : ℕ))
+      = Real.log ((2 : ℝ) ^ (2 : ℕ)) + Real.log ((3 : ℝ) ^ (1 : ℕ)) :=
+    Real.log_mul (by positivity) (by positivity)
+  have e_num : ((12 : ℝ) ^ (1 : ℕ)) = ((2 : ℝ) ^ (2 : ℕ) * (3 : ℝ) ^ (1 : ℕ)) := by norm_num
+  have e_log : Real.log ((12 : ℝ) ^ (1 : ℕ)) = Real.log ((2 : ℝ) ^ (2 : ℕ) * (3 : ℝ) ^ (1 : ℕ)) := by rw [e_num]
+  linarith
+
+-- ===== log_combination EXACT CANCELLATION: (1/2 : ℝ) * Real.log (9/4 : ℝ) + (1/3 : ℝ) * Real.log (8/27 : ℝ) = 0 =====
+-- Scale D = 6: ∏ rᵢ^(D·cᵢ) = 1 is the rational identity below (norm_num);
+-- no enclosure, so the certificate holds at ZERO margin.
+theorem half_log94_add_third_log827_eq_zero :
+    (1/2 : ℝ) * Real.log (9/4 : ℝ) + (1/3 : ℝ) * Real.log (8/27 : ℝ) = 0 := by
+  have ep_f0 : Real.log ((9/4 : ℝ) ^ (3 : ℕ)) = (3 : ℝ) * Real.log (9/4 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have ep_f1 : Real.log ((8/27 : ℝ) ^ (2 : ℕ)) = (2 : ℝ) * Real.log (8/27 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have ep_m1 : Real.log ((9/4 : ℝ) ^ (3 : ℕ) * (8/27 : ℝ) ^ (2 : ℕ))
+      = Real.log ((9/4 : ℝ) ^ (3 : ℕ)) + Real.log ((8/27 : ℝ) ^ (2 : ℕ)) :=
+    Real.log_mul (by positivity) (by positivity)
+  have en_one : Real.log (1 : ℝ) = 0 := Real.log_one
+  have e_num : ((9/4 : ℝ) ^ (3 : ℕ) * (8/27 : ℝ) ^ (2 : ℕ)) = ((1 : ℝ)) := by norm_num
+  have e_log : Real.log ((9/4 : ℝ) ^ (3 : ℕ) * (8/27 : ℝ) ^ (2 : ℕ)) = Real.log ((1 : ℝ)) := by rw [e_num]
+  linarith
+
+-- ===== log_combination MIXED (exact + bounded): lo = 0, hi = 1/100 =====
+-- Exact group cancels to 0 (rational identity, zero margin); the remainder folds to
+-- log(101/100)/1 and is enclosed by 1 − 1/X ≤ log X ≤ X − 1.
+theorem log12_cancel_add_log101_mixed :
+    (0 : ℝ) ≤ (1 : ℝ) * Real.log (12 : ℝ) + (-2 : ℝ) * Real.log (2 : ℝ) + (-1 : ℝ) * Real.log (3 : ℝ) + (1 : ℝ) * Real.log (101/100 : ℝ) ∧
+    (1 : ℝ) * Real.log (12 : ℝ) + (-2 : ℝ) * Real.log (2 : ℝ) + (-1 : ℝ) * Real.log (3 : ℝ) + (1 : ℝ) * Real.log (101/100 : ℝ) ≤ (1/100 : ℝ) := by
+  have ep_f0 : Real.log ((12 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (12 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_f0 : Real.log ((2 : ℝ) ^ (2 : ℕ)) = (2 : ℝ) * Real.log (2 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_f1 : Real.log ((3 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (3 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_m1 : Real.log ((2 : ℝ) ^ (2 : ℕ) * (3 : ℝ) ^ (1 : ℕ))
+      = Real.log ((2 : ℝ) ^ (2 : ℕ)) + Real.log ((3 : ℝ) ^ (1 : ℕ)) :=
+    Real.log_mul (by positivity) (by positivity)
+  have e_num : ((12 : ℝ) ^ (1 : ℕ)) = ((2 : ℝ) ^ (2 : ℕ) * (3 : ℝ) ^ (1 : ℕ)) := by norm_num
+  have e_log : Real.log ((12 : ℝ) ^ (1 : ℕ)) = Real.log ((2 : ℝ) ^ (2 : ℕ) * (3 : ℝ) ^ (1 : ℕ)) := by rw [e_num]
+  have rp_f0 : Real.log ((101/100 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (101/100 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have rn_one : Real.log (1 : ℝ) = 0 := Real.log_one
+  have r_div : Real.log (((101/100 : ℝ) ^ (1 : ℕ)) / ((1 : ℝ)))
+      = Real.log ((101/100 : ℝ) ^ (1 : ℕ)) - Real.log ((1 : ℝ)) :=
+    Real.log_div (by positivity) (by positivity)
+  have r_fold : (((101/100 : ℝ) ^ (1 : ℕ)) / ((1 : ℝ))) = (101/100 : ℝ) := by norm_num
+  rw [r_fold] at r_div
+  have r_up := Real.log_le_sub_one_of_pos (by norm_num : (0 : ℝ) < 101/100)
+  have r_lo := Real.one_sub_inv_le_log_of_pos (by norm_num : (0 : ℝ) < 101/100)
+  have r_inv : (1 : ℝ) - (101/100 : ℝ)⁻¹ = 1/101 := by norm_num
+  constructor <;> linarith
+
+-- ===== log_combination MIXED (exact + bounded): lo = 1/20, hi = 1/10 =====
+-- Exact group cancels to 0 (rational identity, zero margin); the remainder folds to
+-- log(5/4)/3 and is enclosed by 1 − 1/X ≤ log X ≤ X − 1 plus the R hypotheses.
+theorem log94_cancel_add_log54_R_mixed (R : ℝ) (hR_lo : (-1/100 : ℝ) ≤ R) (hR_hi : R ≤ (1/100 : ℝ)) :
+    (1/20 : ℝ) ≤ (1/2 : ℝ) * Real.log (9/4 : ℝ) + (-1 : ℝ) * Real.log (3/2 : ℝ) + (1/3 : ℝ) * Real.log (5/4 : ℝ) + R ∧
+    (1/2 : ℝ) * Real.log (9/4 : ℝ) + (-1 : ℝ) * Real.log (3/2 : ℝ) + (1/3 : ℝ) * Real.log (5/4 : ℝ) + R ≤ (1/10 : ℝ) := by
+  have ep_f0 : Real.log ((9/4 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (9/4 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have en_f0 : Real.log ((3/2 : ℝ) ^ (2 : ℕ)) = (2 : ℝ) * Real.log (3/2 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have e_num : ((9/4 : ℝ) ^ (1 : ℕ)) = ((3/2 : ℝ) ^ (2 : ℕ)) := by norm_num
+  have e_log : Real.log ((9/4 : ℝ) ^ (1 : ℕ)) = Real.log ((3/2 : ℝ) ^ (2 : ℕ)) := by rw [e_num]
+  have rp_f0 : Real.log ((5/4 : ℝ) ^ (1 : ℕ)) = (1 : ℝ) * Real.log (5/4 : ℝ) := by
+    rw [Real.log_pow]; norm_num
+  have rn_one : Real.log (1 : ℝ) = 0 := Real.log_one
+  have r_div : Real.log (((5/4 : ℝ) ^ (1 : ℕ)) / ((1 : ℝ)))
+      = Real.log ((5/4 : ℝ) ^ (1 : ℕ)) - Real.log ((1 : ℝ)) :=
+    Real.log_div (by positivity) (by positivity)
+  have r_fold : (((5/4 : ℝ) ^ (1 : ℕ)) / ((1 : ℝ))) = (5/4 : ℝ) := by norm_num
+  rw [r_fold] at r_div
+  have r_up := Real.log_le_sub_one_of_pos (by norm_num : (0 : ℝ) < 5/4)
+  have r_lo := Real.one_sub_inv_le_log_of_pos (by norm_num : (0 : ℝ) < 5/4)
+  have r_inv : (1 : ℝ) - (5/4 : ℝ)⁻¹ = 1/5 := by norm_num
+  constructor <;> linarith
 
 end LogCombination

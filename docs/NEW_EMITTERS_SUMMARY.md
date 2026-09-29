@@ -311,3 +311,166 @@ control:
 `adapter_zero_sum_majorant` (the 9/4 strip instance forged to `C = 1`, false at every point of the
 strip, rejected at the `ring` identity; true twin `C = 9/4` compiles). Nothing here bears on RH;
 `conjecture1_proved = False`.
+
+## Session 2026-09-29 — `mobius_tangent_cell` (tangent-line cells with a Mobius term)
+
+`MobiusTangentCellEmitter` (kind `mobius_tangent_cell`): `F(x) = a + b x + sum kappa_i log(alpha_i +
+beta_i x) + sigma/(B + A x) <= 0` on a rational interval, `kappa_i > 0`, by tangent-line cells. Per
+cell and rational tangent point `t`, each concave log is replaced by its tangent (with a rational
+`H >= log u` from `Real.abs_log_sub_add_sum_range_le` plus `Real.log_two_{lt,gt}_d9`); the Mobius
+term is kept when `sigma >= 0` (convex) or replaced by its tangent when `sigma < 0` (concave); the
+convex majorant is checked at the two cell endpoints by `norm_num`. The generator bisects until
+every cell passes; the union over the interval is a kernel-checked `le_or_gt` chain. The problem
+can be given as two sides `lhs <= rhs` (exact `sp.apart` split; the original form is emitted as
+`<name>_sides`). Technique: Lemma 3.3 of a draft communicated by J. L. Goldwasser (28 Sep 2026;
+author his London colleague, name to be added). Refusals: convex logs (`kappa < 0`), sign changes
+of a log argument or of `B + A x`, more than one simple pole, non-affine log arguments, floats,
+tampered cells or tilings, and false or order-`>= 2`-tight claims at the bisection cap.
+
+Design doc: [`EMITTER_MOBIUS_TANGENT_CELL_DESIGN_2026-09-29.md`](EMITTER_MOBIUS_TANGENT_CELL_DESIGN_2026-09-29.md).
+Dogfood: `examples/mobius_tangent_cell/` (the [2/1] Pade bound `log(1 + x) <= x(6 + x)/(6 + 4x)` on
+`[1/4, 1]` in 11 cells, the log-mean bound `log x <= 2(x - 1)/(x + 1)` on `[1/10, 1/2]`, and a
+synthetic two-log concave-Mobius instance and a synthetic no-Mobius instance; 48 theorems, axiom
+list pinned by `#guard_msgs`). Not
+covered: the Pade bound near `x = 0` (tight to order 4; the tangent majorant loses a quadratic term,
+refused) and `log(1 + x) >= 2x/(2 + x)` (convex log, refused). Negative control:
+`adapter_mobius_tangent_cell` (the log-mean cell with its constant raised `-2 -> -19/10`, false at
+`x = 1/2`, rejected at the cell `linarith`; the true twin compiles). Nothing here bears on RH;
+`conjecture1_proved = False`.
+## Session 2026-09-29 — concave-witness faces (fold-ins to existing kinds)
+
+Three faces folded into existing kinds rather than new emitters. The certificate shapes (exact
+cancellation, the piecewise-linear node condition, and the quadratic sign race pattern) are
+distilled from a draft communicated by Prof. John L. Goldwasser ("The maximum Laplacian ratio of a
+tree for all n >= 303: concave witnesses and one-variable certificates", 28 Sep 2026; author: his
+London colleague). Only the generic shapes are used: no data from the draft, and nothing from its
+Brualdi-Goldwasser sections is formalized. `conjecture1_proved = False`.
+
+### `log_combination` — exact cancellation (routes `exact`, `mixed`)
+
+The existing routes certify `Σ cᵢ·log rᵢ ≤ q` with a rational margin. At a tie point the value is
+forced to be exactly zero (the motivating shape: `11·F* = 5·log(3/2) + log(23/18)` with
+`F* = log(621/64)/11`, because `(3/2)^5·(23/18) = 621/64`), and every enclosure-based check fails
+there at zero margin. The face adds:
+
+* `exact`: `Σ cᵢ·log rᵢ = 0` for any number of terms with rational `cᵢ`, from the rational identity
+  `∏ rᵢ^{D·cᵢ} = 1` (`D` = lcm of the coefficient denominators), split into two natural-power
+  products `∏pos = ∏neg` and closed by `norm_num`; `Real.log_pow` / `Real.log_mul` expand both sides
+  and `linarith` finishes.
+* `mixed`: `lo ≤ V` and/or `V ≤ hi` for `V = (exact group) + (remainder logs) (+ R)`. The exact group
+  cancels as above. The remainder folds to `log(X)/D'` and is enclosed by
+  `1 − 1/X ≤ log X ≤ X − 1`. An optional opaque real `R` is carried with hypothesis bounds `R_lo ≤ R ≤ R_hi`,
+  for the "bounded part" some other certificate supplies.
+
+Entry points: `log_cancellation_certificate`, `LogCancellationCertificate`; the same `certify` / `emit`
+path, dispatched by `spec["route"]`. Layer-1 refusals: a group that does not cancel exactly,
+a nonpositive argument, a zero coefficient, a claimed bound that the tangent enclosure does not carry,
+or no bound claimed. Dogfood: `examples/log_combination` instances 6-9 (`log 12 = 2 log 2 + log 3`,
+`(1/2)log(9/4) + (1/3)log(8/27) = 0`, and two mixed instances, one with `R`), all
+`[propext, Classical.choice, Quot.sound]`. Kernel negative controls live in
+`tests/test_log_cancellation.py` (forged `log 12 = 2 log 2 + log 5`, and a mixed bound `≤ 1/200`
+below the true `log 1.01`). Both are rejected and their true twins compile. They are face-specific adapters run through
+`generic_negative_control`, not registered, because the registry keeps one adapter per emitter.
+Limitation: the remainder enclosure is the degree-1 tangent pair only, and a remainder that needs the
+`tight` degree-3 route is refused.
+
+### `eventual_threshold` — quadratic sign race (`QuadraticSignRaceCert`)
+
+For `P(m) = a·m² + b·m + c` with rational coefficients, this face certifies the exact sign pattern on the integers
+`m ≥ m₀` with no hypotheses. Modes: `switch` (`a > 0`; `P < 0` on `[m₀, r]`, `P > 0` from `r+1`, so
+the eventual threshold is sharp), `positive` (`a > 0`) and `negative` (`a < 0`, one sign
+throughout). Each mode also proves the conjunct `P(m) ≠ 0` for every integer `m ≥ m₀`. The certificate is the vertex condition
+`-b/(2a) ≤ m₀`, which makes `P` monotone on the range, plus the endpoint signs (`P(r) < 0 < P(r+1)`, or the sign of `P(m₀)`).
+The kernel re-checks it with two `ring` identities that carry the certificate's literals. The first is the Taylor
+expansion at the anchor `k`, `P(m) = a(m−k)² + P'(k)(m−k) + P(k)`, whose three summands are
+sign-definite. The second, for the head of a switch, is `P(r) − P(m) = (r−m)(a(r+m)+b)`.
+
+Why here: this is an eventual-threshold claim with an explicit, computed witness (and the
+complementary sign below it). It does not fit `sturm_positive`, which is bounded-interval Bernstein root exclusion, or
+`tails.py`, which is a Polya adapter over a shifted variable. `EventualThresholdEmitter`'s sensitivity stance is now
+`CERTIFICATE_SENSITIVE`. The arity face still has no corruptible data, but this face does. The stance comes with a registered adapter
+(`adapter_eventual_threshold`): the switch of `m² − 10m − 7` is forged one step late (`r = 11`, which claims
+`P(11) < 0` although `P(11) = 4`). The kernel rejects that forgery, and the true `r = 10` twin compiles. Dogfood:
+`examples/quadratic_sign_race` (new v4.32.0 project, generic instances: `m² − 10m − 7` switching
+between 10 and 11; `C(m,2)` overtaking `3m + 20` between 10 and 11; `m² − 3m + 1 > 0` for `m ≥ 3`;
+`−m² − 8m − 17 < 0` for `m ≥ −3`), all `[propext, Classical.choice, Quot.sound]`. Limitations: the
+face covers degree 2 only, uses the sufficient vertex condition `-b/(2a) ≤ m₀` (not the weaker
+integer condition `-b/(2a) ≤ m₀ + 1/2`), and proves `P ≠ 0` only on `m ≥ m₀`, not on all of ℤ.
+
+### `monotone_tail` — piecewise-linear node-condition tail (`PLNodeTailPayload`)
+
+This face closes a two-parameter family in one step: for all integers `m ≥ M+1` and all `y ∈ (0, 1]`,
+`m·U(y) + L(y) ≤ 0`. Here `U ≤ 0` lies below a piecewise-linear function with rational nodes `(y_i, U_i)`
+(`0 < y_0 < … < y_K = 1`, `U_0 = 0`, `U = 0` on `(0, y_0]`). `L ≤ 0` for `y ≤ y†` and
+`L(y) ≤ s·(y − y†)` above. The certificate is the node condition `(M+1)·|U_i| ≥ s·(y_i − y†)` at every node
+beyond `y†`. On each segment beyond `y†`, `h = m·U + s·(y − y†)` is linear and `≤ 0` at both ends, so it is
+`≤ 0` throughout. The kernel checks this per segment through the exact identity
+`(b − a)·h(y) = (b − y)·h(a) + (y − a)·h(b)` (`ring`), with `h(a), h(b) ≤ 0` from the node literals.
+
+Why here: this is the ratio tail's monotone-plus-base shape with the roles moved. `m·U(y)` is nonincreasing in `m`
+because `U ≤ 0`, and the node condition is the base case `m = M+1` for every `y` at once.
+The core theorem takes `U`, `L` abstractly with their conditions as HYPOTHESES (the honest seam). With
+`L = "log_tangent"` the emitter also discharges them for `L(y) = log(1+y) − log(1+y†)` (monotone below `y†`;
+`log x ≤ x − 1` above, which needs `s ≥ 1/(1+y†)`). It then states a hypothesis-free corollary for the
+concrete `U = min(0, segment lines)`, which lies below every segment line. `MonotoneRatioTailEmitter`'s stance is now
+`CERTIFICATE_SENSITIVE` with a registered adapter (`adapter_monotone_tail`): `M` is forged from 1 to 0, and
+the claim is genuinely false at `m = 1, y = 1` (`−1/5 + log(4/3) > 0`). The kernel rejects the forgery, and the
+true twin compiles. Dogfood: `examples/pl_node_tail` (new v4.32.0 project; generic instances with
+`y† = 1/2, s = 2/3, M = 1` and `y† = 1/3, s = 3/4, M = 14`, plus the abstract-`L` core), all
+`[propext, Classical.choice, Quot.sound]`. Limitations: `U` enters only through the upper hypotheses
+(or the min-of-lines instance). The only concrete `L` is the log tangent, and any other concave `L` must
+supply `hL1`/`hL2` itself. `U_0 = 0` is required. The concrete corollary is for the min-of-lines `U`,
+which equals the piecewise-linear interpolant only when the node sequence is concave.
+## Session 2026-09-29 — `concave_pooled_induction` (tree-recursion bounds by a concave pooled-mean witness)
+
+`ConcavePooledInductionEmitter` (kind `concave_pooled_induction`). **Method credit: concave-witness
+induction, from the draft "The maximum Laplacian ratio of a tree for all n >= 303: concave witnesses
+and one-variable certificates" (28 September 2026), communicated by Professor John L. Goldwasser
+(author: his London colleague; name to be added).** For a branching recursion on finite rooted
+trees -- message `y_v = h(m, R)`, profit `l(v) = sum l(c) + g(m, R)`, `R = sum y_c`, leaf pair
+`(y_leaf, l_leaf)`, `h` and `g` rational -- it certifies `l(b) + alpha |b| <= U(y_b)` for every
+tree, with `U` concave piecewise-linear (strictly decreasing slopes). In Lean `U` is the MINIMUM of
+its affine pieces, so Jensen at the pooled mean is one generic lemma (`minPieces_jensen`), and the
+induction is one generic theorem over `PTree` (`pooled_induction_core`; it also takes a carried
+`U` below a pooling `V`, which this emitter instantiates as `U = V`). Per child count `m = 1..M`
+and per cell of `R`, each piece of `U(h)` and the closure `lo <= h <= hi` is one polynomial
+inequality with exact Bernstein coefficients, closed by `linarith` over the product facts; the
+tail `m >= M + 1` (m-free `h`, `g`, `lo >= 0`) reduces to one variable through a piece with
+`b_j <= 0` (`m b_j <= (M+1) b_j` or `m b_j <= (R/hi) b_j`), with a Taylor certificate on the
+unbounded last cell. Without a tail the claim is stated for child count `<= M`. Not supported:
+exempt "atom" children, a carried `U` different from `V` at the emitter level, non-rational
+`g`/`h` (log cells are the sibling `mobius_tangent_cell` kind). The tail is our own sufficient
+condition, not the draft's Lemma 3.4 node condition.
+
+Design doc: [`EMITTER_CONCAVE_POOLED_INDUCTION_DESIGN_2026-09-29.md`](EMITTER_CONCAVE_POOLED_INDUCTION_DESIGN_2026-09-29.md).
+Dogfood: `examples/concave_pooled_induction/` (`generate.py --check`; lake project on Mathlib
+v4.32.0): the classical matching message `y_u = Z(T_u - u)/Z(T_u)` with `l = -sum_u y_u` and
+`alpha = 3/5`, i.e. `sum_u y_u >= (3/5)|T|` for every finite rooted tree (the path shows the sharp
+constant is `1/phi`), the same recursion on paths (bounded mode), and a clearly synthetic
+m-dependent instance; 134 theorems, all `[propext, Classical.choice, Quot.sound]`. It is NOT the
+Brualdi-Goldwasser problem; nothing from the draft's Sections 4-9 is used. Negative control:
+`adapter_concave_pooled_induction` (the paths instance forged to `alpha = 13/20 > 1/phi`, a false
+claim; its cells carry a negative Bernstein coefficient and the kernel rejects the `linarith`;
+the true twin compiles). `conjecture1_proved = False`.
+## Session 2026-09-29 — `gap_budget_multiplicity` (tangent-price gap budgets)
+
+`GapBudgetMultiplicityEmitter` (kind `gap_budget_multiplicity`) prunes a multiset optimisation
+with a gap budget. The value is `Phi = sum w(k)`, optionally plus `c log(sum y / M)` with `c > 0`,
+under a normalisation `sum ell(k) = M`. A price `tau` and the log tangent give the per-atom gaps
+`gamma(k) >= 0` and the budget `sum gamma <= theta = C - B` against a benchmark of value `B`. From
+that budget the kernel checks the per-atom caps `floor(theta_hi / g_k)`, the exclusions, a tail
+exclusion certified by convexity, and a knapsack over the surviving counts (`decide` over
+naturals). Gap and budget bounds come from `enclosure_tree` (reused) or are exact. The generic core
+(six lemmas) is emitted once per file. Each instance adds a benchmark lemma, which makes the main
+theorem non-vacuous. The tangent-gap pricing pattern is from a draft communicated by Professor
+John L. Goldwasser (28 Sep 2026).
+
+Design doc: [`EMITTER_GAP_BUDGET_MULTIPLICITY_DESIGN_2026-09-29.md`](EMITTER_GAP_BUDGET_MULTIPLICITY_DESIGN_2026-09-29.md).
+The dogfood is `examples/gap_budget_multiplicity/lean/GapBudgetMultiplicity.lean`, generated by
+`generate.py`. It covers the classical maximum product of parts with sum `N = 3t, 3t+2, 3t+4`,
+uniform in `t` (all 3s; at most one 2; at most two 2s or one 4 with the decided knapsack; no part
+`>= 5`), plus a concave toy at two tangent points and a product-form cross-check. It has 59
+theorems plus the cross-check, standard axioms only. Negative control: `adapter_gap_budget_multiplicity`
+forges `gamma(2) >= 1/20` in the `N = 3t+2` budget, which claims `count 2 = 0`; the benchmark
+refutes that claim and the kernel rejects it. Nothing here bears on RH or on the Laplacian-ratio
+problem; `conjecture1_proved = False`.
