@@ -1,5 +1,5 @@
-/- telperion 0.1.6 | family MobiusTangentCell | input-hash 87b1c1507ee537f5
-   48 theorems, 45 generation-time self-checks passed.
+/- telperion 0.1.6 | family MobiusTangentCell | input-hash 5bca6dbab5f46d8a
+   52 theorems, 49 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
 
@@ -667,6 +667,54 @@ theorem no_mobius_sides (x : ℝ) (hpx : (-1 / 2) ≤ x) (hxq : x ≤ (1 / 2)) :
   have hd0 : (10) ≠ 0 := by norm_num
   have hg0 : Real.log (((1) + x)) = Real.log ((1) + (1) * x) := by congr 1; ring
   have e : Real.log (((1) + x)) - ((1 / 10) + (((9) * x) / (10))) = (-1 / 10) + (-9 / 10) * x + (1) * Real.log ((1) + (1) * x) := by
+    rw [hg0]
+    field_simp
+    ring
+  linarith
+
+/-- `log 351/160 <= H` (u = 2^1 * 351/320, order-2 Taylor box of Real.abs_log_sub_add_sum_range_le + Real.log_two_lt_d9).
+    conjecture1_proved = False. -/
+theorem zhu_band0_logH0 : Real.log (351 / 160) ≤ (39316823417433 / 50000000000000) := by
+  have hx : |((-31 / 320) : ℝ)| < 1 := by rw [abs_lt]; constructor <;> norm_num
+  have h := Real.abs_log_sub_add_sum_range_le hx 2
+  rw [show (1 : ℝ) - (-31 / 320) = (351 / 320) by norm_num] at h
+  have hs : ((1 : ℕ) : ℝ) * Real.log 2 + Real.log (351 / 320) = Real.log (351 / 160) := by
+    rw [← Real.log_pow, ← Real.log_mul (by norm_num) (by norm_num)]; norm_num
+  have h2 := Real.log_two_lt_d9
+  rw [← hs]
+  generalize Real.log (351 / 320) = L at h ⊢
+  generalize Real.log 2 = T at h2 ⊢
+  norm_num at h2 ⊢
+  rw [abs_le] at h
+  norm_num [Finset.sum_range_succ] at h
+  linarith [h.1, h.2]
+
+/-- Cell [15/4, 23/5], tangent point t = 351/80, Mobius mode `tangent`: Psi(p) = -2.4150e-01, Psi(q) = -3.6118e-03.
+    conjecture1_proved = False. -/
+theorem zhu_band0_cell0 (x : ℝ) (hpx : (15 / 4) ≤ x) (hxq : x ≤ (23 / 5)) :
+    (-1243 / 2000) + (0) * x + (1) * Real.log ((0) + (1 / 2) * x) + (-1) / ((0) + (1) * x) ≤ 0 := by
+  have hy0 : (0 : ℝ) < (0) + (1 / 2) * x := by linarith
+  have hl0 := pade_log1p_mtc_log_tangent (351 / 160) ((0) + (1 / 2) * x) (39316823417433 / 50000000000000) (by norm_num) hy0 zhu_band0_logH0
+  have hk0 := mul_le_mul_of_nonneg_left hl0 (by norm_num : (0 : ℝ) ≤ (1))
+  have hw : (0 : ℝ) < (0) + (1) * x := by linarith
+  have hM := pade_log1p_mtc_mobius_tangent (-1) ((0) + (1) * x) (351 / 80) (123201 / 6400) (by norm_num) hw (by norm_num) (by norm_num)
+  linarith
+
+/-- `F <= 0` on the whole interval [15/4, 23/5], from 1 cell(s) tiling it at shared breakpoints.
+    conjecture1_proved = False. -/
+theorem zhu_band0 (x : ℝ) (hpx : (15 / 4) ≤ x) (hxq : x ≤ (23 / 5)) :
+    (-1243 / 2000) + (0) * x + (1) * Real.log ((0) + (1 / 2) * x) + (-1) / ((0) + (1) * x) ≤ 0 := by
+  exact zhu_band0_cell0 x hpx hxq
+
+/-- The original two-sided form `lhs <= rhs` on [15/4, 23/5] (lhs - rhs is identically the template F).
+    conjecture1_proved = False. -/
+theorem zhu_band0_sides (x : ℝ) (hpx : (15 / 4) ≤ x) (hxq : x ≤ (23 / 5)) :
+    (((-1) / x) + Real.log ((x / (2)))) ≤ (1243 / 2000) := by
+  have hF := zhu_band0 x hpx hxq
+  have hd0 : (2) ≠ 0 := by norm_num
+  have hd1 : x ≠ 0 := (by linarith : (0 : ℝ) < x).ne'
+  have hg0 : Real.log ((x / (2))) = Real.log ((0) + (1 / 2) * x) := by congr 1; ring
+  have e : (((-1) / x) + Real.log ((x / (2)))) - (1243 / 2000) = (-1243 / 2000) + (0) * x + (1) * Real.log ((0) + (1 / 2) * x) + (-1) / ((0) + (1) * x) := by
     rw [hg0]
     field_simp
     ring

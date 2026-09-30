@@ -24,3 +24,9 @@ A drift in the printed axiom list fails `lake build`.  conjecture1_proved = Fals
 
 /-- info: 'MobiusTangentCell.no_mobius_sides' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms MobiusTangentCell.no_mobius_sides
+
+/-- info: 'MobiusTangentCell.zhu_band0' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms MobiusTangentCell.zhu_band0
+
+/-- info: 'MobiusTangentCell.zhu_band0_sides' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms MobiusTangentCell.zhu_band0_sides

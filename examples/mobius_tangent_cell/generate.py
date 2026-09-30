@@ -20,6 +20,10 @@ certified by tangent-line cells with a convex majorant checked at the two cell e
   terms and a NEGATIVE Mobius coefficient in F (the concave case, replaced by its tangent).
 * `no_mobius`: log(1 + x) <= (9/10) x + 1/10 on [-1/2, 1/2] -- a SYNTHETIC coverage instance
   for the sigma = 0 mode (no Mobius term) and the `Real.log_one` constant (tangent at u = 1).
+* `zhu_band0`: log(t/2) - 1/t <= 1243/2000 on [15/4, 23/5] -- the first band of the digamma
+  envelope of Zhu, arXiv:2608.24827, Lemma 3.1 (see rvm_bridge/lean/ZhuEnvelope.lean, rhs_0),
+  over the whole band.  REGRESSION instance (2026-09-30): the sides front-end used to split
+  log(t/2) into log t - log 2 and refuse the constant; it now keeps each log atom whole.
 
 HONEST SCOPE: elementary one-variable real inequalities; conjecture1_proved = False.
 """
@@ -50,15 +54,18 @@ _SPECS = {
         "rhs": x + 1 / (2 * (1 + x)) - _R(8, 25), "var": x, "p": "0", "q": "2"},
     3: {"lhs": sp.log(1 + x), "rhs": _R(9, 10) * x + _R(1, 10), "var": x,
         "p": "-1/2", "q": "1/2"},
+    4: {"lhs": sp.log(x / 2) - 1 / x, "rhs": _R(1243, 2000), "var": x,
+        "p": "15/4", "q": "23/5"},
 }
-_NAMES = {0: "pade_log1p", 1: "logmean_lower", 2: "concave_mobius", 3: "no_mobius"}
+_NAMES = {0: "pade_log1p", 1: "logmean_lower", 2: "concave_mobius", 3: "no_mobius",
+          4: "zhu_band0"}
 _OUT = Path(__file__).resolve().parent / "lean" / "MobiusTangentCell.lean"
 
 
 def build() -> str:
     fam = mobius_tangent_cell_family(
         "MobiusTangentCell",
-        GridSpec([("case", [0, 1, 2, 3])]),
+        GridSpec([("case", [0, 1, 2, 3, 4])]),
         lambda pt: _NAMES[pt["case"]],
         spec=lambda pt: _SPECS[pt["case"]],
     )

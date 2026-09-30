@@ -903,10 +903,14 @@ class ConcavePooledInductionEmitter(Emitter):
         L.append(f"noncomputable def {nm}_U : ℝ → ℝ := minPieces {nm}_A {nm}_B")
         for fn, (pn, pd) in (("h", (c.h_num, c.h_den)), ("g", (c.g_num, c.g_den))):
             uses_m = any(M_SYM in p.as_expr().free_symbols for p in (pn, pd))
-            L.append(f"noncomputable def {nm}_{fn} : ℕ → ℝ → ℝ := fun {'m' if uses_m else '_'} R => "
+            uses_r = any(R_SYM in p.as_expr().free_symbols for p in (pn, pd))
+            L.append(f"noncomputable def {nm}_{fn} : ℕ → ℝ → ℝ := fun {'m' if uses_m else '_'} "
+                     f"{'R' if uses_r else '_'} => "
                      f"{fun_text(pn, pd)}")
         L.append("")
         U = f"{nm}_U"
+        # `fin_cases` on a single piece leaves one goal: sequence instead of `<;>` (linter)
+        fc = "<;>" if K > 1 else ";"
         # pieces
         for j in range(K):
             L.append(f"theorem {nm}_piece{j} (x : ℝ) : {U} x ≤ {_q(c.a[j])} * x + {_q(c.b[j])} := by\n"
@@ -919,11 +923,11 @@ class ConcavePooledInductionEmitter(Emitter):
             L.append(f"theorem {nm}_node{i} : {U} {_q(x)} = {_q(v)} := by\n"
                      f"  apply le_antisymm\n"
                      f"  · linarith [{nm}_piece{j} {_q(x)}]\n"
-                     f"  · apply le_minPieces; intro k; fin_cases k <;> norm_num [{nm}_A, {nm}_B]\n")
+                     f"  · apply le_minPieces; intro k; fin_cases k {fc} norm_num [{nm}_A, {nm}_B]\n")
             n += 1
         # base
         L.append(f"theorem {nm}_base : {_q(c.l_leaf)} + {al} ≤ {U} {_q(c.y_leaf)} := by\n"
-                 f"  apply le_minPieces; intro k; fin_cases k <;> norm_num [{nm}_A, {nm}_B]\n")
+                 f"  apply le_minPieces; intro k; fin_cases k {fc} norm_num [{nm}_A, {nm}_B]\n")
         n += 1
         # cells
         for ci, cell in enumerate(c.cells):
@@ -972,8 +976,12 @@ class ConcavePooledInductionEmitter(Emitter):
         gn, gd = _at_m(c.g_num, mlit), _at_m(c.g_den, mlit)
 
         def closed(num, den):
-            nt = _poly1(_poly_tuple(num))
-            return nt if den.degree() <= 0 else f"{nt} / {_poly1(_poly_tuple(den))}"
+            if den.degree() <= 0:
+                # an m-dependent denominator can specialise to a constant other than 1
+                # (e.g. `1 + m` at m = 1): fold it into the numerator, never drop it
+                c = sp.Rational(den.as_expr())
+                return _poly1(tuple(sp.Rational(x) / c for x in _poly_tuple(num)))
+            return f"{_poly1(_poly_tuple(num))} / {_poly1(_poly_tuple(den))}"
 
         h_closed, g_closed = f"({closed(hn, hd)})", f"({closed(gn, gd)})"
         # m-free: the closed form is printed exactly as the definition body, so unfolding
@@ -1015,18 +1023,25 @@ class ConcavePooledInductionEmitter(Emitter):
                     if not (ln.startswith("  have eg") and gcall not in stmt)]
             rws = ", ".join(x for x, cl in (("eh", hcall), ("eg", gcall)) if cl in stmt)
             body.append(f"  have key : 0 ≤ {N} := by linarith [{_facts(ob.num)}]")
+            # an identically-zero obligation (e.g. an m-dependent `h` equal to a bound of I)
+            # can be closed by `rw` itself (rfl on `a ≤ a`); then there is no goal left
+            if all(x == 0 for x in ob.num.poly):
+                # the rewritten goal may be `a ≤ a` up to parentheses, which `rw` closes itself
+                same = (lhs_c.replace("(", "").replace(")", "").replace(" ", "")
+                        == rhs_c.replace("(", "").replace(")", "").replace(" ", ""))
+                closer = "" if same else " <;> linarith"
+            else:
+                closer = "\n  linarith"
             if cell.dtot is not None:
                 D = _poly1(cell.dtot.poly)
                 body.append(f"  have e : ({rhs_c}) - ({lhs_c}) = {N} / {D} := by")
                 body.append(f"    field_simp")
                 body.append(f"    ring")
                 body.append(f"  have hq := div_nonneg key hDt.le")
-                body.append(f"  rw [{rws}]")
-                body.append(f"  linarith")
+                body.append(f"  rw [{rws}]{closer}")
             else:
                 body.append(f"  have e : ({rhs_c}) - ({lhs_c}) = {N} := by ring")
-                body.append(f"  rw [{rws}]")
-                body.append(f"  linarith")
+                body.append(f"  rw [{rws}]{closer}")
             L.append(f"theorem {nm}_c{ci}_{tag} {args} :\n    {stmt} := by\n" + "\n".join(body)
                      + "\n")
             nthm += 1
