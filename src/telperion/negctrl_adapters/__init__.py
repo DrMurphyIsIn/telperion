@@ -1,15 +1,19 @@
 """Negative-control adapters: importing this package registers every adapter."""
 from __future__ import annotations
+from . import adapter_affine_hull_dominance  # noqa: F401
 from . import adapter_bragg_floor  # noqa: F401
 from . import adapter_c_g_round  # noqa: F401
 from . import adapter_complex_re_im_split  # noqa: F401
+from . import adapter_concave_pooled_induction  # noqa: F401
 from . import adapter_concave_stationary_max  # noqa: F401
 from . import adapter_cone_farkas  # noqa: F401
 from . import adapter_consequence  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
 from . import adapter_disjoint_discs  # noqa: F401
 from . import adapter_enclosure_tree  # noqa: F401
+from . import adapter_eventual_threshold  # noqa: F401
 from . import adapter_exact_fact  # noqa: F401
+from . import adapter_gap_budget_multiplicity  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_threshold  # noqa: F401
@@ -21,6 +25,8 @@ from . import adapter_identity  # noqa: F401
 from . import adapter_infeasibility  # noqa: F401
 from . import adapter_interval_gram_inertia  # noqa: F401
 from . import adapter_li_positivity  # noqa: F401
+from . import adapter_mobius_tangent_cell  # noqa: F401
+from . import adapter_monotone_tail  # noqa: F401
 from . import adapter_nullstellensatz  # noqa: F401
 from . import adapter_order_balance  # noqa: F401
 from . import adapter_preordering_multiplier  # noqa: F401
@@ -31,6 +37,7 @@ from . import adapter_recursive_domination_ratio  # noqa: F401
 from . import adapter_s_o_s  # noqa: F401
 from . import adapter_s_o_s_refutation  # noqa: F401
 from . import adapter_second_order  # noqa: F401
+from . import adapter_single_crossing_ladder  # noqa: F401
 from . import adapter_symmetric_quad_d2  # noqa: F401
 from . import adapter_telescoping_potential  # noqa: F401
 from . import adapter_transcendental_enclosure  # noqa: F401
@@ -43,16 +50,20 @@ from . import adapter_zero_free_cosine  # noqa: F401
 from . import adapter_zero_sum_majorant  # noqa: F401
 
 __all__ = [
+    'adapter_affine_hull_dominance',
     'adapter_bragg_floor',
     'adapter_c_g_round',
     'adapter_complex_re_im_split',
+    'adapter_concave_pooled_induction',
     'adapter_concave_stationary_max',
     'adapter_cone_farkas',
     'adapter_consequence',
     'adapter_constrained_s_o_s',
     'adapter_disjoint_discs',
     'adapter_enclosure_tree',
+    'adapter_eventual_threshold',
     'adapter_exact_fact',
+    'adapter_gap_budget_multiplicity',
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',
     'adapter_exp_threshold',
@@ -64,6 +75,8 @@ __all__ = [
     'adapter_infeasibility',
     'adapter_interval_gram_inertia',
     'adapter_li_positivity',
+    'adapter_mobius_tangent_cell',
+    'adapter_monotone_tail',
     'adapter_nullstellensatz',
     'adapter_order_balance',
     'adapter_preordering_multiplier',
@@ -74,6 +87,7 @@ __all__ = [
     'adapter_s_o_s',
     'adapter_s_o_s_refutation',
     'adapter_second_order',
+    'adapter_single_crossing_ladder',
     'adapter_symmetric_quad_d2',
     'adapter_telescoping_potential',
     'adapter_transcendental_enclosure',

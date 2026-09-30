@@ -12,11 +12,11 @@
 
 ## Global Constraints
 
-- **Worktree:** `/Users/peterwmurphy/telperion-analytic`, branch `telperion/analytic-cert-structures` (off `origin/main`). Do NOT switch branches; do NOT touch other worktrees.
-- **Python invocation:** from `/Users/peterwmurphy/telperion-analytic/telperion`, use `PYTHONPATH=src /Users/peterwmurphy/arda-trading/.venv/bin/python3 -m pytest …` (Python 3.14.6; has `python-flint` 0.9.0, `mpmath` 1.3.0, `sympy` 1.14.0; telperion imports via `src/` layout). Bare `python`/`pytest` do NOT work.
+- **Worktree:** `~/telperion-analytic`, branch `telperion/analytic-cert-structures` (off `origin/main`). Do NOT switch branches; do NOT touch other worktrees.
+- **Python invocation:** from `~/telperion-analytic/telperion`, use `PYTHONPATH=src python3 -m pytest …` (Python 3.14.6; has `python-flint` 0.9.0, `mpmath` 1.3.0, `sympy` 1.14.0; telperion imports via `src/` layout). Bare `python`/`pytest` do NOT work.
 - **Certificate path is exact-rational only** (`Fraction`/`sympy.Rational`); `float`/`mpmath`/`flint` appear only in enclosure computation and test oracles, never in emitted Lean literals.
 - **First-class emitter pattern** (per `src/telperion/emit_interlacing.py`): certificate dataclass + `certify_<kind>_point` (raises `ValueError` to refuse) + `<Name>Emitter(Emitter)` with `__post_init__` setting `self.kind` + `emit_body` + `<kind>_family` + register in `certify.py` `_SPECIAL_KINDS` and `_SPECIAL_DISPATCH` + export from `__init__.py`.
-- **Lean = local warm verify:** copy `lean-toolchain` + `lakefile.toml` + `lake-manifest.json` from an existing example (`examples/interlacing/lean` or similar), run `/Users/peterwmurphy/.elan/bin/lake exe cache get` FIRST (downloads prebuilt Mathlib oleans — SoC-safe), then `/Users/peterwmurphy/.elan/bin/lake build`. NEVER trigger a from-scratch Mathlib compile.
+- **Lean = local warm verify:** copy `lean-toolchain` + `lakefile.toml` + `lake-manifest.json` from an existing example (`examples/interlacing/lean` or similar), run `~/.elan/bin/lake exe cache get` FIRST (downloads prebuilt Mathlib oleans — SoC-safe), then `~/.elan/bin/lake build`. NEVER trigger a from-scratch Mathlib compile.
 - **Kernel bar:** emitted Lean builds sorry-free, axioms ⊆ `{propext, Classical.choice, Quot.sound}`.
 - **No emoji anywhere.** Honesty flag `conjecture1_proved = False` in every new module docstring / Lean header.
 - **Lean tactic note:** exact statements + Mathlib toolkit are given; tactic blocks are developed against the kernel. A task is done only on a green `lake build`.
