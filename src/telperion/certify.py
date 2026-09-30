@@ -462,6 +462,12 @@ _SPECIAL_KINDS = (
     # from a draft communicated by J. L. Goldwasser; dogfood is the classical max-product
     # partition.  Elementary real inequalities; nothing about RH.
     "gap_budget_multiplicity",
+    # single_crossing_ladder (2026-09-30): consecutive members of a parametric family of
+    # log-sums cross exactly once (derivative numerator with one certified sign change,
+    # rational bracket values from enclosure_tree log atoms), the breakpoints increase, and
+    # the best-member ladder follows over the window.  Dogfood: the arm ladder of the
+    # matching sum.  Elementary one-variable facts; nothing about RH.
+    "single_crossing_ladder",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -764,6 +770,10 @@ _SPECIAL_DISPATCH = {
     "gap_budget_multiplicity":
         ("emit_gap_budget_multiplicity", "certify_gap_budget_multiplicity_point",
          "GapBudgetMultiplicityEmitter"),
+    # single_crossing_ladder (single crossing + increasing breakpoints + best-member ladder).
+    "single_crossing_ladder":
+        ("emit_single_crossing_ladder", "certify_single_crossing_ladder_point",
+         "SingleCrossingLadderEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":

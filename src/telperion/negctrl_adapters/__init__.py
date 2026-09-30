@@ -37,6 +37,7 @@ from . import adapter_recursive_domination_ratio  # noqa: F401
 from . import adapter_s_o_s  # noqa: F401
 from . import adapter_s_o_s_refutation  # noqa: F401
 from . import adapter_second_order  # noqa: F401
+from . import adapter_single_crossing_ladder  # noqa: F401
 from . import adapter_symmetric_quad_d2  # noqa: F401
 from . import adapter_telescoping_potential  # noqa: F401
 from . import adapter_transcendental_enclosure  # noqa: F401
@@ -86,6 +87,7 @@ __all__ = [
     'adapter_s_o_s',
     'adapter_s_o_s_refutation',
     'adapter_second_order',
+    'adapter_single_crossing_ladder',
     'adapter_symmetric_quad_d2',
     'adapter_telescoping_potential',
     'adapter_transcendental_enclosure',

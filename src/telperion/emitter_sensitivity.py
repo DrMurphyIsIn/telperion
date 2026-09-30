@@ -491,6 +491,34 @@ REGISTRY: dict[str, SensitivityStance] = {
                                    # x = 1/2 and the cell's linarith cannot close it.
                                    # See negctrl_adapters/adapter_mobius_tangent_cell.py.
                                    neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "SingleCrossingLadderEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                      "single crossing of consecutive members of a parametric "
+                                      "log-sum family F_j(x) = sum kappa(j) log(1 + beta(j) x) "
+                                      "(kind single_crossing_ladder): D' * P = N is re-derived "
+                                      "in the kernel (field_simp; ring), N's one sign change "
+                                      "+ -> - is the conjunction of Bernstein / Taylor cell "
+                                      "lemmas (linarith) and a crossing cell with N' < 0, the "
+                                      "bracket values D(lo) > 0 > D(hi) are linarith over "
+                                      "enclosure_tree log atoms, and generic cores (mean value "
+                                      "+ intermediate value, Nat induction for the ladder) do "
+                                      "the rest.  The claimed brackets and signs ARE the "
+                                      "statements; no separately-supplied identity to "
+                                      "corrupt, so the shape is structural.  certify REFUSES a "
+                                      "wrong breakpoint bracket (the fold does not imply the "
+                                      "sign), a double crossing (N with two sign changes on "
+                                      "S), a dominated pair after a crossing pair, "
+                                      "overlapping brackets, a log argument not positive on "
+                                      "S, N(0) = 0, identical members, floats.  Dogfood: the "
+                                      "arm ladder of the matching sum; nothing about RH "
+                                      "(conjecture1_proved = False)",
+                                      # Structural, yet a kernel control exists: the A_3/A_4
+                                      # bracket shifted to (0.43052, 0.43053) misses
+                                      # lambda_3 = 0.43050..., D(lo) > 0 is FALSE and the
+                                      # value theorem's linarith cannot close it.  A second
+                                      # control (a double crossing claimed single on [0, oo))
+                                      # runs in the tests.  See
+                                      # negctrl_adapters/adapter_single_crossing_ladder.py.
+                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "GapBudgetMultiplicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "tangent-price GAP BUDGET pruning of a multiset "
                                        "optimisation (kind gap_budget_multiplicity): from a "

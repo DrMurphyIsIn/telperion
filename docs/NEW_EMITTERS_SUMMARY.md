@@ -504,3 +504,32 @@ maximizing root bundle removed and replaced by a non-dominating convex witness, 
 second-best value 7/2 as M_6 -- false, since 29/8 is attained; the decided checker rejects the
 witness; the true twin compiles). Completeness of the maximizer list up to isomorphism is
 generator-side, not a kernel theorem. `conjecture1_proved = False`.
+
+## Session 2026-09-30 — `single_crossing_ladder` (single crossing, increasing breakpoints, best-member ladder)
+
+`SingleCrossingLadderEmitter` (kind `single_crossing_ladder`) takes a parametric family of
+log-sums `F_j(x) = sum kappa_i(j) log(1 + beta_i(j) x)` on `S = [0, X]` or `[0, oo)`, all tied at
+`x = 0`. It certifies three things: (a) consecutive members cross EXACTLY ONCE, with the crossing
+in a rational bracket, or one member dominates the other; (b) the breakpoints increase; (c) the
+best-member ladder, where on `(lambda_{j-1}, lambda_j)` the member `F_j` is the unique maximum of
+the window. The derivative of `D_j = F_j - F_{j+1}` is `N_j / P_j`, where `P_j` is a product of
+the positive log arguments and `N_j` is a polynomial. Its single sign change `+ -> -` is certified
+by Bernstein/Taylor cells (the `PolyCert` machinery of `concave_pooled_induction`) together with a
+crossing cell on which `N_j' < 0`. The bracket values `D(lo) > 0 > D(hi)` use `enclosure_tree` log
+atoms, Taylor only. A generic Lean core is emitted once per file: `single_crossing_core` (mean
+value plus intermediate value), `dominated_core`, and `ladder_core` (`Nat.le_induction`). We added
+a new kind, not a face, because the existing `unimodal` / `monotone_tail` / `eventual_threshold`
+cores are about integer sequences and thresholds, and none states a real-parameter crossing (see
+the design doc).
+
+Design doc: [`EMITTER_SINGLE_CROSSING_LADDER_DESIGN_2026-09-30.md`](EMITTER_SINGLE_CROSSING_LADDER_DESIGN_2026-09-30.md).
+Dogfood: `examples/single_crossing_ladder/` (`generate.py --check`; lake project on Mathlib
+v4.32.0). The first instance is the arm ladder of the matching sum: the per-vertex log-weight
+`F_j` of an arm with `j` cherries, members 1..7 on `[0, oo)`. Arms 1 and 2 are dominated, and arms
+3..7 form the ladder with `lambda_3..lambda_6` in `(0.43050, 0.43051)`, `(0.87247, 0.87248)`,
+`(1.19239, 1.19240)` and `(1.43559, 1.43560)`. The second is a synthetic bounded instance on
+`[0, 2]`. The dogfood has 133 theorems, all `[propext, Classical.choice, Quot.sound]`.
+Negative controls: `adapter_single_crossing_ladder` shifts the `lambda_3` bracket to
+`(0.43052, 0.43053)`. That bracket is false, and the kernel rejects `_p3_vlo`. A double crossing
+claimed single on `[0, oo)` is also rejected: its tail sign cell is false. Both true twins compile.
+Scope: the ladder is proved for a finite window of members only. `conjecture1_proved = False`.
