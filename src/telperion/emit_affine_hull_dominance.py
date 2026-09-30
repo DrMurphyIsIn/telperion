@@ -290,24 +290,87 @@ def _dot(a, x) -> Fraction:
     return sum((ai * xi for ai, xi in zip(a, x)), Fraction(0))
 
 
+def _simplex_max(c, A, b):
+    """Exact two-phase simplex (Bland's rule) in Fractions: maximize c.z subject to A z = b, z >= 0.
+    Returns (optimum, z), or raises ValueError if infeasible or unbounded. Self-contained so that the
+    emitter works with every supported sympy version (sympy.solvers.simplex needs sympy >= 1.13)."""
+    m, n = len(A), len(c)
+    A = [[Fraction(v) for v in row] for row in A]
+    b = [Fraction(v) for v in b]
+    for i in range(m):                      # make b >= 0
+        if b[i] < 0:
+            A[i] = [-v for v in A[i]]
+            b[i] = -b[i]
+    # tableau with artificials a_0..a_{m-1} in columns n..n+m-1
+    T = [A[i] + [Fraction(1 if j == i else 0) for j in range(m)] + [b[i]] for i in range(m)]
+    basis = [n + i for i in range(m)]
+    N = n + m
+
+    def pivot(r, col):
+        pv = T[r][col]
+        T[r] = [v / pv for v in T[r]]
+        for i in range(m):
+            if i != r and T[i][col] != 0:
+                f = T[i][col]
+                T[i] = [vi - f * vr for vi, vr in zip(T[i], T[r])]
+        basis[r] = col
+
+    def run(cost, allowed):
+        while True:
+            # reduced costs for maximization: cost_j - sum cost_B T[.,j]
+            enter = None
+            for j in range(N):
+                if j in basis or not allowed(j):
+                    continue
+                rc = cost[j] - sum(cost[basis[i]] * T[i][j] for i in range(m))
+                if rc > 0:
+                    enter = j
+                    break                   # Bland: smallest index
+            if enter is None:
+                return
+            best, r = None, None
+            for i in range(m):
+                if T[i][enter] > 0:
+                    ratio = T[i][-1] / T[i][enter]
+                    if best is None or ratio < best or (ratio == best and basis[i] < basis[r]):
+                        best, r = ratio, i
+            if r is None:
+                raise ValueError("unbounded")
+            pivot(r, enter)
+
+    # phase I: maximize -sum(artificials)
+    cost1 = [Fraction(0)] * n + [Fraction(-1)] * m
+    run(cost1, lambda j: True)
+    if sum(T[i][-1] for i in range(m) if basis[i] >= n) != 0:
+        raise ValueError("infeasible")
+    for i in range(m):                      # drive remaining (zero) artificials out of the basis
+        if basis[i] >= n:
+            for j in range(n):
+                if T[i][j] != 0:
+                    pivot(i, j)
+                    break
+    cost2 = [Fraction(v) for v in c] + [Fraction(0)] * m
+    run(cost2, lambda j: j < n)
+    z = [Fraction(0)] * n
+    for i in range(m):
+        if basis[i] < n:
+            z[basis[i]] = T[i][-1]
+    return sum((ci * zi for ci, zi in zip(c, z)), Fraction(0)), z
+
+
 def _lp_dominance(pts, x):
     """Maximize sum(s) s.t. sum lam_i pts_i - s = x, lam >= 0, sum lam = 1, s >= 0 (exact).
     Returns (optimum, weights)."""
-    from sympy.solvers.simplex import lpmax
-
-    D = len(x)
-    lam = sp.symbols(f"lam0:{len(pts)}")
-    sl = sp.symbols(f"sl0:{D}")
-    cons = [sp.Eq(sum(lam), 1)]
+    D, k = len(x), len(pts)
+    # variables: lam_0..lam_{k-1}, s_0..s_{D-1}
+    A = [[Fraction(1)] * k + [Fraction(0)] * D]
+    b = [Fraction(1)]
     for d in range(D):
-        cons.append(sp.Eq(sum(sp.Rational(p[d].numerator, p[d].denominator) * lam[i]
-                              for i, p in enumerate(pts)) - sl[d],
-                          sp.Rational(x[d].numerator, x[d].denominator)))
-    cons += [v >= 0 for v in lam] + [v >= 0 for v in sl]
-    opt, sol = lpmax(sum(sl), cons)
-    w = [Fraction(int(sp.Rational(sol.get(v, 0)).p), int(sp.Rational(sol.get(v, 0)).q))
-         for v in lam]
-    return Fraction(int(sp.Rational(opt).p), int(sp.Rational(opt).q)), w
+        A.append([Fraction(p[d]) for p in pts] + [Fraction(-1 if e == d else 0) for e in range(D)])
+        b.append(Fraction(x[d]))
+    c = [Fraction(0)] * k + [Fraction(1)] * D
+    opt, z = _simplex_max(c, A, b)
+    return opt, z[:k]
 
 
 def _dominates(y, x) -> bool:
