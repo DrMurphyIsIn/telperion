@@ -15,8 +15,10 @@ Pins, on a synthetic island and on the live registry:
   * `--check` reports a stale, missing or extra file; `--shard I/N` partitions the nodes;
   * an out-of-tree island (bg: proof/formalization) path-requires its own directory and, with
     no AxiomGuard lib, imports the vocabulary mirror's home modules instead;
-  * the live dbn, rvm_bridge, zeta_reflection and bg bundles are committed and in sync with
-    the registry, and li_positivity renders (it is not yet in the CI matrix).
+  * on an island whose AxiomGuard libs cannot co-import (li_positivity), the bridge imports
+    only the first guard whose import closure holds the artifact and the root imports nothing;
+  * the live dbn, rvm_bridge, zeta_reflection, li_positivity, quasicrystal and bg bundles are
+    committed and in sync with the registry.
 
 conjecture1_proved = False.
 """
@@ -246,6 +248,38 @@ def test_artifact_context_collects_namespace_and_opens():
         judge.artifact_context("import Mathlib\ntheorem other : True := trivial\n", stmt)
 
 
+def test_guard_policy_one_containing(tmp_path, monkeypatch):
+    """On islands whose guards cannot co-import, the bridge imports only the first guard whose
+    island-local import closure contains the artifact (li_positivity's zeta_sphere_bound clash)."""
+    art = "import Mathlib\n\ntheorem g : (1 : ℕ) = 1 := rfl\n"
+    stmt = "import Statements.Defs\n\ntheorem g : (1 : ℕ) = 1 := by sorry\n"
+    tel = _island(tmp_path, artifact=art, statement=stmt)
+    lean = tel / "examples" / "isl" / "lean"
+    (lean / "lakefile.toml").write_text(LAKEFILE + '\n[[lean_lib]]\nname = "AxiomGuardOther"\n')
+    (lean / "AxiomGuardIsl.lean").write_text("import Vocab\n")          # does NOT reach Art
+    (lean / "Vocab.lean").write_text("import Mathlib\n")
+    (lean / "AxiomGuardOther.lean").write_text("import Mid\n")
+    (lean / "Mid.lean").write_text("import Art\n")                      # reaches Art transitively
+    assert judge.import_closure(lean, "AxiomGuardOther") >= {"AxiomGuardOther", "Mid", "Art"}
+    assert "Art" not in judge.import_closure(lean, "AxiomGuardIsl")
+    # default policy: all guards
+    [c] = judge.build_bundle(tel, "isl").challenges
+    assert "import Art\nimport AxiomGuardIsl\nimport AxiomGuardOther\n" in c.challenge_text
+    # one-containing policy: only the guard that reaches the artifact
+    monkeypatch.setattr(judge, "GUARD_POLICY_ONE_CONTAINING", frozenset({"isl"}))
+    [c] = judge.build_bundle(tel, "isl").challenges
+    assert "import Art\nimport AxiomGuardOther\n" in c.challenge_text and "AxiomGuardIsl" not in c.challenge_text
+    # the root module carries no imports under this policy (it would co-import the guards)
+    root = judge.build_bundle(tel, "isl").files()["MissionChallenges.lean"]
+    assert not [ln for ln in root.splitlines() if ln.startswith("import ")] and "DO NOT EDIT" in root
+    # and no guard at all when none reaches it; the header says so instead of claiming one
+    (lean / "Mid.lean").write_text("import Mathlib\n")
+    [c] = judge.build_bundle(tel, "isl").challenges
+    assert "AxiomGuard" not in c.challenge_text.split("-/", 1)[1]
+    assert "No shadowing guard is imported" in c.challenge_text
+    assert "AxiomGuard imports load the whole island" not in c.challenge_text
+
+
 def test_heavy_certificates_turns_nanoda_off_for_that_node_only(tmp_path, capsys):
     """`heavy_certificates = true` in a node toml -> enable_nanoda false in ITS config and a
     `lean-kernel-only` column in --configs; other nodes keep nanoda."""
@@ -462,19 +496,20 @@ def _live() -> bool:
     return (TELPERION / "missions" / "rh" / "mission.toml").exists()
 
 
-@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection", "bg"])
+@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection", "li_positivity", "quasicrystal", "bg"])
 def test_live_committed_bundle_is_in_sync(island):
     """The committed challenges ARE the registry statements; CI runs the same check."""
     if not _live():
         pytest.skip("live registry not present")
     b = judge.build_bundle(TELPERION, island)
-    # zeta_reflection: AND_g2_reflected_band declares a namespace in its statement (reported)
-    assert len(b.skipped) == (1 if island == "zeta_reflection" else 0)
+    # zeta_reflection: AND_g2_reflected_band declares a namespace in its statement;
+    # quasicrystal: MM_leakage_composite_zero declares local defs (both reported, not skipped)
+    assert len(b.skipped) == (1 if island in ("zeta_reflection", "quasicrystal") else 0)
     assert judge.check_bundle(b, judge.default_out(TELPERION, island)) == []
 
 
-@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("zeta_reflection", 5), ("li_positivity", 24),
-                                             ("bg", 9)])
+@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("zeta_reflection", 9), ("li_positivity", 24),
+                                             ("quasicrystal", 7), ("bg", 9)])
 def test_live_islands_render(island, expected):
     if not _live():
         pytest.skip("live registry not present")

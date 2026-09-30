@@ -7,7 +7,10 @@ and holds one bridge module per proved node:
 ```lean
 import <artifact module>            -- the solution
 import <island AxiomGuard modules>  -- the whole island: a shadowed constant is a build error
-                                    -- (bg: the vocabulary mirror's home modules, see below)
+                                    -- (bg: the vocabulary mirror's home modules, see below;
+                                    --  li_positivity: only the guard whose closure holds the
+                                    --  artifact, its two guards cannot co-import; quasicrystal:
+                                    --  none, the island has no AxiomGuard lean_lib)
 namespace <the artifact's namespace at the declaration>
 <the artifact's own `open` lines>   -- inside the namespace, as at the declaration
 theorem _root_.MissionJudge.<Slug> :
@@ -38,6 +41,16 @@ that `missions/bg/lean/Statements/BGDefs.lean` cites as the source of its vocabu
 vocabulary; it does not catch a shadowed constant the mirror does not copy. In CI the bg job
 restores proof-lean.yml's incremental R3Cert build (a path dependency builds in place, into
 `proof/formalization/.lake/build`) and checkpoints what it compiles.
+
+**li_positivity** (toolchain v4.34.0-rc1, Comparator tag v4.34.0-rc1, 24 nodes in two shards)
+has two AxiomGuard libs that cannot be imported into one module (`ZeroFreeBridge.zeta_sphere_bound`
+is declared in both closures), so it is listed in `judge.GUARD_POLICY_ONE_CONTAINING`: each
+bridge imports only the first guard whose island-local import closure holds its artifact, the
+shadowing check covers that closure rather than the whole island, and `MissionChallenges.lean`
+carries no imports (CI builds the bridge modules by name). **quasicrystal** (v4.32.0, 7 of 8
+nodes) has no AxiomGuard lean_lib at all, so its bridges import the artifact alone and the
+shadowing guard does not apply there; `MM_leakage_composite_zero` declares local `def`s before
+its theorem and is reported as not consumable, not silently skipped.
 
 CI: `.github/workflows/missions-comparator.yml` (regenerates and diffs these files first, then
 judges each shard). Why this is independent of the proof's author, and what it does not

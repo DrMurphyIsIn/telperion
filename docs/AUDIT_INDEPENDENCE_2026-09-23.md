@@ -106,14 +106,23 @@ islands' `generate.py --check` jobs. Whether the island's `DBN.H` is the de Brui
 `H` is the read-back's job. The judge closes the gap between the two: given the vocabulary,
 the artifact proves this proposition and nothing weaker.
 
-Coverage on 2026-09-23: the `dbn` island (3 nodes), the `rvm_bridge` island (52 nodes,
-four shards) and the `zeta_reflection` island (9 of 10 nodes: `AND_g2_reflected_band`
-declares a namespace inside its statement, which the bridge cannot reproduce beside the
-artifact; it is reported, not skipped) are wired; `li_positivity` (24 nodes) renders and is
-listed but not yet run; `quasicrystal` (7 of 8: `MM_leakage_composite_zero` carries local
-`def`s), `zero_free_bridge` (1) and `zeta_zero_localization` (3; monolith lakefile, cannot be
-path-required) are not wired. BG's nine nodes are judged by `proof-comparator.yml` in
-self-check mode (no independent statement; statement identity there is by human review).
+Coverage on 2026-09-30: `dbn` (3 nodes), `rvm_bridge` (52, four shards), `zeta_reflection`
+(`AND_g2_reflected_band` declares a namespace inside its statement, which the bridge cannot
+reproduce beside the artifact; reported, not skipped), `li_positivity` (24, two shards),
+`quasicrystal` (7 of 8: `MM_leakage_composite_zero` declares four local `def`s before its
+theorem, and the bridge module imports the artifact, so re-declaring them would be a duplicate
+declaration; judging it needs the statement re-registered against the island's own
+definitions, an owner decision on a proved node) and `bg` (9, against the registered
+statements, see below) are wired. `li_positivity`'s two AxiomGuard libs cannot co-import
+(`ZeroFreeBridge.zeta_sphere_bound` is declared in both closures), so each of its bridges
+imports only the guard whose closure holds the artifact and the shadowing check covers that
+closure, not the whole island. `quasicrystal` has no `AxiomGuard*` lean_lib, so its bridge
+modules import only the artifact: the duplicate-declaration shadowing guard described above
+does not apply there (`AxiomGuardQC.lean` is run by `lake env lean` in the satake job, which
+imports the whole island for the `#print axioms` check). Not wired: `zero_free_bridge` (1) and
+`zeta_zero_localization` (3; monolith lakefile, cannot be path-required). BG's nine nodes are
+also judged by `proof-comparator.yml` in self-check mode (no independent statement; statement
+identity there is by human review).
 
 ## 5. What a session should do now
 

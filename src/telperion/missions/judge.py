@@ -48,6 +48,12 @@ the challenge instead imports the island modules its campaign's vocabulary mirro
 the source of each copied block (`-- ===== ExactCruxes.lean:70 =====` in BGDefs.lean). That
 catches an artifact re-declaring a mirrored vocabulary constant; it does NOT catch a
 shadowed constant that is not in the mirror (the whole-island import would).
+On li_positivity the two AxiomGuard libs cannot co-import (`ZeroFreeBridge.zeta_sphere_bound`
+is declared in both closures), so each challenge imports only the first guard whose import
+closure holds its artifact (`GUARD_POLICY_ONE_CONTAINING`), and the root module imports
+nothing: CI builds the bridge modules by name. quasicrystal has no AxiomGuard lean_lib and no
+vocabulary mirror hook, so its challenges import the artifact alone and the shadowing guard
+does not apply there (its `AxiomGuardQC.lean` is a loose file the island CI runs).
 
 OUT-OF-TREE ISLANDS (`OUT_OF_TREE_ISLANDS`): bg lives at proof/formalization, not
 telperion/examples/<island>/lean. Its proved nodes are the registry nodes whose [proof]
@@ -203,6 +209,46 @@ def island_guard_modules(lean_dir: Path) -> List[str]:
     # ladder built -- those nodes carry `judge_via = "heavy"` and are judged by
     # missions-comparator-heavy.yml, not here.
     return sorted(m.group(1) for m in _LIB_RE.finditer(text) if m.group(1).startswith("AxiomGuard"))
+
+
+#: Islands whose AxiomGuard libs cannot all be imported into one module. li_positivity:
+#: `ZeroFreeBridge.zeta_sphere_bound` is declared in both DlvpZetaDisk (in
+#: AxiomGuardLiPositivity's closure) and ZeroFreeElementary (in AxiomGuardZeroFree's), so a
+#: bridge that imports both fails with "environment already contains". For these islands the
+#: bridge imports only the FIRST guard (sorted) whose import closure contains the artifact,
+#: so the shadowing check covers that guard's closure rather than the whole island. Every
+#: other island imports all of its guards (they co-import; zeta_reflection has ten).
+GUARD_POLICY_ONE_CONTAINING = frozenset({"li_positivity"})
+
+
+def artifact_imports(text: str) -> List[str]:
+    """The `import` lines of a Lean source (comments stripped)."""
+    ga = _guard_anchors()
+    return [m.group(1) for m in _IMPORT_RE.finditer(ga.strip_lean_comments(text))]
+
+
+def import_closure(lean_dir: Path, module: str, _seen: Optional[set] = None) -> set:
+    """Island-local import closure of `module` (modules whose source is under `lean_dir`;
+    external packages are not followed). Includes `module` itself."""
+    seen = _seen if _seen is not None else set()
+    if module in seen:
+        return seen
+    seen.add(module)
+    src = Path(lean_dir) / (module.replace(".", "/") + ".lean")
+    if src.is_file():
+        for dep in artifact_imports(src.read_text()):
+            import_closure(lean_dir, dep, seen)
+    return seen
+
+
+def guards_for(lean_dir: Path, island: str, guards: Sequence[str], solution_module: str) -> List[str]:
+    """Which guard libs a bridge for `solution_module` imports (see GUARD_POLICY_ONE_CONTAINING)."""
+    if island not in GUARD_POLICY_ONE_CONTAINING:
+        return list(guards)
+    for g in guards:
+        if solution_module in import_closure(lean_dir, g):
+            return [g]
+    return []
 
 
 _MIRROR_HEADER_RE = re.compile(r"(?m)^--\s*=====(.*)$")
@@ -471,6 +517,12 @@ def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module:
             "   from, so a vocabulary constant shadowed by the artifact is a duplicate",
             "   declaration here, not a silent substitution. The",
         ]
+    elif not [g for g in guard_modules if g != solution_module]:
+        out += [
+            "   No shadowing guard is imported: this island has no AxiomGuard lean_lib (or none",
+            "   whose closure holds the artifact), so a re-declared vocabulary constant is NOT",
+            "   caught here; the island's own axiom-guard CI job covers the whole island. The",
+        ]
     else:
         out += [
             "   The AxiomGuard imports load the whole island, so a vocabulary constant shadowed by",
@@ -587,8 +639,17 @@ class Bundle:
             "[[lean_lib]]\n"
             'name = "MissionChallenges"\n'
         )
-        files["MissionChallenges.lean"] = "".join(
-            f"import {c.challenge_module}\n" for c in self.challenges)
+        if self.island in GUARD_POLICY_ONE_CONTAINING:
+            # A root that imports every bridge would co-import the guards that cannot coexist
+            # (li_positivity: zeta_sphere_bound). CI builds the bridge modules by name, never
+            # the root, so the root is a comment here rather than a build failure.
+            files["MissionChallenges.lean"] = (
+                f"-- {_SENTINEL}. No root imports on `{self.island}`: its AxiomGuard libs cannot\n"
+                "-- be imported together, so each bridge module imports one of them and is built by\n"
+                "-- name (`lake build MissionChallenges.<Slug>`), never through this root.\n")
+        else:
+            files["MissionChallenges.lean"] = "".join(
+                f"import {c.challenge_module}\n" for c in self.challenges)
         for c in self.challenges:
             files[f"MissionChallenges/{c.slug}.lean"] = c.challenge_text
             files[f"{c.slug}.comparator.json"] = json.dumps(c.config, indent=2) + "\n"
@@ -686,7 +747,8 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
             if spec is not None:
                 challenges += compose_parts(
                     node=a.node, campaign=a.campaign, spec=spec, lean_dir=lean_dir,
-                    guards=guards, vocab_guard=vocab_guard, statement_text=statement_text,
+                    guards=guards_for(lean_dir, island, guards, spec.module),
+                    vocab_guard=vocab_guard, statement_text=statement_text,
                     artifact_sha256=_sha256(a.artifact), statement_sha256=_sha256(stmt_path))
                 continue
         sol = module_name_of(lean_dir, a.artifact)
@@ -694,8 +756,9 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         try:
             text = render_challenge(
                 slug=a.node, campaign=a.campaign, theorem=a.theorem, solution_module=sol,
-                guard_modules=guards, statement_text=statement_text,
-                artifact_text=a.artifact.read_text(), vocab_guard=vocab_guard)
+                guard_modules=guards_for(lean_dir, island, guards, sol),
+                statement_text=statement_text, artifact_text=a.artifact.read_text(),
+                vocab_guard=vocab_guard)
         except JudgeError as e:
             problems.append(f"{a.campaign}/{a.node}: {e}")
             continue
