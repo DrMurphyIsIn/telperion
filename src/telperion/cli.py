@@ -1568,7 +1568,8 @@ def cmd_mission_comparator_record(args) -> int:
             return 1
         from .missions.judge_log import parse_verdicts as _pv
         verdict = _pv(log_text)[slug]
-        kernel_mode = verdict.kernel
+        # A pre-#632 log states no kernel mode; say so instead of inferring one from the switch.
+        kernel_mode = verdict.kernel or "unstated"
         if verdict.judge or node.compose is not None:
             parts_or_errs = _compositional_parts(node, slug, verdict, log_text, run_id, head_sha,
                                                  art, offline=(log_check != "verified"))
@@ -1608,7 +1609,14 @@ def cmd_mission_comparator_record(args) -> int:
         print(f"{slug}: WARNING --no-verify: recording without reading the judge log, so the "
               "theorem name and the kernel mode are unchecked.  The record says "
               "log_check = \"skipped\".")
-    second = "none: heavy_certificates" if lean_only else "nanoda"
+    if lean_only:
+        second = "none: heavy_certificates"
+    elif kernel_mode == "unstated":
+        # The log predates the field, so nothing read here says nanoda replayed the export.
+        # Do not write the default, which would assert it.
+        second = "unstated (pre-#632 log)"
+    else:
+        second = "nanoda"
     rec = ComparatorRecord(
         run_id=run_id, date=_date.today().isoformat(),
         artifact_sha256=sha256_file(art), theorem=theorem,

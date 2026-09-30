@@ -146,3 +146,42 @@ def test_choose_accepts_agreeing_duplicate_verdicts():
 def test_choose_refuses_when_no_job_passed_the_node():
     job, errs = jl.choose([_jv("1"), _jv("2")], HEAVY)
     assert job is None and any("no job in this run" in e for e in errs)
+
+
+# A pre-#632 PASS line: the `kernel=` field did not exist yet.
+LEGACY_LOG = (
+    "2026-09-23T10:00:00Z COMPARATOR PASS island=dbn node=RH_dbn_H0_eq_xi "
+    "theorem=dbn_H0_eq_xi run=36055781811\n")
+
+
+def test_a_legacy_pass_line_still_parses():
+    """Refusing it as "no PASS line" would be untrue about a log that does contain one."""
+    v = jl.parse_verdicts(LEGACY_LOG)
+    assert set(v) == {"RH_dbn_H0_eq_xi"}
+    assert v["RH_dbn_H0_eq_xi"].theorem == "dbn_H0_eq_xi"
+    assert v["RH_dbn_H0_eq_xi"].kernel == "" and v["RH_dbn_H0_eq_xi"].legacy
+    assert v["RH_dbn_H0_eq_xi"].second_kernel == "", "an unstated mode must not read as nanoda"
+
+
+def test_a_legacy_record_is_accepted_when_no_kernel_claim_is_made():
+    assert jl.check(LEGACY_LOG, node="RH_dbn_H0_eq_xi", theorem="dbn_H0_eq_xi",
+                    run_id="36055781811", expect_lean_kernel_only=False) == []
+
+
+def test_a_legacy_log_cannot_support_a_lean_kernel_only_claim():
+    """heavy_certificates did not exist pre-#632, so that run DID replay under nanoda."""
+    errs = jl.check(LEGACY_LOG, node="RH_dbn_H0_eq_xi", theorem="dbn_H0_eq_xi",
+                    run_id="36055781811", expect_lean_kernel_only=True)
+    assert errs and "predates the kernel field" in errs[0]
+
+
+def test_a_legacy_line_still_has_its_theorem_checked():
+    errs = jl.check(LEGACY_LOG, node="RH_dbn_H0_eq_xi", theorem="DBN.dbn_H0_eq_xi",
+                    run_id="36055781811")
+    assert any("record the theorem exactly" in e for e in errs)
+
+
+def test_modern_and_legacy_lines_coexist_in_one_log():
+    v = jl.parse_verdicts(LOG + LEGACY_LOG)
+    assert v[HEAVY].kernel == "lean-kernel-only" and not v[HEAVY].legacy
+    assert v["RH_dbn_H0_eq_xi"].legacy

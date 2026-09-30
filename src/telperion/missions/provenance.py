@@ -320,6 +320,8 @@ class ProvenanceRow:
     log_check: str
     head_check: str
     has_grant: bool
+    #: The literal `kernel=` token the log printed, or "unstated" for a pre-#632 log.
+    kernel_mode: str = ""
     #: "" = judged by the per-PR bundle; "heavy" = excluded from it by rule and judged by the
     #: dispatch-only heavy workflow (see judge.HEAVY_WORKFLOW).
     judge_via: str = ""
@@ -354,10 +356,15 @@ def provenance_rows(campaign) -> List[ProvenanceRow]:
             self_audit=readback_is_self_audit(n),
             comparator_run=n.comparator.run_id if n.comparator else "",
             comparator_stale=bool(comparator_staleness(campaign.root, n)),
-            lean_kernel_only=bool(n.comparator and n.comparator.second_kernel != "nanoda"),
+            # Only the heavy marker means "nanoda did not run".  Testing != "nanoda" would
+            # read ANY other value -- e.g. a legacy record's "unstated" -- as the stronger
+            # claim that the second kernel was skipped.
+            lean_kernel_only=bool(n.comparator
+                                  and n.comparator.second_kernel.startswith("none")),
             has_grant=n.grant is not None,
             log_check=(n.comparator.log_check if n.comparator else ""),
             head_check=(n.comparator.head_check if n.comparator else ""),
+            kernel_mode=(n.comparator.kernel_mode if n.comparator else ""),
             judge_via=getattr(n, "judge_via", "") or "",
             judge_mode=(n.comparator.judge_mode if n.comparator else ""),
             parts=(len(n.comparator.parts) if n.comparator else 0),
@@ -411,6 +418,9 @@ def weak_record_reasons(row) -> List[str]:
                    "pins the artifact")
     elif row.head_check == "skipped":
         out.append("the artifact was not checked at the judged commit")
+    if row.kernel_mode == "unstated":
+        out.append("the judge log predates the kernel field (#632), so it does not state "
+                   "which second kernel ran")
     if row.comparator_run and not row.log_check and not row.head_check:
         out.append("predates the record checks (no log_check/head_check)")
     if getattr(row, "judge_mode", "") == "compositional":

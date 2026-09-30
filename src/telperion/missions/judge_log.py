@@ -35,10 +35,16 @@ KERNEL_MODES = {
     "lean-kernel-only": "none: heavy_certificates",
 }
 
+#: `kernel=` was added by #632.  A pre-#632 PASS line ends at `run=`, and must still parse:
+#: refusing it with "no PASS line" would be simply untrue about a log that does contain one.
 _PASS = re.compile(
     r"COMPARATOR PASS\s+island=(?P<island>\S+)\s+node=(?P<node>\S+)\s+"
-    r"theorem=(?P<theorem>\S+)\s+run=(?P<run>\S+)\s+kernel=(?P<kernel>\S+)"
+    r"theorem=(?P<theorem>\S+)\s+run=(?P<run>\S+)"
+    # `kernel=` arrived with #632 and the `judge=/parts=` tail with the compositional judge, so
+    # both are optional: a pre-#632 line ends at `run=`, an ordinary modern line at `kernel=`.
+    r"(?:\s+kernel=(?P<kernel>\S+))?"
     r"(?:\s+judge=(?P<judge>\S+)\s+parts=(?P<parts>\d+))?")
+
 #: One line per judged part, printed by `telperion.missions.compose verify` before its verdict.
 _PART = re.compile(
     r"COMPOSE PART\s+node=(?P<node>\S+)\s+part=(?P<part>\S+)\s+slug=(?P<slug>\S+)\s+"
@@ -55,14 +61,20 @@ class Verdict:
     node: str
     theorem: str
     run: str
-    kernel: str
+    #: "" for a pre-#632 log, which did not print the field at all.
+    kernel: str = ""
     #: "" = one closure replayed; "compositional" = glued from `parts` judged parts (compose.py).
     judge: str = ""
     parts: int = 0
 
     @property
+    def legacy(self) -> bool:
+        """True when the log predates the `kernel=` field, so the mode is simply unstated."""
+        return self.kernel == ""
+
+    @property
     def second_kernel(self) -> str:
-        """The `second_kernel` string this verdict implies, or "" for an unknown mode."""
+        """The `second_kernel` string this verdict implies, or "" when unknown/unstated."""
         return KERNEL_MODES.get(self.kernel, "")
 
 
@@ -75,7 +87,8 @@ def parse_verdicts(text: str) -> Dict[str, Verdict]:
         m = _PASS.search(line)
         if m:
             out[m.group("node")] = Verdict(m.group("island"), m.group("node"),
-                                           m.group("theorem"), m.group("run"), m.group("kernel"),
+                                           m.group("theorem"), m.group("run"),
+                                           m.group("kernel") or "",
                                            m.group("judge") or "", int(m.group("parts") or 0))
     return out
 
@@ -121,7 +134,15 @@ def check(text: str, *, node: str, theorem: str, run_id: str = "",
                     f"not {theorem!r}; record the theorem exactly as the PASS line prints it")
     if run_id and v.run != str(run_id):
         errs.append(f"the PASS line for {node} cites run {v.run}, not {run_id}")
-    if v.kernel not in KERNEL_MODES:
+    if v.legacy:
+        # Pre-#632 logs state no kernel mode, so nothing here can confirm one.  A
+        # Lean-kernel-only claim is worse than unconfirmed against such a log: the
+        # `heavy_certificates` flag did not exist yet, so that run DID replay under nanoda.
+        if expect_lean_kernel_only:
+            errs.append(f"the PASS line for {node} predates the kernel field (#632), so it cannot "
+                        "support --lean-kernel-only: heavy_certificates did not exist when that "
+                        "run judged the node, so nanoda ran")
+    elif v.kernel not in KERNEL_MODES:
         errs.append(f"unknown kernel mode {v.kernel!r} for {node}; expected one of "
                     f"{sorted(KERNEL_MODES)}")
     elif expect_lean_kernel_only is not None:

@@ -79,3 +79,27 @@ def test_report_lists_weak_records(tmp_path):
     rows = [_row(slug="Weak", log_check="skipped", head_check="skipped")]
     line = "; ".join(prov.weak_record_reasons(rows[0]))
     assert "no judge log confirmed" in line
+
+
+def test_an_unstated_kernel_is_surfaced_not_assumed():
+    """A pre-#632 log states no kernel mode; the record must not present one as confirmed."""
+    why = prov.weak_record_reasons(_row(kernel_mode="unstated"))
+    assert why and "predates the kernel field" in why[0]
+
+
+def test_a_stated_kernel_is_not_flagged():
+    assert prov.weak_record_reasons(_row(kernel_mode="nanoda")) == []
+
+
+def test_only_the_heavy_marker_reads_as_lean_kernel_only():
+    """`!= "nanoda"` would make a legacy record claim the second kernel was skipped."""
+    import types
+    rec = types.SimpleNamespace(second_kernel="unstated (pre-#632 log)")
+    assert not rec.second_kernel.startswith("none")
+    heavy = types.SimpleNamespace(second_kernel="none: heavy_certificates")
+    assert heavy.second_kernel.startswith("none")
+
+
+def test_the_legacy_reason_says_the_log_is_silent_not_that_someone_guessed():
+    why = prov.weak_record_reasons(_row(kernel_mode="unstated"))
+    assert why and "does not state which second kernel ran" in why[0]
