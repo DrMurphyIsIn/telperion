@@ -451,6 +451,11 @@ _SPECIAL_KINDS = (
     # communicated by Professor John L. Goldwasser (author: his London colleague; name to be
     # added).  Dogfood: the classical matching message.  Nothing about BG or RH.
     "concave_pooled_induction",
+    # affine_hull_dominance (2026-09-30): the exact maximum over all trees on n vertices of a
+    # positive multilinear tree recursion (vector states), by convex-hull pruning with explicit
+    # convex-combination domination witnesses checked by decide; one generic exchange induction.
+    # Dogfood: the Randic-weighted matching sum.  Nothing about any open problem.
+    "affine_hull_dominance",
     # gap_budget_multiplicity (2026-09-29): pruning a multiset optimisation by a tangent-price
     # gap budget (caps, exclusions, a decided knapsack) with the budget from a separable or
     # c * log concave model and enclosure_tree bounds on the gaps.  Tangent-gap pricing pattern
@@ -732,6 +737,10 @@ _SPECIAL_DISPATCH = {
     "concave_pooled_induction":
         ("emit_concave_pooled_induction", "certify_concave_pooled_induction_point",
          "ConcavePooledInductionEmitter"),
+    # affine_hull_dominance (exact tree maxima by convex-hull pruning of vector states).
+    "affine_hull_dominance":
+        ("emit_affine_hull_dominance", "certify_affine_hull_dominance_point",
+         "AffineHullDominanceEmitter"),
     # E8 Weil pairing enclosure (onto the WeilExplicit vocabulary of RH_limit_explicit_formula).
     "weil_form_enclosure":
         ("emit_weil_form_enclosure", "certify_weil_form_enclosure_point",

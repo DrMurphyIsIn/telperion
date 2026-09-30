@@ -474,3 +474,33 @@ theorems plus the cross-check, standard axioms only. Negative control: `adapter_
 forges `gamma(2) >= 1/20` in the `N = 3t+2` budget, which claims `count 2 = 0`; the benchmark
 refutes that claim and the kernel rejects it. Nothing here bears on RH or on the Laplacian-ratio
 problem; `conjecture1_proved = False`.
+
+## Session 2026-09-30 — `affine_hull_dominance` (exact tree maxima by convex-hull pruning of vector states)
+
+`AffineHullDominanceEmitter` (kind `affine_hull_dominance`). For a positive multilinear tree
+recursion -- an empty-bundle state `e`, a bilinear "bundle plus child" map `T`, a planting matrix
+`P_c` depending on the child count, and a root covector `F_k`, all with nonnegative rational
+coefficients -- it certifies, for every `n = 2..N`, the exact maximum `M_n` of the root value over
+ALL trees on `n` vertices (`IsGreatest`), and that every maximizer has every branch state and every
+partial bundle state on the kept hull points. The certificate is the exact hull dynamic program:
+per class (size, child count) the kept points (hull vertices and hull-edge points, ties kept) and,
+for every candidate in the Lean checker's own enumeration order, a `kept i` or `dom w` witness
+(rational convex weights, componentwise domination, strict somewhere). `Cert.Valid` is closed by
+one `decide +kernel`. The generic exchange induction states domination in dual form (every
+nonnegative covector is at least as large at some kept point), so each recursion step is a
+covector pull-back (`dot_mul_left`, `dot_mul_right`, `dot_plant`) and transitivity is immediate;
+the strict form under the sign conditions (`Rec.Signs`) gives the maximizer theorem
+`kept_of_pi_eq`.
+
+Design doc: [`EMITTER_AFFINE_HULL_DOMINANCE_DESIGN_2026-09-30.md`](EMITTER_AFFINE_HULL_DOMINANCE_DESIGN_2026-09-30.md).
+Dogfood: `examples/affine_hull_dominance/` (`generate.py --check`; lake project on Mathlib
+v4.32.0): the Randic-weighted matching sum `sum_M prod_{uv in M} 1/(deg u deg v)` for n <= 14
+(`M_14 = 9477/512`, unique maximizer at every n), one plus the Randic-type edge sum as a
+3-dimensional recursion for n <= 12 (ties at n = 7, 8, 9), and a synthetic recursion with larger
+hulls for n <= 12; 199 theorems, all `[propext, Classical.choice, Quot.sound]`, `lake build` 61 s.
+Values and maximizer lists are cross-checked against brute force over every tree with at most 9
+vertices. Negative control: `adapter_affine_hull_dominance` (the matching sum at N = 6 with every
+maximizing root bundle removed and replaced by a non-dominating convex witness, claiming the
+second-best value 7/2 as M_6 -- false, since 29/8 is attained; the decided checker rejects the
+witness; the true twin compiles). Completeness of the maximizer list up to isomorphism is
+generator-side, not a kernel theorem. `conjecture1_proved = False`.

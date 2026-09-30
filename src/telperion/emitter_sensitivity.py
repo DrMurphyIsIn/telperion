@@ -293,6 +293,32 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # prove 0 < 2 * (-1), so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_threshold.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "AffineHullDominanceEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                     "exact maximum over all trees on n vertices (n = 2..N) of "
+                                     "a positive multilinear tree recursion with vector "
+                                     "states, by convex-hull pruning: the Lean checker "
+                                     "enumerates every candidate of every class itself and "
+                                     "decides, in exact rational arithmetic, a supplied "
+                                     "witness for each (a kept index, or convex weights with "
+                                     "componentwise domination strict somewhere); one generic "
+                                     "exchange induction (dual-form domination) turns that "
+                                     "into the upper bound, and an explicit attaining tree "
+                                     "gives equality.  The kept tables, witnesses and claimed "
+                                     "values ARE the statement's hypotheses, all decided; "
+                                     "no separately-supplied identity to corrupt.  certify "
+                                     "REFUSES floats, shape errors, any failing sign "
+                                     "condition (negative coefficient, z0 entry not "
+                                     "positive, an invisible coordinate), a non-strict root "
+                                     "covector with maximizers requested, N outside [2, 16], "
+                                     "and an oversized class.  Nothing about any open "
+                                     "problem (conjecture1_proved = False)",
+                                     # Structural, yet a kernel control exists: the matching-
+                                     # sum certificate at N = 6 with the maximizing root
+                                     # bundle removed and a forged dominance witness in its
+                                     # place claims the second-best value as M_6 (false);
+                                     # the decided checker rejects the witness.
+                                     # See negctrl_adapters/adapter_affine_hull_dominance.py.
+                                     neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ConcavePooledInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "bound l(b) + alpha |b| <= U(y_b) on every finite rooted "
                                        "tree (or every tree of child count <= M) for a rational "
