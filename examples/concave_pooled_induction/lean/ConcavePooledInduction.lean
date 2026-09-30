@@ -1,5 +1,5 @@
-/- telperion 0.1.6 | family ConcavePooledInduction | input-hash 647e572b23a7168a
-   135 theorems, 17 generation-time self-checks passed.
+/- telperion 0.1.6 | family ConcavePooledInduction | input-hash 86dba127a14845ca
+   165 theorems, 21 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
 
@@ -1534,5 +1534,220 @@ theorem synthetic_mdep_uniform (b : PTree) (hb : b.AllDeg (fun m => m ≤ 2)) :
     b.ell synthetic_mdep_g synthetic_mdep_h (-1 : ℝ) (1 : ℝ) + (1 / 2 : ℝ) * b.size ≤ (0 : ℝ) := by
   obtain ⟨h1, h2, h3⟩ := synthetic_mdep b hb
   linarith [synthetic_mdep_U_le_max _ h1 h2]
+
+/-! ## Instance `synthetic_edge`
+
+Claim: `ell + (1) * size ≤ U (msg)` on every finite rooted tree of child count at most 3, for
+  h(m, R) = 1/(m + 1),  g(m, R) = -1,
+  leaf (y, l) = (1, -1), U the concave interpolant of
+  (0, 0), (1, 0).
+Certificate: 3 cells (explicit m = 1..3). -/
+
+noncomputable def synthetic_edge_A : Fin 1 → ℝ := ![(0 : ℝ)]
+noncomputable def synthetic_edge_B : Fin 1 → ℝ := ![(0 : ℝ)]
+/-- The witness: the minimum of its 1 affine pieces. -/
+noncomputable def synthetic_edge_U : ℝ → ℝ := minPieces synthetic_edge_A synthetic_edge_B
+noncomputable def synthetic_edge_h : ℕ → ℝ → ℝ := fun m _ => ((1 : ℝ)) / ((1 : ℝ) + (m : ℝ))
+noncomputable def synthetic_edge_g : ℕ → ℝ → ℝ := fun _ _ => ((-1 : ℝ))
+
+theorem synthetic_edge_piece0 (x : ℝ) : synthetic_edge_U x ≤ (0 : ℝ) * x + (0 : ℝ) := by
+  have := minPieces_le synthetic_edge_A synthetic_edge_B x 0
+  simpa [synthetic_edge_U, synthetic_edge_A, synthetic_edge_B] using this
+
+theorem synthetic_edge_node0 : synthetic_edge_U (0 : ℝ) = (0 : ℝ) := by
+  apply le_antisymm
+  · linarith [synthetic_edge_piece0 (0 : ℝ)]
+  · apply le_minPieces; intro k; fin_cases k ; norm_num [synthetic_edge_A, synthetic_edge_B]
+
+theorem synthetic_edge_node1 : synthetic_edge_U (1 : ℝ) = (0 : ℝ) := by
+  apply le_antisymm
+  · linarith [synthetic_edge_piece0 (1 : ℝ)]
+  · apply le_minPieces; intro k; fin_cases k ; norm_num [synthetic_edge_A, synthetic_edge_B]
+
+theorem synthetic_edge_base : (-1 : ℝ) + (1 : ℝ) ≤ synthetic_edge_U (1 : ℝ) := by
+  apply le_minPieces; intro k; fin_cases k ; norm_num [synthetic_edge_A, synthetic_edge_B]
+
+theorem synthetic_edge_c0_k0 (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (1 : ℝ)) :
+    (0 : ℝ) * R + (1 : ℝ) * (0 : ℝ) + synthetic_edge_g 1 R + (1 : ℝ) ≤ (0 : ℝ) * synthetic_edge_h 1 R + (0 : ℝ) := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (1 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 1 R = (((1 / 2 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have eg : synthetic_edge_g 1 R = (((-1 : ℝ))) := by simp only [synthetic_edge_g]
+  have key : 0 ≤ ((0 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((0 : ℝ) * (((1 / 2 : ℝ))) + (0 : ℝ)) - ((0 : ℝ) * R + (1 : ℝ) * (0 : ℝ) + (((-1 : ℝ))) + (1 : ℝ)) = ((0 : ℝ)) := by ring
+  rw [eh, eg] <;> linarith
+
+theorem synthetic_edge_c0_lo (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (1 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 1 R := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (1 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 1 R = (((1 / 2 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have key : 0 ≤ ((1 / 2 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((((1 / 2 : ℝ)))) - ((0 : ℝ)) = ((1 / 2 : ℝ)) := by ring
+  rw [eh]
+  linarith
+
+theorem synthetic_edge_c0_hi (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (1 : ℝ)) :
+    synthetic_edge_h 1 R ≤ (1 : ℝ) := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (1 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 1 R = (((1 / 2 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have key : 0 ≤ ((1 / 2 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((1 : ℝ)) - ((((1 / 2 : ℝ)))) = ((1 / 2 : ℝ)) := by ring
+  rw [eh]
+  linarith
+
+theorem synthetic_edge_c0 (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (1 : ℝ)) :
+    (0 : ℝ) * R + (1 : ℝ) * (0 : ℝ) + synthetic_edge_g 1 R + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h 1 R) := by
+  apply le_minPieces; intro k; fin_cases k
+  · have := synthetic_edge_c0_k0 R h1 h2
+    simpa [synthetic_edge_A, synthetic_edge_B] using this
+
+theorem synthetic_edge_c0_cl (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (1 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 1 R ∧ synthetic_edge_h 1 R ≤ (1 : ℝ) :=
+  ⟨synthetic_edge_c0_lo R h1 h2, synthetic_edge_c0_hi R h1 h2⟩
+
+theorem synthetic_edge_c1_k0 (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (2 : ℝ)) :
+    (0 : ℝ) * R + (2 : ℝ) * (0 : ℝ) + synthetic_edge_g 2 R + (1 : ℝ) ≤ (0 : ℝ) * synthetic_edge_h 2 R + (0 : ℝ) := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (2 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 2 R = (((1 / 3 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have eg : synthetic_edge_g 2 R = (((-1 : ℝ))) := by simp only [synthetic_edge_g]
+  have key : 0 ≤ ((0 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((0 : ℝ) * (((1 / 3 : ℝ))) + (0 : ℝ)) - ((0 : ℝ) * R + (2 : ℝ) * (0 : ℝ) + (((-1 : ℝ))) + (1 : ℝ)) = ((0 : ℝ)) := by ring
+  rw [eh, eg] <;> linarith
+
+theorem synthetic_edge_c1_lo (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (2 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 2 R := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (2 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 2 R = (((1 / 3 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have key : 0 ≤ ((1 / 3 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((((1 / 3 : ℝ)))) - ((0 : ℝ)) = ((1 / 3 : ℝ)) := by ring
+  rw [eh]
+  linarith
+
+theorem synthetic_edge_c1_hi (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (2 : ℝ)) :
+    synthetic_edge_h 2 R ≤ (1 : ℝ) := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (2 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 2 R = (((1 / 3 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have key : 0 ≤ ((2 / 3 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((1 : ℝ)) - ((((1 / 3 : ℝ)))) = ((2 / 3 : ℝ)) := by ring
+  rw [eh]
+  linarith
+
+theorem synthetic_edge_c1 (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (2 : ℝ)) :
+    (0 : ℝ) * R + (2 : ℝ) * (0 : ℝ) + synthetic_edge_g 2 R + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h 2 R) := by
+  apply le_minPieces; intro k; fin_cases k
+  · have := synthetic_edge_c1_k0 R h1 h2
+    simpa [synthetic_edge_A, synthetic_edge_B] using this
+
+theorem synthetic_edge_c1_cl (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (2 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 2 R ∧ synthetic_edge_h 2 R ≤ (1 : ℝ) :=
+  ⟨synthetic_edge_c1_lo R h1 h2, synthetic_edge_c1_hi R h1 h2⟩
+
+theorem synthetic_edge_c2_k0 (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (3 : ℝ)) :
+    (0 : ℝ) * R + (3 : ℝ) * (0 : ℝ) + synthetic_edge_g 3 R + (1 : ℝ) ≤ (0 : ℝ) * synthetic_edge_h 3 R + (0 : ℝ) := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (3 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 3 R = (((1 / 4 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have eg : synthetic_edge_g 3 R = (((-1 : ℝ))) := by simp only [synthetic_edge_g]
+  have key : 0 ≤ ((0 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((0 : ℝ) * (((1 / 4 : ℝ))) + (0 : ℝ)) - ((0 : ℝ) * R + (3 : ℝ) * (0 : ℝ) + (((-1 : ℝ))) + (1 : ℝ)) = ((0 : ℝ)) := by ring
+  rw [eh, eg] <;> linarith
+
+theorem synthetic_edge_c2_lo (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (3 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 3 R := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (3 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 3 R = (((1 / 4 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have key : 0 ≤ ((1 / 4 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((((1 / 4 : ℝ)))) - ((0 : ℝ)) = ((1 / 4 : ℝ)) := by ring
+  rw [eh]
+  linarith
+
+theorem synthetic_edge_c2_hi (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (3 : ℝ)) :
+    synthetic_edge_h 3 R ≤ (1 : ℝ) := by
+  have hs : 0 ≤ R - (0 : ℝ) := by linarith
+  have ht : 0 ≤ (3 : ℝ) - R := by linarith
+  have eh : synthetic_edge_h 3 R = (((1 / 4 : ℝ))) := by simp only [synthetic_edge_h]; ring
+  have key : 0 ≤ ((3 / 4 : ℝ)) := by linarith [mul_nonneg (pow_nonneg hs 0) (pow_nonneg ht 0)]
+  have e : ((1 : ℝ)) - ((((1 / 4 : ℝ)))) = ((3 / 4 : ℝ)) := by ring
+  rw [eh]
+  linarith
+
+theorem synthetic_edge_c2 (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (3 : ℝ)) :
+    (0 : ℝ) * R + (3 : ℝ) * (0 : ℝ) + synthetic_edge_g 3 R + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h 3 R) := by
+  apply le_minPieces; intro k; fin_cases k
+  · have := synthetic_edge_c2_k0 R h1 h2
+    simpa [synthetic_edge_A, synthetic_edge_B] using this
+
+theorem synthetic_edge_c2_cl (R : ℝ) (h1 : (0 : ℝ) ≤ R) (h2 : R ≤ (3 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 3 R ∧ synthetic_edge_h 3 R ≤ (1 : ℝ) :=
+  ⟨synthetic_edge_c2_lo R h1 h2, synthetic_edge_c2_hi R h1 h2⟩
+
+theorem synthetic_edge_step1 (yb : ℝ) (hl : (0 : ℝ) ≤ yb) (hu : yb ≤ (1 : ℝ)) :
+    ((1 : ℕ) : ℝ) * synthetic_edge_U yb + synthetic_edge_g 1 (((1 : ℕ) : ℝ) * yb) + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h 1 (((1 : ℕ) : ℝ) * yb)) := by
+  rw [show ((1 : ℕ) : ℝ) = 1 by norm_num]
+  · linarith [synthetic_edge_c0 (1 * yb) (by linarith) (by linarith), synthetic_edge_piece0 yb]
+
+theorem synthetic_edge_clos1 (yb : ℝ) (hl : (0 : ℝ) ≤ yb) (hu : yb ≤ (1 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 1 (((1 : ℕ) : ℝ) * yb) ∧ synthetic_edge_h 1 (((1 : ℕ) : ℝ) * yb) ≤ (1 : ℝ) := by
+  rw [show ((1 : ℕ) : ℝ) = 1 by norm_num]
+  · exact synthetic_edge_c0_cl (1 * yb) (by linarith) (by linarith)
+
+theorem synthetic_edge_step2 (yb : ℝ) (hl : (0 : ℝ) ≤ yb) (hu : yb ≤ (1 : ℝ)) :
+    ((2 : ℕ) : ℝ) * synthetic_edge_U yb + synthetic_edge_g 2 (((2 : ℕ) : ℝ) * yb) + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h 2 (((2 : ℕ) : ℝ) * yb)) := by
+  rw [show ((2 : ℕ) : ℝ) = 2 by norm_num]
+  · linarith [synthetic_edge_c1 (2 * yb) (by linarith) (by linarith), synthetic_edge_piece0 yb]
+
+theorem synthetic_edge_clos2 (yb : ℝ) (hl : (0 : ℝ) ≤ yb) (hu : yb ≤ (1 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 2 (((2 : ℕ) : ℝ) * yb) ∧ synthetic_edge_h 2 (((2 : ℕ) : ℝ) * yb) ≤ (1 : ℝ) := by
+  rw [show ((2 : ℕ) : ℝ) = 2 by norm_num]
+  · exact synthetic_edge_c1_cl (2 * yb) (by linarith) (by linarith)
+
+theorem synthetic_edge_step3 (yb : ℝ) (hl : (0 : ℝ) ≤ yb) (hu : yb ≤ (1 : ℝ)) :
+    ((3 : ℕ) : ℝ) * synthetic_edge_U yb + synthetic_edge_g 3 (((3 : ℕ) : ℝ) * yb) + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h 3 (((3 : ℕ) : ℝ) * yb)) := by
+  rw [show ((3 : ℕ) : ℝ) = 3 by norm_num]
+  · linarith [synthetic_edge_c2 (3 * yb) (by linarith) (by linarith), synthetic_edge_piece0 yb]
+
+theorem synthetic_edge_clos3 (yb : ℝ) (hl : (0 : ℝ) ≤ yb) (hu : yb ≤ (1 : ℝ)) :
+    (0 : ℝ) ≤ synthetic_edge_h 3 (((3 : ℕ) : ℝ) * yb) ∧ synthetic_edge_h 3 (((3 : ℕ) : ℝ) * yb) ≤ (1 : ℝ) := by
+  rw [show ((3 : ℕ) : ℝ) = 3 by norm_num]
+  · exact synthetic_edge_c2_cl (3 * yb) (by linarith) (by linarith)
+
+theorem synthetic_edge_hstep : ∀ m : ℕ, 1 ≤ m → m ≤ 3 → ∀ yb : ℝ, (0 : ℝ) ≤ yb → yb ≤ (1 : ℝ) →
+    (m : ℝ) * synthetic_edge_U yb + synthetic_edge_g m (m * yb) + (1 : ℝ) ≤ synthetic_edge_U (synthetic_edge_h m (m * yb)) := by
+  intro m hm hok yb hl hu
+  interval_cases m
+  · exact synthetic_edge_step1 yb hl hu
+  · exact synthetic_edge_step2 yb hl hu
+  · exact synthetic_edge_step3 yb hl hu
+
+theorem synthetic_edge_hclos : ∀ m : ℕ, 1 ≤ m → m ≤ 3 → ∀ yb : ℝ, (0 : ℝ) ≤ yb → yb ≤ (1 : ℝ) →
+    (0 : ℝ) ≤ synthetic_edge_h m (m * yb) ∧ synthetic_edge_h m (m * yb) ≤ (1 : ℝ) := by
+  intro m hm hok yb hl hu
+  interval_cases m
+  · exact synthetic_edge_clos1 yb hl hu
+  · exact synthetic_edge_clos2 yb hl hu
+  · exact synthetic_edge_clos3 yb hl hu
+
+set_option linter.unusedVariables false in
+theorem synthetic_edge_U_le_max (x : ℝ) (hl : (0 : ℝ) ≤ x) (hu : x ≤ (1 : ℝ)) : synthetic_edge_U x ≤ (0 : ℝ) := by
+  · linarith [synthetic_edge_piece0 x]
+
+/-- MAIN.  The certified bound on every tree of child count at most 3. -/
+theorem synthetic_edge (b : PTree) (hb : b.AllDeg (fun m => m ≤ 3)) :
+    (0 : ℝ) ≤ b.msg synthetic_edge_h (1 : ℝ) ∧ b.msg synthetic_edge_h (1 : ℝ) ≤ (1 : ℝ) ∧
+      b.ell synthetic_edge_g synthetic_edge_h (-1 : ℝ) (1 : ℝ) + (1 : ℝ) * b.size ≤ synthetic_edge_U (b.msg synthetic_edge_h (1 : ℝ)) :=
+  pooled_induction_core (fun m => m ≤ 3) synthetic_edge_h synthetic_edge_g synthetic_edge_U synthetic_edge_U (1 : ℝ) (-1 : ℝ) (0 : ℝ) (1 : ℝ) (1 : ℝ)
+    (minPieces_jensen synthetic_edge_A synthetic_edge_B) (fun _ _ _ => le_rfl) ⟨by norm_num, by norm_num⟩ synthetic_edge_base synthetic_edge_hclos synthetic_edge_hstep b hb
+
+/-- Uniform corollary: `ell + α·size ≤ max_j v_j = 0`. -/
+theorem synthetic_edge_uniform (b : PTree) (hb : b.AllDeg (fun m => m ≤ 3)) :
+    b.ell synthetic_edge_g synthetic_edge_h (-1 : ℝ) (1 : ℝ) + (1 : ℝ) * b.size ≤ (0 : ℝ) := by
+  obtain ⟨h1, h2, h3⟩ := synthetic_edge b hb
+  linarith [synthetic_edge_U_le_max _ h1 h2]
 
 end ConcavePooledInduction

@@ -267,3 +267,20 @@ def test_order_zero_is_only_for_u_equal_one():
 def test_non_template_function_is_refused():
     with pytest.raises(MobiusTangentRefusal):
         problem_from_sides(sp.log(1 + x), sp.exp(x), x, 0, 1)
+
+
+@pytest.mark.parametrize("positive", [False, True])
+def test_sides_keep_log_atoms_whole(positive):
+    """Regression (2026-09-30): `log(t/2)` must stay one log atom.  The default sympy log hint
+    split it into `log t - log 2` (for positive symbols) and the constant `-log 2` was refused as
+    a convex log.  Zhu, arXiv:2608.24827 Lemma 3.1, band [15/4, 23/5] of ZhuEnvelope.lean."""
+    t = sp.Symbol("t", positive=True) if positive else sp.Symbol("t")
+    pr = problem_from_sides(sp.log(t / 2) - 1 / t, sp.Rational(1243, 2000), t,
+                            sp.Rational(15, 4), sp.Rational(23, 5))
+    assert len(pr.logs) == 1
+    mobius_tangent_cell_certificate(pr)
+
+
+def test_explicit_negative_constant_log_refusal_names_the_rewrite():
+    with pytest.raises(MobiusTangentRefusal, match=r"CONSTANT log\(2\).*log\(1/2\)"):
+        mobius_tangent_problem(a=0, logs=[(-1, 2, 0)], p=0, q=1)

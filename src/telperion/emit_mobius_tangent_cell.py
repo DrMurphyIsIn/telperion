@@ -189,6 +189,10 @@ def mobius_tangent_problem(*, a=0, b=0, logs=(), sigma=0, B=1, A=0, p, q,
         kappa = _Q(kappa, f"kappa_{i}")
         alpha = _Q(alpha, f"alpha_{i}")
         beta = _Q(beta, f"beta_{i}")
+        if kappa < 0 and beta == 0:
+            raise _refuse(f"kappa_{i} = {kappa} < 0 on the CONSTANT log({alpha}): write it with a "
+                          f"positive coefficient on the reciprocal, {-kappa} * log({1 / alpha}) "
+                          "(exact: log(1/a) = -log a); only upper enclosures of log are emitted")
         if kappa < 0:
             raise _refuse(f"kappa_{i} = {kappa} < 0: kappa log(.) is then CONVEX and has no "
                           "tangent majorant (the template needs every log term concave)")
@@ -226,7 +230,11 @@ def _problem_from_sides(lhs, rhs, var, p, q) -> MobiusTangentProblem:
     moving everything to the left); the remaining rational function must be
     `affine + sigma / (B + A var)` after `sp.apart` (one simple pole at most)."""
     x = var
-    F = sp.expand(sp.sympify(lhs) - sp.sympify(rhs))
+    # log=False: keep each log atom whole.  The default log hint splits e.g. log(t/2) into
+    # log t - log 2 (for positive symbols), leaving a constant log with a negative coefficient
+    # that the template must refuse, and a form the `_sides` rewrite (log(src) = log(affine),
+    # then `ring`, which treats logs as atoms) could not match anyway.  (Fixed 2026-09-30.)
+    F = sp.expand(sp.sympify(lhs) - sp.sympify(rhs), log=False)
     logs, rest = [], sp.Integer(0)
     for term in sp.Add.make_args(F):
         if not term.has(sp.log):

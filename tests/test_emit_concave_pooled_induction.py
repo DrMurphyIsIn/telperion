@@ -235,3 +235,18 @@ def test_dogfood_is_frozen():
     txt = (_EX / "lean" / "ConcavePooledInduction.lean").read_text(encoding="utf-8")
     assert "theorem matching_density_uniform (b : PTree) :" in txt
     assert "theorem synthetic_mdep (b : PTree) (hb : b.AllDeg (fun m => m ≤ 2))" in txt
+
+
+def test_rendering_edge_cases_regression():
+    """Four rendering bugs fixed 2026-09-30 (all rejected by the kernel before, never unsound):
+    unused binders, `fin_cases ... <;>` on a single piece, a constant denominator dropped from
+    the closed form, and `linarith` after a `rw` that already closed an identically-zero goal."""
+    spec = dict(nodes=[(0, 0), (1, 0)], h="1/(1+m)", g="-1", y_leaf=1, l_leaf=-1,
+                alpha=1, M=3, tail=False)
+    txt = _emit_one(spec, name="edge")
+    assert "noncomputable def edge_h : ℕ → ℝ → ℝ := fun m _ =>" in txt
+    assert "noncomputable def edge_g : ℕ → ℝ → ℝ := fun _ _ =>" in txt
+    assert "fin_cases k <;>" not in txt and "fin_cases k ; norm_num" in txt
+    # m = 1: h = 1/(1+1) must render as 1/2, not as the bare numerator 1
+    assert "edge_h 1 R = (((1 / 2 : ℝ)))" in txt
+    assert "rw [eh, eg] <;> linarith" in txt or "rw [eh, eg]\n" in txt
