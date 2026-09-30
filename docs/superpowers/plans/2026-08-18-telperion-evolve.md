@@ -14,7 +14,7 @@
 
 - **Python 3.9** — the interpreter here is 3.9.6. No 3.10+ syntax (no `match`, no `X | Y` in runtime-evaluated annotations without `from __future__ import annotations`).
 - **Core stays sympy-only** — `import telperion` and the certify/emit pipeline must not gain a new hard dependency. The Ollama client uses stdlib `urllib` only. No `openai`/`requests` dependency.
-- **No emoji anywhere in code, comments, or emitted Lean** (project rule; QuantConnect/Lean constraint carried over).
+- **No emoji anywhere in code, comments, or emitted Lean** (project rule).
 - **Trust-model firewall** — the evolve module only *proposes*. Every candidate passes the same `certify → emit → lake build` gate. Evolved certificates are NEVER auto-frozen and NEVER auto-added to `telperion.toml`/CI. A human promotes survivors exactly as today. Do not modify `certify`, `emit`, or any trust-model code.
 - **Lean toolchain** — `leanprover/lean4:v4.32.0`; kernel checks run via `lake env lean <file>` with CWD `examples/g1_floors/lean` (7.7G prebuilt Mathlib, ~5 s/file). Skip kernel steps if that `.lake` is absent.
 - **Determinism** — every stochastic component takes an explicit `seed`. `Date.now()`/`random` without a seed is forbidden in library code.
