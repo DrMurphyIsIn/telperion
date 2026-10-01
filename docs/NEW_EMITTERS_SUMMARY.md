@@ -322,8 +322,7 @@ term is kept when `sigma >= 0` (convex) or replaced by its tangent when `sigma <
 convex majorant is checked at the two cell endpoints by `norm_num`. The generator bisects until
 every cell passes; the union over the interval is a kernel-checked `le_or_gt` chain. The problem
 can be given as two sides `lhs <= rhs` (exact `sp.apart` split; the original form is emitted as
-`<name>_sides`). Technique: Lemma 3.3 of a draft communicated by J. L. Goldwasser (28 Sep 2026;
-author his London colleague, name to be added). Refusals: convex logs (`kappa < 0`), sign changes
+`<name>_sides`). Technique: from unpublished work communicated by J. L. Goldwasser. Refusals: convex logs (`kappa < 0`), sign changes
 of a log argument or of `B + A x`, more than one simple pole, non-affine log arguments, floats,
 tampered cells or tilings, and false or order-`>= 2`-tight claims at the bisection cap.
 
@@ -341,10 +340,8 @@ refused) and `log(1 + x) >= 2x/(2 + x)` (convex log, refused). Negative control:
 
 Three faces folded into existing kinds rather than new emitters. The certificate shapes (exact
 cancellation, the piecewise-linear node condition, and the quadratic sign race pattern) are
-distilled from a draft communicated by Prof. John L. Goldwasser ("The maximum Laplacian ratio of a
-tree for all n >= 303: concave witnesses and one-variable certificates", 28 Sep 2026; author: his
-London colleague). Only the generic shapes are used: no data from the draft, and nothing from its
-Brualdi-Goldwasser sections is formalized. `conjecture1_proved = False`.
+distilled from unpublished work communicated by Professor John L. Goldwasser. Only the generic
+shapes are used: no data from that work is used. `conjecture1_proved = False`.
 
 ### `log_combination` — exact cancellation (routes `exact`, `mixed`)
 
@@ -424,9 +421,7 @@ which equals the piecewise-linear interpolant only when the node sequence is con
 ## Session 2026-09-29 — `concave_pooled_induction` (tree-recursion bounds by a concave pooled-mean witness)
 
 `ConcavePooledInductionEmitter` (kind `concave_pooled_induction`). **Method credit: concave-witness
-induction, from the draft "The maximum Laplacian ratio of a tree for all n >= 303: concave witnesses
-and one-variable certificates" (28 September 2026), communicated by Professor John L. Goldwasser
-(author: his London colleague; name to be added).** For a branching recursion on finite rooted
+induction, from unpublished work communicated by Professor John L. Goldwasser.** For a branching recursion on finite rooted
 trees -- message `y_v = h(m, R)`, profit `l(v) = sum l(c) + g(m, R)`, `R = sum y_c`, leaf pair
 `(y_leaf, l_leaf)`, `h` and `g` rational -- it certifies `l(b) + alpha |b| <= U(y_b)` for every
 tree, with `U` concave piecewise-linear (strictly decreasing slopes). In Lean `U` is the MINIMUM of
@@ -440,7 +435,7 @@ tail `m >= M + 1` (m-free `h`, `g`, `lo >= 0`) reduces to one variable through a
 unbounded last cell. Without a tail the claim is stated for child count `<= M`. Not supported:
 exempt "atom" children, a carried `U` different from `V` at the emitter level, non-rational
 `g`/`h` (log cells are the sibling `mobius_tangent_cell` kind). The tail is our own sufficient
-condition, not the draft's Lemma 3.4 node condition.
+condition.
 
 Design doc: [`EMITTER_CONCAVE_POOLED_INDUCTION_DESIGN_2026-09-29.md`](EMITTER_CONCAVE_POOLED_INDUCTION_DESIGN_2026-09-29.md).
 Dogfood: `examples/concave_pooled_induction/` (`generate.py --check`; lake project on Mathlib
@@ -448,7 +443,7 @@ v4.32.0): the classical matching message `y_u = Z(T_u - u)/Z(T_u)` with `l = -su
 `alpha = 3/5`, i.e. `sum_u y_u >= (3/5)|T|` for every finite rooted tree (the path shows the sharp
 constant is `1/phi`), the same recursion on paths (bounded mode), and a clearly synthetic
 m-dependent instance; 134 theorems, all `[propext, Classical.choice, Quot.sound]`. It is NOT the
-Brualdi-Goldwasser problem; nothing from the draft's Sections 4-9 is used. Negative control:
+Brualdi-Goldwasser problem; no data from the credited work is used. Negative control:
 `adapter_concave_pooled_induction` (the paths instance forged to `alpha = 13/20 > 1/phi`, a false
 claim; its cells carry a negative Bernstein coefficient and the kernel rejects the `linarith`;
 the true twin compiles). `conjecture1_proved = False`.
@@ -462,8 +457,8 @@ that budget the kernel checks the per-atom caps `floor(theta_hi / g_k)`, the exc
 exclusion certified by convexity, and a knapsack over the surviving counts (`decide` over
 naturals). Gap and budget bounds come from `enclosure_tree` (reused) or are exact. The generic core
 (six lemmas) is emitted once per file. Each instance adds a benchmark lemma, which makes the main
-theorem non-vacuous. The tangent-gap pricing pattern is from a draft communicated by Professor
-John L. Goldwasser (28 Sep 2026).
+theorem non-vacuous. The tangent-gap pricing pattern is from unpublished work communicated by
+Professor John L. Goldwasser.
 
 Design doc: [`EMITTER_GAP_BUDGET_MULTIPLICITY_DESIGN_2026-09-29.md`](EMITTER_GAP_BUDGET_MULTIPLICITY_DESIGN_2026-09-29.md).
 The dogfood is `examples/gap_budget_multiplicity/lean/GapBudgetMultiplicity.lean`, generated by

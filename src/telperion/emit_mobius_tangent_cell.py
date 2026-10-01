@@ -6,10 +6,8 @@ the Brualdi-Goldwasser conjecture: it certifies elementary one-variable real ine
 with rational data.  Downstream consumers state their own scope.
 
 Acknowledgement: the tangent-line cell technique (concave witnesses, a Mobius term, a convex
-majorant checked at the two cell endpoints) is taken from a draft communicated by Professor
-John L. Goldwasser ("The maximum Laplacian ratio of a tree for all n >= 303: concave
-witnesses and one-variable certificates", 28 Sep 2026, Lemma 3.3; author: his London
-colleague, name to be added).  Nothing from the draft's data is reproduced here.
+majorant checked at the two cell endpoints) is taken from unpublished work communicated by
+Professor John L. Goldwasser.  Nothing from that work's data is reproduced here.
 
 THE SHAPE
 ---------
@@ -23,8 +21,8 @@ split EXACTLY into the shape above (`sp.apart`), and a refusal is raised when it
 fit (a log with a negative coefficient, a non-affine log argument, a rational part that is
 not "affine + one simple pole").
 
-THE METHOD (Lemma 3.3 of the source), per cell [p, q] with a rational tangent point t
-------------------------------------------------------------------------------------
+THE METHOD, per cell [p, q] with a rational tangent point t
+-----------------------------------------------------------
 * each log is concave, so with u_i = alpha_i + beta_i t and any rational H_i >= log u_i,
       kappa_i log(alpha_i + beta_i x) <= kappa_i (H_i + (alpha_i + beta_i x - u_i) / u_i)
   (Mathlib: `Real.log_le_sub_one_of_pos` at y/u, plus `Real.log_div`);
@@ -595,7 +593,7 @@ def sympy_to_lean(e: sp.Expr, x) -> str:
 _GENERIC = """\
 /-! ### Generic lemmas of the mobius_tangent_cell template (emitted once per family).
 Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints:
-Lemma 3.3 of a draft communicated by J. L. Goldwasser (28 Sep 2026).
+from unpublished work communicated by J. L. Goldwasser.
 conjecture1_proved = False. -/
 
 /-- Concavity of `log` as a tangent bound at `u`, with `log u <= H`. -/

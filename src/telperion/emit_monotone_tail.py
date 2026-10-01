@@ -78,8 +78,8 @@ hypothesis-free corollary for the concrete ``U = min(0, l_0, ..., l_{K-1})``, wh
 line through nodes ``i`` and ``i+1``: the minimum lies below every segment line, so it
 satisfies every ``U`` hypothesis.
 
-The node-condition pattern is distilled from a draft communicated by
-Prof. John L. Goldwasser (28 Sep 2026); only the generic shape is used.
+The node-condition pattern is distilled from unpublished work communicated by
+Professor John L. Goldwasser; only the generic shape is used.
 conjecture1_proved = False.
 """
 from __future__ import annotations

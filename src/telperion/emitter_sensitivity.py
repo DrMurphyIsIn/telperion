@@ -370,9 +370,9 @@ REGISTRY: dict[str, SensitivityStance] = {
                                        "subdivision limit, a tail with m-dependent h/g, lo < 0, "
                                        "hi <= 0 or no piece with b_j <= 0, a non-covering cell "
                                        "layout, degree > 12, and floats.  Method credit: "
-                                       "concave-witness induction, from a draft communicated by "
-                                       "Professor John L. Goldwasser (author: his London "
-                                       "colleague; name to be added).  Dogfood: the matching "
+                                       "concave-witness induction, from unpublished work "
+                                       "communicated by Professor John L. Goldwasser.  "
+                                       "Dogfood: the matching "
                                        "message, sum_u y_u >= (3/5)|T|; nothing about BG or RH "
                                        "(conjecture1_proved = False)",
                                        # Structural, yet a kernel control exists: the bounded-
@@ -501,7 +501,7 @@ REGISTRY: dict[str, SensitivityStance] = {
     "MobiusTangentCellEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                    "F(x) = a + b x + sum kappa_i log(alpha_i + beta_i x) + "
                                    "sigma/(B + A x) <= 0 on [P, Q] by tangent-line cells "
-                                   "(Lemma 3.3 of a draft communicated by J. L. Goldwasser): "
+                                   "(from unpublished work communicated by J. L. Goldwasser): "
                                    "per cell the concave logs are replaced by their tangents "
                                    "at a rational t (Real.log_le_sub_one_of_pos, with a "
                                    "rational H >= log u from abs_log_sub_add_sum_range_le + "

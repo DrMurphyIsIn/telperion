@@ -23,10 +23,8 @@ bounded-degree mode, no tail.  A third, clearly SYNTHETIC instance (no combinato
 exercises an m-dependent message `h(m, R) = m / (m + 2R)` with a second denominator in
 `g(m, R) = -1/(1+R)`, bounded child count <= 2, deficit 1/2.
 
-Method: concave-witness induction, from the draft "The maximum Laplacian ratio of a tree for
-all n >= 303: concave witnesses and one-variable certificates" (28 September 2026),
-communicated by Professor John L. Goldwasser (author: his London colleague; name to be
-added).  This example is NOT the Brualdi-Goldwasser problem.
+Method: concave-witness induction, from unpublished work communicated by Professor John L.
+Goldwasser.  This example is NOT the Brualdi-Goldwasser problem.
 
 HONEST SCOPE: an inequality about the matching message on finite rooted trees, proved by a
 kernel-checked certificate.  We know of no literature statement of this exact inequality; it
