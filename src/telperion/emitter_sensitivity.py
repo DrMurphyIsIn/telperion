@@ -792,7 +792,13 @@ REGISTRY: dict[str, SensitivityStance] = {
     "ConcaveStationaryMaxEmitter": _S(CERTIFICATE_SENSITIVE,
         "Ships a `_foc` theorem `g'(f*)=0` = an exact rational equation whose one side is the separately-supplied stationary point `fstar`"),
     "CurvatureBoundaryEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "Convexity/positivity shape: nlinarith consumes the structural fact (x-a)(b-x)>=0 built from interval bounds, not a supplied cofactor"),
+        "Convexity/positivity shape: nlinarith consumes the structural fact (x-a)(b-x)>=0 built from interval bounds, not a supplied cofactor; "
+        "kink-minimum route (2026-10-01): derivative signs of the two polynomial pieces closed by linarith from Bernstein product facts, "
+        "monotonicity via Mathlib antitoneOn_of_deriv_nonpos / monotoneOn_of_deriv_nonneg, the kink value recomputed by norm_num",
+        # Structural, yet a kernel control exists (kink route): the minimum of
+        # |x - 1/3| + x^2 on [0, 1] forged to 1/9 + 1/1000; the kink-value norm_num
+        # reduces to False.  See negctrl_adapters/adapter_curvature_boundary.py.
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "DiskCoordBoundsEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "\"Farkas-style\" is naming only: the cert (wr,wi,rho) is substituted into BOTH hypothesis and conclusion, so it parameterizes the statement, not a corruptible witness"),
     "FiniteArgmaxMarginEmitter": _S(CERTIFICATE_SENSITIVE,

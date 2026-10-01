@@ -86,13 +86,26 @@ and a POOLING function `V` with `U <= V` on `I` and Jensen for `V` as hypotheses
 per cell closure, one step lemma per `m <= M`, the tail lemma, and the final theorem plus the
 uniform corollary `l(b) + alpha |b| <= max_j v_j`.
 
+EXTENSIONS (2026-10-01; backward compatible, design doc
+docs/EMITTER_EXTENSIONS_BUNDLE_DESIGN_2026-10-01.md)
+-------------------------------------------------------------------------------------------
+* LEAF-EXEMPT children (``exempt_leaves=True``): leaf children enter EXACTLY (their pair
+  (y_leaf, l_leaf)) and are excluded from the Jensen pooling, which runs over the non-leaf
+  children only (generic `exempt_induction_core`, `minPieces_jensen_on`); the claim is for every
+  NON-LEAF tree of child count <= M (no tail).  Every child mix (p pooled, k leaves) is a cell
+  family over the pooled sum, the all-leaves mixes are exact numbers.
+* LOG TERMS in g: `kappa * log(a0 + b1 * R)` (kappa > 0, a0 > 0, b1 >= 0), replaced on every
+  cell by the tangent majorant at the cell's tangent point, `log u <= H` enclosed by the
+  mobius_tangent_cell Taylor box (`log_tangent_le`, one `*_logH<i>` lemma per constant).
+
 WHAT IS NOT SUPPORTED (stated plainly)
 --------------------------------------
-* "atom" children with exact (unpooled) values: not supported.
+* exempt atoms other than leaves (listed finite subtrees with exact values): not supported.
+* a tail in the leaf-exempt mode.
 * a carried function `U` different from the pooling function `V`: the generic Lean theorem
   takes `U`, `V` and `U <= V`, but this emitter always instantiates `U = V`.
-* non-rational `g`/`h` (logs, Mobius-log cells): out of scope here (see the sibling
-  `mobius_tangent_cell` kind); use a rational upper bound for `g` and a separate lemma.
+* logs in `h`, convex logs (kappa < 0) or non-affine log arguments in `g`, Mobius-log cells:
+  out of scope (see the sibling `mobius_tangent_cell` kind).
 * an m-dependent recursion has no tail: the claim is then bounded-degree only.
 
 ANTI-PHANTOM REFUSALS
@@ -300,6 +313,10 @@ class Cell:
     dens: tuple            # PolyCert (strict) per distinct non-constant denominator
     dtot: object           # PolyCert (strict) of the common denominator, or None
     obligations: tuple     # Obligation, pieces first then closure lo/hi
+    # extension (2026-10-01); the defaults reproduce the original cells exactly
+    p: int | None = None   # leaf-exempt mode: number of POOLED (non-leaf) children
+    k: int = 0             # leaf-exempt mode: number of exact leaf children
+    logb: tuple = ()       # one LogConstBound per log term of g (tangent constants)
 
 
 @dataclass(frozen=True)
@@ -321,6 +338,10 @@ class ConcavePooledCert:
     tail: bool
     cells: tuple           # Cell
     checked: bool = True   # False only for hand-forged (negative-control) certificates
+    # extension (2026-10-01); defaults reproduce the original certificate
+    exempt: bool = False   # leaf-exempt mode (leaves exact, claim for non-leaf trees)
+    logs: tuple = ()       # LogPart per log term of g: kappa * log(a0 + b1 * R)
+    atom_cases: tuple = () # AtomCase per (p = 0, k) child mix (leaf-exempt mode)
 
     @property
     def lo(self):
@@ -362,11 +383,21 @@ def _lhs_poly(cert_like, j: int, mode: str, m) -> sp.Poly:
     return sp.Poly(sp.expand(e), R, domain="QQ")
 
 
-def _build_cell(ctx, m, s, t, j, mode, *, check: bool) -> Cell:
-    """Compute every obligation of one cell exactly; with ``check`` raise on a failure."""
+def _build_cell(ctx, m, s, t, j, mode, *, check: bool, p=None, k: int = 0) -> Cell:
+    """Compute every obligation of one cell exactly; with ``check`` raise on a failure.
+
+    Extension (2026-10-01): ``p``/``k`` (leaf-exempt mode) -- the cell variable is the sum of
+    the ``p`` POOLED children's messages, the ``k`` leaf children enter exactly (``R + k y0``
+    inside ``h``, ``g``; ``k (l0 + alpha)`` on the left), ``m = p + k``.  Log terms of ``g``
+    (``ctx["logs"]``) are replaced by their tangent majorant at the cell's tangent point.
+    With ``p=None, k=0`` and no logs every computation is the original one."""
+    kleaf = k  # (the name `k` is reused below for the piece index)
     mm = m  # None in the tail (h, g are m-free there)
     hn, hd = _at_m(ctx["h_num"], mm), _at_m(ctx["h_den"], mm)
     gn, gd = _at_m(ctx["g_num"], mm), _at_m(ctx["g_den"], mm)
+    shift = kleaf * ctx.get("y0", 0) if kleaf else 0
+    if shift != 0:
+        hn, hd, gn, gd = (_shift(P, shift) for P in (hn, hd, gn, gd))
     den_list = []
     for D in (hd, gd):
         if D.degree() > 0 and all(D != E for E in den_list):
@@ -388,7 +419,12 @@ def _build_cell(ctx, m, s, t, j, mode, *, check: bool) -> Cell:
                              f"positive on [{s}, {'oo' if t is None else t}] (m = {m})")
     H = hn.as_expr() / hd.as_expr()
     G = gn.as_expr() / gd.as_expr()
-    lhs = _lhs_poly(ctx, j, mode, m).as_expr() + G + ctx["alpha"]
+    lhs = _lhs_poly(ctx, j, mode, m if p is None else p).as_expr() + G + ctx["alpha"]
+    if kleaf:
+        lhs = lhs + kleaf * (ctx["l0"] + ctx["alpha"])
+    logb = _tangent_bounds(ctx, s, t, shift)
+    for lp, bd in zip(ctx.get("logs", ()), logb):
+        lhs = lhs + _log_majorant(lp, bd, shift)
     obls = []
     for k in range(len(ctx["a"])):
         diff = ctx["a"][k] * H + ctx["b"][k] - lhs
@@ -409,7 +445,7 @@ def _build_cell(ctx, m, s, t, j, mode, *, check: bool) -> Cell:
         pc = _polycert(P, s, t, False)
         out.append(Obligation(side=side, k=k, num=pc))
     return Cell(m=m, s=s, t=t, j=j, mode=mode, dens=dens, dtot=dtot_cert,
-                obligations=tuple(out))
+                obligations=tuple(out), p=p, k=kleaf, logb=logb)
 
 
 def _cell_ok(cell: Cell) -> bool:
@@ -440,10 +476,10 @@ def _probe_violation(ctx, m, s, t):
     return None
 
 
-def _cover(ctx, m, s, t, cands, depth, *, check=True) -> list:
+def _cover(ctx, m, s, t, cands, depth, *, check=True, **kw) -> list:
     """Untrusted cell search: try each (j, mode) candidate, bisect on failure."""
     for j, mode in cands:
-        cell = _build_cell(ctx, m, s, t, j, mode, check=False)
+        cell = _build_cell(ctx, m, s, t, j, mode, check=False, **kw)
         if _cell_ok(cell):
             return [cell]
     if t is None:
@@ -451,10 +487,10 @@ def _cover(ctx, m, s, t, cands, depth, *, check=True) -> list:
     if depth >= _MAX_DEPTH:
         return None
     mid = (s + t) / 2
-    left = _cover(ctx, m, s, mid, cands, depth + 1)
+    left = _cover(ctx, m, s, mid, cands, depth + 1, **kw)
     if left is None:
         return None
-    right = _cover(ctx, m, mid, t, cands, depth + 1)
+    right = _cover(ctx, m, mid, t, cands, depth + 1, **kw)
     if right is None:
         return None
     return left + right
@@ -527,13 +563,177 @@ def _check_cover(cells, m, start, stop):
         raise ValueError(f"REFUSED: cells for m = {m} end at {cur}, domain ends at {stop}")
 
 
+# ---------------------------------------------------------------------------
+# extension (2026-10-01): log terms in g, leaf-exempt children
+# ---------------------------------------------------------------------------
+
+#: Taylor order of the rational enclosure `log u <= H` (mobius_tangent_cell machinery)
+_LOG_ORDER = 12
+
+
+@dataclass(frozen=True)
+class LogPart:
+    """One log term `kappa * log(a0 + b1 * R)` of the profit `g` (kappa > 0, a0 > 0,
+    b1 >= 0, all rational, m-free)."""
+
+    kappa: object
+    a0: object
+    b1: object
+
+
+@dataclass(frozen=True)
+class AtomCase:
+    """Leaf-exempt mode, a node whose ``k`` children are ALL leaves (no pooled child): the
+    step and closure are numbers, checked exactly.  ``hval`` = h(k, k y0), ``lhs`` = the
+    left side with every log replaced by its rational upper bound, ``logb`` those bounds."""
+
+    k: int
+    hval: object
+    lhs: object
+    logb: tuple
+
+
+def _shift(P: sp.Poly, c) -> sp.Poly:
+    """`P(R + c)` as a polynomial in R."""
+    return sp.Poly(sp.expand(P.as_expr().subs(R_SYM, R_SYM + c)), R_SYM, domain="QQ")
+
+
+def _split_logs(expr, what: str):
+    """Split ``g`` into (rational part, (LogPart, ...)).  Each log term must be
+    ``kappa * log(a0 + b1 * R)`` with rational kappa > 0, a0 > 0, b1 >= 0 (concave, so the
+    tangent line is an upper bound -- the mobius_tangent_cell template; kappa < 0 is refused
+    there too)."""
+    if isinstance(expr, str):
+        expr = sp.sympify(expr, locals={"m": M_SYM, "R": R_SYM})
+    expr = sp.expand(sp.sympify(expr))
+    if not expr.atoms(sp.log):
+        return expr, ()
+    rat, logs = sp.Integer(0), []
+    for term in sp.Add.make_args(expr):
+        lg = [f for f in sp.Mul.make_args(term) if isinstance(f, sp.log)]
+        if not lg:
+            if term.atoms(sp.log):
+                raise ValueError(f"REFUSED: {what}: log nested inside {term}")
+            rat += term
+            continue
+        if len(lg) != 1:
+            raise ValueError(f"REFUSED: {what}: product of logs in {term}")
+        kappa = sp.simplify(term / lg[0])
+        arg = sp.expand(lg[0].args[0])
+        if not kappa.is_Rational or kappa.atoms(sp.Float):
+            raise ValueError(f"REFUSED: {what}: log coefficient {kappa} is not an exact "
+                             f"rational constant")
+        if kappa <= 0:
+            raise ValueError(f"REFUSED: {what}: log coefficient {kappa} <= 0 (a convex log "
+                             f"has no tangent UPPER bound; outside the template)")
+        if arg.free_symbols - {R_SYM}:
+            raise ValueError(f"REFUSED: {what}: log argument {arg} must depend on R only")
+        try:
+            P = sp.Poly(arg, R_SYM, domain="QQ")
+        except sp.PolynomialError as e:
+            raise ValueError(f"REFUSED: {what}: log argument {arg} is not affine in R") from e
+        if P.degree() > 1:
+            raise ValueError(f"REFUSED: {what}: log argument {arg} is not affine in R")
+        a0 = sp.Rational(P.coeff_monomial(1))
+        b1 = sp.Rational(P.coeff_monomial(R_SYM))
+        if not (a0 > 0 and b1 >= 0):
+            raise ValueError(f"REFUSED: {what}: log argument {arg} needs a0 > 0 and b1 >= 0 "
+                             f"(positive for every R >= 0)")
+        logs.append(LogPart(kappa=sp.Rational(kappa), a0=a0, b1=b1))
+    return rat, tuple(logs)
+
+
+def _log_upper(u):
+    from .emit_mobius_tangent_cell import log_upper
+    return log_upper(Fraction(int(u.p), int(u.q)), _LOG_ORDER)
+
+
+def _tangent_bounds(ctx, s, t, shift) -> tuple:
+    """The tangent constants of every log of g on the cell [s, t] (t None: [s, oo)), at the
+    tangent point R0 = midpoint (bounded) or s + 1 (unbounded)."""
+    logs = ctx.get("logs", ())
+    if not logs:
+        return ()
+    R0 = (s + t) / 2 if t is not None else s + 1
+    return tuple(_log_upper(sp.Rational(lp.a0 + lp.b1 * (R0 + shift))) for lp in logs)
+
+
+def _log_majorant(lp: LogPart, bd, shift):
+    """`kappa * (H + (y - u) / u)` with y = a0 + b1 (R + shift): an upper bound of
+    `kappa * log y` (concavity of log, Mathlib `Real.log_le_sub_one_of_pos`)."""
+    u = sp.Rational(bd.u.numerator, bd.u.denominator)
+    H = sp.Rational(bd.H.numerator, bd.H.denominator)
+    y = lp.a0 + lp.b1 * (R_SYM + shift)
+    return lp.kappa * (H + (y - u) / u)
+
+
+def _atom_case(ctx, k: int, *, check: bool) -> AtomCase:
+    """The all-leaves node with ``k`` children (leaf-exempt mode), checked exactly."""
+    R = k * ctx["y0"]
+    hv = (_at_m(ctx["h_num"], k).as_expr() / _at_m(ctx["h_den"], k).as_expr()).subs(R_SYM, R)
+    hd = _at_m(ctx["h_den"], k).as_expr().subs(R_SYM, R)
+    gd = _at_m(ctx["g_den"], k).as_expr().subs(R_SYM, R)
+    if check and (hd == 0 or gd == 0):
+        raise ValueError(f"REFUSED: a denominator vanishes at the all-leaves node k = {k}")
+    gv = (_at_m(ctx["g_num"], k).as_expr() / _at_m(ctx["g_den"], k).as_expr()).subs(R_SYM, R)
+    logb = tuple(_log_upper(sp.Rational(lp.a0 + lp.b1 * R)) for lp in ctx.get("logs", ()))
+    lhs = k * (ctx["l0"] + ctx["alpha"]) + gv + ctx["alpha"]
+    for lp, bd in zip(ctx.get("logs", ()), logb):
+        lhs += lp.kappa * sp.Rational(bd.H.numerator, bd.H.denominator)
+    hv, lhs = sp.Rational(hv), sp.Rational(lhs)
+    if check:
+        if not (ctx["lo"] <= hv <= ctx["hi"]):
+            raise ValueError(f"REFUSED: closure fails at the all-leaves node k = {k}: "
+                             f"h = {hv} outside [{ctx['lo']}, {ctx['hi']}]")
+        if not lhs <= _U(ctx["a"], ctx["b"], hv):
+            raise ValueError(f"REFUSED: step fails at the all-leaves node k = {k}: "
+                             f"{lhs} > U(h) = {_U(ctx['a'], ctx['b'], hv)}")
+    return AtomCase(k=k, hval=hv, lhs=lhs, logb=logb)
+
+
+def _exempt_cells(ctx) -> list:
+    """Leaf-exempt mode: for every child mix (p pooled, k leaves), 1 <= p, p + k <= M, cover
+    the pooled sum R in [p lo, p hi]."""
+    cells = []
+    xs = ctx["xs"]
+    for n in range(1, ctx["M"] + 1):
+        for p in range(1, n + 1):
+            k = n - p
+            for j in range(len(xs) - 1):
+                s, t = p * xs[j], p * xs[j + 1]
+                cands = [(j, "fixed")] + [(i, "fixed") for i in range(len(xs) - 1) if i != j]
+                got = _cover(ctx, n, s, t, cands, 0, p=p, k=k)
+                if got is None:
+                    raise ValueError(f"REFUSED: no certificate for the child mix p = {p} "
+                                     f"pooled + k = {k} leaves on R in [{s}, {t}] down to "
+                                     f"depth {_MAX_DEPTH}")
+                cells += got
+    return cells
+
+
 def verify_certificate(cert: ConcavePooledCert) -> None:
     """Re-verify every obligation of ``cert`` exactly (raises ``ValueError`` on failure)."""
     ctx = _ctx_of(cert)
     for i in range(1, cert.K):
         if not cert.a[i] < cert.a[i - 1]:
             raise ValueError("REFUSED: slopes not strictly decreasing (witness not concave)")
+    if cert.exempt:
+        for n in range(1, cert.M + 1):
+            for p in range(1, n + 1):
+                cs = [c for c in cert.cells if c.m == n and c.p == p and c.k == n - p]
+                _check_cover(cs, (n, p), p * cert.lo, p * cert.hi)
+        if len(cert.cells) != sum(1 for c in cert.cells if c.p is not None):
+            raise ValueError("REFUSED: a non-exempt cell in a leaf-exempt certificate")
+        ks = sorted(a.k for a in cert.atom_cases)
+        if ks != list(range(1, cert.M + 1)):
+            raise ValueError("REFUSED: the all-leaves cases do not cover k = 1..M")
+        for a in cert.atom_cases:
+            if _atom_case(ctx, a.k, check=True) != a:
+                raise ValueError(f"REFUSED: all-leaves case k = {a.k} does not match its "
+                                 f"exact recomputation")
     for mm in range(1, cert.M + 1):
+        if cert.exempt:
+            break
         cs = [c for c in cert.cells if c.m == mm]
         _check_cover(cs, mm, mm * cert.lo, mm * cert.hi)
     if cert.tail:
@@ -545,7 +745,7 @@ def verify_certificate(cert: ConcavePooledCert) -> None:
                              f"(fixed mode for m <= M, M1/Rhi for the tail)")
         if c.mode != "fixed" and cert.b[c.j] > 0:
             raise ValueError(f"REFUSED: tail mode {c.mode} on piece {c.j} needs b_j <= 0")
-        fresh = _build_cell(ctx, c.m, c.s, c.t, c.j, c.mode, check=True)
+        fresh = _build_cell(ctx, c.m, c.s, c.t, c.j, c.mode, check=True, p=c.p, k=c.k)
         if fresh != c:
             raise ValueError(f"REFUSED: cell [{c.s}, {c.t}] (m = {c.m}) does not match its "
                              f"exact recomputation")
@@ -560,11 +760,13 @@ def verify_certificate(cert: ConcavePooledCert) -> None:
 def _ctx_of(cert) -> dict:
     return dict(xs=cert.xs, a=cert.a, b=cert.b, lo=cert.lo, hi=cert.hi, M=cert.M,
                 alpha=cert.alpha, h_num=cert.h_num, h_den=cert.h_den,
-                g_num=cert.g_num, g_den=cert.g_den)
+                g_num=cert.g_num, g_den=cert.g_den, y0=cert.y_leaf, l0=cert.l_leaf,
+                logs=cert.logs)
 
 
 def concave_pooled_certificate(*, nodes, h, g, y_leaf, l_leaf, alpha=0, M, tail=True,
-                               tail_breaks=None, check: bool = True) -> ConcavePooledCert:
+                               tail_breaks=None, exempt_leaves: bool = False,
+                               check: bool = True) -> ConcavePooledCert:
     """Build (untrusted cell search) and EXACTLY verify a concave-pooled-induction certificate.
 
     ``nodes``: ``[(x_0, v_0), ..., (x_K, v_K)]`` rational, ``x`` strictly increasing, slopes
@@ -574,7 +776,18 @@ def concave_pooled_certificate(*, nodes, h, g, y_leaf, l_leaf, alpha=0, M, tail=
     ``b_j <= 0``); otherwise the claim is for trees of maximum child count ``<= M``.
 
     ``check=False`` is for hand-forged negative controls ONLY: it computes the certificate
-    algebra with every sign check skipped (the result carries ``checked=False``)."""
+    algebra with every sign check skipped (the result carries ``checked=False``).
+
+    Extension (2026-10-01), both backward compatible:
+
+    * ``g`` may contain terms ``kappa * log(a0 + b1 * R)`` (rational kappa > 0, a0 > 0,
+      b1 >= 0; needs lo >= 0 and y_leaf >= 0 so R >= 0): each is replaced on every cell by
+      its tangent majorant, the log constant enclosed by the mobius_tangent_cell Taylor box.
+    * ``exempt_leaves=True``: leaves are EXEMPT -- a leaf child enters exactly (its pair
+      (y_leaf, l_leaf)), only the non-leaf children are pooled, and the claim is made for
+      every NON-LEAF tree.  y_leaf need not lie in I and the leaf need not satisfy the base.
+      Every child mix (p pooled, k leaves), p + k <= M, is certified; ``tail`` must be
+      False (bounded child count)."""
     if len(nodes) < 2:
         raise ValueError("REFUSED: need at least two nodes")
     xs = tuple(_rat(x, "node x") for x, _ in nodes)
@@ -596,16 +809,22 @@ def concave_pooled_certificate(*, nodes, h, g, y_leaf, l_leaf, alpha=0, M, tail=
     l0 = _rat(l_leaf, "l_leaf")
     al = _rat(alpha, "alpha")
     hn, hd = _ratfun(h, "h")
-    gn, gd = _ratfun(g, "g")
+    g_rat, logs = _split_logs(g, "g")
+    gn, gd = _ratfun(g_rat, "g")
     lo, hi = xs[0], xs[-1]
-    if check:
+    if logs and (lo < 0 or y0 < 0):
+        raise ValueError("REFUSED: a log term in g needs lo >= 0 and y_leaf >= 0 (so every "
+                         "pooled sum R is >= 0 and the log argument stays positive)")
+    if exempt_leaves and tail:
+        raise ValueError("REFUSED: the leaf-exempt mode is bounded-degree only (tail=False)")
+    if check and not exempt_leaves:
         if not (lo <= y0 <= hi):
             raise ValueError(f"REFUSED: y_leaf = {y0} outside I = [{lo}, {hi}]")
         if not l0 + al <= _U(a, b, y0):
             raise ValueError(f"REFUSED: base fails: l_leaf + alpha = {l0 + al} > "
                              f"U(y_leaf) = {_U(a, b, y0)}")
     ctx = dict(xs=xs, a=a, b=b, lo=lo, hi=hi, M=M, alpha=al,
-               h_num=hn, h_den=hd, g_num=gn, g_den=gd)
+               h_num=hn, h_den=hd, g_num=gn, g_den=gd, y0=y0, l0=l0, logs=logs)
     if tail:
         if any(M_SYM in p.as_expr().free_symbols for p in (hn, hd, gn, gd)):
             raise ValueError("REFUSED: tail needs h and g independent of m (use tail=False "
@@ -617,7 +836,18 @@ def concave_pooled_certificate(*, nodes, h, g, y_leaf, l_leaf, alpha=0, M, tail=
         if not any(bj <= 0 for bj in b):
             raise ValueError("REFUSED: tail requested but no piece has intercept b_j <= 0")
     cells: list = []
-    if check:
+    atom_cases: tuple = ()
+    if exempt_leaves:
+        atom_cases = tuple(_atom_case(ctx, kk, check=check) for kk in range(1, M + 1))
+        if check:
+            cells = _exempt_cells(ctx)
+        else:  # forged: one cell per node segment per child mix, active piece
+            for n in range(1, M + 1):
+                for pp in range(1, n + 1):
+                    for j in range(len(xs) - 1):
+                        cells.append(_build_cell(ctx, n, pp * xs[j], pp * xs[j + 1], j,
+                                                 "fixed", check=False, p=pp, k=n - pp))
+    elif check:
         for mm in range(1, M + 1):
             cells += _fixed_m_cells(ctx, mm)
         if tail:
@@ -633,7 +863,8 @@ def concave_pooled_certificate(*, nodes, h, g, y_leaf, l_leaf, alpha=0, M, tail=
             cells.append(_build_cell(ctx, None, (M + 1) * lo, None, j0, "M1", check=False))
     cert = ConcavePooledCert(xs=xs, vs=vs, a=a, b=b, h_num=hn, h_den=hd, g_num=gn, g_den=gd,
                              y_leaf=y0, l_leaf=l0, alpha=al, M=M, tail=bool(tail),
-                             cells=tuple(cells), checked=check)
+                             cells=tuple(cells), checked=check, exempt=bool(exempt_leaves),
+                             logs=logs, atom_cases=atom_cases)
     if check:
         verify_certificate(cert)
     return cert
@@ -844,6 +1075,170 @@ open ConcavePooled
 """
 
 
+_GENERIC_LOG = r"""/-! ## Log tangent bound (extension, 2026-10-01; emitted once per file when g has a log)
+
+The tangent-line upper bound of the concave `log` (the mobius_tangent_cell lemma).
+conjecture1_proved = False. -/
+
+namespace ConcavePooled
+
+/-- Concavity of `log` as a tangent bound at `u`, with `log u ≤ H`. -/
+theorem log_tangent_le (u y H : ℝ) (hu : 0 < u) (hy : 0 < y) (hH : Real.log u ≤ H) :
+    Real.log y ≤ H + (y - u) / u := by
+  have h := Real.log_le_sub_one_of_pos (div_pos hy hu)
+  rw [Real.log_div hy.ne' hu.ne'] at h
+  have e : (y - u) / u = y / u - 1 := by field_simp
+  linarith
+
+end ConcavePooled
+"""
+
+_GENERIC_EXEMPT = r"""/-! ## Leaf-exempt pooled induction (extension, 2026-10-01; emitted once per file when used)
+
+Leaves are EXEMPT: a leaf child enters its parent's step with its exact pair `(y_leaf,
+l_leaf)` and is excluded from the Jensen pooling, which runs over the non-leaf children only;
+the claim is made for every NON-LEAF tree.  conjecture1_proved = False. -/
+
+namespace ConcavePooled
+
+/-- Is this tree an internal node (not a leaf)? -/
+def PTree.isNode : PTree → Bool
+  | PTree.leaf => false
+  | PTree.node _ _ => true
+
+theorem PTree.eq_leaf_of_not_isNode {b : PTree} (hb : ¬ b.isNode = true) : b = PTree.leaf := by
+  cases b with
+  | leaf => rfl
+  | node m cs => exact absurd rfl hb
+
+/-- Jensen for a minimum of affine pieces over a nonempty sub-family `s`. -/
+theorem minPieces_jensen_on {K : ℕ} (a b : Fin (K + 1) → ℝ) {n : ℕ} (s : Finset (Fin n))
+    (y : Fin n → ℝ) (hs : s.Nonempty) :
+    ∑ i ∈ s, minPieces a b (y i) ≤ (s.card : ℝ) * minPieces a b ((∑ i ∈ s, y i) / s.card) := by
+  have hn' : (0 : ℝ) < s.card := by exact_mod_cast hs.card_pos
+  rw [mul_comm, ← div_le_iff₀ hn']
+  apply le_minPieces
+  intro k
+  rw [div_le_iff₀ hn']
+  calc ∑ i ∈ s, minPieces a b (y i) ≤ ∑ i ∈ s, (a k * y i + b k) :=
+        Finset.sum_le_sum fun i _ => minPieces_le a b (y i) k
+    _ = (a k * ((∑ i ∈ s, y i) / s.card) + b k) * s.card := by
+        rw [Finset.sum_add_distrib, ← Finset.mul_sum, Finset.sum_const, nsmul_eq_mul]
+        field_simp
+
+/-- THE LEAF-EXEMPT INDUCTION.  A node with `p` non-leaf children (pooled at their mean `yb`)
+and `k` leaf children (exact) satisfies the step; then every non-leaf tree satisfies
+`ell + α·size ≤ U (msg)` with `msg ∈ [lo, hi]`.  The leaf itself is not claimed. -/
+theorem exempt_induction_core (ok : ℕ → Prop) (h g : ℕ → ℝ → ℝ) (U V : ℝ → ℝ)
+    (y0 l0 lo hi α : ℝ)
+    (hJ : ∀ (n : ℕ) (s : Finset (Fin n)) (y : Fin n → ℝ), s.Nonempty →
+      ∑ i ∈ s, V (y i) ≤ (s.card : ℝ) * V ((∑ i ∈ s, y i) / s.card))
+    (hUV : ∀ y, lo ≤ y → y ≤ hi → U y ≤ V y)
+    (hlohi : lo ≤ hi)
+    (hclos : ∀ p k : ℕ, 1 ≤ p + k → ok (p + k) → ∀ yb, lo ≤ yb → yb ≤ hi →
+      lo ≤ h (p + k) (p * yb + k * y0) ∧ h (p + k) (p * yb + k * y0) ≤ hi)
+    (hstep : ∀ p k : ℕ, 1 ≤ p + k → ok (p + k) → ∀ yb, lo ≤ yb → yb ≤ hi →
+      (p : ℝ) * V yb + k * (l0 + α) + g (p + k) (p * yb + k * y0) + α ≤
+        U (h (p + k) (p * yb + k * y0))) :
+    ∀ b : PTree, b.isNode = true → b.AllDeg ok →
+      lo ≤ b.msg h y0 ∧ b.msg h y0 ≤ hi ∧
+        b.ell g h l0 y0 + α * b.size ≤ U (b.msg h y0) := by
+  intro b
+  induction b with
+  | leaf => intro hb; exact absurd hb (by simp [PTree.isNode])
+  | node m cs ih =>
+    intro _ hdeg
+    obtain ⟨hok, hcs⟩ := hdeg
+    classical
+    set S := Finset.univ.filter (fun i => (cs i).isNode = true) with hS
+    set T := Finset.univ.filter (fun i => ¬ (cs i).isNode = true) with hT
+    have hcard : S.card + T.card = m + 1 := by
+      rw [hS, hT, Finset.card_filter_add_card_filter_not, Finset.card_univ,
+        Fintype.card_fin]
+    have hleaf : ∀ i ∈ T, cs i = PTree.leaf := fun i hi =>
+      PTree.eq_leaf_of_not_isNode (Finset.mem_filter.mp hi).2
+    have hc : ∀ i ∈ S, lo ≤ (cs i).msg h y0 ∧ (cs i).msg h y0 ≤ hi ∧
+        (cs i).ell g h l0 y0 + α * (cs i).size ≤ U ((cs i).msg h y0) :=
+      fun i hi => ih i (Finset.mem_filter.mp hi).2 (hcs i)
+    -- split every child sum into the non-leaf part (over S) and the leaf part (over T)
+    have split : ∀ f : PTree → ℝ, ∑ i, f (cs i) = ∑ i ∈ S, f (cs i) + T.card * f PTree.leaf := by
+      intro f
+      rw [← Finset.sum_filter_add_sum_filter_not Finset.univ (fun i => (cs i).isNode = true)]
+      congr 1
+      rw [Finset.sum_congr rfl (fun i hi => by rw [hleaf i hi]), Finset.sum_const,
+        nsmul_eq_mul]
+    set p := S.card with hp
+    set k := T.card with hk
+    set RS := ∑ i ∈ S, (cs i).msg h y0 with hRS
+    have hRlo : (p : ℝ) * lo ≤ RS := by
+      have := Finset.sum_le_sum (fun i hi => (hc i hi).1)
+      simpa [Finset.sum_const, nsmul_eq_mul] using this
+    have hRhi : RS ≤ (p : ℝ) * hi := by
+      have := Finset.sum_le_sum (fun i hi => (hc i hi).2.1)
+      simpa [Finset.sum_const, nsmul_eq_mul] using this
+    -- the pooled mean (any point of I when there is no non-leaf child)
+    set yb : ℝ := if p = 0 then lo else RS / p with hyb
+    have hpyb : (p : ℝ) * yb = RS := by
+      by_cases h0 : p = 0
+      · have hSe : S = ∅ := Finset.card_eq_zero.mp h0
+        simp [hyb, h0, hRS, hSe]
+      · have hp' : (0 : ℝ) < p := by exact_mod_cast Nat.pos_of_ne_zero h0
+        rw [hyb, if_neg h0]; field_simp
+    have hyblo : lo ≤ yb := by
+      by_cases h0 : p = 0
+      · rw [hyb, if_pos h0]
+      · have hp' : (0 : ℝ) < p := by exact_mod_cast Nat.pos_of_ne_zero h0
+        rw [hyb, if_neg h0, le_div_iff₀ hp']; linarith
+    have hybhi : yb ≤ hi := by
+      by_cases h0 : p = 0
+      · rw [hyb, if_pos h0]; exact hlohi
+      · have hp' : (0 : ℝ) < p := by exact_mod_cast Nat.pos_of_ne_zero h0
+        rw [hyb, if_neg h0, div_le_iff₀ hp']; linarith
+    have hn : 1 ≤ p + k := by omega
+    have hok' : ok (p + k) := by rw [hcard]; exact hok
+    have hcl := hclos p k hn hok' yb hyblo hybhi
+    have hst := hstep p k hn hok' yb hyblo hybhi
+    have hR : ∑ i, (cs i).msg h y0 = (p : ℝ) * yb + k * y0 := by
+      have e := split (fun c => c.msg h y0)
+      simp only [PTree.msg] at e
+      rw [e, hpyb, hRS]
+    rw [hcard] at hcl hst
+    -- Jensen over the non-leaf children
+    have hjen : ∑ i ∈ S, ((cs i).ell g h l0 y0 + α * (cs i).size) ≤ (p : ℝ) * V yb := by
+      have h1 : ∑ i ∈ S, ((cs i).ell g h l0 y0 + α * (cs i).size) ≤
+          ∑ i ∈ S, V ((cs i).msg h y0) :=
+        Finset.sum_le_sum fun i hi => le_trans (hc i hi).2.2 (hUV _ (hc i hi).1 (hc i hi).2.1)
+      by_cases h0 : p = 0
+      · have hSe : S = ∅ := Finset.card_eq_zero.mp h0
+        simp [hSe, h0]
+      · have hne : S.Nonempty := Finset.card_pos.mp (Nat.pos_of_ne_zero h0)
+        have := hJ (m + 1) S (fun i => (cs i).msg h y0) hne
+        have hp' : (0 : ℝ) < p := by exact_mod_cast Nat.pos_of_ne_zero h0
+        have hyb' : yb = RS / p := by rw [hyb, if_neg h0]
+        rw [hyb']
+        exact le_trans h1 this
+    have hsz : (((PTree.node m cs).size : ℕ) : ℝ) =
+        (∑ i ∈ S, ((cs i).size : ℝ)) + k * 1 + 1 := by
+      have := split (fun c => (c.size : ℝ))
+      simp only [PTree.size, Nat.cast_add, Nat.cast_sum, Nat.cast_one] at this ⊢
+      rw [this]
+    have hell : (PTree.node m cs).ell g h l0 y0 =
+        ∑ i ∈ S, (cs i).ell g h l0 y0 + k * l0 + g (m + 1) ((p : ℝ) * yb + k * y0) := by
+      have e := split (fun c => c.ell g h l0 y0)
+      simp only [PTree.ell] at e ⊢
+      rw [e, hR]
+    have hmsg : (PTree.node m cs).msg h y0 = h (m + 1) ((p : ℝ) * yb + k * y0) := by
+      simp only [PTree.msg]; rw [hR]
+    rw [hmsg]
+    refine ⟨hcl.1, hcl.2, ?_⟩
+    rw [hell, hsz]
+    rw [Finset.sum_add_distrib, ← Finset.mul_sum] at hjen
+    nlinarith [hjen, hst]
+
+end ConcavePooled
+"""
+
+
 @dataclass
 class ConcavePooledInductionEmitter(Emitter):
     """Emit the generic concave pooled induction once, then per instance the witness, the
@@ -861,6 +1256,15 @@ class ConcavePooledInductionEmitter(Emitter):
     def emit_body(self, fam, profile: LeanProfile) -> tuple[str, int]:
         parts = [_GENERIC]
         nthm = 6
+        # extension (2026-10-01): extra generic sections only when an instance needs them,
+        # so a file without exempt / log instances is unchanged
+        certs = [inst.payload for inst in fam.instances]
+        if any(getattr(c, "logs", ()) for c in certs):
+            parts.append(_GENERIC_LOG)
+            nthm += 1
+        if any(getattr(c, "exempt", False) for c in certs):
+            parts.append(_GENERIC_EXEMPT)
+            nthm += 3
         for inst in fam.instances:
             text, n = self._emit_instance(inst.payload, inst.lean_name)
             parts.append(text)
@@ -873,6 +1277,8 @@ class ConcavePooledInductionEmitter(Emitter):
 
     # -- per instance -------------------------------------------------------------------
     def _emit_instance(self, c: ConcavePooledCert, nm: str) -> tuple[str, int]:
+        if c.exempt:
+            return self._emit_instance_exempt(c, nm)
         L: list[str] = []
         n = 0
         K = c.K
@@ -901,13 +1307,10 @@ class ConcavePooledInductionEmitter(Emitter):
         L.append(f"noncomputable def {nm}_B : Fin {K} → ℝ := ![{', '.join(_q(x) for x in c.b)}]")
         L.append(f"/-- The witness: the minimum of its {K} affine pieces. -/")
         L.append(f"noncomputable def {nm}_U : ℝ → ℝ := minPieces {nm}_A {nm}_B")
-        for fn, (pn, pd) in (("h", (c.h_num, c.h_den)), ("g", (c.g_num, c.g_den))):
-            uses_m = any(M_SYM in p.as_expr().free_symbols for p in (pn, pd))
-            uses_r = any(R_SYM in p.as_expr().free_symbols for p in (pn, pd))
-            L.append(f"noncomputable def {nm}_{fn} : ℕ → ℝ → ℝ := fun {'m' if uses_m else '_'} "
-                     f"{'R' if uses_r else '_'} => "
-                     f"{fun_text(pn, pd)}")
+        L += self._defs_hg(c, nm, fun_text)
         L.append("")
+        hmap = self._log_consts(c, nm, L)
+        n += len(hmap)
         U = f"{nm}_U"
         # `fin_cases` on a single piece leaves one goal: sequence instead of `<;>` (linter)
         fc = "<;>" if K > 1 else ";"
@@ -931,7 +1334,7 @@ class ConcavePooledInductionEmitter(Emitter):
         n += 1
         # cells
         for ci, cell in enumerate(c.cells):
-            text, k = self._emit_cell(c, nm, ci, cell)
+            text, k = self._emit_cell(c, nm, ci, cell, hmap)
             L.append(text)
             n += k
         # fixed-m steps
@@ -944,6 +1347,228 @@ class ConcavePooledInductionEmitter(Emitter):
         L.append(self._emit_assembly(c, nm))
         n += 5
         return "\n".join(L), n
+
+    # -- leaf-exempt instance (extension, 2026-10-01) ------------------------------------
+    def _emit_instance_exempt(self, c: ConcavePooledCert, nm: str) -> tuple[str, int]:
+        L: list[str] = []
+        n = 0
+        K = c.K
+        lo, hi, al = _q(c.lo), _q(c.hi), al_text(c)
+        y0, l0 = _q(c.y_leaf), _q(c.l_leaf)
+        mv = "(m : ℝ)" if c.m_dependent else None
+
+        def fun_text(num, den):
+            nt = _poly_lean(num, mv)
+            if den.total_degree() == 0:
+                return nt
+            return f"{nt} / {_poly_lean(den, mv)}"
+
+        logs_txt = (" + " + " + ".join(f"{lp.kappa} log({lp.a0} + {lp.b1} R)" for lp in c.logs)
+                    if c.logs else "")
+        L.append(f"/-! ## Instance `{nm}` (LEAF-EXEMPT, extension 2026-10-01)\n\n"
+                 f"Claim: `ell + ({c.alpha}) * size ≤ U (msg)` on every NON-LEAF finite rooted "
+                 f"tree of child count at most {c.M}, for\n"
+                 f"  h(m, R) = {sp.sstr(c.h_num.as_expr() / c.h_den.as_expr())},  "
+                 f"g(m, R) = {sp.sstr(c.g_num.as_expr() / c.g_den.as_expr())}{logs_txt},\n"
+                 f"  leaf (y, l) = ({c.y_leaf}, {c.l_leaf}) entering EXACTLY (never pooled), U the "
+                 f"concave interpolant of\n"
+                 f"  {', '.join(f'({x}, {v})' for x, v in zip(c.xs, c.vs))}.\n"
+                 f"Certificate: {len(c.cells)} cells over the child mixes (p pooled, k leaves), "
+                 f"p + k ≤ {c.M}, plus {len(c.atom_cases)} all-leaves cases. -/\n")
+        L.append(f"noncomputable def {nm}_A : Fin {K} → ℝ := ![{', '.join(_q(x) for x in c.a)}]")
+        L.append(f"noncomputable def {nm}_B : Fin {K} → ℝ := ![{', '.join(_q(x) for x in c.b)}]")
+        L.append(f"/-- The witness: the minimum of its {K} affine pieces. -/")
+        L.append(f"noncomputable def {nm}_U : ℝ → ℝ := minPieces {nm}_A {nm}_B")
+        L += self._defs_hg(c, nm, fun_text)
+        L.append("")
+        hmap = self._log_consts(c, nm, L)
+        n += len(hmap)
+        U = f"{nm}_U"
+        fc = "<;>" if K > 1 else ";"
+        for j in range(K):
+            L.append(f"theorem {nm}_piece{j} (x : ℝ) : {U} x ≤ {_q(c.a[j])} * x + {_q(c.b[j])} := by\n"
+                     f"  have := minPieces_le {nm}_A {nm}_B x {j}\n"
+                     f"  simpa [{U}, {nm}_A, {nm}_B] using this\n")
+            n += 1
+        for i, (x, v) in enumerate(zip(c.xs, c.vs)):
+            j = 0 if i == 0 else i - 1
+            L.append(f"theorem {nm}_node{i} : {U} {_q(x)} = {_q(v)} := by\n"
+                     f"  apply le_antisymm\n"
+                     f"  · linarith [{nm}_piece{j} {_q(x)}]\n"
+                     f"  · apply le_minPieces; intro k; fin_cases k {fc} norm_num [{nm}_A, {nm}_B]\n")
+            n += 1
+        for ci, cell in enumerate(c.cells):
+            text, k = self._emit_cell(c, nm, ci, cell, hmap)
+            L.append(text)
+            n += k
+        names = []
+        for nn in range(1, c.M + 1):
+            for p in range(0, nn + 1):
+                kk = nn - p
+                L.append(self._emit_xstep(c, nm, p, kk, hmap))
+                names.append((p, kk))
+                n += 2
+        L.append(self._emit_xassembly(c, nm, names))
+        n += 5 + (1 if c.l_leaf + c.alpha > c.umax else 0)
+        return "\n".join(L), n
+
+    def _xstmt(self, c, nm, p, k) -> tuple[str, str]:
+        """The (step, closure) statements of the child mix (p, k), in the exact form
+        `interval_cases` leaves in the generic `hstep`/`hclos`."""
+        P, Kc = f"(({p} : ℕ) : ℝ)", f"(({k} : ℕ) : ℝ)"
+        arg = f"({P} * yb + {Kc} * {_q(c.y_leaf)})"
+        hc = f"{nm}_h ({p} + {k}) {arg}"
+        step = (f"{P} * {nm}_U yb + {Kc} * ({_q(c.l_leaf)} + {al_text(c)}) + "
+                f"{nm}_g ({p} + {k}) {arg} + {al_text(c)} ≤ {nm}_U ({hc})")
+        clos = f"{_q(c.lo)} ≤ {hc} ∧ {hc} ≤ {_q(c.hi)}"
+        return step, clos
+
+    def _emit_xstep(self, c, nm, p, k, hmap) -> str:
+        nn = p + k
+        step, clos = self._xstmt(c, nm, p, k)
+        shift = k * c.y_leaf
+        head = (("set_option linter.unusedVariables false in\n" if p == 0 else "")
+                + f"theorem {nm}_xs_{p}_{k} (yb : ℝ) (hl : {_q(c.lo)} ≤ yb) (hu : yb ≤ {_q(c.hi)}) :\n"
+                f"    {step} := by\n")
+        head2 = ("set_option linter.unusedVariables false in\n"
+                 f"theorem {nm}_xc_{p}_{k} (yb : ℝ) (hl : {_q(c.lo)} ≤ yb) (hu : yb ≤ {_q(c.hi)}) :\n"
+                 f"    {clos} := by\n")
+        P, Kc = f"(({p} : ℕ) : ℝ)", f"(({k} : ℕ) : ℝ)"
+        if p >= 1:
+            R = f"{_q(p)} * yb"
+            target = R if not shift else f"{R} + {_q(shift)}"
+            lead = [f"  have e1 : {P} * yb + {Kc} * {_q(c.y_leaf)} = {target} := by push_cast; ring",
+                    f"  rw [show ({p} + {k} : ℕ) = {nn} from rfl, e1]",
+                    f"  push_cast"]
+            lead2 = lead[:2]
+            cells = [(i, cl) for i, cl in enumerate(c.cells)
+                     if cl.p == p and cl.k == k and cl.m == nn]
+
+            def fin(ci, cell, lo_h, hi_h):
+                args = f"({R}) {lo_h}" + ("" if hi_h is None else f" {hi_h}")
+                return f"linarith [{nm}_c{ci} {args}, {nm}_piece{cell.j} yb]"
+
+            def fin2(ci, cell, lo_h, hi_h):
+                args = f"({R}) {lo_h}" + ("" if hi_h is None else f" {hi_h}")
+                return f"exact {nm}_c{ci}_cl {args}"
+            body = self._split(cells, R, lead, fin)
+            body2 = self._split(cells, R, lead2, fin2)
+            return head + "\n".join(body) + "\n\n" + head2 + "\n".join(body2) + "\n"
+        # p = 0: every child is a leaf -- pure numbers
+        a = next(x for x in c.atom_cases if x.k == k)
+        cval = _q(shift)
+        lines = [f"  have e1 : {P} * yb + {Kc} * {_q(c.y_leaf)} = {cval} := by push_cast; ring",
+                 f"  rw [show ({p} + {k} : ℕ) = {nn} from rfl, e1]"]
+        clos_lines = lines + [f"  norm_num [{nm}_h]"]
+        gtxt = self._closed_at(c.g_num, c.g_den, nn, shift)
+        htxt = _q(a.hval)
+        lines.append(f"  have eh : {nm}_h {nn} {cval} = {htxt} := by norm_num [{nm}_h]")
+        if c.logs:
+            logs_at = " + ".join(f"{_q(lp.kappa)} * Real.log {_fq(bd.u)}"
+                                 for lp, bd in zip(c.logs, a.logb))
+            lines.append(f"  have eg : {nm}_g {nn} {cval} = {gtxt} + {logs_at} := by "
+                         f"norm_num [{nm}_g]")
+        else:
+            lines.append(f"  have eg : {nm}_g {nn} {cval} = {gtxt} := by norm_num [{nm}_g]")
+        lines.append(f"  rw [eh, eg]")
+        lines.append(f"  have hU : {_q(a.lhs)} ≤ {nm}_U {htxt} := by\n"
+                     f"    apply le_minPieces; intro K; fin_cases K{(' <;>' if c.K > 1 else ';')} "
+                     f"norm_num [{nm}_A, {nm}_B]")
+        hints = ["hU"]
+        for i, (lp, bd) in enumerate(zip(c.logs, a.logb)):
+            lines.append(f"  have hk{i} := mul_le_mul_of_nonneg_left {hmap[bd.u]} "
+                         f"(by norm_num : (0 : ℝ) ≤ {_q(lp.kappa)})")
+            hints.append(f"hk{i}")
+        lines.append(f"  push_cast")
+        lines.append(f"  linarith [{', '.join(hints)}]")
+        return head + "\n".join(lines) + "\n\n" + head2 + "\n".join(clos_lines) + "\n"
+
+    def _closed_at(self, num, den, m, R) -> str:
+        """The exact value of a rational function of (m, R) at numbers, as a Lean literal."""
+        v = (_at_m(num, m).as_expr() / _at_m(den, m).as_expr()).subs(R_SYM, R)
+        return _q(sp.Rational(v))
+
+    def _emit_xassembly(self, c, nm, names) -> str:
+        M = c.M
+        lo, hi = _q(c.lo), _q(c.hi)
+        y0, l0, al = _q(c.y_leaf), _q(c.l_leaf), al_text(c)
+        U = f"{nm}_U"
+        stmt_step = (f"(p : ℝ) * {U} yb + k * ({l0} + {al}) + {nm}_g (p + k) (p * yb + k * {y0})"
+                     f" + {al} ≤ {U} ({nm}_h (p + k) (p * yb + k * {y0}))")
+        stmt_clos = (f"{lo} ≤ {nm}_h (p + k) (p * yb + k * {y0}) ∧ "
+                     f"{nm}_h (p + k) (p * yb + k * {y0}) ≤ {hi}")
+        alts_s = " | ".join(f"exact {nm}_xs_{p}_{k} yb hl hu" for p, k in names)
+        alts_c = " | ".join(f"exact {nm}_xc_{p}_{k} yb hl hu" for p, k in names)
+        pre = (f"  intro p k h1 h2 yb hl hu\n"
+               f"  have hp : p ≤ {M} := by omega\n"
+               f"  have hk : k ≤ {M} := by omega\n"
+               f"  interval_cases p <;> interval_cases k <;> first | (exfalso; omega) | ")
+        out = []
+        out.append(f"theorem {nm}_xhstep : ∀ p k : ℕ, 1 ≤ p + k → p + k ≤ {M} → ∀ yb : ℝ, "
+                   f"{lo} ≤ yb → yb ≤ {hi} →\n    {stmt_step} := by\n" + pre + alts_s + "\n")
+        out.append(f"theorem {nm}_xhclos : ∀ p k : ℕ, 1 ≤ p + k → p + k ≤ {M} → ∀ yb : ℝ, "
+                   f"{lo} ≤ yb → yb ≤ {hi} →\n    {stmt_clos} := by\n" + pre + alts_c + "\n")
+        umax = _q(c.umax)
+        ul = ["set_option linter.unusedVariables false in",
+              f"theorem {nm}_U_le_max (x : ℝ) (hl : {lo} ≤ x) (hu : x ≤ {hi}) : {U} x ≤ {umax} := by"]
+        for i in range(c.K):
+            if i < c.K - 1:
+                ul.append(f"  rcases le_or_gt x {_q(c.xs[i + 1])} with h_{i} | h_{i}")
+            ul.append(f"  · linarith [{nm}_piece{i} x]")
+        out.append("\n".join(ul) + "\n")
+        concl = (f"b.ell {nm}_g {nm}_h {l0} {y0} + {al} * b.size ≤ {U} (b.msg {nm}_h {y0})")
+        out.append(f"/-- MAIN.  The certified bound on every NON-LEAF tree of child count at most "
+                   f"{M} (leaves exempt). -/\n"
+                   f"theorem {nm} (b : PTree) (hn : b.isNode = true)"
+                   f" (hb : b.AllDeg (fun m => m ≤ {M})) :\n"
+                   f"    {lo} ≤ b.msg {nm}_h {y0} ∧ b.msg {nm}_h {y0} ≤ {hi} ∧\n"
+                   f"      {concl} :=\n"
+                   f"  exempt_induction_core (fun m => m ≤ {M}) {nm}_h {nm}_g {U} {U} {y0} {l0} "
+                   f"{lo} {hi} {al}\n"
+                   f"    (fun _ s y hs => minPieces_jensen_on {nm}_A {nm}_B s y hs) "
+                   f"(fun _ _ _ => le_rfl) (by norm_num) {nm}_xhclos {nm}_xhstep b hn hb\n")
+        out.append(f"/-- Uniform corollary: `ell + α·size ≤ max_j v_j = {c.umax}` on every non-leaf "
+                   f"tree. -/\n"
+                   f"theorem {nm}_uniform (b : PTree) (hn : b.isNode = true)"
+                   f" (hb : b.AllDeg (fun m => m ≤ {M})) :\n"
+                   f"    b.ell {nm}_g {nm}_h {l0} {y0} + {al} * b.size ≤ {umax} := by\n"
+                   f"  obtain ⟨h1, h2, h3⟩ := {nm} b hn hb\n"
+                   f"  linarith [{nm}_U_le_max _ h1 h2]\n")
+        if c.l_leaf + c.alpha > c.umax:
+            out.append(f"/-- The single leaf VIOLATES the uniform bound (`l_leaf + α = "
+                       f"{c.l_leaf + c.alpha} > {c.umax}`): no certificate that pools the leaves "
+                       f"(and so covers the leaf tree) can prove it; exempting them can. -/\n"
+                       f"theorem {nm}_leaf_breaks : {umax} < {l0} + {al} := by norm_num\n")
+        return "\n".join(out)
+
+    def _defs_hg(self, c, nm, fun_text) -> list[str]:
+        out = []
+        for fn, (pn, pd) in (("h", (c.h_num, c.h_den)), ("g", (c.g_num, c.g_den))):
+            uses_m = any(M_SYM in p.as_expr().free_symbols for p in (pn, pd))
+            uses_r = any(R_SYM in p.as_expr().free_symbols for p in (pn, pd))
+            extra = ""
+            if fn == "g" and c.logs:
+                uses_r = uses_r or any(lp.b1 != 0 for lp in c.logs)
+                extra = " + " + _log_text(c.logs, "R")
+            out.append(f"noncomputable def {nm}_{fn} : ℕ → ℝ → ℝ := fun {'m' if uses_m else '_'} "
+                       f"{'R' if uses_r else '_'} => "
+                       f"{fun_text(pn, pd)}{extra}")
+        return out
+
+    def _log_consts(self, c, nm, L) -> dict:
+        """One `Real.log u ≤ H` lemma per distinct tangent constant (extension, logs);
+        returns the map u -> lemma name."""
+        if not c.logs:
+            return {}
+        from .emit_mobius_tangent_cell import _log_bound_theorem
+        seen: dict = {}
+        bds = [bd for cl in c.cells for bd in cl.logb]
+        bds += [bd for a in c.atom_cases for bd in a.logb]
+        for bd in bds:
+            if bd.u not in seen:
+                seen[bd.u] = f"{nm}_logH{len(seen)}"
+                L.append(_log_bound_theorem(bd, seen[bd.u]))
+        return seen
 
     def _cell_args(self, cell, with_m: bool) -> str:
         margs = "(m : ℕ) " if with_m else ""
@@ -958,22 +1583,31 @@ class ConcavePooledInductionEmitter(Emitter):
 
     def _lhs_text(self, c, cell, R: str = "R") -> str:
         a, b = c.a[cell.j], c.b[cell.j]
+        if cell.mode == "fixed" and cell.p is not None:  # leaf-exempt cell
+            out = f"{_q(a)} * {R} + {_q(cell.p)} * {_q(b)}"
+            if cell.k:
+                out += f" + {_q(cell.k)} * ({_q(c.l_leaf)} + {al_text(c)})"
+            return out
         if cell.mode == "fixed":
             return f"{_q(a)} * {R} + {_q(cell.m)} * {_q(b)}"
         if cell.mode == "M1":
             return f"{_q(a)} * {R} + {_q(c.M + 1)} * {_q(b)}"
         return f"{_q(a + b / c.hi)} * {R}"
 
-    def _emit_cell(self, c, nm, ci, cell) -> tuple[str, int]:
+    def _emit_cell(self, c, nm, ci, cell, hmap=None) -> tuple[str, int]:
         L = []
         tailc = cell.m is None
         marg = "m" if tailc else str(cell.m)
-        hcall, gcall = f"{nm}_h {marg} R", f"{nm}_g {marg} R"
+        shift = cell.k * c.y_leaf if cell.k else 0
+        argR = "R" if not shift else f"(R + {_q(shift)})"
+        hcall, gcall = f"{nm}_h {marg} {argR}", f"{nm}_g {marg} {argR}"
         args = self._cell_args(cell, tailc)
         lhs = self._lhs_text(c, cell)
         mlit = cell.m
         hn, hd = _at_m(c.h_num, mlit), _at_m(c.h_den, mlit)
         gn, gd = _at_m(c.g_num, mlit), _at_m(c.g_den, mlit)
+        if shift:
+            hn, hd, gn, gd = (_shift(P, shift) for P in (hn, hd, gn, gd))
 
         def closed(num, den):
             if den.degree() <= 0:
@@ -984,13 +1618,19 @@ class ConcavePooledInductionEmitter(Emitter):
             return f"{_poly1(_poly_tuple(num))} / {_poly1(_poly_tuple(den))}"
 
         h_closed, g_closed = f"({closed(hn, hd)})", f"({closed(gn, gd)})"
+        g_exact = g_closed
+        if c.logs:  # extension: eg states the logs exactly, the obligations use the majorant
+            g_exact = f"{g_closed} + {_log_text(c.logs, argR)}"
+            g_closed = "(" + g_closed + " + " + " + ".join(
+                f"{_q(lp.kappa)} * ({_fq(bd.H)} + ({_log_arg(lp, argR)} - {_fq(bd.u)}) / "
+                f"{_fq(bd.u)})" for lp, bd in zip(c.logs, cell.logb)) + ")"
         # m-free: the closed form is printed exactly as the definition body, so unfolding
         # closes it; m-dependent: the cast `((m : ℕ) : ℝ)` and the expanded coefficients
         # differ syntactically, so `ring` finishes.
         def _mdep(*ps):
             return any(M_SYM in p.as_expr().free_symbols for p in ps)
-        tail_h = "; ring" if _mdep(c.h_num, c.h_den) else ""
-        tail_g = "; ring" if _mdep(c.g_num, c.g_den) else ""
+        tail_h = "; ring" if (_mdep(c.h_num, c.h_den) or shift) else ""
+        tail_g = "; ring" if (_mdep(c.g_num, c.g_den) or shift) else ""
         common = self._cell_intro(cell)
         dt_poly = cell.dtot.poly if cell.dtot is not None else None
         for di, pc in enumerate(cell.dens):
@@ -1002,7 +1642,15 @@ class ConcavePooledInductionEmitter(Emitter):
                           f"linarith [{_facts(cell.dtot)}]")
             common.append("  have hDt' := hDt.ne'")
         common.append(f"  have eh : {hcall} = {h_closed} := by simp only [{nm}_h]{tail_h}")
-        common.append(f"  have eg : {gcall} = {g_closed} := by simp only [{nm}_g]{tail_g}")
+        common.append(f"  have eg : {gcall} = {g_exact} := by simp only [{nm}_g]{tail_g}")
+        if c.logs:
+            for i, (lp, bd) in enumerate(zip(c.logs, cell.logb)):
+                arg = _log_arg(lp, argR)
+                common.append(f"  have hy{i} : 0 < {arg} := by linarith")
+                common.append(f"  have hl{i} := log_tangent_le {_fq(bd.u)} ({arg}) {_fq(bd.H)} "
+                              f"(by norm_num) hy{i} {hmap[bd.u]}")
+                common.append(f"  have hk{i} := mul_le_mul_of_nonneg_left hl{i} "
+                              f"(by norm_num : (0 : ℝ) ≤ {_q(lp.kappa)})")
         nthm = 0
         for ob in cell.obligations:
             if ob.side == "piece":
@@ -1020,7 +1668,9 @@ class ConcavePooledInductionEmitter(Emitter):
             rhs_c = rhs_t.replace(hcall, h_closed).replace(gcall, g_closed)
             N = _poly1(ob.num.poly)
             body = [ln for ln in common
-                    if not (ln.startswith("  have eg") and gcall not in stmt)]
+                    if not (ln.startswith("  have eg") and gcall not in stmt)
+                    and not (ln.startswith(("  have hy", "  have hl", "  have hk"))
+                             and gcall not in stmt)]
             rws = ", ".join(x for x, cl in (("eh", hcall), ("eg", gcall)) if cl in stmt)
             body.append(f"  have key : 0 ≤ {N} := by linarith [{_facts(ob.num)}]")
             # an identically-zero obligation (e.g. an m-dependent `h` equal to a bound of I)
@@ -1208,6 +1858,21 @@ def al_text(c) -> str:
     return _q(c.alpha)
 
 
+def _fq(f) -> str:
+    """A ``Fraction`` as a Lean real literal."""
+    return _q(sp.Rational(f.numerator, f.denominator))
+
+
+def _log_arg(lp, arg: str) -> str:
+    return f"{_q(lp.a0)} + {_q(lp.b1)} * {arg}"
+
+
+def _log_text(logs, arg: str) -> str:
+    """`κ₁ * Real.log (a₁ + b₁ * arg) + ...` -- printed identically in the definition of g
+    and in each cell's `eg`, so unfolding matches."""
+    return " + ".join(f"{_q(lp.kappa)} * Real.log ({_log_arg(lp, arg)})" for lp in logs)
+
+
 def concave_pooled_induction_family(name, grid, lean_name, spec, constants=None):
     """Build a concave-pooled-induction family (kind='concave_pooled_induction').
 
@@ -1235,6 +1900,42 @@ MATCHING_DENSITY_SPEC = dict(
 
 #: The same recursion restricted to PATHS (child count at most 1): bounded-degree mode.
 PATH_DENSITY_SPEC = dict(MATCHING_DENSITY_SPEC, M=1, tail=False)
+
+#: Extension (2026-10-01), LEAF-EXEMPT dogfood.  The same matching message, profit
+#: `l(v) = -sum_{u in T_v} (1 - y_u)` (so `g = -R/(1+R)`, `l_leaf = 0`), child count <= 2.
+#: For every NON-LEAF tree the certificate proves `sum_u (1 - y_u) >= (27/100) |T| - 83/500`
+#: (uniform corollary `ell + (27/100) |T| <= max U = 83/500`).  The single leaf has
+#: `l_leaf + alpha = 27/100 > 83/500`, so it VIOLATES this bound: any certificate that pools the
+#: leaves (and therefore covers the one-vertex tree) has `max U >= U(y_leaf) >= 27/100`.  With
+#: the leaves entering exactly, the witness lives on the non-leaf message range [1/3, 3/4] only.
+LEAF_EXEMPT_SPEC = dict(
+    nodes=[(sp.Rational(1, 3), sp.Rational(29, 200)), (sp.Rational(3, 5), sp.Rational(4, 25)),
+           (sp.Rational(3, 4), sp.Rational(83, 500))],
+    h="1/(1+R)", g="-R/(1+R)", y_leaf=1, l_leaf=0, alpha=sp.Rational(27, 100), M=2,
+    tail=False, exempt_leaves=True,
+)
+
+#: The flat (one-piece) leaf-exempt certificate at alpha = 1/4: `sum_u (1 - y_u) >= |T|/4 - 1/12`
+#: on every non-leaf tree of child count <= 2, TIGHT at the root with two leaf children
+#: (`ell + 3/4 = 1/12`); the negative-control twin lowers the witness by 1/1000.
+LEAF_EXEMPT_FLAT_SPEC = dict(
+    nodes=[(sp.Rational(1, 3), sp.Rational(1, 12)), (sp.Rational(3, 4), sp.Rational(1, 12))],
+    h="1/(1+R)", g="-R/(1+R)", y_leaf=1, l_leaf=0, alpha=sp.Rational(1, 4), M=2,
+    tail=False, exempt_leaves=True,
+)
+
+#: Extension (2026-10-01), LOG-PROFIT dogfood (synthetic profit, every finite rooted tree):
+#: the matching-density recursion with `g = -1/(1+R) + (1/5) log(1 + R/2)`, alpha = 1/2,
+#: the original witness; i.e. `sum_u y_u - (1/5) sum_{v internal} log(1 + R_v/2) >= |T|/2`.
+LOG_PROFIT_SPEC = dict(MATCHING_DENSITY_SPEC, g="-1/(1+R) + log(1 + R/2)/5",
+                       alpha=sp.Rational(1, 2))
+
+#: Both extensions at once: leaf-exempt with a log term, alpha = 1/5, flat witness 1/10.
+LEAF_EXEMPT_LOG_SPEC = dict(
+    nodes=[(sp.Rational(1, 3), sp.Rational(1, 10)), (sp.Rational(3, 4), sp.Rational(1, 10))],
+    h="1/(1+R)", g="-R/(1+R) + log(1 + R/2)/10", y_leaf=1, l_leaf=0, alpha=sp.Rational(1, 5),
+    M=2, tail=False, exempt_leaves=True,
+)
 
 
 if __name__ == "__main__":

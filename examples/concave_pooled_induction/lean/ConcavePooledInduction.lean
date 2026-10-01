@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family ConcavePooledInduction | input-hash 86dba127a14845ca
+/- telperion 0.1.6 | family ConcavePooledInduction | input-hash f93eb2c8c3c4c6e1
    165 theorems, 21 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/

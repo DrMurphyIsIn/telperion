@@ -20,6 +20,13 @@ Four instances: the concave quadratic `f = -(x²)+x` on [0,1] (the headline port
 a second concave quadratic `f = -2x²+x+1` on [0,1], a convex `f = x²` on [0,1],
 and an affine `f = 2x+1` on [0,1].
 
+Kink-minimum extension (2026-10-01): three more instances certify that a continuous
+piecewise polynomial with ONE interior kink at a rational kappa is minimized at kappa
+(left piece decreasing, right piece increasing, each by a Bernstein sign check on the
+derivative): `|x - 1/3| + x^2` on [0,1] (min 1/9 at 1/3, so also nonnegative), the cubic
+pieces `(x-1)^2 (x+2)` | `x^3 - x` on [-1,2] (min 0 at 1), and `x^2/2 + |x| x/2 + |x|/2`
+on [-1,1] (pieces `-x/2` | `x^2 + x/2`, min 0 at 0).
+
 HONEST SCOPE: reduces a sign-definite-curvature interval extremum to the two
 endpoints; verifies the curvature sign in exact sympy (wrong sign ⟹ refusal).  It
 does NOT choose f nor prove any downstream inequality.  conjecture1_proved=False.
@@ -48,12 +55,22 @@ _SPECS = {
     1: {"mode": "concave", "f_expr": "-2*x**2 + x + 1", "a": 0, "b": 1},
     2: {"mode": "convex", "f_expr": "x**2", "a": 0, "b": 1},
     3: {"mode": "affine", "f_expr": "2*x + 1", "a": 0, "b": 1},
+    # kink-minimum extension (2026-10-01): min at an interior kink
+    4: {"mode": "kink", "left": "1/3 - x + x**2", "right": "x - 1/3 + x**2",
+        "kappa": "1/3", "a": 0, "b": 1, "f_expr": "Abs(x - 1/3) + x**2", "value": "1/9"},
+    5: {"mode": "kink", "left": "(x - 1)**2 * (x + 2)", "right": "x**3 - x",
+        "kappa": 1, "a": -1, "b": 2, "value": 0},
+    6: {"mode": "kink", "left": "-x/2", "right": "x**2 + x/2", "kappa": 0,
+        "a": -1, "b": 1, "f_expr": "x**2/2 + Abs(x)*x/2 + Abs(x)/2", "value": 0},
 }
 _NAMES = {
     0: "concave_quad_min_endpoints",
     1: "concave_quad2_min_endpoints",
     2: "convex_quad_max_endpoints",
     3: "affine_line_boundary",
+    4: "kink_abs_quad_min",
+    5: "kink_cubic_pieces_min",
+    6: "kink_signed_abs_min",
 }
 _OUT = Path(__file__).resolve().parent / "lean" / "CurvatureBoundary.lean"
 
@@ -61,7 +78,7 @@ _OUT = Path(__file__).resolve().parent / "lean" / "CurvatureBoundary.lean"
 def build() -> str:
     fam = curvature_boundary_family(
         "CurvatureBoundary",
-        GridSpec([("case", [0, 1, 2, 3])]),
+        GridSpec([("case", [0, 1, 2, 3, 4, 5, 6])]),
         lambda pt: _NAMES[pt["case"]],
         spec=lambda pt: _SPECS[pt["case"]],
     )

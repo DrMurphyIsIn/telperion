@@ -656,3 +656,57 @@ normalizer `(1 + 3λ/4)^n` for the hard-core recursion, which is false at a sing
 row-0 residual cell cannot close, so the kernel rejects `forged_res0` (its only error), and the
 true twin compiles. Scope: the two-row invariant is a sufficient condition, and both aggregate
 ranges are sound relaxations. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — extensions bundle (kink minimum, leaf-exempt + log pooled induction, multivariate / modular identities)
+
+No new kind. Three existing emitters are extended, each backward compatible: the original specs
+build the same certificates, and the original examples regenerate to the same Lean apart from
+the input-hash header.
+
+- **`curvature_boundary`, mode `"kink"`**: a continuous piecewise polynomial with one interior
+  kink at a rational `kappa` is minimized there. The left piece is decreasing and the right
+  piece increasing, each by a Bernstein sign check on the derivative. Lean: `Polynomial ℝ`
+  pieces, `antitoneOn_of_deriv_nonpos` / `monotoneOn_of_deriv_nonneg`, and the generic
+  `kink_min_of_anti_mono`. It states `IsLeast (f '' Icc a b) (f kappa)`, `v ≤ f x`, `0 ≤ f x`
+  when `v ≥ 0`, and the same for a closed form with `|affine|`. Dogfood (in
+  `examples/curvature_boundary/`): `|x - 1/3| + x^2` on `[0,1]` (min 1/9), cubic pieces on
+  `[-1,2]`, and `x^2/2 + |x|x/2 + |x|/2` on `[-1,1]`. The file has 53 theorems.
+- **`concave_pooled_induction`, leaf-exempt children** (`exempt_leaves=True`): leaves enter
+  exactly and are excluded from the Jensen pooling (`exempt_induction_core`), and the claim is
+  for every non-leaf tree of child count `≤ M`. A **log term in `g`**,
+  `kappa log(a0 + b1 R)` with `kappa > 0`, is replaced per cell by its tangent majorant, with
+  `log u ≤ H` from the mobius_tangent_cell Taylor box. Dogfood
+  (`examples/concave_pooled_induction/generate_ext.py` → `ConcavePooledInductionExt.lean`, a
+  second `lean_lib`, 197 theorems):
+  - `sum_u (1 - y_u) ≥ (27/100)|T| - 83/500` for the matching message on non-leaf trees of
+    child count `≤ 2`, which the single leaf violates, so no pooled certificate can prove it;
+  - a flat twin at alpha = 1/4;
+  - `g = -1/(1+R) + (1/5) log(1 + R/2)` at alpha = 1/2 on every tree;
+  - both extensions together.
+- **`rational_identity`, dict specs**: the multivariate mode
+  `∀ x y : ℚ, c_x < x → c_y < y → lhs = rhs` (`field_simp; ring`, every denominator atom
+  certified positive on the box), and identities modulo an irreducible monic polynomial,
+  `∀ t : ℝ, m t = 0 → lhs = rhs` by `linear_combination q * h`, plus the instance at the real
+  root of a quadratic `m`. Dogfood (`examples/rational_identity/generate_ext.py` →
+  `lean/RationalIdentityExt.lean`, a new lake project and CI job, 31 theorems): partial fractions
+  in one and two variables, and in ℚ(√5) = ℚ[t]/(t² - t - 1) the identities `t² = t + 1`,
+  `t^n = F_n t + F_(n-1)`, `t^n + (1-t)^n = L_n` and `(2t-1)² = 5`.
+
+Negative controls (each false twin rejected by the kernel, each true twin compiles):
+
+- kink minimum claimed as 1/9 + 1/1000 (registered `adapter_curvature_boundary`; the stance now
+  has `neg_control=ADAPTER`);
+- leaf-exempt witness lowered by 1/1000, false at the root with two leaf children;
+- log enclosures forged to `H - 1/1000`;
+- the partial fraction plus 1/1000;
+- `t^5 = 5t + 4` modulo `t² - t - 1`.
+
+The last four are unregistered adapters with lean-gated tests. Every theorem is
+`[propext, Classical.choice, Quot.sound]`, with no `sorry`, `admit` or `native_decide`.
+
+Not done: exempt atoms other than leaves, a tail in the exempt mode, and log bounds on
+`[0, ∞)` for `transcendental_enclosure` (left to the factored_endpoint_enclosure branch).
+
+Design doc: [`EMITTER_EXTENSIONS_BUNDLE_DESIGN_2026-10-01.md`](EMITTER_EXTENSIONS_BUNDLE_DESIGN_2026-10-01.md).
+`conjecture1_proved = False`.
+
