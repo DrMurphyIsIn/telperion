@@ -533,3 +533,43 @@ Negative controls: `adapter_single_crossing_ladder` shifts the `lambda_3` bracke
 `(0.43052, 0.43053)`. That bracket is false, and the kernel rejects `_p3_vlo`. A double crossing
 claimed single on `[0, oo)` is also rejected: its tail sign cell is false. Both true twins compile.
 Scope: the ladder is proved for a finite window of members only. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — `anchored_monotone_extension` (derivative prelude for parametric tree recursions, two-row invariant, anchored extension)
+
+`AnchoredMonotoneExtensionEmitter` (kind `anchored_monotone_extension`) takes a parametric
+recursion on finite rooted trees: `T_b(λ) = (∏ T_c(λ))·g(λ, A_b)` and `y_b = h(λ, A_b)`, where the
+aggregate `A_b` is the product (product mode) or the sum (sum mode) of the children's messages.
+`g` and `h` are rational in `(λ, A)`. It also takes a normalizer `N(λ, n) = ψ(λ)^(ρ n)`. The kind
+certifies three things for every tree. (1) The DERIVATIVE PRELUDE: `T_b` is positive and
+differentiable on `λ ≥ λ0`, and its log-derivative `D_b` is given by an explicit recursion that is
+proved equal to `d/dλ log T_b` (`hasDeriv_rec`, `hasDerivAt_log_T`). (2) `λ D_b ≤ n_b c(λ)` with
+`c = ρλψ'/ψ`, by a TWO-ROW inductive invariant. The second row is supplied by the certificate:
+`λD + μ·λE ≤ nc + κ`, where `E` is the message log-derivative. The per-node content is finitely
+many polynomial inequalities in `(λ, A[, k])`: positivity, the weight window `0 ≤ m ≤ μ`, and one
+cleared residual per row. Hence `T_b / N(λ, n_b)` is ANTITONE on `λ ≥ λ0`. (3) The ANCHORED
+EXTENSION: `T_b(λ) ≤ N(λ, n_b)` for all `λ ≥ λa`. The anchor is either a node check at `λ0` or a
+hypothesis passed through. Every obligation is an exact product-basis certificate (Taylor on a
+half-line, Bernstein on `[0, 1]`, with bisection), closed in Lean by one `linarith` per cell. The
+generic Lean is re-derived from Mathlib: `hasDerivAt_p2` (chain rule for a two-variable
+polynomial along `t ↦ (t, A t)`), `HasDerivAt.fun_finsetProd`, `antitoneOn_of_hasDerivWithinAt_nonpos`.
+We added a new kind, not a face, because the existing anchor-plus-monotone kinds (`monotone_tail`,
+`lattice_box`, `unimodal`) are integer-indexed. `single_crossing_ladder` differentiates explicit
+closed forms, not tree recursions (see the design doc).
+
+Design doc: [`EMITTER_ANCHORED_MONOTONE_EXTENSION_DESIGN_2026-10-01.md`](EMITTER_ANCHORED_MONOTONE_EXTENSION_DESIGN_2026-10-01.md).
+Dogfood: `examples/anchored_monotone_extension/` (`generate.py --check`; lake project on Mathlib
+v4.32.0). There are three instances:
+
+* the classical hard-core (independent-set) recursion: `Z_b(λ)/(1+λ)^n` is antitone and
+  `Z_b(λ) ≤ (1+λ)^n` on `[0, ∞)`, with the anchor `Z_b(0) = 1` as a node check;
+* the same recursion through the rational exponent `ρ = 1/3`;
+* a synthetic matching-type sum recursion with normalizer `(1+λ)^n` on the threshold half-line
+  `[1, ∞)`. The threshold is load-bearing (`[0, ∞)` is refused), and the anchor is a hypothesis.
+
+The dogfood has 136 theorems, all `[propext, Classical.choice, Quot.sound]`. The claims were
+checked numerically before the emitter was built, over all rooted trees with `n ≤ 9`; the tests
+repeat this for `n ≤ 7`. Negative control: `adapter_anchored_monotone_extension` uses the too-small
+normalizer `(1 + 3λ/4)^n` for the hard-core recursion, which is false at a single vertex. The
+row-0 residual cell cannot close, so the kernel rejects `forged_res0` (its only error), and the
+true twin compiles. Scope: the two-row invariant is a sufficient condition, and both aggregate
+ranges are sound relaxations. `conjecture1_proved = False`.

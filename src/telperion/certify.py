@@ -468,6 +468,12 @@ _SPECIAL_KINDS = (
     # the best-member ladder follows over the window.  Dogfood: the arm ladder of the
     # matching sum.  Elementary one-variable facts; nothing about RH.
     "single_crossing_ladder",
+    # anchored_monotone_extension (2026-10-01): a parametric recursion on finite rooted trees is
+    # differentiable with an explicit log-derivative recursion (derivative prelude), a two-row
+    # inductive invariant with finitely many polynomial checks gives lam D_b <= n_b c(lam) on
+    # [lam0, oo), so T_b / N(lam, n_b) is antitone and an anchor bounds the half-line.
+    # Dogfood: the hard-core recursion and a synthetic matching-type sum recursion.
+    "anchored_monotone_extension",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -774,6 +780,10 @@ _SPECIAL_DISPATCH = {
     "single_crossing_ladder":
         ("emit_single_crossing_ladder", "certify_single_crossing_ladder_point",
          "SingleCrossingLadderEmitter"),
+    # anchored_monotone_extension (derivative prelude + two-row invariant + anchored extension).
+    "anchored_monotone_extension":
+        ("emit_anchored_monotone_extension", "certify_anchored_monotone_extension_point",
+         "AnchoredMonotoneExtensionEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":
