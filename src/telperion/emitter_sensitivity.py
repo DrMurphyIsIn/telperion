@@ -519,6 +519,39 @@ REGISTRY: dict[str, SensitivityStance] = {
                                       # runs in the tests.  See
                                       # negctrl_adapters/adapter_single_crossing_ladder.py.
                                       neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "FactoredEndpointEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
+                                           "0 <= F on closed boxes touching a singular "
+                                           "endpoint l = s (kind "
+                                           "factored_endpoint_enclosure): the certificate "
+                                           "carries the factorization identity Q = "
+                                           "(sigma (l - s))^k * H with a supplied cofactor "
+                                           "H, re-checked by ring in the kernel, plus the "
+                                           "Taylor lower bound Q <= D F (log atoms through "
+                                           "the generic signed-remainder lemmas log_le_T / "
+                                           "T_le_log, D F = N by field_simp; ring) and one "
+                                           "box sign lemma 0 <= H per box (linarith over "
+                                           "Bernstein products); the generic "
+                                           "factored_endpoint_core assembles them, endpoint "
+                                           "included.  A corrupted H or k breaks ring, a "
+                                           "false box claim breaks linarith.  certify "
+                                           "REFUSES floats, non-log functions, a log not "
+                                           "linear in the cleared numerator, an endpoint "
+                                           "inside the domain, a wrong k (no exact "
+                                           "division), a wrong-parity Taylor order, a "
+                                           "sign-changing log coefficient, a non-positive "
+                                           "denominator factor, a supplied H that does not "
+                                           "match, and an H not certified >= 0 (FALSE with "
+                                           "a located point when F < 0 on the sample grid).  "
+                                           "Dogfood: classical log / rational / Pade bounds "
+                                           "near 0 and a synthetic two-variable F; nothing "
+                                           "about RH (conjecture1_proved = False)",
+                                           # Kernel control: l - log(1+l) >= (47/100) l^2
+                                           # on [0, 1/10] is FALSE by ~1/1000 at l = 1/10;
+                                           # the forged box lemma 0 <= H cannot close.  The
+                                           # true twin 117/250 compiles.  A two-variable
+                                           # pair (margin -+ 1/1000) runs in the tests.  See
+                                           # negctrl_adapters/adapter_factored_endpoint_enclosure.py.
+                                           neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "GapBudgetMultiplicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "tangent-price GAP BUDGET pruning of a multiset "
                                        "optimisation (kind gap_budget_multiplicity): from a "

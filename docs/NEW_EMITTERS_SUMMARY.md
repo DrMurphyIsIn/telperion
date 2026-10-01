@@ -533,3 +533,45 @@ Negative controls: `adapter_single_crossing_ladder` shifts the `lambda_3` bracke
 `(0.43052, 0.43053)`. That bracket is false, and the kernel rejects `_p3_vlo`. A double crossing
 claimed single on `[0, oo)` is also rejected: its tail sign cell is false. Both true twins compile.
 Scope: the ladder is proved for a finite window of members only. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — `factored_endpoint_enclosure` (factorization plus box sign through a singular endpoint)
+
+`FactoredEndpointEnclosureEmitter` (kind `factored_endpoint_enclosure`) certifies `0 <= F(l, x)`
+on CLOSED boxes `[A, B] x [C, D]` that touch an endpoint `l = s` where `F` vanishes to order
+`k`. There the quotient `F / (l - s)^k`, which is the quantity of interest, has no interval
+enclosure. `F` is a rational function plus `log(1 + u_i)` atoms, written as
+`D F = N0 + sum kappa_i log(1 + u_i)` with `D > 0`. Each atom is replaced by a Taylor polynomial
+whose remainder has the needed sign on all of `[0, oo)`, which gives `Q <= D F`. `Q` factors
+exactly as `(sigma (l - s))^k H`, and `H >= 0` is checked on a bisection cover with exact tensor
+Bernstein coefficients. The boxes include the endpoint. One generic Lean lemma,
+`factored_endpoint_core`, turns the factorization plus a box sign into `0 <= F` on the closed box.
+Per box, `linarith` runs over the Bernstein products. A union theorem follows the bisection tree,
+and a quotient corollary `0 <= F / t^k` is stated off the endpoint. This closes the gap that
+`mobius_tangent_cell` documents (claims tight to order >= 2 near 0 are refused).
+
+The signed-remainder log bounds EXTEND `transcendental_enclosure` with a new face, `log_taylor`;
+they are not duplicated. `log_le_T` (odd `n`) and `T_le_log` (even `n`) are proved once for every
+order: the derivative is `-(-t)^n/(1+t)`, then the mean value theorem. Explicit `upper_<n>` and
+`lower_<n>` are emitted per order. The new kind imports the same generator. The
+`transcendental_enclosure` example gains a `log_taylor` instance with orders 1..5.
+
+Design doc: [`EMITTER_FACTORED_ENDPOINT_ENCLOSURE_DESIGN_2026-10-01.md`](EMITTER_FACTORED_ENDPOINT_ENCLOSURE_DESIGN_2026-10-01.md).
+Dogfood: `examples/factored_endpoint_enclosure/` (`generate.py --check`; lake project on Mathlib
+v4.32.0). All instances are classical or synthetic:
+
+* `(1/l) log(1 + l) <= 1` on `[0, 1/10]`, i.e. `(1 + l)^(1/l) <= e`;
+* the sharp `l - log(1 + l) >= (117/250) l^2`;
+* the rational alternating bound `(1 + l)^-2 >= 1 - 2l + 3l^2 - 4l^3` on `[0, 1]`. Telperion has
+  no `sin` enclosure, so this stands in for `sin(l)/l`;
+* the synthetic `l (x - l)^2 + l^2 x >= 0` on `[0, 1/2] x [1/8, 1]`, a three-box cover;
+* the [2/1] Pade bound `log(1 + l) <= l (6 + l)/(6 + 4l)` on `[0, 1/3]`, `k = 4`.
+
+The dogfood has 54 theorems, all `[propext, Classical.choice, Quot.sound]`.
+
+Negative controls: `adapter_factored_endpoint_enclosure` forges `l - log(1 + l) >= (47/100) l^2`.
+That claim is false by about 1/1000 at `l = 1/10`, and the kernel rejects the box lemma
+`0 <= H`. A two-variable twin pair with margin `-/+ 1/1000` runs in the tests. Both true twins
+compile.
+
+Scope: `log` atoms only (no `sin` / `exp`, and no mean-value route), one endpoint factor in `l`,
+and rectangular domains. `conjecture1_proved = False`.
