@@ -6,6 +6,7 @@ from . import adapter_c_g_round  # noqa: F401
 from . import adapter_complex_re_im_split  # noqa: F401
 from . import adapter_concave_pooled_induction  # noqa: F401
 from . import adapter_concave_stationary_max  # noqa: F401
+from . import adapter_curvature_boundary  # noqa: F401
 from . import adapter_cone_farkas  # noqa: F401
 from . import adapter_consequence  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
@@ -56,6 +57,7 @@ __all__ = [
     'adapter_complex_re_im_split',
     'adapter_concave_pooled_induction',
     'adapter_concave_stationary_max',
+    'adapter_curvature_boundary',
     'adapter_cone_farkas',
     'adapter_consequence',
     'adapter_constrained_s_o_s',

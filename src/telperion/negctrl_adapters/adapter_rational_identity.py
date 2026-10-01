@@ -90,3 +90,71 @@ register(
         imports_line="import Mathlib",
     )
 )
+
+
+# ---------------------------------------------------------------------------
+# Extension controls (2026-10-01): multivariate and minimal-polynomial modes.  NOT
+# registered (one adapter per emitter); the kernel runs are in
+# tests/test_negctrl_rational_identity_ext.py against examples/rational_identity/lean.
+# ---------------------------------------------------------------------------
+
+from telperion.emit_rational_identity import extended_identity_certificate  # noqa: E402
+
+_X, _Y, _T = sp.symbols("x y t")
+
+
+def make_multivariate_true_cert():
+    """1/((x+y)(x+2y)) = (1/(x+y) - 1/(x+2y))/y on x, y > 0 (a two-variable partial fraction)."""
+    return extended_identity_certificate(
+        symbols=(_X, _Y), lhs=1 / ((_X + _Y) * (_X + 2 * _Y)),
+        rhs=(1 / (_X + _Y) - 1 / (_X + 2 * _Y)) / _Y, domain={"x": 0, "y": 0})
+
+
+def make_multivariate_false_cert():
+    """FALSE by 1/1000: the same right side plus 1/1000 (Layer 1 refuses: lhs - rhs = -1/1000);
+    `field_simp; ring` is left a goal that is off by a nonzero polynomial."""
+    return extended_identity_certificate(
+        symbols=(_X, _Y), lhs=1 / ((_X + _Y) * (_X + 2 * _Y)),
+        rhs=(1 / (_X + _Y) - 1 / (_X + 2 * _Y)) / _Y + sp.Rational(1, 1000),
+        domain={"x": 0, "y": 0}, check=False)
+
+
+def _emit_ext(cert, name):
+    return emit_via_single_instance_family(
+        RationalIdentityEmitter(), lean_name=name, instance_kwargs={"payload": cert},
+        family_kwargs={"symbols": tuple(cert.symbols)})
+
+
+MULTIVARIATE_ADAPTER = NegativeControlAdapter(
+    emitter_name="RationalIdentityEmitter",
+    make_false_cert=make_multivariate_false_cert,
+    make_true_cert=make_multivariate_true_cert,
+    emit_call=_emit_ext,
+    label=("multivariate: 1/((x+y)(x+2y)) = (1/(x+y) - 1/(x+2y))/y + 1/1000 (false): ring "
+           "fails after field_simp; the true partial fraction compiles"),
+    imports_line="import Mathlib",
+)
+
+
+def make_modular_true_cert():
+    """t^5 = 5 t + 3 modulo t^2 - t - 1 (Fibonacci: F_5 = 5, F_4 = 3)."""
+    return extended_identity_certificate(symbols=(_T,), lhs=_T ** 5, rhs=5 * _T + 3,
+                                         modulus=_T ** 2 - _T - 1)
+
+
+def make_modular_false_cert():
+    """WRONG identity: t^5 = 5 t + 4 modulo t^2 - t - 1 (remainder -1, refused by Layer 1);
+    `linear_combination q * h` leaves the nonzero remainder and `ring1` fails."""
+    return extended_identity_certificate(symbols=(_T,), lhs=_T ** 5, rhs=5 * _T + 4,
+                                         modulus=_T ** 2 - _T - 1, check=False)
+
+
+MODULAR_ADAPTER = NegativeControlAdapter(
+    emitter_name="RationalIdentityEmitter",
+    make_false_cert=make_modular_false_cert,
+    make_true_cert=make_modular_true_cert,
+    emit_call=_emit_ext,
+    label=("modulo t^2 - t - 1: t^5 = 5t + 4 (wrong, the remainder is -1): linear_combination "
+           "fails; t^5 = 5t + 3 compiles (and its instance at (1 + sqrt 5)/2)"),
+    imports_line="import Mathlib",
+)

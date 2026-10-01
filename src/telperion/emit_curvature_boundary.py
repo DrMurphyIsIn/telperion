@@ -29,6 +29,13 @@ concrete quadratic instance), that the extremum sits at a boundary point.  It do
 NOT choose ``f`` for you, nor prove any downstream inequality.  The emitted file
 is self-contained (only ``import Mathlib``).
 
+KINK-MINIMUM MODE (extension, 2026-10-01; ``mode="kink"``): a continuous piecewise polynomial
+with one interior kink at a rational kappa, left piece decreasing and right piece increasing
+(each a Bernstein sign check on the derivative), is minimized at kappa -- `IsLeast (f '' Icc a b)
+(f kappa)`, plus `0 <= f` when `f(kappa) >= 0`, and the same for an optional closed form with
+`Abs` of affine arguments.  See ``kink_minimum_certificate`` and
+docs/EMITTER_EXTENSIONS_BUNDLE_DESIGN_2026-10-01.md.
+
 conjecture1_proved=False.
 """
 from __future__ import annotations
@@ -188,6 +195,11 @@ def certify_curvature_boundary_point(family, pt, name):
     "a": ..., "b": ...}`` (all optional; default is the concave quadratic
     ``f(x) = -(x²) + x`` on ``[0,1]``)."""
     spec = family.special[1](pt)
+    if spec.get("mode") == "kink":
+        kw = {k: v for k, v in spec.items() if k != "mode"}
+        kcert = kink_minimum_certificate(**kw)
+        inst = CertifiedInstance(point=dict(pt), lean_name=name, corners=(), payload=kcert)
+        return inst, 2 + len(kcert.left_cells) + len(kcert.right_cells)
     cert = curvature_boundary_certificate(
         mode=spec.get("mode", "concave"),
         f_expr=spec.get("f_expr", "-(x**2) + x"),
@@ -328,9 +340,21 @@ class CurvatureBoundaryEmitter(Emitter):
         lines: list[str] = []
         nthm = 0
         abstract_emitted = False
+        kink_emitted = False
         for inst in fam.instances:
             cert: CurvatureBoundaryCertificate = inst.payload  # type: ignore[assignment]
             name = inst.lean_name
+            if isinstance(cert, KinkMinimumCertificate):
+                # kink-minimum extension (2026-10-01): its own generic lemma, emitted once
+                # and only when a kink instance is present (endpoint-mode files unchanged)
+                if not kink_emitted:
+                    lines.append(_KINK_ABSTRACT)
+                    kink_emitted = True
+                    nthm += 1
+                text, k = _emit_kink(cert, name)
+                lines.append(text)
+                nthm += k
+                continue
             if not abstract_emitted:
                 lines.append(_ABSTRACT)
                 abstract_emitted = True
@@ -424,6 +448,422 @@ def curvature_boundary_family(name, grid, lean_name, spec, constants=None):
         special=("curvature_boundary", spec),
         constants=dict(constants or {}),
     )
+
+
+# ---------------------------------------------------------------------------
+# Kink-minimum extension (2026-10-01)
+# ---------------------------------------------------------------------------
+#
+# A continuous piecewise-polynomial function on [a, b] with ONE interior kink at a rational
+# point kappa:  f(x) = L(x) for x <= kappa,  f(x) = R(x) for x > kappa,  L(kappa) = R(kappa).
+# If L' <= 0 on [a, kappa] and R' >= 0 on [kappa, b], then f is antitone on [a, kappa] and
+# monotone on [kappa, b], so its minimum over [a, b] is f(kappa) = v.  Each derivative sign is
+# a one-variable polynomial sign check, certified by nonnegative Bernstein coefficients on
+# cells of the side interval (shared machinery with concave_pooled_induction); the Lean turns
+# each into AntitoneOn / MonotoneOn through Mathlib's `antitoneOn_of_deriv_nonpos` /
+# `monotoneOn_of_deriv_nonneg` applied to the pieces as `Polynomial ℝ`.  Optionally a closed
+# form `f_expr` (a sympy expression in x whose only non-polynomial atoms are `Abs` of AFFINE
+# arguments, e.g. |x - 1/3| + x^2) is proved equal to the piecewise f on [a, b] and the same
+# conclusions are restated for it.
+#
+# Emitted per instance: IsLeast (f '' Icc a b) v, the pointwise bound v <= f x, f kappa = v,
+# and 0 <= f x on [a, b] when v >= 0.  REFUSALS: kappa not strictly inside (a, b); pieces that
+# are not polynomials in x; a discontinuity L(kappa) != R(kappa); a derivative sign that fails
+# anywhere on its side (with an exact counterexample point); a Bernstein cover that does not
+# close by depth 8; a claimed value different from f(kappa); an f_expr that does not agree with
+# the pieces, or with an Abs of a non-affine argument or one changing sign on a side.
+
+_KINK_MAX_DEPTH = 8
+_KINK_MAX_DEGREE = 12
+
+
+@dataclass(frozen=True)
+class KinkMinimumCertificate:
+    """A verified kink-minimum certificate (all fields exact).
+
+    ``left``/``right`` are ascending coefficient tuples of the pieces in ``x``;
+    ``left_cells`` certify ``-L' >= 0`` on cells tiling ``[a, kappa]``, ``right_cells``
+    certify ``R' >= 0`` on cells tiling ``[kappa, b]`` (``PolyCert`` objects in the shared
+    Bernstein form).  ``value`` is ``f(kappa)``.  ``f_expr`` is the optional closed form and
+    ``abs_args`` its Abs arguments with their sign on each side ("le"/"ge").  ``checked`` is
+    False only for hand-forged negative controls."""
+
+    a: object
+    kappa: object
+    b: object
+    left: tuple
+    right: tuple
+    value: object
+    left_cells: tuple
+    right_cells: tuple
+    f_expr: object = None
+    abs_args: tuple = ()
+    checked: bool = True
+
+
+def _kink_poly(expr, x, what):
+    e = sp.sympify(expr, locals={"x": x}) if isinstance(expr, str) else sp.sympify(expr)
+    if e.atoms(sp.Float):
+        raise ValueError(f"REFUSED: {what} = {e} contains a float")
+    if not (e.free_symbols <= {x}):
+        raise ValueError(f"REFUSED: {what} = {e} must be a function of x alone")
+    try:
+        P = sp.Poly(sp.expand(e), x, domain="QQ")
+    except sp.PolynomialError as err:
+        raise ValueError(f"REFUSED: {what} = {e} is not a polynomial in x ({err})") from err
+    if P.degree() > _KINK_MAX_DEGREE:
+        raise ValueError(f"REFUSED: {what} has degree {P.degree()} > {_KINK_MAX_DEGREE}")
+    d = max(P.degree(), 0)
+    return tuple(sp.Rational(P.coeff_monomial(x ** k)) for k in range(d + 1))
+
+
+def _sign_cover(coeffs, s, t, depth=0):
+    """Bernstein cells certifying ``0 <= P`` on ``[s, t]`` (P ascending coeffs in x), bisecting
+    on failure; None when the cover does not close by ``_KINK_MAX_DEPTH``."""
+    from .emit_concave_pooled_induction import R_SYM, _polycert
+    P = sp.Poly(sum(c * R_SYM ** i for i, c in enumerate(coeffs)) + 0 * R_SYM, R_SYM,
+                domain="QQ")
+    pc = _polycert(P, s, t, False)
+    if pc.ok():
+        return [pc]
+    if depth >= _KINK_MAX_DEPTH:
+        return None
+    mid = (s + t) / 2
+    left = _sign_cover(coeffs, s, mid, depth + 1)
+    if left is None:
+        return None
+    right = _sign_cover(coeffs, mid, t, depth + 1)
+    if right is None:
+        return None
+    return left + right
+
+
+def _neg_point(coeffs, s, t, x):
+    """An exact point of [s, t] where the polynomial is negative, if one is easy to find."""
+    P = sum(c * x ** i for i, c in enumerate(coeffs))
+    cands = [s, t, (s + t) / 2]
+    for r in sp.Poly(sp.diff(P, x), x).real_roots() if sp.diff(P, x) != 0 else []:
+        if s <= r <= t:
+            q = sp.nsimplify(r) if r.is_rational else sp.Rational(str(sp.N(r, 30)))
+            if s <= q <= t:
+                cands.append(q)
+    for q in cands:
+        if P.subs(x, q) < 0:
+            return q, P.subs(x, q)
+    return None
+
+
+def _abs_args(f, x):
+    return sorted({e.args[0] for e in sp.preorder_traversal(f) if isinstance(e, sp.Abs)},
+                  key=sp.default_sort_key)
+
+
+def _affine_sign(arg, x, s, t):
+    """'le' if arg <= 0 on [s, t], 'ge' if arg >= 0 there (arg affine in x), else None."""
+    va, vb = arg.subs(x, s), arg.subs(x, t)
+    if va <= 0 and vb <= 0:
+        return "le"
+    if va >= 0 and vb >= 0:
+        return "ge"
+    return None
+
+
+def kink_minimum_certificate(*, left, right, kappa, a, b, f_expr=None, value=None,
+                             check: bool = True) -> KinkMinimumCertificate:
+    """Build and EXACTLY verify a kink-minimum certificate.
+
+    ``left``/``right``: the polynomial pieces (sympy expressions or strings in ``x``) on
+    ``[a, kappa]`` and ``[kappa, b]``.  ``kappa``: the rational kink, ``a < kappa < b``.
+    ``f_expr``: an optional closed form (``Abs`` of affine arguments allowed) checked to agree
+    with the pieces.  ``value``: an optional claimed minimum, checked against ``L(kappa)``.
+
+    ``check=False`` is for hand-forged negative controls ONLY: every sign/equality check is
+    skipped and ``value`` (if given) is taken as claimed."""
+    x = sp.Symbol("x")
+    a_r, k_r, b_r = (sp.Rational(sp.sympify(v)) for v in (a, kappa, b))
+    for nm_, v in (("a", a), ("kappa", kappa), ("b", b)):
+        if isinstance(v, float):
+            raise ValueError(f"REFUSED: {nm_} = {v!r} is a float; pass an exact rational")
+    if not (a_r < k_r < b_r):
+        raise ValueError(f"REFUSED: the kink kappa = {k_r} must lie strictly inside "
+                         f"({a_r}, {b_r})")
+    L = _kink_poly(left, x, "left piece")
+    R = _kink_poly(right, x, "right piece")
+    Lx = sum(c * x ** i for i, c in enumerate(L))
+    Rx = sum(c * x ** i for i, c in enumerate(R))
+    vL, vR = Lx.subs(x, k_r), Rx.subs(x, k_r)
+    v = sp.Rational(vL)
+    if check:
+        if vL != vR:
+            raise ValueError(f"REFUSED: discontinuous at the kink: L({k_r}) = {vL} but "
+                             f"R({k_r}) = {vR}")
+        if value is not None and sp.Rational(sp.sympify(value)) != v:
+            raise ValueError(f"REFUSED: claimed minimum {value} but f({k_r}) = {v}")
+    elif value is not None:
+        v = sp.Rational(sp.sympify(value))
+    negdL = _kink_poly(-sp.diff(Lx, x), x, "-L'")
+    dR = _kink_poly(sp.diff(Rx, x), x, "R'")
+    lc = _sign_cover(negdL, a_r, k_r)
+    rc = _sign_cover(dR, k_r, b_r)
+    if check:
+        if lc is None:
+            why = _neg_point(negdL, a_r, k_r, x)
+            raise ValueError(
+                f"REFUSED: left piece not certified decreasing on [{a_r}, {k_r}] (L' = "
+                f"{sp.expand(-sum(c * x ** i for i, c in enumerate(negdL)))})"
+                + (f"; L'({why[0]}) = {-why[1]} > 0" if why else ""))
+        if rc is None:
+            why = _neg_point(dR, k_r, b_r, x)
+            raise ValueError(
+                f"REFUSED: right piece not certified increasing on [{k_r}, {b_r}] (R' = "
+                f"{sp.expand(sum(c * x ** i for i, c in enumerate(dR)))})"
+                + (f"; R'({why[0]}) = {why[1]} < 0" if why else ""))
+        for pc in lc + rc:
+            if not pc.identity_holds():  # pragma: no cover - by construction
+                raise ValueError("REFUSED: a Bernstein identity does not expand back")
+    else:  # forged: one (possibly failing) cell per side
+        from .emit_concave_pooled_induction import R_SYM, _polycert
+        lc = lc or [_polycert(sp.Poly(sum(c * R_SYM ** i for i, c in enumerate(negdL))
+                                      + 0 * R_SYM, R_SYM, domain="QQ"), a_r, k_r, False)]
+        rc = rc or [_polycert(sp.Poly(sum(c * R_SYM ** i for i, c in enumerate(dR))
+                                      + 0 * R_SYM, R_SYM, domain="QQ"), k_r, b_r, False)]
+    fe = None
+    abs_info: tuple = ()
+    if f_expr is not None:
+        fe = sp.sympify(f_expr, locals={"x": x}) if isinstance(f_expr, str) else f_expr
+        if fe.atoms(sp.Float):
+            raise ValueError(f"REFUSED: f_expr = {fe} contains a float")
+        if not (fe.free_symbols <= {x}):
+            raise ValueError(f"REFUSED: f_expr = {fe} must be a function of x alone")
+        info = []
+        subsL, subsR = {}, {}
+        for arg in _abs_args(fe, x):
+            if not (sp.Poly(arg, x).degree() <= 1 and not arg.atoms(sp.Abs)):
+                raise ValueError(f"REFUSED: |{arg}| has a non-affine argument")
+            sl, sr = _affine_sign(arg, x, a_r, k_r), _affine_sign(arg, x, k_r, b_r)
+            if sl is None or sr is None:
+                raise ValueError(f"REFUSED: the argument {arg} of an Abs changes sign on a "
+                                 f"side of the kink (only one kink, at {k_r}, is supported)")
+            info.append((arg, sl, sr))
+            subsL[sp.Abs(arg)] = -arg if sl == "le" else arg
+            subsR[sp.Abs(arg)] = -arg if sr == "le" else arg
+        abs_info = tuple(info)
+        if check:
+            if sp.expand(fe.xreplace(subsL) - Lx) != 0:
+                raise ValueError(f"REFUSED: f_expr = {fe} does not equal the left piece on "
+                                 f"[{a_r}, {k_r}]")
+            if sp.expand(fe.xreplace(subsR) - Rx) != 0:
+                raise ValueError(f"REFUSED: f_expr = {fe} does not equal the right piece on "
+                                 f"[{k_r}, {b_r}]")
+    return KinkMinimumCertificate(a=a_r, kappa=k_r, b=b_r, left=L, right=R, value=v,
+                                  left_cells=tuple(lc), right_cells=tuple(rc), f_expr=fe,
+                                  abs_args=abs_info, checked=check)
+
+
+_KINK_ABSTRACT = """\
+-- (5) KINK MINIMUM (extension, 2026-10-01).  A function antitone on `[a,k]` and monotone
+-- on `[k,b]` attains its minimum over `[a,b]` at the kink `k`.
+theorem kink_min_of_anti_mono {a k b : ℝ} (f : ℝ → ℝ)
+    (hL : AntitoneOn f (Set.Icc a k)) (hR : MonotoneOn f (Set.Icc k b))
+    (hak : a ≤ k) (hkb : k ≤ b) {x : ℝ} (hx : x ∈ Set.Icc a b) : f k ≤ f x := by
+  rcases le_total x k with h | h
+  · exact hL ⟨hx.1, h⟩ ⟨hak, le_rfl⟩ h
+  · exact hR ⟨le_rfl, hkb⟩ ⟨h, hx.2⟩ h
+"""
+
+
+def _kq(q) -> str:
+    q = sp.Rational(q)
+    return f"({q.p} : ℝ)" if q.q == 1 else f"({q.p} / {q.q} : ℝ)"
+
+
+def _kink_polyX(coeffs) -> str:
+    terms = [f"Polynomial.C {_kq(c)} * Polynomial.X ^ {i}" for i, c in enumerate(coeffs)
+             if c != 0]
+    return " + ".join(terms) if terms else "Polynomial.C (0 : ℝ)"
+
+
+def _kink_expr_lean(e, x) -> str:
+    """Render the closed form (rationals, x, +, *, integer powers, Abs) as Lean ℝ text."""
+    if e == x:
+        return "x"
+    if e.is_Rational:
+        return _kq(e)
+    if isinstance(e, sp.Abs):
+        return f"|{_kink_expr_lean(e.args[0], x)}|"
+    if e.is_Add:
+        return "(" + " + ".join(_kink_expr_lean(t, x) for t in e.args) + ")"
+    if e.is_Mul:
+        return "(" + " * ".join(_kink_expr_lean(t, x) for t in e.args) + ")"
+    if e.is_Pow and e.exp.is_Integer and e.exp > 0:
+        return f"{_kink_expr_lean(e.base, x)} ^ {int(e.exp)}"
+    raise ValueError(f"REFUSED: cannot render {e} in the kink closed form")
+
+
+def _ev(*polys) -> str:
+    """The `Polynomial.eval` simp set for these pieces (`eval_add` only when some piece has
+    two or more terms, so no simp argument is ever unused)."""
+    multi = any(sum(1 for q in p if q != 0) > 1 for p in polys)
+    return (("Polynomial.eval_add, " if multi else "")
+            + "Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_pow, Polynomial.eval_X")
+
+
+def _dv(p) -> str:
+    multi = sum(1 for q in p if q != 0) > 1
+    return (("Polynomial.derivative_add, " if multi else "")
+            + "Polynomial.derivative_C_mul_X_pow, " + _ev(p))
+
+
+def _kink_sign_proof(cells, var="x") -> list[str]:
+    """Lines proving `0 ≤ P x` on the union of ``cells`` from h1 : s0 ≤ x, h2 : x ≤ t_last."""
+    from .emit_concave_pooled_induction import _facts
+    out = []
+    n = len(cells)
+
+    def one(pc, lo_h, hi_h, ind):
+        return [f"{ind}have hs : 0 ≤ {var} - {_kq(pc.s)} := by linarith [{lo_h}]",
+                f"{ind}have ht : 0 ≤ {_kq(pc.t)} - {var} := by linarith [{hi_h}]",
+                f"{ind}linarith [{_facts(pc)}]"]
+    if n == 1:
+        return one(cells[0], "h1", "h2", "  ")
+    for i, pc in enumerate(cells):
+        lo_h = "h1" if i == 0 else f"hc{i - 1}.le"
+        if i < n - 1:
+            out.append(f"  rcases le_or_gt {var} {_kq(pc.t)} with hc{i} | hc{i}")
+            body = one(pc, lo_h, f"hc{i}", "    ")
+            out.append("  · " + body[0].lstrip())
+            out += body[1:]
+        else:
+            body = one(pc, lo_h, "h2", "    ")
+            out.append("  · " + body[0].lstrip())
+            out += body[1:]
+    return out
+
+
+def _emit_kink(c: KinkMinimumCertificate, nm: str) -> tuple[str, int]:
+    from .emit_concave_pooled_induction import _poly1
+    a, k, b, v = _kq(c.a), _kq(c.kappa), _kq(c.b), _kq(c.value)
+    x = sp.Symbol("x")
+    dL = tuple(-q for q in _kink_poly(-sp.diff(sum(q * x ** i for i, q in enumerate(c.left)),
+                                                 x), x, "L'"))
+    dR = _kink_poly(sp.diff(sum(q * x ** i for i, q in enumerate(c.right)), x), x, "R'")
+    negdL = tuple(-q for q in dL)
+    L: list[str] = []
+    n = 0
+    lin_off = ("set_option linter.unreachableTactic false in\n"
+               "set_option linter.unusedTactic false in\n"
+               "set_option linter.unnecessarySeqFocus false in\n")
+    L.append(f"-- KINK-MINIMUM INSTANCE `{nm}` (extension, 2026-10-01): f = L on [{c.a}, "
+             f"{c.kappa}], f = R on ({c.kappa}, {c.b}],\n"
+             f"-- L' ≤ 0 and R' ≥ 0 certified by Bernstein cells "
+             f"({len(c.left_cells)} + {len(c.right_cells)}), so min f = f({c.kappa}) = "
+             f"{c.value}.")
+    L.append(f"noncomputable def {nm}_L : Polynomial ℝ := {_kink_polyX(c.left)}")
+    L.append(f"noncomputable def {nm}_R : Polynomial ℝ := {_kink_polyX(c.right)}")
+    L.append(f"/-- The piecewise function: `L` up to the kink, `R` after it. -/")
+    L.append(f"noncomputable def {nm}_f (x : ℝ) : ℝ := if x ≤ {k} then {nm}_L.eval x "
+             f"else {nm}_R.eval x\n")
+    for side, poly, piece in (("L", dL, c.left), ("R", dR, c.right)):
+        L.append(lin_off + f"theorem {nm}_d{side} (x : ℝ) :\n"
+                 f"    (Polynomial.derivative {nm}_{side}).eval x = {_poly1(poly, 'x')} := by\n"
+                 f"  simp only [{nm}_{side}, {_dv(piece)}] <;> norm_num <;> ring_nf\n")
+        n += 1
+    # sign lemmas
+    L.append(f"theorem {nm}_dL_nonpos (x : ℝ) (h1 : {a} ≤ x) (h2 : x ≤ {k}) :\n"
+             f"    {_poly1(dL, 'x')} ≤ 0 := by\n"
+             f"  suffices H : 0 ≤ {_poly1(negdL, 'x')} by linarith\n"
+             + "\n".join(_kink_sign_proof(c.left_cells)) + "\n")
+    L.append(f"theorem {nm}_dR_nonneg (x : ℝ) (h1 : {k} ≤ x) (h2 : x ≤ {b}) :\n"
+             f"    0 ≤ {_poly1(dR, 'x')} := by\n"
+             + "\n".join(_kink_sign_proof(c.right_cells)) + "\n")
+    n += 2
+    L.append(f"theorem {nm}_L_anti : AntitoneOn (fun x => {nm}_L.eval x) (Set.Icc {a} {k}) := by\n"
+             f"  apply antitoneOn_of_deriv_nonpos (convex_Icc _ _) {nm}_L.continuous.continuousOn\n"
+             f"    {nm}_L.differentiable.differentiableOn\n"
+             f"  intro x hx\n"
+             f"  rw [interior_Icc] at hx\n"
+             f"  rw [Polynomial.deriv, {nm}_dL]\n"
+             f"  exact {nm}_dL_nonpos x hx.1.le hx.2.le\n")
+    L.append(f"theorem {nm}_R_mono : MonotoneOn (fun x => {nm}_R.eval x) (Set.Icc {k} {b}) := by\n"
+             f"  apply monotoneOn_of_deriv_nonneg (convex_Icc _ _) {nm}_R.continuous.continuousOn\n"
+             f"    {nm}_R.differentiable.differentiableOn\n"
+             f"  intro x hx\n"
+             f"  rw [interior_Icc] at hx\n"
+             f"  rw [Polynomial.deriv, {nm}_dR]\n"
+             f"  exact {nm}_dR_nonneg x hx.1.le hx.2.le\n")
+    n += 2
+    L.append(f"theorem {nm}_cont : {nm}_L.eval {k} = {nm}_R.eval {k} := by\n"
+             f"  simp only [{nm}_L, {nm}_R, {_ev(c.left, c.right)}]\n"
+             f"  norm_num\n")
+    L.append(f"theorem {nm}_f_anti : AntitoneOn {nm}_f (Set.Icc {a} {k}) := by\n"
+             f"  refine {nm}_L_anti.congr ?_\n"
+             f"  intro x hx\n"
+             f"  simp only [{nm}_f]\n"
+             f"  rw [if_pos hx.2]\n")
+    L.append(f"theorem {nm}_f_mono : MonotoneOn {nm}_f (Set.Icc {k} {b}) := by\n"
+             f"  refine {nm}_R_mono.congr ?_\n"
+             f"  intro x hx\n"
+             f"  simp only [{nm}_f]\n"
+             f"  rcases eq_or_lt_of_le hx.1 with h | h\n"
+             f"  · rw [← h, if_pos le_rfl]; exact {nm}_cont.symm\n"
+             f"  · rw [if_neg (not_le.mpr h)]\n")
+    n += 3
+    L.append(f"/-- The value at the kink. -/\n"
+             f"theorem {nm}_value : {nm}_f {k} = {v} := by\n"
+             f"  simp only [{nm}_f, if_pos (le_refl {k}), {nm}_L, {_ev(c.left)}]\n"
+             f"  norm_num\n")
+    L.append(f"/-- The minimum over `[{c.a}, {c.b}]` is attained at the kink: `{c.value} ≤ f x`. -/\n"
+             f"theorem {nm} : ∀ x ∈ Set.Icc {a} {b}, {v} ≤ {nm}_f x := by\n"
+             f"  intro x hx\n"
+             f"  rw [← {nm}_value]\n"
+             f"  exact kink_min_of_anti_mono {nm}_f {nm}_f_anti {nm}_f_mono (by norm_num) "
+             f"(by norm_num) hx\n")
+    L.append(f"/-- `min_{{[a,b]}} f = f(kappa) = {c.value}` as an `IsLeast` statement. -/\n"
+             f"theorem {nm}_isLeast : IsLeast ({nm}_f '' Set.Icc {a} {b}) {v} :=\n"
+             f"  ⟨⟨{k}, ⟨by norm_num, by norm_num⟩, {nm}_value⟩, by\n"
+             f"    rintro _ ⟨x, hx, rfl⟩; exact {nm} x hx⟩\n")
+    n += 3
+    if c.value >= 0:
+        L.append(f"/-- Nonnegativity on `[{c.a}, {c.b}]` (the kink value is `≥ 0`). -/\n"
+                 f"theorem {nm}_nonneg : ∀ x ∈ Set.Icc {a} {b}, 0 ≤ {nm}_f x := fun x hx =>\n"
+                 f"  le_trans (by norm_num) ({nm} x hx)\n")
+        n += 1
+    if c.f_expr is not None:
+        fe = _kink_expr_lean(c.f_expr, x)
+        rwl = ", ".join(
+            f"abs_of_{'nonpos' if sl == 'le' else 'nonneg'} "
+            f"(show {('' if sl == 'le' else '0 ≤ ')}{_kink_expr_lean(arg, x)}"
+            f"{' ≤ 0' if sl == 'le' else ''} by linarith [hx.1, hx.2])"
+            for arg, sl, _sr in c.abs_args)
+        rwr = ", ".join(
+            f"abs_of_{'nonpos' if sr == 'le' else 'nonneg'} "
+            f"(show {('' if sr == 'le' else '0 ≤ ')}{_kink_expr_lean(arg, x)}"
+            f"{' ≤ 0' if sr == 'le' else ''} by linarith [hx.1, hx.2])"
+            for arg, _sl, sr in c.abs_args)
+        L.append(f"/-- The closed form agrees with the piecewise `f` on `[{c.a}, {c.b}]`. -/\n"
+                 f"theorem {nm}_expr_eq : ∀ x ∈ Set.Icc {a} {b}, {fe} = {nm}_f x := by\n"
+                 f"  intro x hx\n"
+                 f"  simp only [{nm}_f]\n"
+                 f"  rcases le_or_gt x {k} with h | h\n"
+                 f"  · rw [if_pos h{', ' + rwl if rwl else ''}]\n"
+                 f"    simp only [{nm}_L, {_ev(c.left)}]\n"
+                 f"    ring\n"
+                 f"  · rw [if_neg (not_le.mpr h){', ' + rwr if rwr else ''}]\n"
+                 f"    simp only [{nm}_R, {_ev(c.right)}]\n"
+                 f"    ring\n")
+        L.append(f"theorem {nm}_expr_min : ∀ x ∈ Set.Icc {a} {b}, {v} ≤ {fe} := by\n"
+                 f"  intro x hx\n"
+                 f"  rw [{nm}_expr_eq x hx]\n"
+                 f"  exact {nm} x hx\n")
+        L.append(f"theorem {nm}_expr_isLeast :\n"
+                 f"    IsLeast ((fun x : ℝ => {fe}) '' Set.Icc {a} {b}) {v} := by\n"
+                 f"  refine ⟨⟨{k}, ⟨by norm_num, by norm_num⟩, ?_⟩, ?_⟩\n"
+                 f"  · simp only\n"
+                 f"    rw [{nm}_expr_eq {k} ⟨by norm_num, by norm_num⟩, {nm}_value]\n"
+                 f"  · rintro _ ⟨x, hx, rfl⟩\n"
+                 f"    exact {nm}_expr_min x hx\n")
+        n += 3
+    return "\n".join(L), n
 
 
 if __name__ == "__main__":
