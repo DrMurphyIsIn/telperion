@@ -8,12 +8,9 @@ state their own scope.
 
 CREDIT
 ------
-Method: concave-witness induction, from the draft "The maximum Laplacian ratio of a tree for all
-n >= 303: concave witnesses and one-variable certificates" (28 September 2026), communicated to
-us by Professor John L. Goldwasser (author: his London colleague; name to be added once
-permission is given).  The draft uses this induction for the Brualdi-Goldwasser ceiling; this
-module packages the METHOD generically.  Nothing from the draft's Sections 4-9 (the Laplacian-
-ratio instance) is formalized here, and none of its data is used.
+Method: concave-witness induction, from unpublished work communicated by Professor John L.
+Goldwasser.  This module packages the METHOD generically; only the generic shape is taken, and
+no data from that work is used.
 
 THE SETTING
 -----------
@@ -71,9 +68,8 @@ THE CERTIFICATE (every obligation the Lean theorem consumes)
       Without a tail (`tail=False`) the conclusion is stated for trees whose nodes all have at
       most `M` children (`PTree.AllDeg (fun m => m <= M)`); nothing is claimed beyond `M`.
 
-This tail is NOT the node-condition tail of the draft's Lemma 3.4 (which uses `U = 0` near the
-small messages that large `m` produces); it is a sufficient condition of our own that reduces
-every `m >= M + 1` to one one-variable check.  Either is sound; this one is what is certified.
+This tail is a sufficient condition of our own that reduces every `m >= M + 1` to one
+one-variable check; it is what is certified.
 
 THE LEAN (self-contained; only `import Mathlib`)
 ------------------------------------------------
@@ -934,9 +930,8 @@ def _facts(pc: PolyCert) -> str:
 
 _GENERIC = r"""/-! ## Generic concave pooled induction (emitted once per file)
 
-Method: concave-witness induction, from the draft "The maximum Laplacian ratio of a tree for
-all n >= 303: concave witnesses and one-variable certificates" (28 September 2026),
-communicated by Professor John L. Goldwasser (author: his London colleague; name to be added).
+Method: concave-witness induction,
+from unpublished work communicated by Professor John L. Goldwasser.
 conjecture1_proved = False. -/
 
 namespace ConcavePooled
@@ -1247,8 +1242,8 @@ class ConcavePooledInductionEmitter(Emitter):
 
     HONEST SCOPE: a bound for one explicit rational recursion on every finite rooted tree
     (or every tree of child count at most `M` without a tail).  Nothing about BG or RH.
-    Method credit: concave-witness induction, from a draft communicated by Professor John L.
-    Goldwasser (author: his London colleague; name to be added).  conjecture1_proved=False."""
+    Method credit: concave-witness induction, from unpublished work communicated by Professor
+    John L. Goldwasser.  conjecture1_proved=False."""
 
     def __post_init__(self):
         self.kind = "concave_pooled_induction"

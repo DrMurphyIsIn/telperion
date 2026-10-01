@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family ConcavePooledInductionExt | input-hash 23454f2733d65459
+/- telperion 0.1.6 | family ConcavePooledInductionExt | input-hash 97c9813a8f757623
    198 theorems, 22 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
@@ -9,9 +9,8 @@ namespace ConcavePooledInductionExt
 
 /-! ## Generic concave pooled induction (emitted once per file)
 
-Method: concave-witness induction, from the draft "The maximum Laplacian ratio of a tree for
-all n >= 303: concave witnesses and one-variable certificates" (28 September 2026),
-communicated by Professor John L. Goldwasser (author: his London colleague; name to be added).
+Method: concave-witness induction,
+from unpublished work communicated by Professor John L. Goldwasser.
 conjecture1_proved = False. -/
 
 namespace ConcavePooled

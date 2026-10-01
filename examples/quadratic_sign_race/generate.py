@@ -14,8 +14,8 @@ the Taylor identity at the anchor by ``ring``.  Classical instances only:
   * m² − 3m + 1           : positive for all m ≥ 3
   * −m² − 8m − 17         : negative for all m ≥ −3
 
-The quadratic sign race pattern is distilled from a draft communicated by
-Prof. John L. Goldwasser (28 Sep 2026); none of its data is used here.
+The quadratic sign race pattern is distilled from unpublished work communicated by
+Professor John L. Goldwasser; none of its data is used here.
 
 conjecture1_proved=False.
 """

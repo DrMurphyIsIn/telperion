@@ -31,8 +31,8 @@ in its classical product form (m.sum = 3t + 4, 4 * 3^t <= m.prod), proved by fee
 emitted theorem; and #print axioms lines.
 
 conjecture1_proved = False -- elementary inequalities about a classical toy problem; nothing
-here bears on RH or on the Laplacian-ratio problem.  Tangent-gap pricing pattern: a draft
-communicated by Professor John L. Goldwasser (28 Sep 2026; see the module docstring).
+here bears on RH or on the Laplacian-ratio problem.  Tangent-gap pricing pattern: from
+unpublished work communicated by Professor John L. Goldwasser (see the module docstring).
 """
 import argparse
 import sys

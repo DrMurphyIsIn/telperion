@@ -5,11 +5,9 @@ conjecture1_proved = False.  Nothing in this module bears on the Riemann Hypothe
 Brualdi-Goldwasser Laplacian-ratio problem: it certifies finite pruning consequences of one
 elementary inequality per instance.  Downstream consumers state their own scope.
 
-Acknowledgement.  The tangent-gap pricing pattern is from a draft communicated by Professor
-John L. Goldwasser ("The maximum Laplacian ratio of a tree for all n >= 303: concave witnesses
-and one-variable certificates", 28 Sep 2026; author: his London colleague, name to be added).
-Nothing from the draft (text or data) is reproduced here; the dogfood is a classical
-instance.
+Acknowledgement.  The tangent-gap pricing pattern is from unpublished work communicated by
+Professor John L. Goldwasser.  Only the generic pattern is taken; nothing from that work (text
+or data) is reproduced here; the dogfood is a classical instance.
 
 THE SETTING
 -----------

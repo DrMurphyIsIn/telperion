@@ -7,8 +7,8 @@ beyond the explicit child counts, so the tail is exercised), the emitted Lean te
 frozen dogfood.  The kernel run is the dogfood `lake build` (CI) and the lean-gated negative
 control in `test_certificate_sensitivity`.
 
-Method credit: concave-witness induction, from a draft communicated by Professor John L.
-Goldwasser (author: his London colleague; name to be added).  conjecture1_proved = False.
+Method credit: concave-witness induction, from unpublished work communicated by Professor
+John L. Goldwasser.  conjecture1_proved = False.
 """
 import random
 import sys

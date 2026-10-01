@@ -439,7 +439,7 @@ _SPECIAL_KINDS = (
     # shared subtrees once), the pi-face rate corollary, and the log/sqrt face.  Finite
     # arithmetic facts about real constants; nothing about RH.
     "enclosure_tree",
-    # mobius_tangent_cell (2026-09-29, Lemma 3.3 of a draft communicated by J. L. Goldwasser):
+    # mobius_tangent_cell (2026-09-29, from unpublished work communicated by J. L. Goldwasser):
     # "linear + concave logs + one Mobius term <= 0" on a rational interval, by tangent-line
     # cells whose convex majorant is checked at the two cell endpoints (bisection generator, one
     # theorem per cell, union by a le_or_lt chain).  Elementary one-variable inequalities;
@@ -447,9 +447,9 @@ _SPECIAL_KINDS = (
     "mobius_tangent_cell",
     # concave_pooled_induction (2026-09-29): a bound on a branching (tree) recursion via a
     # concave one-scalar witness checked at the pooled mean for m = 1..M plus a one-variable
-    # tail for every m > M.  Method credit: concave-witness induction, from a draft
-    # communicated by Professor John L. Goldwasser (author: his London colleague; name to be
-    # added).  Dogfood: the classical matching message.  Nothing about BG or RH.
+    # tail for every m > M.  Method credit: concave-witness induction, from unpublished work
+    # communicated by Professor John L. Goldwasser.  Dogfood: the classical matching message.
+    # Nothing about BG or RH.
     "concave_pooled_induction",
     # affine_hull_dominance (2026-09-30): the exact maximum over all trees on n vertices of a
     # positive multilinear tree recursion (vector states), by convex-hull pruning with explicit
@@ -459,7 +459,7 @@ _SPECIAL_KINDS = (
     # gap_budget_multiplicity (2026-09-29): pruning a multiset optimisation by a tangent-price
     # gap budget (caps, exclusions, a decided knapsack) with the budget from a separable or
     # c * log concave model and enclosure_tree bounds on the gaps.  Tangent-gap pricing pattern
-    # from a draft communicated by J. L. Goldwasser; dogfood is the classical max-product
+    # from unpublished work communicated by J. L. Goldwasser; dogfood is the classical max-product
     # partition.  Elementary real inequalities; nothing about RH.
     "gap_budget_multiplicity",
     # single_crossing_ladder (2026-09-30): consecutive members of a parametric family of

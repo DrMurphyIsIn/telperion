@@ -9,7 +9,7 @@ namespace MobiusTangentCell
 
 /-! ### Generic lemmas of the mobius_tangent_cell template (emitted once per family).
 Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints:
-Lemma 3.3 of a draft communicated by J. L. Goldwasser (28 Sep 2026).
+from unpublished work communicated by J. L. Goldwasser.
 conjecture1_proved = False. -/
 
 /-- Concavity of `log` as a tangent bound at `u`, with `log u <= H`. -/

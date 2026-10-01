@@ -44,8 +44,8 @@ interval root exclusion via Bernstein, and ``tails.py`` wraps a Polya
 certificate on a shifted variable.  This face is an eventual-threshold claim
 ("holds for all sufficiently large m") with an explicit, computed witness, and it
 also certifies the complementary sign below the witness.  The quadratic sign race
-pattern is distilled from a draft communicated by Prof. John L. Goldwasser
-(28 Sep 2026); only the generic pattern is used.
+pattern is distilled from unpublished work communicated by Professor John L.
+Goldwasser; only the generic pattern is used.
 
 ``conjecture1_proved = False``.
 """
