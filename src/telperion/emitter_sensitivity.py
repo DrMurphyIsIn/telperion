@@ -491,6 +491,36 @@ REGISTRY: dict[str, SensitivityStance] = {
                                    # x = 1/2 and the cell's linarith cannot close it.
                                    # See negctrl_adapters/adapter_mobius_tangent_cell.py.
                                    neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "TypedCavityInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                      "a finite TYPE TABLE (degree groups x message-sum bins, "
+                                      "per-type bound B and message interval) is an inductive "
+                                      "invariant of a rational tree recursion y = h(m, R), "
+                                      "l = sum l + g(m, R) (kind typed_cavity_induction): one "
+                                      "generic structural induction (typed_induction_core) "
+                                      "consumes the step; the enumerated steps are point "
+                                      "norm_num checks or Bernstein-cell linarith per child-"
+                                      "type multiset (step_of_counts reduces assignments to "
+                                      "count vectors, dispatched by interval_cases), the band "
+                                      "is a separable tangent bound per degree, the tail one "
+                                      "two-variable certificate uniform in m.  The table and "
+                                      "the claimed bounds ARE the statement; no separately-"
+                                      "supplied identity to corrupt, so the shape is "
+                                      "structural.  certify REFUSES a table some step "
+                                      "violates (reported with the exact point), a failing "
+                                      "base, non-partitioning degree groups or bins, a tail "
+                                      "with mu_T > 0 or ymin < 0, a denominator not certified "
+                                      "positive, floats.  Dogfood: the Balister-Bollobas-Gerke "
+                                      "half-tree recursion for R_{-1} at the published "
+                                      "beta_3 = 7/27 and beta_4 = 139/528 plus a synthetic "
+                                      "band/tail instance; nothing about RH "
+                                      "(conjecture1_proved = False)",
+                                      # Structural, yet a kernel control exists: beta_3 lowered
+                                      # by 1/1000 (table recomputed) makes the degree-3 step
+                                      # with two degree-3 children false by 3/500; that point
+                                      # cell's norm_num cannot close and the main theorem does
+                                      # not elaborate.  See
+                                      # negctrl_adapters/adapter_typed_cavity_induction.py.
+                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "SingleCrossingLadderEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                       "single crossing of consecutive members of a parametric "
                                       "log-sum family F_j(x) = sum kappa(j) log(1 + beta(j) x) "

@@ -474,6 +474,12 @@ _SPECIAL_KINDS = (
     # Dogfood: classical log / rational / Pade bounds near 0 and a synthetic two-variable F.
     # Elementary real inequalities; nothing about RH.
     "factored_endpoint_enclosure",
+    # typed_cavity_induction (2026-10-01): a finite type table (degree groups x message-sum
+    # bins, per-type bounds and message intervals) is an inductive invariant of a branching
+    # recursion over every finite rooted tree; enumeration over child-type multisets, a
+    # tangent band and an analytic tail.  Dogfood: the Balister-Bollobas-Gerke half-tree
+    # recursion for R_{-1} (published beta_3, beta_4).  Elementary; nothing about RH.
+    "typed_cavity_induction",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -784,6 +790,10 @@ _SPECIAL_DISPATCH = {
     "factored_endpoint_enclosure":
         ("emit_factored_endpoint_enclosure", "certify_factored_endpoint_enclosure_point",
          "FactoredEndpointEnclosureEmitter"),
+    # typed_cavity_induction (a type table as an inductive invariant over all trees).
+    "typed_cavity_induction":
+        ("emit_typed_cavity_induction", "certify_typed_cavity_induction_point",
+         "TypedCavityInductionEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":

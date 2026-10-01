@@ -42,6 +42,7 @@ from . import adapter_single_crossing_ladder  # noqa: F401
 from . import adapter_symmetric_quad_d2  # noqa: F401
 from . import adapter_telescoping_potential  # noqa: F401
 from . import adapter_transcendental_enclosure  # noqa: F401
+from . import adapter_typed_cavity_induction  # noqa: F401
 from . import adapter_two_moment_count  # noqa: F401
 from . import adapter_twofreq_offline  # noqa: F401
 from . import adapter_w_z  # noqa: F401
@@ -93,6 +94,7 @@ __all__ = [
     'adapter_symmetric_quad_d2',
     'adapter_telescoping_potential',
     'adapter_transcendental_enclosure',
+    'adapter_typed_cavity_induction',
     'adapter_two_moment_count',
     'adapter_twofreq_offline',
     'adapter_w_z',

@@ -575,3 +575,44 @@ compile.
 
 Scope: `log` atoms only (no `sin` / `exp`, and no mean-value route), one endpoint factor in `l`,
 and rectangular domains. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — `typed_cavity_induction` (a type table as an inductive invariant over all trees)
+
+`TypedCavityInductionEmitter` (kind `typed_cavity_induction`) works on a rational tree recursion
+`y = h(m, R)`, `l = sum l(c) + g(m, R)`, `R = sum y(c)`. It certifies that a finite TYPE TABLE is
+an inductive invariant over every finite rooted tree, or every tree of child count at most `D`.
+A type is a predicate on (child count `m`, message sum `R`): consecutive degree groups, each
+split into `R`-bins. Each type carries a bound `B` and a message interval; an exact atom pins its
+message. The claim is `l(b) <= B[type b]` and `y(b) in [ylo, yhi][type b]`, with the corollary
+`l <= max B` and an optional join that closes `K` trees at a root. Three devices reduce the
+infinitely many parent steps to finitely many exact checks:
+
+* enumeration over every multiset of child types for `m <= M_enum` (point cells by `norm_num`,
+  interval cells by Bernstein coefficients);
+* a tangent band for `M_enum < m <= M_tail`: a certified linear majorant of `g` makes the sum
+  separable, leaving one inequality per degree and bin;
+* an analytic tail for all `m > M_tail` at once: a two-variable certificate in `u = m - K0` and
+  `R`, then `m mu_T <= K0 mu_T`.
+
+The generic Lean core (`typed_induction_core`, `step_of_counts`, `separable_bound`) is emitted
+once per file. We added a new kind, not a face: `concave_pooled_induction` carries one scalar
+witness and no type table, and `affine_hull_dominance` is bounded in size (see the design doc).
+
+Design doc: [`EMITTER_TYPED_CAVITY_INDUCTION_DESIGN_2026-10-01.md`](EMITTER_TYPED_CAVITY_INDUCTION_DESIGN_2026-10-01.md).
+Dogfood: `examples/typed_cavity_induction/` (`generate.py --check`; lake project on Mathlib
+v4.32.0).
+
+* The first instance is published: the Balister-Bollobás-Gerke half-tree recursion (2) for the
+  generalized Randić index `R_{-1}` (J. Graph Theory 56 (2007) 270-286), with types by root
+  degree and the table `c_d` of their (4)-(5), at `beta_3 = 7/27` and `beta_4 = 139/528`. This is
+  their Lemma 4. Through the join it gives their Theorem 6: `R_{-1}(T) <= (7/27) n + 5/27`
+  (implying the printed `11/54`) and `R_{-1}(T) <= (139/528) n + 73/528`. A hand-written
+  companion, `TypedCavityInductionRandic.lean`, restates both for `R_{-1}` itself.
+* The second instance is synthetic: eight types with `R`-bins, interval messages, a band at
+  `m = 3..4` and an `m`-dependent tail at `m >= 5`.
+
+The dogfood has 585 + 11 theorems, all `[propext, Classical.choice, Quot.sound]`. Negative
+control: `adapter_typed_cavity_induction` lowers `beta_3` by 1/1000 and recomputes the table. That
+claim is false: starting from `[3, 2, 1]` and repeatedly joining two copies at a new root drives `c_T` past `c_3`. The
+kernel rejects the degree-3 point cell, and the true twin compiles. v1 is rational only;
+parameter boxes with Taylor enclosures are documented as v2. `conjecture1_proved = False`.
