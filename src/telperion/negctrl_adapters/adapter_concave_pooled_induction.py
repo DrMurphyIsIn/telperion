@@ -80,3 +80,95 @@ register(
         imports_line="import Mathlib",
     )
 )
+
+
+# ---------------------------------------------------------------------------
+# Extension controls (2026-10-01).  NOT registered (the registry holds one adapter per
+# emitter, the path-density control above); the kernel runs are in
+# tests/test_negctrl_concave_pooled_ext.py against examples/concave_pooled_induction/lean.
+# ---------------------------------------------------------------------------
+
+from dataclasses import replace as _replace  # noqa: E402
+from fractions import Fraction as _Fraction  # noqa: E402
+
+from telperion import emit_concave_pooled_induction as _cpi  # noqa: E402
+
+#: the leaf-exempt flat witness 1/12 lowered by 1/1000
+EXEMPT_FORGED_DROP = sp.Rational(1, 1000)
+
+
+def make_exempt_true_cert() -> ConcavePooledCert:
+    """The honest flat leaf-exempt certificate: `ell + |T|/4 <= 1/12` on every non-leaf tree
+    of child count <= 2 (tight at the root with two leaf children)."""
+    return concave_pooled_certificate(**_cpi.LEAF_EXEMPT_FLAT_SPEC)
+
+
+def make_exempt_false_cert() -> ConcavePooledCert:
+    """FALSE by 1/1000: the flat witness lowered to `1/12 - 1/1000`.  The root with two leaf
+    children has `ell + 3/4 = -2/3 + 3/4 = 1/12 > 1/12 - 1/1000`, so the claim fails on that
+    tree; built with every Layer-1 check skipped (same cell layout as the true twin)."""
+    nodes = [(x, v - EXEMPT_FORGED_DROP) for x, v in _cpi.LEAF_EXEMPT_FLAT_SPEC["nodes"]]
+    return concave_pooled_certificate(**dict(_cpi.LEAF_EXEMPT_FLAT_SPEC, nodes=nodes),
+                                      check=False)
+
+
+EXEMPT_ADAPTER = NegativeControlAdapter(
+    emitter_name="ConcavePooledInductionEmitter",
+    make_false_cert=make_exempt_false_cert,
+    make_true_cert=make_exempt_true_cert,
+    emit_call=_emit,
+    prelude="",
+    allow_axioms=(),
+    label=(
+        "leaf-exempt: forged sum_u (1 - y_u) >= |T|/4 - (1/12 - 1/1000) on non-leaf trees of "
+        "child count <= 2 (false at the root with two leaf children by exactly 1/1000): the "
+        "all-leaves step's norm_num fails and the kernel rejects it; the true twin compiles"
+    ),
+    imports_line="import Mathlib",
+)
+
+#: the log enclosure `log u <= H` forged to `H - 1/1000` (then below log u)
+LOG_FORGED_DROP = _Fraction(1, 1000)
+
+
+def make_log_true_cert() -> ConcavePooledCert:
+    """The honest log-profit certificate (`g = -1/(1+R) + (1/5) log(1 + R/2)`, alpha = 1/2)."""
+    return concave_pooled_certificate(**_cpi.LOG_PROFIT_SPEC)
+
+
+def make_log_false_cert() -> ConcavePooledCert:
+    """FALSE by 1/1000: every log enclosure `log u <= H` replaced by `log u <= H - 1/1000`
+    (false: H exceeds log u by less than 1e-6), the cells REBUILT on the true twin's layout
+    with the forged constants (so the algebra is self-consistent and only the log facts are
+    wrong).  The Taylor-box `linarith` of the enclosure lemma fails and the kernel rejects."""
+    true = make_log_true_cert()
+    orig = _cpi._log_upper
+
+    def forged(u):
+        bd = orig(u)
+        return _replace(bd, H=bd.H - LOG_FORGED_DROP)
+
+    _cpi._log_upper = forged
+    try:
+        ctx = _cpi._ctx_of(true)
+        cells = tuple(_cpi._build_cell(ctx, c.m, c.s, c.t, c.j, c.mode, check=False, p=c.p,
+                                       k=c.k) for c in true.cells)
+    finally:
+        _cpi._log_upper = orig
+    return _replace(true, cells=cells, checked=False)
+
+
+LOG_ADAPTER = NegativeControlAdapter(
+    emitter_name="ConcavePooledInductionEmitter",
+    make_false_cert=make_log_false_cert,
+    make_true_cert=make_log_true_cert,
+    emit_call=_emit,
+    prelude="",
+    allow_axioms=(),
+    label=(
+        "log term in g: the tangent constants log u <= H forged to H - 1/1000 (false), cells "
+        "rebuilt consistently: the enclosure lemma's Taylor-box linarith fails and the kernel "
+        "rejects it; the true twin compiles"
+    ),
+    imports_line="import Mathlib",
+)

@@ -533,3 +533,180 @@ Negative controls: `adapter_single_crossing_ladder` shifts the `lambda_3` bracke
 `(0.43052, 0.43053)`. That bracket is false, and the kernel rejects `_p3_vlo`. A double crossing
 claimed single on `[0, oo)` is also rejected: its tail sign cell is false. Both true twins compile.
 Scope: the ladder is proved for a finite window of members only. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — `factored_endpoint_enclosure` (factorization plus box sign through a singular endpoint)
+
+`FactoredEndpointEnclosureEmitter` (kind `factored_endpoint_enclosure`) certifies `0 <= F(l, x)`
+on CLOSED boxes `[A, B] x [C, D]` that touch an endpoint `l = s` where `F` vanishes to order
+`k`. There the quotient `F / (l - s)^k`, which is the quantity of interest, has no interval
+enclosure. `F` is a rational function plus `log(1 + u_i)` atoms, written as
+`D F = N0 + sum kappa_i log(1 + u_i)` with `D > 0`. Each atom is replaced by a Taylor polynomial
+whose remainder has the needed sign on all of `[0, oo)`, which gives `Q <= D F`. `Q` factors
+exactly as `(sigma (l - s))^k H`, and `H >= 0` is checked on a bisection cover with exact tensor
+Bernstein coefficients. The boxes include the endpoint. One generic Lean lemma,
+`factored_endpoint_core`, turns the factorization plus a box sign into `0 <= F` on the closed box.
+Per box, `linarith` runs over the Bernstein products. A union theorem follows the bisection tree,
+and a quotient corollary `0 <= F / t^k` is stated off the endpoint. This closes the gap that
+`mobius_tangent_cell` documents (claims tight to order >= 2 near 0 are refused).
+
+The signed-remainder log bounds EXTEND `transcendental_enclosure` with a new face, `log_taylor`;
+they are not duplicated. `log_le_T` (odd `n`) and `T_le_log` (even `n`) are proved once for every
+order: the derivative is `-(-t)^n/(1+t)`, then the mean value theorem. Explicit `upper_<n>` and
+`lower_<n>` are emitted per order. The new kind imports the same generator. The
+`transcendental_enclosure` example gains a `log_taylor` instance with orders 1..5.
+
+Design doc: [`EMITTER_FACTORED_ENDPOINT_ENCLOSURE_DESIGN_2026-10-01.md`](EMITTER_FACTORED_ENDPOINT_ENCLOSURE_DESIGN_2026-10-01.md).
+Dogfood: `examples/factored_endpoint_enclosure/` (`generate.py --check`; lake project on Mathlib
+v4.32.0). All instances are classical or synthetic:
+
+* `(1/l) log(1 + l) <= 1` on `[0, 1/10]`, i.e. `(1 + l)^(1/l) <= e`;
+* the sharp `l - log(1 + l) >= (117/250) l^2`;
+* the rational alternating bound `(1 + l)^-2 >= 1 - 2l + 3l^2 - 4l^3` on `[0, 1]`. Telperion has
+  no `sin` enclosure, so this stands in for `sin(l)/l`;
+* the synthetic `l (x - l)^2 + l^2 x >= 0` on `[0, 1/2] x [1/8, 1]`, a three-box cover;
+* the [2/1] Pade bound `log(1 + l) <= l (6 + l)/(6 + 4l)` on `[0, 1/3]`, `k = 4`.
+
+The dogfood has 54 theorems, all `[propext, Classical.choice, Quot.sound]`.
+
+Negative controls: `adapter_factored_endpoint_enclosure` forges `l - log(1 + l) >= (47/100) l^2`.
+That claim is false by about 1/1000 at `l = 1/10`, and the kernel rejects the box lemma
+`0 <= H`. A two-variable twin pair with margin `-/+ 1/1000` runs in the tests. Both true twins
+compile.
+
+Scope: `log` atoms only (no `sin` / `exp`, and no mean-value route), one endpoint factor in `l`,
+and rectangular domains. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — `typed_cavity_induction` (a type table as an inductive invariant over all trees)
+
+`TypedCavityInductionEmitter` (kind `typed_cavity_induction`) works on a rational tree recursion
+`y = h(m, R)`, `l = sum l(c) + g(m, R)`, `R = sum y(c)`. It certifies that a finite TYPE TABLE is
+an inductive invariant over every finite rooted tree, or every tree of child count at most `D`.
+A type is a predicate on (child count `m`, message sum `R`): consecutive degree groups, each
+split into `R`-bins. Each type carries a bound `B` and a message interval; an exact atom pins its
+message. The claim is `l(b) <= B[type b]` and `y(b) in [ylo, yhi][type b]`, with the corollary
+`l <= max B` and an optional join that closes `K` trees at a root. Three devices reduce the
+infinitely many parent steps to finitely many exact checks:
+
+* enumeration over every multiset of child types for `m <= M_enum` (point cells by `norm_num`,
+  interval cells by Bernstein coefficients);
+* a tangent band for `M_enum < m <= M_tail`: a certified linear majorant of `g` makes the sum
+  separable, leaving one inequality per degree and bin;
+* an analytic tail for all `m > M_tail` at once: a two-variable certificate in `u = m - K0` and
+  `R`, then `m mu_T <= K0 mu_T`.
+
+The generic Lean core (`typed_induction_core`, `step_of_counts`, `separable_bound`) is emitted
+once per file. We added a new kind, not a face: `concave_pooled_induction` carries one scalar
+witness and no type table, and `affine_hull_dominance` is bounded in size (see the design doc).
+
+Design doc: [`EMITTER_TYPED_CAVITY_INDUCTION_DESIGN_2026-10-01.md`](EMITTER_TYPED_CAVITY_INDUCTION_DESIGN_2026-10-01.md).
+Dogfood: `examples/typed_cavity_induction/` (`generate.py --check`; lake project on Mathlib
+v4.32.0).
+
+* The first instance is published: the Balister-Bollobás-Gerke half-tree recursion (2) for the
+  generalized Randić index `R_{-1}` (J. Graph Theory 56 (2007) 270-286), with types by root
+  degree and the table `c_d` of their (4)-(5), at `beta_3 = 7/27` and `beta_4 = 139/528`. This is
+  their Lemma 4. Through the join it gives their Theorem 6: `R_{-1}(T) <= (7/27) n + 5/27`
+  (implying the printed `11/54`) and `R_{-1}(T) <= (139/528) n + 73/528`. A hand-written
+  companion, `TypedCavityInductionRandic.lean`, restates both for `R_{-1}` itself.
+* The second instance is synthetic: eight types with `R`-bins, interval messages, a band at
+  `m = 3..4` and an `m`-dependent tail at `m >= 5`.
+
+The dogfood has 585 + 11 theorems, all `[propext, Classical.choice, Quot.sound]`. Negative
+control: `adapter_typed_cavity_induction` lowers `beta_3` by 1/1000 and recomputes the table. That
+claim is false: starting from `[3, 2, 1]` and repeatedly joining two copies at a new root drives `c_T` past `c_3`. The
+kernel rejects the degree-3 point cell, and the true twin compiles. v1 is rational only;
+parameter boxes with Taylor enclosures are documented as v2. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — `anchored_monotone_extension` (derivative prelude for parametric tree recursions, two-row invariant, anchored extension)
+
+`AnchoredMonotoneExtensionEmitter` (kind `anchored_monotone_extension`) takes a parametric
+recursion on finite rooted trees: `T_b(λ) = (∏ T_c(λ))·g(λ, A_b)` and `y_b = h(λ, A_b)`, where the
+aggregate `A_b` is the product (product mode) or the sum (sum mode) of the children's messages.
+`g` and `h` are rational in `(λ, A)`. It also takes a normalizer `N(λ, n) = ψ(λ)^(ρ n)`. The kind
+certifies three things for every tree. (1) The DERIVATIVE PRELUDE: `T_b` is positive and
+differentiable on `λ ≥ λ0`, and its log-derivative `D_b` is given by an explicit recursion that is
+proved equal to `d/dλ log T_b` (`hasDeriv_rec`, `hasDerivAt_log_T`). (2) `λ D_b ≤ n_b c(λ)` with
+`c = ρλψ'/ψ`, by a TWO-ROW inductive invariant. The second row is supplied by the certificate:
+`λD + μ·λE ≤ nc + κ`, where `E` is the message log-derivative. The per-node content is finitely
+many polynomial inequalities in `(λ, A[, k])`: positivity, the weight window `0 ≤ m ≤ μ`, and one
+cleared residual per row. Hence `T_b / N(λ, n_b)` is ANTITONE on `λ ≥ λ0`. (3) The ANCHORED
+EXTENSION: `T_b(λ) ≤ N(λ, n_b)` for all `λ ≥ λa`. The anchor is either a node check at `λ0` or a
+hypothesis passed through. Every obligation is an exact product-basis certificate (Taylor on a
+half-line, Bernstein on `[0, 1]`, with bisection), closed in Lean by one `linarith` per cell. The
+generic Lean is re-derived from Mathlib: `hasDerivAt_p2` (chain rule for a two-variable
+polynomial along `t ↦ (t, A t)`), `HasDerivAt.fun_finsetProd`, `antitoneOn_of_hasDerivWithinAt_nonpos`.
+We added a new kind, not a face, because the existing anchor-plus-monotone kinds (`monotone_tail`,
+`lattice_box`, `unimodal`) are integer-indexed. `single_crossing_ladder` differentiates explicit
+closed forms, not tree recursions (see the design doc).
+
+Design doc: [`EMITTER_ANCHORED_MONOTONE_EXTENSION_DESIGN_2026-10-01.md`](EMITTER_ANCHORED_MONOTONE_EXTENSION_DESIGN_2026-10-01.md).
+Dogfood: `examples/anchored_monotone_extension/` (`generate.py --check`; lake project on Mathlib
+v4.32.0). There are three instances:
+
+* the classical hard-core (independent-set) recursion: `Z_b(λ)/(1+λ)^n` is antitone and
+  `Z_b(λ) ≤ (1+λ)^n` on `[0, ∞)`, with the anchor `Z_b(0) = 1` as a node check;
+* the same recursion through the rational exponent `ρ = 1/3`;
+* a synthetic matching-type sum recursion with normalizer `(1+λ)^n` on the threshold half-line
+  `[1, ∞)`. The threshold is load-bearing (`[0, ∞)` is refused), and the anchor is a hypothesis.
+
+The dogfood has 136 theorems, all `[propext, Classical.choice, Quot.sound]`. The claims were
+checked numerically before the emitter was built, over all rooted trees with `n ≤ 9`; the tests
+repeat this for `n ≤ 7`. Negative control: `adapter_anchored_monotone_extension` uses the too-small
+normalizer `(1 + 3λ/4)^n` for the hard-core recursion, which is false at a single vertex. The
+row-0 residual cell cannot close, so the kernel rejects `forged_res0` (its only error), and the
+true twin compiles. Scope: the two-row invariant is a sufficient condition, and both aggregate
+ranges are sound relaxations. `conjecture1_proved = False`.
+
+## Session 2026-10-01 — extensions bundle (kink minimum, leaf-exempt + log pooled induction, multivariate / modular identities)
+
+No new kind. Three existing emitters are extended, each backward compatible: the original specs
+build the same certificates, and the original examples regenerate to the same Lean apart from
+the input-hash header.
+
+- **`curvature_boundary`, mode `"kink"`**: a continuous piecewise polynomial with one interior
+  kink at a rational `kappa` is minimized there. The left piece is decreasing and the right
+  piece increasing, each by a Bernstein sign check on the derivative. Lean: `Polynomial ℝ`
+  pieces, `antitoneOn_of_deriv_nonpos` / `monotoneOn_of_deriv_nonneg`, and the generic
+  `kink_min_of_anti_mono`. It states `IsLeast (f '' Icc a b) (f kappa)`, `v ≤ f x`, `0 ≤ f x`
+  when `v ≥ 0`, and the same for a closed form with `|affine|`. Dogfood (in
+  `examples/curvature_boundary/`): `|x - 1/3| + x^2` on `[0,1]` (min 1/9), cubic pieces on
+  `[-1,2]`, and `x^2/2 + |x|x/2 + |x|/2` on `[-1,1]`. The file has 53 theorems.
+- **`concave_pooled_induction`, leaf-exempt children** (`exempt_leaves=True`): leaves enter
+  exactly and are excluded from the Jensen pooling (`exempt_induction_core`), and the claim is
+  for every non-leaf tree of child count `≤ M`. A **log term in `g`**,
+  `kappa log(a0 + b1 R)` with `kappa > 0`, is replaced per cell by its tangent majorant, with
+  `log u ≤ H` from the mobius_tangent_cell Taylor box. Dogfood
+  (`examples/concave_pooled_induction/generate_ext.py` → `ConcavePooledInductionExt.lean`, a
+  second `lean_lib`, 197 theorems):
+  - `sum_u (1 - y_u) ≥ (27/100)|T| - 83/500` for the matching message on non-leaf trees of
+    child count `≤ 2`, which the single leaf violates, so no pooled certificate can prove it;
+  - a flat twin at alpha = 1/4;
+  - `g = -1/(1+R) + (1/5) log(1 + R/2)` at alpha = 1/2 on every tree;
+  - both extensions together.
+- **`rational_identity`, dict specs**: the multivariate mode
+  `∀ x y : ℚ, c_x < x → c_y < y → lhs = rhs` (`field_simp; ring`, every denominator atom
+  certified positive on the box), and identities modulo an irreducible monic polynomial,
+  `∀ t : ℝ, m t = 0 → lhs = rhs` by `linear_combination q * h`, plus the instance at the real
+  root of a quadratic `m`. Dogfood (`examples/rational_identity/generate_ext.py` →
+  `lean/RationalIdentityExt.lean`, a new lake project and CI job, 31 theorems): partial fractions
+  in one and two variables, and in ℚ(√5) = ℚ[t]/(t² - t - 1) the identities `t² = t + 1`,
+  `t^n = F_n t + F_(n-1)`, `t^n + (1-t)^n = L_n` and `(2t-1)² = 5`.
+
+Negative controls (each false twin rejected by the kernel, each true twin compiles):
+
+- kink minimum claimed as 1/9 + 1/1000 (registered `adapter_curvature_boundary`; the stance now
+  has `neg_control=ADAPTER`);
+- leaf-exempt witness lowered by 1/1000, false at the root with two leaf children;
+- log enclosures forged to `H - 1/1000`;
+- the partial fraction plus 1/1000;
+- `t^5 = 5t + 4` modulo `t² - t - 1`.
+
+The last four are unregistered adapters with lean-gated tests. Every theorem is
+`[propext, Classical.choice, Quot.sound]`, with no `sorry`, `admit` or `native_decide`.
+
+Not done: exempt atoms other than leaves, a tail in the exempt mode, and log bounds on
+`[0, ∞)` for `transcendental_enclosure` (left to the factored_endpoint_enclosure branch).
+
+Design doc: [`EMITTER_EXTENSIONS_BUNDLE_DESIGN_2026-10-01.md`](EMITTER_EXTENSIONS_BUNDLE_DESIGN_2026-10-01.md).
+`conjecture1_proved = False`.
+

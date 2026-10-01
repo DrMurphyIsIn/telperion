@@ -35,6 +35,19 @@ not — the trig face is DEFERRED as a follow-on and is NOT emitted here.  The l
 face (BG-critical) ships alone and green.  See ``trig=True`` spec handling below,
 which raises a clear "deferred" refusal rather than emitting non-green Lean.
 
+FACE ``log_taylor`` (2026-10-01) — polynomial bounds for ``log(1+u)`` valid on ALL of
+``[0, oo)``, with the SIGN of the remainder.  With
+
+    T_n(u) = sum_{j<n} (-1)^j u^(j+1) / (j+1) = u - u^2/2 + ... ± u^n/n,
+
+``log(1+u) <= T_n(u)`` for ODD ``n`` and ``T_n(u) <= log(1+u)`` for EVEN ``n``, for every
+``u >= 0``.  The Lean proof is generic in ``n`` (proved once): ``g = T_n - log(1+.)`` has
+``g(0) = 0`` and ``g'(t) = -(-t)^n / (1+t)`` (the geometric sum ``geom_sum_mul_neg``), so the
+mean value theorem gives the sign.  Per requested order the face then states the explicit
+polynomial form (``upper_<n>`` / ``lower_<n>``).  :func:`log_taylor_lean` is the single
+generator of this section; the ``factored_endpoint_enclosure`` emitter imports it for its
+Taylor-with-signed-remainder route instead of duplicating it.
+
 conjecture1_proved = False.
 """
 from __future__ import annotations
@@ -91,6 +104,7 @@ class TranscendentalEnclosureCertificate:
     U: object           # certified rational UPPER bound of expr on the box
     expr_lo: object     # exact/high-precision value of expr at x0 (min on box)
     expr_hi: object     # exact/high-precision value of expr at x1 (max on box)
+    orders: tuple = ()  # log_taylor face only: the requested Taylor orders
 
 
 # exp lower bound used in Lean: `Real.add_one_le_exp : x + 1 ≤ Real.exp x`, i.e.
@@ -101,9 +115,163 @@ class TranscendentalEnclosureCertificate:
 # emitted Lean discharges `L ≤ log(1+x0)` via `Real.le_log_iff_exp_le` with a
 # `Real.exp` monotone bound whose rational witness is checked here.
 
+#: largest Taylor order the ``log_taylor`` face accepts (Lean cost of the explicit forms)
+LOG_TAYLOR_MAX_ORDER = 16
+
+
+def log_taylor_poly(n: int, u):
+    """``T_n(u) = sum_{j<n} (-1)^j u^(j+1)/(j+1)`` as an exact sympy expression."""
+    return sum(sp.Rational((-1) ** j, j + 1) * u ** (j + 1) for j in range(n))
+
+
+def _log_taylor_text(n: int, var: str = "u") -> str:
+    """Lean text of ``T_n(var)`` (``u - u ^ 2 / 2 + u ^ 3 / 3 - ...``)."""
+    out = []
+    for j in range(n):
+        e = j + 1
+        mono = var if e == 1 else f"{var} ^ {e}"
+        term = mono if e == 1 else f"{mono} / {e}"
+        if j == 0:
+            out.append(term)
+        else:
+            out.append(("- " if j % 2 else "+ ") + term)
+    return " ".join(out)
+
+
+def check_log_taylor_orders(orders) -> tuple:
+    """Validate a collection of Taylor orders (positive ints <= LOG_TAYLOR_MAX_ORDER)."""
+    out = []
+    for n in orders:
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= LOG_TAYLOR_MAX_ORDER:
+            raise ValueError(f"REFUSED: log_taylor order {n!r} must be an int in "
+                             f"1..{LOG_TAYLOR_MAX_ORDER}")
+        out.append(n)
+    if not out:
+        raise ValueError("REFUSED: log_taylor face needs at least one order")
+    return tuple(sorted(set(out)))
+
+
+def log_taylor_lean(ns: str, orders) -> tuple[str, int]:
+    """The Lean section of the ``log_taylor`` face, in namespace ``ns``.
+
+    Generic (proved once, every order): ``T``, ``hasDerivAt_T``, ``nonneg_of_deriv_nonneg``,
+    ``deriv_gap``, ``hasDerivAt_log1``, ``log_le_T`` (odd ``n``), ``T_le_log`` (even ``n``).
+    Per order ``n`` in ``orders``: ``upper_<n>`` (odd) or ``lower_<n>`` (even), the explicit
+    polynomial statement for ``u >= 0``.  Returns ``(text, number of theorems)``."""
+    orders = check_log_taylor_orders(orders)
+    L = [f"""/-! ## `log (1 + u)` Taylor bounds for all `u >= 0`, with signed remainder
+
+`T n u = sum_{{j < n}} (-1)^j u^(j+1) / (j+1)`.  For every `u >= 0`: `log (1 + u) <= T n u`
+when `n` is odd, `T n u <= log (1 + u)` when `n` is even.  Generic proof: `T n - log (1 + .)`
+vanishes at `0` and has derivative `-(-t)^n / (1 + t)` (geometric sum), then the mean value
+theorem.  Emitted by `transcendental_enclosure` (face `log_taylor`). -/
+
+namespace {ns}
+
+noncomputable def T (n : ℕ) (u : ℝ) : ℝ :=
+  ∑ j ∈ Finset.range n, (-1 : ℝ) ^ j * u ^ (j + 1) / ((j : ℝ) + 1)
+
+theorem hasDerivAt_T (n : ℕ) (t : ℝ) :
+    HasDerivAt (T n) (∑ j ∈ Finset.range n, (-t) ^ j) t := by
+  have h : ∀ j ∈ Finset.range n, HasDerivAt
+      (fun u : ℝ => (-1 : ℝ) ^ j * u ^ (j + 1) / ((j : ℝ) + 1)) ((-t) ^ j) t := by
+    intro j _
+    have h1 := ((hasDerivAt_pow (j + 1) t).const_mul ((-1 : ℝ) ^ j)).div_const ((j : ℝ) + 1)
+    refine h1.congr_deriv ?_
+    have hj : ((j : ℝ) + 1) ≠ 0 := by positivity
+    rw [Nat.add_sub_cancel, neg_pow t j]
+    push_cast
+    field_simp
+  exact HasDerivAt.fun_sum h
+
+theorem nonneg_of_deriv_nonneg {{g g' : ℝ → ℝ}} (h0 : g 0 = 0)
+    (hd : ∀ t, 0 ≤ t → HasDerivAt g (g' t) t) (hp : ∀ t, 0 ≤ t → 0 ≤ g' t) :
+    ∀ u, 0 ≤ u → 0 ≤ g u := by
+  intro u hu
+  rcases hu.eq_or_lt with h | h
+  · rw [← h, h0]
+  · obtain ⟨c, hc, hcs⟩ := exists_hasDerivAt_eq_slope g g' h
+      (fun x hx => (hd x hx.1).continuousAt.continuousWithinAt)
+      (fun x hx => hd x hx.1.le)
+    have := hp c hc.1.le
+    rw [hcs, h0, sub_zero, sub_zero] at this
+    exact (div_nonneg_iff.mp this).elim (fun h' => h'.1) (fun h' => by linarith [h'.2])
+
+/-- The remainder's derivative: `(T n)' - 1/(1+t) = -(-t)^n / (1 + t)`. -/
+theorem deriv_gap (n : ℕ) (t : ℝ) (ht : 0 ≤ t) :
+    (∑ j ∈ Finset.range n, (-t) ^ j) - 1 / (1 + t) = -(-t) ^ n / (1 + t) := by
+  have h1 : (1 + t) ≠ 0 := by positivity
+  have hg := geom_sum_mul_neg (-t) n
+  rw [sub_neg_eq_add, add_comm] at hg
+  field_simp
+  linarith [hg]
+
+theorem hasDerivAt_log1 (t : ℝ) (ht : 0 ≤ t) :
+    HasDerivAt (fun u : ℝ => Real.log (1 + u)) (1 / (1 + t)) t := by
+  have h1 : HasDerivAt (fun u : ℝ => 1 + u) 1 t := (hasDerivAt_id t).const_add 1
+  have := h1.log (by positivity)
+  simpa using this
+
+/-- Odd order: the Taylor polynomial is an UPPER bound for every `u >= 0`. -/
+theorem log_le_T (n : ℕ) (hn : Odd n) (u : ℝ) (hu : 0 ≤ u) : Real.log (1 + u) ≤ T n u := by
+  have key := nonneg_of_deriv_nonneg (g := fun v => T n v - Real.log (1 + v))
+    (g' := fun t => (∑ j ∈ Finset.range n, (-t) ^ j) - 1 / (1 + t))
+    (by simp [T])
+    (fun t ht => (hasDerivAt_T n t).sub (hasDerivAt_log1 t ht))
+    (fun t ht => by
+      rw [deriv_gap n t ht, hn.neg_pow]
+      have : 0 ≤ t ^ n := pow_nonneg ht n
+      have : 0 < 1 + t := by linarith
+      rw [neg_neg]; positivity)
+    u hu
+  have key' : 0 ≤ T n u - Real.log (1 + u) := key
+  linarith
+
+/-- Even order: the Taylor polynomial is a LOWER bound for every `u >= 0`. -/
+theorem T_le_log (n : ℕ) (hn : Even n) (u : ℝ) (hu : 0 ≤ u) : T n u ≤ Real.log (1 + u) := by
+  have key := nonneg_of_deriv_nonneg (g := fun v => Real.log (1 + v) - T n v)
+    (g' := fun t => 1 / (1 + t) - (∑ j ∈ Finset.range n, (-t) ^ j))
+    (by simp [T])
+    (fun t ht => (hasDerivAt_log1 t ht).sub (hasDerivAt_T n t))
+    (fun t ht => by
+      have e : 1 / (1 + t) - (∑ j ∈ Finset.range n, (-t) ^ j) = (-t) ^ n / (1 + t) := by
+        have := deriv_gap n t ht; rw [neg_div] at this; linarith
+      rw [e, hn.neg_pow]
+      have : 0 ≤ t ^ n := pow_nonneg ht n
+      positivity)
+    u hu
+  have key' : 0 ≤ Real.log (1 + u) - T n u := key
+  linarith
+"""]
+    nthm = 6
+    for n in orders:
+        poly = _log_taylor_text(n)
+        if n % 2:
+            L.append(f"""
+theorem upper_{n} (u : ℝ) (hu : 0 ≤ u) :
+    Real.log (1 + u) ≤ {poly} := by
+  have h := log_le_T {n} (by decide) u hu
+  simp only [T, Finset.sum_range_succ, Finset.sum_range_zero] at h
+  norm_num at h
+  linarith
+""")
+        else:
+            L.append(f"""
+theorem lower_{n} (u : ℝ) (hu : 0 ≤ u) :
+    {poly} ≤ Real.log (1 + u) := by
+  have h := T_le_log {n} (by decide) u hu
+  simp only [T, Finset.sum_range_succ, Finset.sum_range_zero] at h
+  norm_num at h
+  linarith
+""")
+        nthm += 1
+    L.append(f"\nend {ns}\n")
+    return "".join(L), nthm
+
+
 
 def transcendental_enclosure_certificate(
-    *, face: str = "log", x0=None, x1=None, L=None, U=None
+    *, face: str = "log", x0=None, x1=None, L=None, U=None, orders=None
 ) -> TranscendentalEnclosureCertificate:
     """Build and self-check a rational enclosure ``L ≤ expr ≤ U`` over a box.
 
@@ -126,6 +294,11 @@ def transcendental_enclosure_certificate(
 
     trig face: DEFERRED (see module docstring).  Any ``face="trig"`` is REFUSED
     with a clear message — we do not emit non-green Lean.
+
+    log_taylor face: ``orders`` (default ``(2, 3)``), each an int in
+    ``1..LOG_TAYLOR_MAX_ORDER``.  The bounds hold for all ``u >= 0`` (no box); the
+    self-check re-verifies the remainder sign ``(-1)^n (log(1+u) - T_n(u)) >= 0`` at sample
+    points in high precision.
     """
     if face == "trig":
         raise ValueError(
@@ -134,8 +307,21 @@ def transcendental_enclosure_certificate(
             "plus cos/sin Taylor bounds at 1/√2; the log face ships alone and green "
             "(see module docstring). conjecture1_proved=False."
         )
+    if face == "log_taylor":
+        ords = check_log_taylor_orders((2, 3) if orders is None else orders)
+        u = sp.Symbol("u")
+        for n in ords:
+            for uv in (sp.Rational(1, 100), sp.Rational(1, 2), sp.Integer(3), sp.Integer(40)):
+                gap = (-1) ** n * (sp.log(1 + uv) - log_taylor_poly(n, u).subs(u, uv))
+                if not sp.N(gap, 50) >= 0:  # pragma: no cover - a theorem, kept as a guard
+                    raise ValueError(f"REFUSED: log_taylor order {n} remainder sign fails "
+                                     f"at u = {uv}")
+        return TranscendentalEnclosureCertificate(
+            face="log_taylor", x0=None, x1=None, L=None, U=None,
+            expr_lo=None, expr_hi=None, orders=ords)
     if face != "log":
-        raise ValueError(f"REFUSED: unknown face {face!r} (expected 'log'; 'trig' deferred)")
+        raise ValueError(f"REFUSED: unknown face {face!r} (expected 'log' or 'log_taylor'; "
+                         f"'trig' deferred)")
 
     x0 = sp.Rational(1, 4) if x0 is None else sp.Rational(x0)
     x1 = sp.Rational(1, 2) if x1 is None else sp.Rational(x1)
@@ -192,7 +378,7 @@ def certify_transcendental_enclosure_point(family, pt, name):
     cert = transcendental_enclosure_certificate(
         face=spec.get("face", "log"),
         x0=spec.get("x0"), x1=spec.get("x1"),
-        L=spec.get("L"), U=spec.get("U"),
+        L=spec.get("L"), U=spec.get("U"), orders=spec.get("orders"),
     )
     inst = CertifiedInstance(point=dict(pt), lean_name=name, corners=(), payload=cert)
     return inst, 1
@@ -227,6 +413,10 @@ class TranscendentalEnclosureEmitter(Emitter):
                (L : ℝ) ≤ Real.log (1 + x) ∧ Real.log (1 + x) ≤ (U : ℝ)
 
        combining (2) with (1) chained through ``x ≤ x1 = U``.
+
+    log_taylor face: the generic section of :func:`log_taylor_lean` in namespace
+    ``<name>_logTaylor`` (``log_le_T`` / ``T_le_log`` for every order, then
+    ``upper_<n>`` / ``lower_<n>`` per requested order), valid for every ``u >= 0``.
 
     HONEST SCOPE: the log face is BG-critical and ships green; the trig face
     (Montgomery–Taylor ``C₀``) is DEFERRED (refused at cert time).
@@ -305,6 +495,10 @@ class TranscendentalEnclosureEmitter(Emitter):
             if cert.face == "log":
                 lines.append(self._emit_log(cert, name))
                 nthm += 3
+            elif cert.face == "log_taylor":
+                text, n = log_taylor_lean(f"{name}_logTaylor", cert.orders)
+                lines.append(text)
+                nthm += n
             else:  # pragma: no cover — guarded at certify time
                 raise ValueError(f"unknown/deferred face {cert.face!r}")
         return "\n".join(lines), nthm

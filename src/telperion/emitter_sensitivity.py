@@ -319,6 +319,39 @@ REGISTRY: dict[str, SensitivityStance] = {
                                      # the decided checker rejects the witness.
                                      # See negctrl_adapters/adapter_affine_hull_dominance.py.
                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "AnchoredMonotoneExtensionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                          "anchored monotone extension of a parametric "
+                                          "recursion on finite rooted trees (T_b = prod T_c * "
+                                          "g(lam, A), y_b = h(lam, A), A = prod or sum of the "
+                                          "children's messages): the generic derivative prelude "
+                                          "proves T_b differentiable with the explicit "
+                                          "log-derivative recursion D_b, a two-row inductive "
+                                          "invariant gives lam D_b <= n_b c(lam) on [lam0, oo), "
+                                          "so T_b / psi^(rho n_b) is antitone and an anchor "
+                                          "(a node check or a passed-through hypothesis) bounds "
+                                          "the half-line.  The per-node obligations ARE the "
+                                          "statements (positivity, weight window, one cleared "
+                                          "residual per row), each a polynomial inequality in "
+                                          "(lam, A[, k]) closed by linarith from product-basis "
+                                          "facts; no separately-supplied identity to corrupt.  "
+                                          "certify REFUSES floats, foreign symbols, lam0 < 0, "
+                                          "rho <= 0, an anchor below lam0, any obligation "
+                                          "without a nonnegative product-basis certificate down "
+                                          "to the subdivision limit (a too-small normalizer is "
+                                          "refused here, with a located exact violation), a "
+                                          "failed anchor node check, degree caps.  Dogfood: the "
+                                          "hard-core recursion, Z_b <= (1+lam)^n_b, and a "
+                                          "synthetic matching-type sum recursion on [1, oo); "
+                                          "nothing about any open problem "
+                                          "(conjecture1_proved = False)",
+                                          # Structural, yet a kernel control exists: the hard-core
+                                          # recursion against the too-small normalizer
+                                          # (1 + 3 lam/4)^n (false at a single vertex); the row-0
+                                          # residual cell carries a negative coefficient and its
+                                          # linarith cannot close, so the kernel rejects it.
+                                          # See negctrl_adapters/
+                                          # adapter_anchored_monotone_extension.py.
+                                          neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ConcavePooledInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "bound l(b) + alpha |b| <= U(y_b) on every finite rooted "
                                        "tree (or every tree of child count <= M) for a rational "
@@ -491,6 +524,36 @@ REGISTRY: dict[str, SensitivityStance] = {
                                    # x = 1/2 and the cell's linarith cannot close it.
                                    # See negctrl_adapters/adapter_mobius_tangent_cell.py.
                                    neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "TypedCavityInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                      "a finite TYPE TABLE (degree groups x message-sum bins, "
+                                      "per-type bound B and message interval) is an inductive "
+                                      "invariant of a rational tree recursion y = h(m, R), "
+                                      "l = sum l + g(m, R) (kind typed_cavity_induction): one "
+                                      "generic structural induction (typed_induction_core) "
+                                      "consumes the step; the enumerated steps are point "
+                                      "norm_num checks or Bernstein-cell linarith per child-"
+                                      "type multiset (step_of_counts reduces assignments to "
+                                      "count vectors, dispatched by interval_cases), the band "
+                                      "is a separable tangent bound per degree, the tail one "
+                                      "two-variable certificate uniform in m.  The table and "
+                                      "the claimed bounds ARE the statement; no separately-"
+                                      "supplied identity to corrupt, so the shape is "
+                                      "structural.  certify REFUSES a table some step "
+                                      "violates (reported with the exact point), a failing "
+                                      "base, non-partitioning degree groups or bins, a tail "
+                                      "with mu_T > 0 or ymin < 0, a denominator not certified "
+                                      "positive, floats.  Dogfood: the Balister-Bollobas-Gerke "
+                                      "half-tree recursion for R_{-1} at the published "
+                                      "beta_3 = 7/27 and beta_4 = 139/528 plus a synthetic "
+                                      "band/tail instance; nothing about RH "
+                                      "(conjecture1_proved = False)",
+                                      # Structural, yet a kernel control exists: beta_3 lowered
+                                      # by 1/1000 (table recomputed) makes the degree-3 step
+                                      # with two degree-3 children false by 3/500; that point
+                                      # cell's norm_num cannot close and the main theorem does
+                                      # not elaborate.  See
+                                      # negctrl_adapters/adapter_typed_cavity_induction.py.
+                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "SingleCrossingLadderEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                       "single crossing of consecutive members of a parametric "
                                       "log-sum family F_j(x) = sum kappa(j) log(1 + beta(j) x) "
@@ -519,6 +582,39 @@ REGISTRY: dict[str, SensitivityStance] = {
                                       # runs in the tests.  See
                                       # negctrl_adapters/adapter_single_crossing_ladder.py.
                                       neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "FactoredEndpointEnclosureEmitter": _S(CERTIFICATE_SENSITIVE,
+                                           "0 <= F on closed boxes touching a singular "
+                                           "endpoint l = s (kind "
+                                           "factored_endpoint_enclosure): the certificate "
+                                           "carries the factorization identity Q = "
+                                           "(sigma (l - s))^k * H with a supplied cofactor "
+                                           "H, re-checked by ring in the kernel, plus the "
+                                           "Taylor lower bound Q <= D F (log atoms through "
+                                           "the generic signed-remainder lemmas log_le_T / "
+                                           "T_le_log, D F = N by field_simp; ring) and one "
+                                           "box sign lemma 0 <= H per box (linarith over "
+                                           "Bernstein products); the generic "
+                                           "factored_endpoint_core assembles them, endpoint "
+                                           "included.  A corrupted H or k breaks ring, a "
+                                           "false box claim breaks linarith.  certify "
+                                           "REFUSES floats, non-log functions, a log not "
+                                           "linear in the cleared numerator, an endpoint "
+                                           "inside the domain, a wrong k (no exact "
+                                           "division), a wrong-parity Taylor order, a "
+                                           "sign-changing log coefficient, a non-positive "
+                                           "denominator factor, a supplied H that does not "
+                                           "match, and an H not certified >= 0 (FALSE with "
+                                           "a located point when F < 0 on the sample grid).  "
+                                           "Dogfood: classical log / rational / Pade bounds "
+                                           "near 0 and a synthetic two-variable F; nothing "
+                                           "about RH (conjecture1_proved = False)",
+                                           # Kernel control: l - log(1+l) >= (47/100) l^2
+                                           # on [0, 1/10] is FALSE by ~1/1000 at l = 1/10;
+                                           # the forged box lemma 0 <= H cannot close.  The
+                                           # true twin 117/250 compiles.  A two-variable
+                                           # pair (margin -+ 1/1000) runs in the tests.  See
+                                           # negctrl_adapters/adapter_factored_endpoint_enclosure.py.
+                                           neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "GapBudgetMultiplicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "tangent-price GAP BUDGET pruning of a multiset "
                                        "optimisation (kind gap_budget_multiplicity): from a "
@@ -696,7 +792,13 @@ REGISTRY: dict[str, SensitivityStance] = {
     "ConcaveStationaryMaxEmitter": _S(CERTIFICATE_SENSITIVE,
         "Ships a `_foc` theorem `g'(f*)=0` = an exact rational equation whose one side is the separately-supplied stationary point `fstar`"),
     "CurvatureBoundaryEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "Convexity/positivity shape: nlinarith consumes the structural fact (x-a)(b-x)>=0 built from interval bounds, not a supplied cofactor"),
+        "Convexity/positivity shape: nlinarith consumes the structural fact (x-a)(b-x)>=0 built from interval bounds, not a supplied cofactor; "
+        "kink-minimum route (2026-10-01): derivative signs of the two polynomial pieces closed by linarith from Bernstein product facts, "
+        "monotonicity via Mathlib antitoneOn_of_deriv_nonpos / monotoneOn_of_deriv_nonneg, the kink value recomputed by norm_num",
+        # Structural, yet a kernel control exists (kink route): the minimum of
+        # |x - 1/3| + x^2 on [0, 1] forged to 1/9 + 1/1000; the kink-value norm_num
+        # reduces to False.  See negctrl_adapters/adapter_curvature_boundary.py.
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "DiskCoordBoundsEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "\"Farkas-style\" is naming only: the cert (wr,wi,rho) is substituted into BOTH hypothesis and conclusion, so it parameterizes the statement, not a corruptible witness"),
     "FiniteArgmaxMarginEmitter": _S(CERTIFICATE_SENSITIVE,

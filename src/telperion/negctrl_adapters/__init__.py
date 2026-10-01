@@ -1,11 +1,13 @@
 """Negative-control adapters: importing this package registers every adapter."""
 from __future__ import annotations
 from . import adapter_affine_hull_dominance  # noqa: F401
+from . import adapter_anchored_monotone_extension  # noqa: F401
 from . import adapter_bragg_floor  # noqa: F401
 from . import adapter_c_g_round  # noqa: F401
 from . import adapter_complex_re_im_split  # noqa: F401
 from . import adapter_concave_pooled_induction  # noqa: F401
 from . import adapter_concave_stationary_max  # noqa: F401
+from . import adapter_curvature_boundary  # noqa: F401
 from . import adapter_cone_farkas  # noqa: F401
 from . import adapter_consequence  # noqa: F401
 from . import adapter_constrained_s_o_s  # noqa: F401
@@ -17,6 +19,7 @@ from . import adapter_gap_budget_multiplicity  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_threshold  # noqa: F401
+from . import adapter_factored_endpoint_enclosure  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
 from . import adapter_grid_modulus_nonvanishing  # noqa: F401
@@ -41,6 +44,7 @@ from . import adapter_single_crossing_ladder  # noqa: F401
 from . import adapter_symmetric_quad_d2  # noqa: F401
 from . import adapter_telescoping_potential  # noqa: F401
 from . import adapter_transcendental_enclosure  # noqa: F401
+from . import adapter_typed_cavity_induction  # noqa: F401
 from . import adapter_two_moment_count  # noqa: F401
 from . import adapter_twofreq_offline  # noqa: F401
 from . import adapter_w_z  # noqa: F401
@@ -51,11 +55,13 @@ from . import adapter_zero_sum_majorant  # noqa: F401
 
 __all__ = [
     'adapter_affine_hull_dominance',
+    'adapter_anchored_monotone_extension',
     'adapter_bragg_floor',
     'adapter_c_g_round',
     'adapter_complex_re_im_split',
     'adapter_concave_pooled_induction',
     'adapter_concave_stationary_max',
+    'adapter_curvature_boundary',
     'adapter_cone_farkas',
     'adapter_consequence',
     'adapter_constrained_s_o_s',
@@ -67,6 +73,7 @@ __all__ = [
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',
     'adapter_exp_threshold',
+    'adapter_factored_endpoint_enclosure',
     'adapter_finite_argmax',
     'adapter_fwd_telescope',
     'adapter_grid_modulus_nonvanishing',
@@ -91,6 +98,7 @@ __all__ = [
     'adapter_symmetric_quad_d2',
     'adapter_telescoping_potential',
     'adapter_transcendental_enclosure',
+    'adapter_typed_cavity_induction',
     'adapter_two_moment_count',
     'adapter_twofreq_offline',
     'adapter_w_z',

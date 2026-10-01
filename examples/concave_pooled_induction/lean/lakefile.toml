@@ -1,5 +1,5 @@
 name = "ConcavePooledInduction"
-defaultTargets = ["ConcavePooledInduction"]
+defaultTargets = ["ConcavePooledInduction", "ConcavePooledInductionExt"]
 
 [[require]]
 name = "mathlib"
@@ -8,3 +8,6 @@ rev = "v4.32.0"
 
 [[lean_lib]]
 name = "ConcavePooledInduction"
+
+[[lean_lib]]
+name = "ConcavePooledInductionExt"
