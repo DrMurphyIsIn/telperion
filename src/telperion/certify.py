@@ -468,6 +468,12 @@ _SPECIAL_KINDS = (
     # the best-member ladder follows over the window.  Dogfood: the arm ladder of the
     # matching sum.  Elementary one-variable facts; nothing about RH.
     "single_crossing_ladder",
+    # factored_endpoint_enclosure (2026-10-01): 0 <= F on closed boxes touching a singular
+    # endpoint l = s, from a polynomial lower bound Q <= D F (log atoms by Taylor with signed
+    # remainder), the exact factorization Q = (l - s)^k H and H >= 0 per box (Bernstein).
+    # Dogfood: classical log / rational / Pade bounds near 0 and a synthetic two-variable F.
+    # Elementary real inequalities; nothing about RH.
+    "factored_endpoint_enclosure",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -774,6 +780,10 @@ _SPECIAL_DISPATCH = {
     "single_crossing_ladder":
         ("emit_single_crossing_ladder", "certify_single_crossing_ladder_point",
          "SingleCrossingLadderEmitter"),
+    # factored_endpoint_enclosure (factorization + box sign through the endpoint).
+    "factored_endpoint_enclosure":
+        ("emit_factored_endpoint_enclosure", "certify_factored_endpoint_enclosure_point",
+         "FactoredEndpointEnclosureEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":

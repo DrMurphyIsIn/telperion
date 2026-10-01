@@ -161,6 +161,11 @@ from .emit_single_crossing_ladder import (  # noqa: F401
     single_crossing_ladder_certificate, single_crossing_ladder_family,
     certify_single_crossing_ladder_point,
 )
+from .emit_factored_endpoint_enclosure import (  # noqa: F401
+    FactoredEndpointEnclosureEmitter, FactoredEndpointCert, FactoredEndpointRefusal,
+    factored_endpoint_certificate, factored_endpoint_enclosure_family,
+    certify_factored_endpoint_enclosure_point,
+)
 from .emit_enclosure_fold import (  # noqa: F401
     EnclosureIntervalFoldEmitter, enclosure_interval_fold_certificate,
     enclosure_interval_fold_family,

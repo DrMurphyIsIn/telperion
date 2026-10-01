@@ -17,6 +17,7 @@ from . import adapter_gap_budget_multiplicity  # noqa: F401
 from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_threshold  # noqa: F401
+from . import adapter_factored_endpoint_enclosure  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
 from . import adapter_grid_modulus_nonvanishing  # noqa: F401
@@ -67,6 +68,7 @@ __all__ = [
     'adapter_exp_enclosure',
     'adapter_exp_laurent_identity',
     'adapter_exp_threshold',
+    'adapter_factored_endpoint_enclosure',
     'adapter_finite_argmax',
     'adapter_fwd_telescope',
     'adapter_grid_modulus_nonvanishing',
