@@ -319,6 +319,39 @@ REGISTRY: dict[str, SensitivityStance] = {
                                      # the decided checker rejects the witness.
                                      # See negctrl_adapters/adapter_affine_hull_dominance.py.
                                      neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "AnchoredMonotoneExtensionEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                          "anchored monotone extension of a parametric "
+                                          "recursion on finite rooted trees (T_b = prod T_c * "
+                                          "g(lam, A), y_b = h(lam, A), A = prod or sum of the "
+                                          "children's messages): the generic derivative prelude "
+                                          "proves T_b differentiable with the explicit "
+                                          "log-derivative recursion D_b, a two-row inductive "
+                                          "invariant gives lam D_b <= n_b c(lam) on [lam0, oo), "
+                                          "so T_b / psi^(rho n_b) is antitone and an anchor "
+                                          "(a node check or a passed-through hypothesis) bounds "
+                                          "the half-line.  The per-node obligations ARE the "
+                                          "statements (positivity, weight window, one cleared "
+                                          "residual per row), each a polynomial inequality in "
+                                          "(lam, A[, k]) closed by linarith from product-basis "
+                                          "facts; no separately-supplied identity to corrupt.  "
+                                          "certify REFUSES floats, foreign symbols, lam0 < 0, "
+                                          "rho <= 0, an anchor below lam0, any obligation "
+                                          "without a nonnegative product-basis certificate down "
+                                          "to the subdivision limit (a too-small normalizer is "
+                                          "refused here, with a located exact violation), a "
+                                          "failed anchor node check, degree caps.  Dogfood: the "
+                                          "hard-core recursion, Z_b <= (1+lam)^n_b, and a "
+                                          "synthetic matching-type sum recursion on [1, oo); "
+                                          "nothing about any open problem "
+                                          "(conjecture1_proved = False)",
+                                          # Structural, yet a kernel control exists: the hard-core
+                                          # recursion against the too-small normalizer
+                                          # (1 + 3 lam/4)^n (false at a single vertex); the row-0
+                                          # residual cell carries a negative coefficient and its
+                                          # linarith cannot close, so the kernel rejects it.
+                                          # See negctrl_adapters/
+                                          # adapter_anchored_monotone_extension.py.
+                                          neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ConcavePooledInductionEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "bound l(b) + alpha |b| <= U(y_b) on every finite rooted "
                                        "tree (or every tree of child count <= M) for a rational "
