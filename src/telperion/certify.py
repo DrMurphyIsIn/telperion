@@ -468,6 +468,12 @@ _SPECIAL_KINDS = (
     # the best-member ladder follows over the window.  Dogfood: the arm ladder of the
     # matching sum.  Elementary one-variable facts; nothing about RH.
     "single_crossing_ladder",
+    # typed_cavity_induction (2026-10-01): a finite type table (degree groups x message-sum
+    # bins, per-type bounds and message intervals) is an inductive invariant of a branching
+    # recursion over every finite rooted tree; enumeration over child-type multisets, a
+    # tangent band and an analytic tail.  Dogfood: the Balister-Bollobas-Gerke half-tree
+    # recursion for R_{-1} (published beta_3, beta_4).  Elementary; nothing about RH.
+    "typed_cavity_induction",
     # zero_sum_majorant (2026-09-22, SHAPES_AUDIT_48H section 2 rank 2 = audit C shape A merged
     # with audit B N5): a zero-supported family is summable through a finite ordinate window
     # plus the local-count tail m(rho) C/(1 + |gamma_rho|^2) (the RvMBridgeXi.zeroBoundAt atom).
@@ -774,6 +780,10 @@ _SPECIAL_DISPATCH = {
     "single_crossing_ladder":
         ("emit_single_crossing_ladder", "certify_single_crossing_ladder_point",
          "SingleCrossingLadderEmitter"),
+    # typed_cavity_induction (a type table as an inductive invariant over all trees).
+    "typed_cavity_induction":
+        ("emit_typed_cavity_induction", "certify_typed_cavity_induction_point",
+         "TypedCavityInductionEmitter"),
     # zero_sum_majorant (the strip certificate composed with the RvMBridgeXi.zeroBoundAt atom of
     # the rvm_bridge island; the tail_envelope face is Mathlib-only).
     "zero_sum_majorant":
