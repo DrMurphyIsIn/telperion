@@ -369,9 +369,8 @@ REGISTRY: dict[str, SensitivityStance] = {
                                        "without nonnegative Bernstein coefficients down to the "
                                        "subdivision limit, a tail with m-dependent h/g, lo < 0, "
                                        "hi <= 0 or no piece with b_j <= 0, a non-covering cell "
-                                       "layout, degree > 12, and floats.  Method credit: "
-                                       "concave-witness induction, from unpublished work "
-                                       "communicated privately.  "
+                                       "layout, degree > 12, and floats.  Method: "
+                                       "concave-witness induction.  "
                                        "Dogfood: the matching "
                                        "message, sum_u y_u >= (3/5)|T|; nothing about BG or RH "
                                        "(conjecture1_proved = False)",
@@ -500,8 +499,7 @@ REGISTRY: dict[str, SensitivityStance] = {
                                  neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "MobiusTangentCellEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                    "F(x) = a + b x + sum kappa_i log(alpha_i + beta_i x) + "
-                                   "sigma/(B + A x) <= 0 on [P, Q] by tangent-line cells "
-                                   "(from unpublished work communicated privately): "
+                                   "sigma/(B + A x) <= 0 on [P, Q] by tangent-line cells: "
                                    "per cell the concave logs are replaced by their tangents "
                                    "at a rational t (Real.log_le_sub_one_of_pos, with a "
                                    "rational H >= log u from abs_log_sub_add_sum_range_le + "

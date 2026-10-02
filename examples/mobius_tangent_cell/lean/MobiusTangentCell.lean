@@ -8,8 +8,7 @@ import Mathlib
 namespace MobiusTangentCell
 
 /-! ### Generic lemmas of the mobius_tangent_cell template (emitted once per family).
-Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints:
-from unpublished work communicated privately.
+Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints.
 conjecture1_proved = False. -/
 
 /-- Concavity of `log` as a tangent bound at `u`, with `log u <= H`. -/

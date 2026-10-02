@@ -5,8 +5,8 @@ conjecture1_proved = False.  Nothing in this module bears on the Riemann Hypothe
 the Brualdi-Goldwasser conjecture: it certifies elementary one-variable real inequalities
 with rational data.  Downstream consumers state their own scope.
 
-Acknowledgement: the tangent-line cell technique (concave witnesses, a Mobius term, a convex
-majorant checked at the two cell endpoints) is taken from unpublished work communicated privately.  Nothing from that work's data is reproduced here.
+Technique: tangent-line cells (concave logs replaced by tangents, a Mobius term, a convex
+majorant checked at the two cell endpoints).
 
 THE SHAPE
 ---------
@@ -591,8 +591,7 @@ def sympy_to_lean(e: sp.Expr, x) -> str:
 
 _GENERIC = """\
 /-! ### Generic lemmas of the mobius_tangent_cell template (emitted once per family).
-Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints:
-from unpublished work communicated privately.
+Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints.
 conjecture1_proved = False. -/
 
 /-- Concavity of `log` as a tangent bound at `u`, with `log u <= H`. -/

@@ -6,10 +6,9 @@ on RH, or on any other open problem.  It certifies, for one explicitly given rec
 explicitly given witness, a bound that holds on EVERY finite rooted tree; downstream consumers
 state their own scope.
 
-CREDIT
+METHOD
 ------
-Method: concave-witness induction, from unpublished work communicated privately.  This module packages the METHOD generically; only the generic shape is taken, and
-no data from that work is used.
+Method: concave-witness induction.  This module packages the method generically.
 
 THE SETTING
 -----------
@@ -929,8 +928,7 @@ def _facts(pc: PolyCert) -> str:
 
 _GENERIC = r"""/-! ## Generic concave pooled induction (emitted once per file)
 
-Method: concave-witness induction,
-from unpublished work communicated privately.
+Method: concave-witness induction.
 conjecture1_proved = False. -/
 
 namespace ConcavePooled
@@ -1241,7 +1239,7 @@ class ConcavePooledInductionEmitter(Emitter):
 
     HONEST SCOPE: a bound for one explicit rational recursion on every finite rooted tree
     (or every tree of child count at most `M` without a tail).  Nothing about BG or RH.
-    Method credit: concave-witness induction, from unpublished work communicated privately.  conjecture1_proved=False."""
+    Method: concave-witness induction.  conjecture1_proved=False."""
 
     def __post_init__(self):
         self.kind = "concave_pooled_induction"
