@@ -238,7 +238,7 @@ def test_emitted_lean_shape():
     assert "theorem lm (x : ℝ)" in txt and "theorem pd_sides (x : ℝ)" in txt
     assert "Real.log_two_gt_d9" in txt                            # u < 2/3 path
     assert "rcases le_or_gt x" in txt
-    assert "from unpublished work communicated privately." in txt and "conjecture1_proved = False" in txt
+    assert "privately" not in txt and "conjecture1_proved = False" in txt
 
 
 def test_unknown_spec_keys_are_refused():
