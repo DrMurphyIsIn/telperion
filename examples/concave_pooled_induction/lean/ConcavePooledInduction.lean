@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family ConcavePooledInduction | input-hash 6df1308e801900a9
+/- telperion 0.1.6 | family ConcavePooledInduction | input-hash 7600363b3fe916d9
    165 theorems, 21 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
@@ -10,7 +10,7 @@ namespace ConcavePooledInduction
 /-! ## Generic concave pooled induction (emitted once per file)
 
 Method: concave-witness induction,
-from unpublished work communicated by Professor John L. Goldwasser.
+from unpublished work communicated privately.
 conjecture1_proved = False. -/
 
 namespace ConcavePooled

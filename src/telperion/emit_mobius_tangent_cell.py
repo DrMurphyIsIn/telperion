@@ -6,8 +6,7 @@ the Brualdi-Goldwasser conjecture: it certifies elementary one-variable real ine
 with rational data.  Downstream consumers state their own scope.
 
 Acknowledgement: the tangent-line cell technique (concave witnesses, a Mobius term, a convex
-majorant checked at the two cell endpoints) is taken from unpublished work communicated by
-Professor John L. Goldwasser.  Nothing from that work's data is reproduced here.
+majorant checked at the two cell endpoints) is taken from unpublished work communicated privately.  Nothing from that work's data is reproduced here.
 
 THE SHAPE
 ---------
@@ -593,7 +592,7 @@ def sympy_to_lean(e: sp.Expr, x) -> str:
 _GENERIC = """\
 /-! ### Generic lemmas of the mobius_tangent_cell template (emitted once per family).
 Tangent-line cells with a Mobius term and a convex majorant checked at the two endpoints:
-from unpublished work communicated by J. L. Goldwasser.
+from unpublished work communicated privately.
 conjecture1_proved = False. -/
 
 /-- Concavity of `log` as a tangent bound at `u`, with `log u <= H`. -/

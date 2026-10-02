@@ -26,8 +26,7 @@ than one scalar per child, or are checked only on a probe set of realized nodes.
 function U of a single scalar message, CONCAVE in it, and the per-node inequality is verified at the
 POOLED MEAN message for EVERY child count m (with the parent's message a function of m and the mean), then
 Jensen gives sum_c U(y_c) <= m U(mean) and a local pass IS a global certificate, by induction from the
-leaves.  This is the concave-witness route (from unpublished work communicated by Professor John L.
-Goldwasser); see the `concave_pooled_induction` emitter.  This
+leaves.  This is the concave-witness route (from unpublished work communicated privately); see the `concave_pooled_induction` emitter.  This
 tester does not check concavity or cover all m, so it keeps the downgrade.
 """
 from __future__ import annotations

@@ -18,8 +18,7 @@ Generic instances (small rational nodes, not from any application):
 For the log cases the emitter also discharges the L hypotheses and states a
 hypothesis-free corollary for U = min(0, segment lines).
 
-The node-condition pattern is distilled from unpublished work communicated by
-Professor John L. Goldwasser; none of its data is used here.
+The node-condition pattern is distilled from unpublished work communicated privately; none of its data is used here.
 
 conjecture1_proved=False.
 """
