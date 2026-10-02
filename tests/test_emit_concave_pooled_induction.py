@@ -7,8 +7,7 @@ beyond the explicit child counts, so the tail is exercised), the emitted Lean te
 frozen dogfood.  The kernel run is the dogfood `lake build` (CI) and the lean-gated negative
 control in `test_certificate_sensitivity`.
 
-Method credit: concave-witness induction, from unpublished work communicated by Professor
-John L. Goldwasser.  conjecture1_proved = False.
+Method credit: concave-witness induction, from unpublished work communicated privately.  conjecture1_proved = False.
 """
 import random
 import sys
@@ -205,7 +204,7 @@ def test_emitted_text_shape():
     for s in ("theorem pooled_induction_core", "theorem minPieces_jensen",
               "theorem pd (b : PTree) (hb : b.AllDeg (fun m => m ≤ 1))",
               "theorem pd_uniform", "theorem pd_hstep", "theorem pd_node2",
-              "Professor John L. Goldwasser"):
+              "from unpublished work communicated privately."):
         assert s in txt, s
     for bad in ("sorry", "native_decide", "admit", "axiom "):
         assert bad not in txt

@@ -315,8 +315,7 @@ def log_combination_certificate(
 # tangent bounds 1 − 1/X ≤ log X ≤ X − 1, plus an optional opaque real R carried
 # with hypothesis bounds) needs an enclosure.
 #
-# Acknowledgement: distilled from unpublished work communicated by Professor John L.
-# Goldwasser.  Only the generic certificate shape is taken; no data from that work is
+# Acknowledgement: distilled from unpublished work communicated privately.  Only the generic certificate shape is taken; no data from that work is
 # used.
 
 

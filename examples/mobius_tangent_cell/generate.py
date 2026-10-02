@@ -5,7 +5,7 @@
 
 Four one-variable inequalities "linear + concave logs + one Mobius term <= 0", each
 certified by tangent-line cells with a convex majorant checked at the two cell endpoints
-(from unpublished work communicated by J. L. Goldwasser):
+(from unpublished work communicated privately):
 
 * `pade_log1p`:  log(1 + x) <= x (6 + x) / (6 + 4 x) on [1/4, 1]  (the [2/1] Pade bound;
   F = log(1 + x) - x/4 - 9/8 + 27/(24 + 16 x), Mobius coefficient > 0: convex case).

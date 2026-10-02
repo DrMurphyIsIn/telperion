@@ -32,7 +32,7 @@ emitted theorem; and #print axioms lines.
 
 conjecture1_proved = False -- elementary inequalities about a classical toy problem; nothing
 here bears on RH or on the Laplacian-ratio problem.  Tangent-gap pricing pattern: from
-unpublished work communicated by Professor John L. Goldwasser (see the module docstring).
+unpublished work communicated privately (see the module docstring).
 """
 import argparse
 import sys

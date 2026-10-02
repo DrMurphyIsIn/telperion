@@ -49,7 +49,7 @@ def test_registry_declares_wired_adapter():
     stance = REGISTRY["ConcavePooledInductionEmitter"]
     assert stance.neg_control is not None
     assert stance.neg_control.kind == NEG_CONTROL_ADAPTER
-    assert "Goldwasser" in stance.reason
+    assert "communicated privately" in stance.reason
 
 
 def test_false_cert_is_refused_by_layer_one():

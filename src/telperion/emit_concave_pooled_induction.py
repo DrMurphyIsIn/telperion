@@ -8,8 +8,7 @@ state their own scope.
 
 CREDIT
 ------
-Method: concave-witness induction, from unpublished work communicated by Professor John L.
-Goldwasser.  This module packages the METHOD generically; only the generic shape is taken, and
+Method: concave-witness induction, from unpublished work communicated privately.  This module packages the METHOD generically; only the generic shape is taken, and
 no data from that work is used.
 
 THE SETTING
@@ -931,7 +930,7 @@ def _facts(pc: PolyCert) -> str:
 _GENERIC = r"""/-! ## Generic concave pooled induction (emitted once per file)
 
 Method: concave-witness induction,
-from unpublished work communicated by Professor John L. Goldwasser.
+from unpublished work communicated privately.
 conjecture1_proved = False. -/
 
 namespace ConcavePooled
@@ -1242,8 +1241,7 @@ class ConcavePooledInductionEmitter(Emitter):
 
     HONEST SCOPE: a bound for one explicit rational recursion on every finite rooted tree
     (or every tree of child count at most `M` without a tail).  Nothing about BG or RH.
-    Method credit: concave-witness induction, from unpublished work communicated by Professor
-    John L. Goldwasser.  conjecture1_proved=False."""
+    Method credit: concave-witness induction, from unpublished work communicated privately.  conjecture1_proved=False."""
 
     def __post_init__(self):
         self.kind = "concave_pooled_induction"
