@@ -17,8 +17,13 @@ Pins, on a synthetic island and on the live registry:
     no AxiomGuard lib, imports the vocabulary mirror's home modules instead;
   * on an island whose AxiomGuard libs cannot co-import (li_positivity), the bridge imports
     only the first guard whose import closure holds the artifact and the root imports nothing;
-  * the live dbn, rvm_bridge, zeta_reflection, li_positivity, quasicrystal and bg bundles are
-    committed and in sync with the registry.
+  * a materialized-root island (oai_qrh_bridge) has no lakefile of its own but a stanza that
+    telperion/scripts/judge_materialize.sh appends inside the workspace; its guards must be roots
+    of the island stanza; with no proved node its bundle is empty, not an error;
+  * `--pending` (default off, scratch `--out` only, never `--check`) also renders draft/open nodes
+    and says so in each bridge and in MANIFEST.json;
+  * the live dbn, rvm_bridge, zeta_reflection, li_positivity, quasicrystal, bg and oai_qrh_bridge
+    bundles are committed and in sync with the registry.
 
 conjecture1_proved = False.
 """
@@ -496,7 +501,7 @@ def _live() -> bool:
     return (TELPERION / "missions" / "rh" / "mission.toml").exists()
 
 
-@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection", "li_positivity", "quasicrystal", "bg"])
+@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection", "li_positivity", "quasicrystal", "bg", "oai_qrh_bridge"])
 def test_live_committed_bundle_is_in_sync(island):
     """The committed challenges ARE the registry statements; CI runs the same check."""
     if not _live():
@@ -518,3 +523,229 @@ def test_live_islands_render(island, expected):
     for c in b.challenges:
         assert f":=\n  {c.theorem}\n" in c.challenge_text
         assert c.config["theorem_names"] == [c.bridge_theorem]
+
+
+# ---------------------------------------------------------------------------
+# materialized-root islands (oai_qrh_bridge) and the --pending opt-in
+# ---------------------------------------------------------------------------
+
+MAT_STANZA = ("-- island stanza\nlean_lib Art where\n  roots := #[`Art]\n"
+              "lean_lib AxiomGuardMat where\n  roots := #[`AxiomGuardMat]\n")
+MAT_ARTIFACT = textwrap.dedent("""\
+    import Mathlib
+
+    theorem mat_thm (x : ℝ) (hx : 0 < x) : 0 < x ^ 2 := by
+      positivity
+    """)
+MAT_STATEMENT = "import Mathlib\n\ntheorem mat_thm (x : ℝ) (hx : 0 < x) : 0 < x ^ 2 := by sorry\n"
+
+
+def _mat_island(tmp_path: Path, monkeypatch, *, status="draft", stanza=MAT_STANZA,
+                guard=True, pin="toolchain=leanprover/lean4:v4.34.1\ncommit=abc\n",
+                artifact_name="Art.lean", nodes=True) -> Path:
+    """A telperion/ tree with one materialized-root island `mat` (a recipe dir, no lakefile)."""
+    tel = tmp_path / "telperion"
+    recipe = tel / "examples" / "mat"
+    lean = recipe / "lean"
+    lean.mkdir(parents=True)
+    (recipe / "OAI_PIN").write_text("# pin\n" + pin)
+    (lean / "lakefile-stanza.lean").write_text(stanza)
+    (lean / artifact_name).parent.mkdir(parents=True, exist_ok=True)
+    (lean / artifact_name).write_text(MAT_ARTIFACT)
+    if guard:
+        (lean / "AxiomGuardMat.lean").write_text("import Art\n#print axioms mat_thm\n")
+    camp = tel / "missions" / "x"
+    (camp / "nodes").mkdir(parents=True)
+    (camp / "lean" / "Statements").mkdir(parents=True)
+    (camp / "mission.toml").write_text(
+        'name = "x.goal"\ntitle = "t"\ndescription = "d"\ngoal_node = "X_mat"\n'
+        'environment_toolchain = "leanprover/lean4:v4.34.1"\nenvironment_mathlib_rev = "x"\n')
+    if nodes:
+        (camp / "nodes" / "X_mat.toml").write_text(textwrap.dedent(f"""\
+            name = "X.mat"
+            title = "node"
+            kind = "lemma"
+            status = "{status}"
+            statement_module = "Statements.X_mat"
+            depends_on = []
+
+            [proof]
+            artifact = "../../examples/mat/lean/{artifact_name}"
+            artifact_kind = "lean_module"
+            via = "direct"
+            closure_clean = true
+            """))
+        (camp / "lean" / "Statements" / "X_mat.lean").write_text(
+            HEADER.format(slug="X_mat") + MAT_STATEMENT)
+    monkeypatch.setattr(judge, "MATERIALIZED_ROOT_ISLANDS", {
+        "mat": judge.MaterializedRootIsland(
+            recipe="examples/mat", pin_file="OAI_PIN", island_stanza="lean/lakefile-stanza.lean",
+            package="OAI", lakefile="lakefile.lean", comparator_tag="v4.34.0")})
+    return tel
+
+
+def test_materialized_island_without_proved_node_is_an_empty_bundle(tmp_path, monkeypatch):
+    """Pre-grant (draft node only) the committed bundle is EMPTY, not an error, and has no
+    lakefile of its own: the foreign root package must stay the workspace root."""
+    tel = _mat_island(tmp_path, monkeypatch, status="draft")
+    b = judge.build_bundle(tel, "mat")
+    assert b.challenges == [] and b.pending == () and b.require_path == ""
+    files = b.files()
+    assert sorted(files) == ["MANIFEST.json", "MissionChallenges.lean", "lakefile-stanza.lean",
+                             "lean-toolchain"]
+    assert files["lean-toolchain"] == "leanprover/lean4:v4.34.1\n"
+    assert "lean_lib MissionChallenges where" in files["lakefile-stanza.lean"]
+    assert "import" not in files["MissionChallenges.lean"]
+    m = json.loads(files["MANIFEST.json"])
+    assert m["nodes"] == [] and m["package"] == "OAI" and m["comparator_tag"] == "v4.34.0"
+    assert m["comparator_toolchain"] == "leanprover/lean4:v4.34.1"
+    assert m["materialized_root"]["pin"]["commit"] == "abc"
+    assert "pending_not_proved" not in m
+    out = tmp_path / "bundle"
+    judge.write_bundle(b, out)
+    assert judge.check_bundle(b, out) == []
+    # a node with --only that matches nothing is still an error (only the full bundle may be empty)
+    with pytest.raises(judge.JudgeError, match="no proved registry node"):
+        judge.build_bundle(tel, "mat", only=["X_mat"])
+
+
+def test_materialized_proved_node_bridge(tmp_path, monkeypatch):
+    tel = _mat_island(tmp_path, monkeypatch, status="proved")
+    b = judge.build_bundle(tel, "mat")
+    [c] = b.challenges
+    assert b.pending == ()
+    assert c.solution_module == "Art" and c.theorem == "mat_thm"
+    # artifact first, then the island's AxiomGuard modules (the shadowing guard)
+    assert "import Art\nimport AxiomGuardMat\n" in c.challenge_text
+    assert "This island is MATERIALIZED" in c.challenge_text
+    assert "PENDING RENDER" not in c.challenge_text
+    assert ("theorem MissionJudge.X_mat :\n    ∀ (x : ℝ) (hx : 0 < x), 0 < x ^ 2 :=\n  mat_thm\n"
+            in c.challenge_text)
+    assert c.config["theorem_names"] == ["MissionJudge.X_mat"] and c.config["enable_nanoda"]
+    files = b.files()
+    assert "lakefile.toml" not in files
+    assert files["MissionChallenges.lean"] == "import MissionChallenges.X_mat\n"
+    assert files["MissionChallenges/X_mat.lean"] == c.challenge_text
+    [node] = json.loads(files["MANIFEST.json"])["nodes"]
+    assert node["solution_module"] == "Art" and node["config"] == "X_mat.comparator.json"
+
+
+def test_pending_renders_draft_nodes_and_says_so(tmp_path, monkeypatch):
+    tel = _mat_island(tmp_path, monkeypatch, status="draft")
+    b = judge.build_bundle(tel, "mat", pending=True)
+    [c] = b.challenges
+    assert b.pending == ("x/X_mat: draft",)
+    assert "PENDING RENDER: the node's status is 'draft'" in c.challenge_text
+    assert json.loads(b.files()["MANIFEST.json"])["pending_not_proved"] == ["x/X_mat: draft"]
+    with pytest.raises(judge.JudgeError, match="separate paths"):
+        judge.build_bundle(tel, "mat", pending=True, heavy=True, only=["X_mat"])
+
+
+def test_pending_on_an_ordinary_island(tmp_path):
+    """--pending is island-agnostic; the default (committed) path still refuses a draft-only island."""
+    tel = _island(tmp_path, artifact=ARTIFACT_NS, statement=STATEMENT_NS, status="draft")
+    with pytest.raises(judge.JudgeError, match="no proved registry node"):
+        judge.build_bundle(tel, "isl")
+    b = judge.build_bundle(tel, "isl", pending=True)
+    assert [c.slug for c in b.challenges] == ["X_node"] and b.pending == ("x/X_node: draft",)
+    assert "pending_not_proved" in b.files()["MANIFEST.json"]
+
+
+def test_pending_cli_refuses_check_and_default_out(tmp_path, monkeypatch, capsys):
+    tel = _mat_island(tmp_path, monkeypatch, status="draft")
+    assert judge.main(["--island", "mat", "--telperion", str(tel), "--pending"]) == 2
+    assert "--pending needs --out" in capsys.readouterr().err
+    assert judge.main(["--island", "mat", "--telperion", str(tel), "--pending", "--check"]) == 2
+    assert "nothing to --check" in capsys.readouterr().err
+    out = tmp_path / "scratch"
+    assert judge.main(["--island", "mat", "--telperion", str(tel), "--pending", "--out", str(out)]) == 0
+    assert (out / "MissionChallenges" / "X_mat.lean").is_file()
+    # the committed bundle stays empty: --configs (what CI iterates) lists nothing without --pending
+    capsys.readouterr()
+    assert judge.main(["--island", "mat", "--telperion", str(tel), "--configs"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_materialized_guard_must_be_a_stanza_root(tmp_path, monkeypatch):
+    tel = _mat_island(tmp_path, monkeypatch, stanza="lean_lib Art where\n  roots := #[`Art]\n"
+                      "-- lean_lib AxiomGuardMat where roots := #[`AxiomGuardMat]\n")
+    with pytest.raises(judge.JudgeError, match="not lean_lib roots"):
+        judge.build_bundle(tel, "mat", pending=True)
+
+
+def test_materialized_island_needs_a_guard(tmp_path, monkeypatch):
+    tel = _mat_island(tmp_path, monkeypatch, guard=False)
+    with pytest.raises(judge.JudgeError, match="shadowing guard needs at least one"):
+        judge.build_bundle(tel, "mat", pending=True)
+
+
+def test_materialized_pin_needs_toolchain(tmp_path, monkeypatch):
+    tel = _mat_island(tmp_path, monkeypatch, pin="commit=abc\n")
+    with pytest.raises(judge.JudgeError, match="no `toolchain=` line"):
+        judge.build_bundle(tel, "mat")
+
+
+def test_materialized_nested_artifact_is_not_consumable(tmp_path, monkeypatch):
+    """The recipe copies only lean/*.lean to the workspace root, so a nested artifact module
+    would not exist there; it is reported, not rendered under a wrong module name."""
+    tel = _mat_island(tmp_path, monkeypatch, status="proved", artifact_name="Sub/Art.lean")
+    with pytest.raises(judge.JudgeError, match="not a top-level file"):
+        judge.build_bundle(tel, "mat")
+
+
+def test_judge_materialize_script_installs_once(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    if shutil.which("bash") is None:
+        pytest.skip("bash not available")
+    tel = _mat_island(tmp_path, monkeypatch, status="draft")
+    bundle = tmp_path / "bundle"
+    judge.write_bundle(judge.build_bundle(tel, "mat", pending=True), bundle)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "lean-toolchain").write_text("leanprover/lean4:v4.34.1\n")
+    (ws / "lakefile.lean").write_text("package OAI\n" + MAT_STANZA)
+    script = TELPERION / "scripts" / "judge_materialize.sh"
+    for _ in range(2):
+        r = subprocess.run(["bash", str(script), str(bundle), str(ws)], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+    lake = (ws / "lakefile.lean").read_text()
+    assert lake.count("lean_lib MissionChallenges where") == 1
+    assert (ws / "MissionChallenges" / "X_mat.lean").read_text() == \
+        (bundle / "MissionChallenges" / "X_mat.lean").read_text()
+    assert (ws / "X_mat.comparator.json").is_file()
+    # a different file of the same config name is never overwritten
+    (ws / "X_mat.comparator.json").write_text("{}\n")
+    r = subprocess.run(["bash", str(script), str(bundle), str(ws)], capture_output=True, text=True)
+    assert r.returncode == 1 and "refusing to overwrite" in r.stderr
+    # wrong toolchain is refused
+    (ws / "X_mat.comparator.json").unlink()
+    (ws / "lean-toolchain").write_text("leanprover/lean4:v4.34.0\n")
+    r = subprocess.run(["bash", str(script), str(bundle), str(ws)], capture_output=True, text=True)
+    assert r.returncode == 1 and "toolchain mismatch" in r.stderr
+
+
+def test_live_oai_qrh_bridge_bundle():
+    """The committed oai_qrh_bridge bundle is in sync and, pre-grant, EMPTY (its two nodes are
+    draft). The pending render pins the bridge theorems the reviewing session built at OpenAI's
+    pin: the 7/8 half-plane from ArdaQRHBridge and Lambda <= 9/32 from ArdaDBNUnconditional."""
+    if not _live():
+        pytest.skip("live registry not present")
+    b = judge.build_bundle(TELPERION, "oai_qrh_bridge")
+    assert judge.check_bundle(b, judge.default_out(TELPERION, "oai_qrh_bridge")) == []
+    assert b.comparator_tag == "v4.34.0" and b.toolchain == "leanprover/lean4:v4.34.1"
+    p = judge.build_bundle(TELPERION, "oai_qrh_bridge", pending=True)
+    by = {c.slug: c for c in p.challenges}
+    if "RH_zeta_zero_free_seven_eighths" in by:
+        c = by["RH_zeta_zero_free_seven_eighths"]
+        assert c.solution_module == "ArdaQRHBridge" and c.theorem == "qrh_seven_eighths"
+        assert "∀ s : ℂ, (7 / 8 : ℝ) < s.re → riemannZeta s ≠ 0 :=\n  qrh_seven_eighths\n" in c.challenge_text
+    if "RH_dbn_real_zeros_nine_thirtyseconds" in by:
+        c = by["RH_dbn_real_zeros_nine_thirtyseconds"]
+        assert c.solution_module == "ArdaDBNUnconditional"
+        assert ("∀ t : ℝ, 9 / 32 ≤ t → ∀ z : ℂ, DBN.H t z = 0 → z.im = 0 :=\n"
+                "  dbn_real_zeros_of_qrh_unconditional\n") in c.challenge_text
+    for c in p.challenges:
+        assert "import AxiomGuardDBNUnconditional\nimport AxiomGuardQRHBridge\n" in c.challenge_text
+    # every rendered node is either proved (then also in the committed bundle) or listed pending
+    assert len(p.challenges) == len(b.challenges) + len(p.pending)
