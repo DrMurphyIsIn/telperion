@@ -59,6 +59,29 @@ OUT-OF-TREE ISLANDS (`OUT_OF_TREE_ISLANDS`): bg lives at proof/formalization, no
 telperion/examples/<island>/lean. Its proved nodes are the registry nodes whose [proof]
 artifact lies under that directory; everything else is the same.
 
+MATERIALIZED-ROOT ISLANDS (`MATERIALIZED_ROOT_ISLANDS`): oai_qrh_bridge is a RECIPE, not a
+Lake package. Its materialize.sh checks out openai/math's lean/ at the pin in OAI_PIN (Lean
+v4.34.1, Mathlib d13f23b), copies the island's `lean/*.lean` files (and the single-pin dbn port)
+into that workspace's root, and appends the island's lakefile stanza. OpenAI's lakefile patches
+its dependencies from hooks that refuse a non-root workspace, so the bundle cannot path-require
+the island. Instead the bundle has NO lakefile of its own: it carries `lakefile-stanza.lean`
+(one `lean_lib MissionChallenges`), and telperion/scripts/judge_materialize.sh copies the bridge
+modules and configs into the materialized workspace and appends that stanza. Everything else is
+the same: the bridge imports the artifact and the island's AxiomGuard modules (every top-level
+`lean/AxiomGuard*.lean`, each required to be a lean_lib root in the island stanza; on
+oai_qrh_bridge AxiomGuardDBNUnconditional and AxiomGuardQRHBridge, which co-import). The
+shadowing guard covers the island modules in the guards' closure, NOT the rest of OpenAI's root
+package (about 2,900 modules the guards do not import). There is no v4.34.1 Comparator tag; the
+bundle names v4.34.0, built with its lean-toolchain set to v4.34.1 (MANIFEST.json records both),
+exactly as .github/workflows/oai-qrh-bridge.yml does. Before the island's first grant its
+committed bundle is EMPTY (no proved node; MANIFEST.json lists none) rather than an error.
+
+PENDING (`--pending`, default OFF, never used in CI): also renders draft and open nodes, each
+bridge module saying so and MANIFEST.json listing them under `pending_not_proved`. It must be
+written with `--out` to a scratch directory (refused otherwise, and `--check` is refused); it is
+local pre-grant evidence only. `mission comparator-record` refuses a node that is not proved, so
+the order is always audit, grant, missions-comparator CI run, comparator-record.
+
 NOT CONSUMABLE (reported, never skipped silently): a statement that declares anything besides
 its final theorem (local `def`s would collide with the artifact's copies; 2 of 97 nodes,
 both on islands outside the CI matrix), an island whose toolchain has no Comparator tag, or
@@ -71,6 +94,8 @@ Output layout (`--out`, default `telperion/missions/judge/<island>/`):
   MissionChallenges/<Slug>.lean        the challenge (bridge) module
   <Slug>.comparator.json               the Comparator config
   MANIFEST.json                        node -> (campaign, theorem, solution module, digests)
+A materialized-root island has `lakefile-stanza.lean` in place of `lakefile.toml`, and its
+MANIFEST.json adds `comparator_toolchain` and `materialized_root` (recipe, pin, install command).
 
 conjecture1_proved = False.
 """
@@ -153,7 +178,83 @@ OUT_OF_TREE_ISLANDS = {
 }
 
 
+@dataclass(frozen=True)
+class MaterializedRootIsland:
+    """An island that is a RECIPE, not a Lake package: a script materializes a foreign
+    workspace whose lakefile must stay the workspace root, and copies the island's `lean/*.lean`
+    files into that workspace's root directory (see the module docstring)."""
+    #: Recipe directory, relative to telperion/ (holds the pin file, the materialize script and
+    #: `lean/`, whose top-level `.lean` files the script copies to the workspace root).
+    recipe: str
+    #: `key=value` pin file in the recipe directory (must carry `toolchain=`).
+    pin_file: str
+    #: The island's own lean_lib stanza appended to the workspace lakefile by the recipe. Every
+    #: AxiomGuard module the judge imports must be a root there, or the bridge cannot build.
+    island_stanza: str
+    #: The root package's name (the workspace lakefile's `package <name>`), for MANIFEST.json.
+    package: str
+    #: Workspace lakefile name, to which the bundle's `lakefile-stanza.lean` is appended.
+    lakefile: str
+    #: Comparator tag to build. There may be no tag for the workspace toolchain itself; the
+    #: tag is then built with its `lean-toolchain` overwritten by the workspace toolchain
+    #: (recorded in MANIFEST.json as `comparator_toolchain`).
+    comparator_tag: str
+
+
+#: oai_qrh_bridge: openai/math @ adc7f124 (lean/, Lean v4.34.1, Mathlib d13f23b), whose lakefile
+#: patches 23 dependencies from hooks that refuse a non-root workspace, so the island cannot be
+#: path-required. There is no v4.34.1 Comparator tag; v4.34.0 is built with toolchain v4.34.1,
+#: exactly as .github/workflows/oai-qrh-bridge.yml does.
+MATERIALIZED_ROOT_ISLANDS = {
+    "oai_qrh_bridge": MaterializedRootIsland(
+        recipe="examples/oai_qrh_bridge", pin_file="OAI_PIN",
+        island_stanza="lean/lakefile-stanza.lean", package="OAI", lakefile="lakefile.lean",
+        comparator_tag="v4.34.0"),
+}
+
+#: Statuses the judge renders. The committed bundle judges PROVED nodes only; `--pending`
+#: (written to a temp `--out`, never committed) also renders draft and open nodes so a
+#: registered-but-ungranted node can be judged before its grant (see `build_bundle`).
+PROVED_STATUSES = ("proved",)
+PENDING_STATUSES = ("proved", "open", "draft")
+
+
+def read_pin(path: Path) -> "OrderedDict[str, str]":
+    """`key=value` lines of a pin file (comments and blank lines ignored)."""
+    out: "OrderedDict[str, str]" = OrderedDict()
+    for ln in Path(path).read_text().splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or "=" not in ln:
+            continue
+        k, v = ln.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def materialized_facts(telperion_root: Path, island: str) -> "OrderedDict[str, object]":
+    """What MANIFEST.json records about a materialized-root island's workspace."""
+    spec = MATERIALIZED_ROOT_ISLANDS[island]
+    recipe = Path(telperion_root) / spec.recipe
+    pin = read_pin(recipe / spec.pin_file)
+    if "toolchain" not in pin:
+        raise JudgeError(f"{recipe / spec.pin_file}: no `toolchain=` line")
+    return OrderedDict(
+        recipe=spec.recipe, pin_file=spec.pin_file, pin=pin,
+        workspace_lakefile=spec.lakefile, island_stanza=spec.island_stanza,
+        comparator_toolchain=pin["toolchain"],
+        install=f"telperion/scripts/judge_materialize.sh telperion/missions/judge/{island} "
+                f"<materialized workspace>")
+
+
 def island_dir(telperion_root: Path, island: str) -> Path:
+    if island in MATERIALIZED_ROOT_ISLANDS:
+        spec = MATERIALIZED_ROOT_ISLANDS[island]
+        recipe = Path(telperion_root) / spec.recipe
+        d = recipe / "lean"
+        for need in (recipe / spec.pin_file, recipe / spec.island_stanza):
+            if not need.is_file():
+                raise JudgeError(f"materialized island {island!r}: missing {need}")
+        return d
     if island in OUT_OF_TREE_ISLANDS:
         d = (Path(telperion_root) / OUT_OF_TREE_ISLANDS[island].lean_dir).resolve()
     else:
@@ -209,6 +310,30 @@ def island_guard_modules(lean_dir: Path) -> List[str]:
     # ladder built -- those nodes carry `judge_via = "heavy"` and are judged by
     # missions-comparator-heavy.yml, not here.
     return sorted(m.group(1) for m in _LIB_RE.finditer(text) if m.group(1).startswith("AxiomGuard"))
+
+
+_STANZA_ROOT_RE = re.compile(r"`([A-Za-z_][\w.]*)")
+
+
+def materialized_guard_modules(telperion_root: Path, island: str) -> List[str]:
+    """The AxiomGuard modules of a materialized-root island: its top-level `lean/AxiomGuard*.lean`
+    files (copied to the workspace root by the recipe), each of which must be a lean_lib root in
+    the island's lakefile stanza. Same convention as `island_guard_modules`: the guards import
+    every island module, so importing them makes a shadowed constant a duplicate declaration."""
+    spec = MATERIALIZED_ROOT_ISLANDS[island]
+    recipe = Path(telperion_root) / spec.recipe
+    mods = sorted(p.stem for p in (recipe / "lean").glob("AxiomGuard*.lean") if p.is_file())
+    if not mods:
+        raise JudgeError(f"materialized island {island!r}: no lean/AxiomGuard*.lean; the "
+                         "shadowing guard needs at least one")
+    roots = set(_STANZA_ROOT_RE.findall(
+        _guard_anchors().strip_lean_comments((recipe / spec.island_stanza).read_text())))
+    missing = [m for m in mods if m not in roots]
+    if missing:
+        raise JudgeError(f"materialized island {island!r}: guard module(s) {missing} are not "
+                         f"lean_lib roots in {spec.island_stanza}, so the bridge could not build "
+                         "them")
+    return mods
 
 
 #: Islands whose AxiomGuard libs cannot all be imported into one module. li_positivity:
@@ -282,12 +407,15 @@ def vocabulary_home_modules(lean_dir: Path, mirror_text: str) -> List[str]:
     return sorted(mods)
 
 
-def island_anchors(telperion_root: Path, island: str, lean_dir: Path) -> list:
+def island_anchors(telperion_root: Path, island: str, lean_dir: Path,
+                   statuses: Sequence[str] = PROVED_STATUSES) -> list:
     """The grant gate's anchors (proved node -> artifact theorem) on this island. For an
     out-of-tree island this is guard_anchors.load_anchors with the island test replaced by
-    "the artifact lies under the island's package directory"."""
+    "the artifact lies under the island's package directory". With `statuses` beyond
+    ("proved",) (`--pending`) the same scan also returns draft/open nodes; their theorem is
+    resolved exactly as the grant gate would resolve it."""
     ga = _guard_anchors()
-    if island not in OUT_OF_TREE_ISLANDS:
+    if island not in OUT_OF_TREE_ISLANDS and tuple(statuses) == PROVED_STATUSES:
         return ga.load_anchors(telperion_root, island)
     lean_dir = Path(lean_dir).resolve()
     anchors, errors = [], []
@@ -299,10 +427,13 @@ def island_anchors(telperion_root: Path, island: str, lean_dir: Path) -> list:
             errors.append(f"{toml_path}: unreadable ({e})")
             continue
         art = (doc.get("proof") or {}).get("artifact")
-        if doc.get("status") != "proved" or not art or not str(art).endswith(".lean"):
+        if doc.get("status") not in statuses or not art or not str(art).endswith(".lean"):
             continue
         artifact = (campaign_root / art).resolve()
-        if not artifact.is_relative_to(lean_dir):
+        if island in OUT_OF_TREE_ISLANDS:
+            if not artifact.is_relative_to(lean_dir):
+                continue
+        elif ga.island_of(artifact) != island:
             continue
         slug = str(doc.get("name", toml_path.stem)).replace(".", "_")
         stmt = campaign_root / "lean" / "Statements" / f"{slug}.lean"
@@ -321,6 +452,8 @@ def challenge_guard_modules(telperion_root: Path, island: str,
                             lean_dir: Path) -> tuple[List[str], bool]:
     """(modules every challenge imports for the shadowing guard, whether they are the
     vocabulary-home fallback rather than the island's AxiomGuard libs)."""
+    if island in MATERIALIZED_ROOT_ISLANDS:
+        return materialized_guard_modules(telperion_root, island), False
     guards = island_guard_modules(lean_dir)
     if guards or island not in OUT_OF_TREE_ISLANDS:
         return guards, False
@@ -488,7 +621,8 @@ def bridge_theorem_name(slug: str) -> str:
 def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module: str,
                      guard_modules: Sequence[str], statement_text: str,
                      artifact_text: str, vocab_guard: bool = False,
-                     hypotheses: Sequence[tuple] = ()) -> str:
+                     hypotheses: Sequence[tuple] = (), materialized: bool = False,
+                     pending_status: str = "") -> str:
     """The Comparator challenge for one node.  With `hypotheses` [(binder, constant), ...] it is
     instead the IMPLICATION part of a compositional judgement (see compose.py): the registered
     statement under those leading hypotheses, proved by the island's implication `theorem`."""
@@ -511,7 +645,21 @@ def render_challenge(*, slug: str, campaign: str, theorem: str, solution_module:
         f"   PROOF is the artifact constant `{theorem}` from {solution_module}. Both kernels",
         "   accept this module only if the artifact proves exactly the registered proposition.",
     ]
-    if vocab_guard:
+    if pending_status:
+        out += [
+            f"   PENDING RENDER: the node's status is {pending_status!r}, not proved. This module",
+            "   comes from `--pending` (a temp bundle, never committed); a pass here is pre-grant",
+            "   evidence and cannot be recorded with `mission comparator-record`.",
+        ]
+    if materialized:
+        out += [
+            "   This island is MATERIALIZED: its workspace is a foreign root package that the",
+            "   island's recipe checks out at a pinned commit, plus the island's own modules. The",
+            "   AxiomGuard imports load every island module, so a vocabulary constant shadowed by",
+            "   the artifact is a duplicate declaration here; root-package modules outside their",
+            "   import closure are not loaded. The",
+        ]
+    elif vocab_guard:
         out += [
             "   The other imports are the island modules the campaign's vocabulary mirror copies",
             "   from, so a vocabulary constant shadowed by the artifact is a duplicate",
@@ -622,11 +770,19 @@ class Bundle:
     #: missions-comparator-heavy.yml instead. Written into MANIFEST.json so the bundle itself
     #: says which nodes it does not judge and where they are judged.
     excluded: tuple = ()
+    #: MATERIALIZED_ROOT_ISLANDS only: what MANIFEST.json records about the workspace (recipe,
+    #: pin, Comparator toolchain, install command). None for every other island, whose bundle
+    #: is then byte-for-byte what it was before materialized islands existed.
+    materialized: Optional["OrderedDict[str, object]"] = None
+    #: `--pending` only: "campaign/slug: status" of rendered nodes that are NOT proved.
+    pending: tuple = ()
 
     def files(self) -> "OrderedDict[str, str]":
         """Relative path -> text for everything the bundle writes."""
         files: "OrderedDict[str, str]" = OrderedDict()
         files["lean-toolchain"] = self.toolchain + "\n"
+        if self.materialized is not None:
+            return self._materialized_files(files)
         files["lakefile.toml"] = (
             f'name = "MissionJudge_{self.island}"\n'
             "# Generated by telperion.missions.judge -- DO NOT EDIT BY HAND.\n"
@@ -667,11 +823,69 @@ class Bundle:
                    if c.part else {}),
             ) for c in self.challenges],
         )
+        if self.pending:
+            manifest["pending_not_proved"] = list(self.pending)
         if self.excluded:
             manifest["judged_elsewhere"] = [
                 dict(node=e, judge_via="heavy", workflow=HEAVY_WORKFLOW) for e in self.excluded]
         files["MANIFEST.json"] = json.dumps(manifest, indent=2) + "\n"
         return files
+
+    def _materialized_files(self, files: "OrderedDict[str, str]") -> "OrderedDict[str, str]":
+        """The bundle of a MATERIALIZED_ROOT_ISLANDS island: no lakefile of its own (the foreign
+        root package must stay the workspace root), but a `lakefile-stanza.lean` that
+        telperion/scripts/judge_materialize.sh appends to the workspace lakefile after copying
+        the challenge modules and configs into the workspace root."""
+        m = self.materialized
+        files["lakefile-stanza.lean"] = (
+            f"-- ===== Arda missions judge bundle for {self.island} (appended by "
+            "telperion/scripts/judge_materialize.sh) =====\n"
+            f"-- {_SENTINEL}: generated by telperion.missions.judge. One lib holding the bridge\n"
+            "-- modules; they import the island's artifact and AxiomGuard modules, which the\n"
+            "-- island's own stanza (appended by the recipe) already builds.\n"
+            "lean_lib MissionChallenges where\n"
+            "  roots := #[`MissionChallenges]\n"
+            "  globs := #[.andSubmodules `MissionChallenges]\n")
+        if self.challenges:
+            files["MissionChallenges.lean"] = "".join(
+                f"import {c.challenge_module}\n" for c in self.challenges)
+        else:
+            files["MissionChallenges.lean"] = (
+                f"-- {_SENTINEL}. No proved registry node has its artifact on `{self.island}` "
+                "yet,\n-- so there is nothing to judge; a grant adds one bridge module per node.\n")
+        for c in self.challenges:
+            files[f"MissionChallenges/{c.slug}.lean"] = c.challenge_text
+            files[f"{c.slug}.comparator.json"] = json.dumps(c.config, indent=2) + "\n"
+        manifest = OrderedDict(
+            island=self.island, package=self.package, toolchain=self.toolchain,
+            comparator_tag=self.comparator_tag,
+            comparator_toolchain=m["comparator_toolchain"],
+            materialized_root=OrderedDict((k, v) for k, v in m.items()
+                                          if k != "comparator_toolchain"),
+            not_consumable=list(self.skipped),
+            nodes=[OrderedDict(
+                slug=c.slug, campaign=c.campaign, theorem=c.theorem,
+                solution_module=c.solution_module, challenge_module=c.challenge_module,
+                bridge_theorem=c.bridge_theorem, config=f"{c.slug}.comparator.json",
+                nanoda=c.nanoda,
+                artifact_sha256=c.artifact_sha256, statement_sha256=c.statement_sha256,
+            ) for c in self.challenges],
+        )
+        if self.pending:
+            manifest["pending_not_proved"] = list(self.pending)
+        if self.excluded:
+            manifest["judged_elsewhere"] = [
+                dict(node=e, judge_via="heavy", workflow=HEAVY_WORKFLOW) for e in self.excluded]
+        files["MANIFEST.json"] = json.dumps(manifest, indent=2) + "\n"
+        return files
+
+
+def _node_status(node_toml: Path) -> str:
+    """The node's `status` ("" when unreadable)."""
+    try:
+        return str(tomllib.loads(Path(node_toml).read_text()).get("status", ""))
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
 
 
 def _heavy_certificates(node_toml: Path) -> bool:
@@ -701,7 +915,8 @@ def _sha256(path: Path) -> str:
 
 
 def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = True,
-                 only: Optional[Sequence[str]] = None, heavy: bool = False) -> Bundle:
+                 only: Optional[Sequence[str]] = None, heavy: bool = False,
+                 pending: bool = False) -> Bundle:
     """Render the challenge bundle.
 
     Per-PR mode (heavy=False): nodes with `judge_via = "heavy"` are EXCLUDED BY RULE (listed in
@@ -709,21 +924,41 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
     Heavy mode (heavy=True): render ONLY the `--only` nodes, and REFUSE any of them that is not
     `judge_via = "heavy"` -- the heavy path must never become a way to route an ordinary node
     around the per-PR judge. A heavy bundle is written to a temp `--out`, never committed.
+    Pending mode (pending=True): ALSO render draft and open nodes whose artifact is on the
+    island (`Bundle.pending` lists them; each bridge module says so). Like a heavy bundle it is
+    written to a temp `--out`, never committed: a pass on it is pre-grant evidence only.
+
+    A MATERIALIZED_ROOT_ISLANDS island may have no proved node yet; its committed bundle is then
+    empty (the root says so, MANIFEST.json lists no node) instead of an error, so the island
+    can be wired before its first grant. Every other island still refuses an empty bundle.
     """
     if heavy and not only:
         raise JudgeError("--heavy needs --only <slug>: the heavy path judges named nodes only")
+    if heavy and pending:
+        raise JudgeError("--heavy and --pending are separate paths; use one")
     telperion_root = Path(telperion_root)
     ga = _guard_anchors()
     lean_dir = island_dir(telperion_root, island)
-    package = island_package_name(lean_dir)
-    toolchain = island_toolchain(lean_dir)
-    tag = comparator_tag(toolchain)
+    materialized = island in MATERIALIZED_ROOT_ISLANDS
+    if materialized:
+        facts = materialized_facts(telperion_root, island)
+        package = MATERIALIZED_ROOT_ISLANDS[island].package
+        toolchain = str(facts["comparator_toolchain"])
+        tag = MATERIALIZED_ROOT_ISLANDS[island].comparator_tag
+    else:
+        facts = None
+        package = island_package_name(lean_dir)
+        toolchain = island_toolchain(lean_dir)
+        tag = comparator_tag(toolchain)
+    statuses = PENDING_STATUSES if pending else PROVED_STATUSES
     try:
-        anchors = island_anchors(telperion_root, island, lean_dir)
+        anchors = island_anchors(telperion_root, island, lean_dir, statuses)
     except ga.RegistryError as e:
         raise JudgeError(f"island {island!r}: {e}") from e
-    if not anchors:
-        raise JudgeError(f"island {island!r}: no proved registry node has its artifact here")
+    if not anchors and not (materialized and not only):
+        what = "registered (draft/open/proved)" if pending else "proved"
+        raise JudgeError(f"island {island!r}: no {what} registry node has its artifact here")
+    pending_nodes: List[str] = []
     challenges: List[Challenge] = []
     guards, vocab_guard = challenge_guard_modules(telperion_root, island, lean_dir)
     problems: List[str] = []
@@ -751,17 +986,27 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
                     vocab_guard=vocab_guard, statement_text=statement_text,
                     artifact_sha256=_sha256(a.artifact), statement_sha256=_sha256(stmt_path))
                 continue
+        status = _node_status(telperion_root / "missions" / a.campaign / "nodes"
+                              / f"{a.node}.toml")
         sol = module_name_of(lean_dir, a.artifact)
         chal = f"MissionChallenges.{a.node}"
         try:
+            if materialized and "." in sol:
+                # The recipe copies only lean/*.lean to the workspace root; a nested artifact
+                # would not exist there under this module name.
+                raise JudgeError(f"artifact module {sol!r} is not a top-level file of the "
+                                 "materialized island's lean/ directory")
             text = render_challenge(
                 slug=a.node, campaign=a.campaign, theorem=a.theorem, solution_module=sol,
                 guard_modules=guards_for(lean_dir, island, guards, sol),
                 statement_text=statement_text, artifact_text=a.artifact.read_text(),
-                vocab_guard=vocab_guard)
+                vocab_guard=vocab_guard, materialized=materialized,
+                pending_status="" if status == "proved" else status)
         except JudgeError as e:
             problems.append(f"{a.campaign}/{a.node}: {e}")
             continue
+        if status != "proved":
+            pending_nodes.append(f"{a.campaign}/{a.node}: {status}")
         bridge = bridge_theorem_name(a.node)
         # Per-node: `heavy_certificates = true` in the node toml turns nanoda off for that
         # node only (its exact certificates exhaust a 16 GB runner under nanoda; the Lean
@@ -784,12 +1029,14 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
             artifact_sha256=_sha256(a.artifact), statement_sha256=_sha256(stmt_path)))
     if problems and not challenges:
         raise JudgeError(f"island {island!r}: no consumable node:\n  " + "\n  ".join(problems))
-    if not challenges:
+    if not challenges and not (materialized and not only):
         raise JudgeError(f"island {island!r}: --only matched no proved node")
-    require = os.path.relpath(lean_dir.resolve(), default_out(telperion_root, island).resolve())
+    # A materialized bundle is COPIED into the workspace, so it path-requires nothing.
+    require = "" if materialized else os.path.relpath(
+        lean_dir.resolve(), default_out(telperion_root, island).resolve())
     return Bundle(island=island, package=package, toolchain=toolchain, comparator_tag=tag,
                   challenges=challenges, skipped=tuple(problems), require_path=require,
-                  excluded=tuple(excluded))
+                  excluded=tuple(excluded), materialized=facts, pending=tuple(pending_nodes))
 
 
 def compose_parts(*, node: str, campaign: str, spec, lean_dir: Path, guards: Sequence[str],
@@ -904,6 +1151,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="render ONLY the --only nodes, each of which must be judge_via = \"heavy\" "
                          "(refused otherwise); write it with --out to a temp dir, never commit it. "
                          "Without --heavy, judge_via = \"heavy\" nodes are excluded by rule.")
+    ap.add_argument("--pending", action="store_true",
+                    help="ALSO render draft and open nodes whose artifact is on the island (pre-grant "
+                         "judging); write it with --out to a temp dir, never commit it. A pass on "
+                         "it cannot be recorded (comparator-record needs a proved node)")
     ap.add_argument("--list", action="store_true", help="print the nodes and exit")
     ap.add_argument("--configs", action="store_true",
                     help="print `slug<TAB>config<TAB>solution_module<TAB>theorem<TAB>bridge<TAB>"
@@ -914,7 +1165,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = ap.parse_args(list(argv) if argv is not None else None)
     try:
         bundle = build_bundle(args.telperion, args.island, enable_nanoda=not args.no_nanoda,
-                              only=args.only, heavy=args.heavy)
+                              only=args.only, heavy=args.heavy, pending=args.pending)
     except JudgeError as e:
         print(f"::error::{e}", file=sys.stderr)
         return 2
@@ -932,6 +1183,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for ex in bundle.excluded:
         print(f"::notice::{args.island}: {ex} is judge_via = \"heavy\": excluded from this bundle "
               f"by rule, judged by {HEAVY_WORKFLOW}", file=sys.stderr)
+    for pn in bundle.pending:
+        print(f"::notice::{args.island}: PENDING render of a node that is not proved: {pn}",
+              file=sys.stderr)
+    if args.pending and args.check:
+        print("::error::--pending bundles are never committed, so there is nothing to --check",
+              file=sys.stderr)
+        return 2
+    if args.pending and not args.out and not (args.configs or args.list):
+        print("::error::--pending needs --out <temp dir>: a pending bundle must never be written "
+              "over the committed bundle", file=sys.stderr)
+        return 2
     if args.heavy and args.check:
         print("::error::--heavy bundles are never committed, so there is nothing to --check",
               file=sys.stderr)
