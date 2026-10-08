@@ -120,3 +120,12 @@ CI (`.github/workflows/proof-comparator.yml`, config generator
 `proof/formalization/comparator/gen_configs.py`). Both the Lean kernel and nanoda
 accept each, axiom-clean. This re-verifies what is *proved* (the two cruxes and
 the conditional reduction); it does not close the still-open layers Hnorm/Hdom.
+
+The problem itself was later answered by a different route, and that answer
+went through Comparator with a genuine, independently stated challenge: in the
+standalone release [DrMurphyIsIn/brualdi-goldwasser](https://github.com/DrMurphyIsIn/brualdi-goldwasser), the maximizer
+theorem is stated in Mathlib's vocabulary (`BGChallenge.lean`, which imports
+only the definition of the answer), and both Lean's kernel and nanoda accepted
+the proof (a local run, with a pass-through shim in place of the sandbox). For
+the release's uniqueness theorem Comparator confirmed only that the statement
+matches; no second-kernel verdict is recorded for it.

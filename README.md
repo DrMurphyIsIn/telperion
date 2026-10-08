@@ -24,7 +24,11 @@ specific to it. It is now a standalone, problem-agnostic artifact, battle-tested
 across three very different campaigns:
 
 - **Extremal combinatorics** — the Brualdi–Goldwasser proof, thousands of
-  CI-green Mathlib theorems (`g1_floors` alone: 3,084).
+  CI-green Mathlib theorems (`g1_floors` alone: 3,084). That campaign reached
+  its goal: the maximizer of `per(L(T))/∏deg` for every `n ≥ 4` is
+  kernel-checked in Lean 4 / Mathlib (not yet refereed), released at
+  [DrMurphyIsIn/brualdi-goldwasser](https://github.com/DrMurphyIsIn/brualdi-goldwasser)
+  (doi:10.5281/zenodo.22983412), with its certificates packaged by Telperion.
 - **Analytic number theory** — an *unconditional* Riemann-ζ zero-free region,
   the Borel–Carathéodory machinery, and sharp near-line growth bounds, all
   sorry-free (classical-analysis formalization, not a claim on RH itself).  Plus a
@@ -304,7 +308,10 @@ both kernels, and all — lives in [`examples/bernoulli/lean`](examples/bernoull
 theorems of the Brualdi–Goldwasser formalization (the `Φ ≤ 1` crux, the g-step /
 master-inequality crux, and the conditional R7′ capstone) are re-verified in CI
 through the full judge — both the Lean kernel *and* nanoda accept each,
-axiom-clean. The analytic-number-theory campaign is guarded in the same spirit
+axiom-clean. The campaign's final theorem, the maximizer for every `n ≥ 4`,
+was put through the same two kernels in its standalone release (a genuine
+challenge/solution pair in Mathlib's vocabulary; run locally, both kernels
+accepted). The analytic-number-theory campaign is guarded in the same spirit
 at the kernel level: its unconditional anchors (the elementary and polylog ζ
 zero-free regions, the sharp near-line growth bound, the strip representation)
 carry a `#print axioms` guard in CI that fails on any hidden `sorryAx` — so a
@@ -404,7 +411,10 @@ is a kernel-checked, unconditional **zero-free region** and its supporting
 bounds — classical results, formalized honestly — and carries
 `conjecture1_proved = False` throughout; it is **not** progress on the Riemann
 Hypothesis, and the Brualdi–Goldwasser and proof-complexity campaigns are held to
-the same standard. The project names what it cannot do rather than paper over it.
+the same standard. (In the Brualdi–Goldwasser campaign the flag tracks the
+campaign's own first, conditional route; the 1984 problem itself was answered
+by a different route and is kernel-checked, as described above.) The project
+names what it cannot do rather than paper over it.
 
 ## Search, when you don't know the certificate yet — `telperion.evolve`
 
@@ -473,7 +483,8 @@ one is running. See [Origin](#origin) for the `bg` research-lab extra.
 ## Origin
 
 Telperion was extracted clean-room from the Brualdi–Goldwasser (1984)
-Laplacian-ratio proof campaign in [`../proof/`](../proof/), where the pattern
+Laplacian-ratio proof campaign in [`../proof/`](../proof/) (a campaign that
+has since produced a complete, kernel-checked answer), where the pattern
 produced thousands of CI-green Mathlib theorems (a 36-cell bilinear certificate
 table, 36 dispatch adapters, 72 vee/mirror branches, 42 leg and 55 shedding
 certificates — most batches first-try green; `g1_floors` alone is 3,084). That
