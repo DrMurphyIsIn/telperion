@@ -52,9 +52,40 @@ nodes) has no AxiomGuard lean_lib at all, so its bridges import the artifact alo
 shadowing guard does not apply there; `MM_leakage_composite_zero` declares local `def`s before
 its theorem and is reported as not consumable, not silently skipped.
 
+**oai_qrh_bridge** is different in kind: the island is a recipe, not a Lake package. Its
+`materialize.sh` checks out openai/math's `lean/` at the commit in `OAI_PIN` (Lean v4.34.1,
+Mathlib d13f23b) and copies the island's own modules into that workspace's root. OpenAI's
+lakefile has to stay the workspace root, so nothing can path-require it. The bundle therefore
+has no `lakefile.toml`. It has a `lakefile-stanza.lean` instead, and
+`telperion/scripts/judge_materialize.sh <bundle> <workspace>` copies the bridge modules and
+configs into the materialized workspace and appends that stanza to OpenAI's lakefile. The
+bridges import the artifact plus both island guards, AxiomGuardDBNUnconditional and
+AxiomGuardQRHBridge, which co-import cleanly. That guards the island modules. It does not guard
+the rest of OpenAI's package, which the guards do not import. No Comparator tag exists for
+v4.34.1, so the bundle uses tag v4.34.0 built with its toolchain file set to v4.34.1, as
+`oai-qrh-bridge.yml` does. `MANIFEST.json` records both.
+
+Today this bundle is **empty on purpose**. Its two nodes, `RH_zeta_zero_free_seven_eighths`
+(proved by `qrh_seven_eighths` in ArdaQRHBridge) and `RH_dbn_real_zeros_nine_thirtyseconds`
+(proved by `dbn_real_zeros_of_qrh_unconditional` in ArdaDBNUnconditional), are draft. The
+judge renders proved nodes only, and `mission comparator-record` refuses anything else. To see
+the bridges before a grant, render a pending bundle into a scratch directory. It is never
+committed and never used in CI:
+
+```sh
+PYTHONPATH=src python -m telperion.missions.judge --island oai_qrh_bridge --pending --out <scratch>
+telperion/scripts/judge_materialize.sh <scratch> <a scratch copy of the materialized work/oai>
+```
+
+The two other new QRH nodes, `RH_dbn_real_zeros_of_zeta_halfplane` and
+`RH_dbn_real_zeros_of_qrh`, have their artifact on the dbn island and join the dbn bundle when
+granted.
+
 CI: `.github/workflows/missions-comparator.yml` (regenerates and diffs these files first, then
-judges each shard). Why this is independent of the proof's author, and what it does not
+judges each shard; oai_qrh_bridge has its own job, `judge-oai-qrh-bridge`, which materializes
+the workspace and reuses `oai-qrh-bridge.yml`'s build cache). Why this is independent of the proof's author, and what it does not
 check: `telperion/docs/AUDIT_INDEPENDENCE_2026-09-23.md` section 4. To record a pass on a
-node: `mission comparator-record <Slug> --run-id <run> --theorem <name>`.
+node: `mission comparator-record <Slug> --run-id <run> --theorem <name>`. That only works on a
+proved node, so it always comes after the grant and after a CI run on the granted registry.
 
 conjecture1_proved = False.
