@@ -42,6 +42,15 @@ across three very different campaigns:
   (`RHInBox_2d5_3d5_0_100.lean`) extends the verified RANGE to
   `[2/5,3/5]×[0,100]`, kernel-certifying all `N(100) = 29` on-line zeros (winding
   `N` = on-line count) — still Turing's method, still **not** a proof of RH.
+  And, as of 2026-10-09, the first **machine-checked bound on the de Bruijn–Newman
+  constant below de Bruijn's 1/2**: `Λ ≤ 9/32`. OpenAI's kernel-checked quasi-Riemann
+  hypothesis (`ζ(s) ≠ 0` for `Re s > 7/8`, [openai/math](https://github.com/openai/math),
+  Apache-2.0, replayed here through Comparator with nanoda) is composed with the dbn island's
+  de Bruijn heat-flow theorem in ONE Lean environment at OpenAI's pin
+  (`examples/oai_qrh_bridge/`, design and audit trail in
+  `docs/QRH_DBN_BRIDGE_2026-10-07.md`); the four registry nodes are proved, operator-read-back,
+  and judge-verified by the missions Comparator job. It is weaker than the numerical 0.22
+  and it is **not** a proof of RH (RH is `Λ = 0`).
 - **Proof complexity** — sum-of-squares refutations of unsatisfiable systems and
   their pseudo-expectation-duality complement (no low-degree refutation exists).
 
