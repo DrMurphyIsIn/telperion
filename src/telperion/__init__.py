@@ -111,6 +111,12 @@ from .emit_exp_enclosure import (  # noqa: F401
     ExpEnclosureEmitter, ExpEnclosureCert, exp_enclosure_certificate,
     exp_enclosure_family, certify_exp_enclosure_point, taylor_box, taylor_parts,
 )
+from .emit_scaled_interval_eval import (  # noqa: F401
+    ScaledIntervalEvalEmitter, ScaledIntervalEvalCert, SIENode,
+    scaled_interval_eval_certificate, scaled_interval_eval_family,
+    certify_scaled_interval_eval_point, scaled_interval_prelude_lean,
+    scaled_interval_prelude_body,
+)
 from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,

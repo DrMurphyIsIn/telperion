@@ -266,6 +266,23 @@ REGISTRY: dict[str, SensitivityStance] = {
                              # emitted linarith unprovable, so the kernel rejects it.
                              # See negctrl_adapters/adapter_exp_enclosure.py.
                              neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "ScaledIntervalEvalEmitter": _S(STRUCTURALLY_NONVACUOUS,
+                                   "fixed-scale integer interval evaluation of an expression DAG "
+                                   "(rationals, declared variables over rational ranges, +, -, *, "
+                                   "integer powers, exp): each node's literal box IS the statement, "
+                                   "and the kernel recomputes it by `decide +kernel` on a Bool "
+                                   "subset check before once-proved ScaledInterval mem_* lemmas lift "
+                                   "it to R -- no separately-supplied identity to corrupt, so the "
+                                   "shape is structural.  certify REFUSES a claim that does not "
+                                   "contain the computed root box (one ulp too tight included), "
+                                   "unsupported nodes, floats, irrational constants, inverted "
+                                   "ranges, unused binders and exp arguments past the reduction "
+                                   "cap.  Finite arithmetic facts about elementary expressions; "
+                                   "nothing about RH (conjecture1_proved = False)",
+                                   # Structural, yet a kernel control exists: shrink one node box by
+                                   # one ulp and that node's _calc decide is false, so the kernel
+                                   # rejects it.  See negctrl_adapters/adapter_scaled_interval_eval.py.
+                                   neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ExpThresholdEmitter": _S(STRUCTURALLY_NONVACUOUS,
                              "threshold-to-exponential domination via `1 + t <= e^t` "
                              "(Real.add_one_le_exp): a bundle reads a nested-max threshold "
