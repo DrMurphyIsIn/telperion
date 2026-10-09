@@ -65,12 +65,13 @@ the rest of OpenAI's package, which the guards do not import. No Comparator tag 
 v4.34.1, so the bundle uses tag v4.34.0 built with its toolchain file set to v4.34.1, as
 `oai-qrh-bridge.yml` does. `MANIFEST.json` records both.
 
-Today this bundle is **empty on purpose**. Its two nodes, `RH_zeta_zero_free_seven_eighths`
+Since 2026-10-09 this bundle holds two judged nodes, `RH_zeta_zero_free_seven_eighths`
 (proved by `qrh_seven_eighths` in ArdaQRHBridge) and `RH_dbn_real_zeros_nine_thirtyseconds`
-(proved by `dbn_real_zeros_of_qrh_unconditional` in ArdaDBNUnconditional), are draft. The
-judge renders proved nodes only, and `mission comparator-record` refuses anything else. To see
-the bridges before a grant, render a pending bundle into a scratch directory. It is never
-committed and never used in CI:
+(proved by `dbn_real_zeros_of_qrh_unconditional` in ArdaDBNUnconditional). Both passed the
+`judge-oai-qrh-bridge` job of `missions-comparator` run 37955041118 with nanoda on, and the
+registry records that run on each node. Before a node is granted the judge does not render
+it (`mission comparator-record` refuses anything not proved); to see a bridge before a grant,
+render a pending bundle into a scratch directory. It is never committed and never used in CI:
 
 ```sh
 PYTHONPATH=src python -m telperion.missions.judge --island oai_qrh_bridge --pending --out <scratch>
