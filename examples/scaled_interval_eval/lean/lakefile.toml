@@ -1,0 +1,17 @@
+name = "ScaledIntervalEval"
+defaultTargets = ["ScaledInterval", "ScaledIntervalEval"]
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+# ScaledInterval: the fixed-scale integer interval kernel (RI, mem_* lemmas, exp via a
+# Taylor sum with a proved remainder).  Emitted by telperion.scaled_interval_prelude_lean
+# and drift-checked by generate.py --check.
+[[lean_lib]]
+name = "ScaledInterval"
+
+# ScaledIntervalEval: the emitted per-instance boxes, _calc / _mem lemmas and enclosures.
+[[lean_lib]]
+name = "ScaledIntervalEval"

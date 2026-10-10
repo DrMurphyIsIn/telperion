@@ -428,6 +428,11 @@ _SPECIAL_KINDS = (
     # from Real.exp_bound -- reflects BraggDefect's Arb `hexp` seam into the kernel and brackets
     # the recurrence deficit e^d + e^-d - 2.  A finite arithmetic fact; nothing about RH.
     "exp_enclosure",
+    # scaled_interval_eval (2026-10-09, Part C C1; prior art OpenAI openai/math WaveIntervals,
+    # Apache-2.0): fixed-scale integer interval evaluation of an expression DAG over
+    # {+, -, *, integer powers, exp}, every box recomputed by `decide +kernel` and lifted to R
+    # by once-proved mem_* lemmas (the ScaledInterval prelude).  Nothing about RH.
+    "scaled_interval_eval",
     # exp_threshold (2026-09-22, SHAPES_AUDIT_48H section 2 rank 5; B N2, C 4.5): from a rational
     # or symbolic threshold on the Gaussian width to exponential domination via `1 + t <= e^t`
     # (linear / log bundles reading a nested-max threshold with the `max 1` guard folded in, plus
@@ -772,6 +777,10 @@ _SPECIAL_DISPATCH = {
     # BraggDefect hexp seam, the QC_RECURRENCE deficit row, the ZooDH cosh input).
     "exp_enclosure":
         ("emit_exp_enclosure", "certify_exp_enclosure_point", "ExpEnclosureEmitter"),
+    # scaled_interval_eval (kernel-recomputed fixed-scale integer interval boxes).
+    "scaled_interval_eval":
+        ("emit_scaled_interval_eval", "certify_scaled_interval_eval_point",
+         "ScaledIntervalEvalEmitter"),
     # exp_threshold (threshold-to-exponential-domination bundles and atoms, Real.add_one_le_exp).
     "exp_threshold":
         ("emit_exp_threshold", "certify_exp_threshold_point", "ExpThresholdEmitter"),
