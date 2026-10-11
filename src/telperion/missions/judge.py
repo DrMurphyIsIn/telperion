@@ -59,7 +59,8 @@ OUT-OF-TREE ISLANDS (`OUT_OF_TREE_ISLANDS`): bg lives at proof/formalization, no
 telperion/examples/<island>/lean. Its proved nodes are the registry nodes whose [proof]
 artifact lies under that directory; everything else is the same.
 
-MATERIALIZED-ROOT ISLANDS (`MATERIALIZED_ROOT_ISLANDS`): oai_qrh_bridge is a RECIPE, not a
+MATERIALIZED-ROOT ISLANDS (`MATERIALIZED_ROOT_ISLANDS`): oai_qrh_bridge (and liu_dbn_bridge, the same
+workspace plus Liu's overlay, built by liu_materialize.sh) is a RECIPE, not a
 Lake package. Its materialize.sh checks out openai/math's lean/ at the pin in OAI_PIN (Lean
 v4.34.1, Mathlib d13f23b), copies the island's `lean/*.lean` files (and the single-pin dbn port)
 into that workspace's root, and appends the island's lakefile stanza. OpenAI's lakefile patches
@@ -208,6 +209,14 @@ class MaterializedRootIsland:
 MATERIALIZED_ROOT_ISLANDS = {
     "oai_qrh_bridge": MaterializedRootIsland(
         recipe="examples/oai_qrh_bridge", pin_file="OAI_PIN",
+        island_stanza="lean/lakefile-stanza.lean", package="OAI", lakefile="lakefile.lean",
+        comparator_tag="v4.34.0"),
+    #: liu_dbn_bridge: the same openai/math workspace (OAI_PIN) plus Baiying Liu's overlay
+    #: (arXiv:2610.12234, LIU_PIN; fetched at build time, never vendored; licence basis: owner
+    #: decision 2026-10-11, no author grant on file) and the same single-pin dbn port. Same root
+    #: package and Comparator setup as oai_qrh_bridge; liu_materialize.sh builds the workspace.
+    "liu_dbn_bridge": MaterializedRootIsland(
+        recipe="examples/liu_dbn_bridge", pin_file="LIU_PIN",
         island_stanza="lean/lakefile-stanza.lean", package="OAI", lakefile="lakefile.lean",
         comparator_tag="v4.34.0"),
 }
