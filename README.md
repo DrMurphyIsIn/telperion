@@ -50,10 +50,11 @@ across three very different campaigns:
   (`examples/oai_qrh_bridge/`, design and audit trail in
   `docs/QRH_DBN_BRIDGE_2026-10-07.md`); the four registry nodes are proved, operator-read-back,
   and judge-verified by the missions Comparator job. On 2026-10-10 the lower half followed
-  (branch `rh/newman-dobner`, draft node `RH_dbn_newman`): Newman's conjecture `Λ ≥ 0`
-  (Rodgers–Tao), kernel-checked on the dbn island after Dobner — every `H_t` with `t < 0` has a
-  non-real zero — so the machine-checked range is `0 ≤ Λ ≤ 9/32`
-  (`docs/NEWMAN_LAMBDA_NONNEG_SCOPING_2026-10-10.md`). It is weaker than the numerical 0.22
+  (PR #679, node `RH_dbn_newman`: proved, operator-read-back, judge-verified with nanoda):
+  Newman's conjecture `Λ ≥ 0` (Rodgers–Tao), kernel-checked on the dbn island after Dobner —
+  every `H_t` with `t < 0` has a non-real zero — so the machine-checked range is
+  `0 ≤ Λ ≤ 9/32` (`docs/NEWMAN_LAMBDA_NONNEG_SCOPING_2026-10-10.md`; released at
+  [newman-lambda-nonneg](https://github.com/DrMurphyIsIn/newman-lambda-nonneg), Zenodo DOI 10.5281/zenodo.23287832). It is weaker than the numerical 0.22
   and it is **not** a proof of RH (RH is `Λ = 0`).
 - **Proof complexity** — sum-of-squares refutations of unsatisfiable systems and
   their pseudo-expectation-duality complement (no low-degree refutation exists).
