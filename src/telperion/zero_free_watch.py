@@ -41,9 +41,10 @@ ARXIV_QUERY = (
 #: ordered: "strip" is the jackpot (a fixed zero-free vertical strip inside the critical strip),
 #: "dbn" is anything about the constant itself, "input" is an estimate the 7/8 method is bottlenecked on.
 TIERS: dict[str, str] = {
-    "strip": r"""zero[- ]?free\s+(half[- ]?plane|strip|region)|quasi[- ]?riemann|no\s+zeros?\s+(with|for)\s+re|
-                 \bre\s*\(?s\)?\s*>\s*\d|half[- ]?plane\s+re|zeros?\s+of\s+(the\s+)?(riemann\s+)?zeta.*(re|real\s+part)""",
-    "dbn": r"""de\s+bruijn[- ]?newman|heat\s+flow.*(zeta|xi)|newman'?s?\s+conjecture|polymath\s?15|\blambda\b.*(upper|lower)\s+bound""",
+    "strip": r"""zero[- ]?free\s+(half[- ]?plane|strip)|quasi[- ]?riemann|no\s+zeros?\s+(with|for)\s+re|
+                 \bre\s*\(?s\)?\s*>\s*\d|half[- ]?plane\s+re\b|
+                 zeros?\s+of\s+(the\s+)?(riemann\s+)?zeta[^.]*\b(real\s+part|re\s*\(?s\)?\s*(>|\\?ge|at\s+least))""",
+    "dbn": r"""de\s+bruijn[- ]?newman|heat\s+flow.*(zeta|xi)|newman'?s?\s+conjecture|polymath\s?15""",
     "input": r"""(cubic|quartic|sextic|biquadratic|higher[- ]order|metaplectic)\s+(theta|gauss\s+sum|large\s+sieve)|
                  large\s+sieve.*(cubic|quartic|sextic|order)|kubota|patterson|selberg\s+class""",
 }
