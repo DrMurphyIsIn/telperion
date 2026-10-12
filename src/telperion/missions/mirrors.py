@@ -93,6 +93,11 @@ NOT_MIRRORS: dict[tuple[str, str], str] = {
         "used as a lower bound in the KWin2 window certificates (2026-09-24); it is not a copy of "
         "BraggDefect.expLo (MMDefs), a fixed real constant: same bare name, different namespace "
         "and object.",
+    ("Dfun", "rvm_bridge/lean/ArchS4_Rung.lean"):
+        "ArchS4.Dfun is `def Dfun (f : ℝ → ℂ) : ℂ := ∫ u, f u * (deltaE |u| : ℂ)`, CC's D applied "
+        "to a test f directly (complex-valued, kernel deltaE), used for CC Cor 3.8 (2026-10-11); it "
+        "is not a copy of ArchS3.Dfun (MMDefs, the real part of D on the autocorrelation g * g^*, "
+        "mirrored for MM_cc_cor_2_3): same bare name, different namespace and object.",
 }
 
 
