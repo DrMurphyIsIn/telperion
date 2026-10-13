@@ -1744,6 +1744,12 @@ def _fetch_judge_job(run_id: str, slug: str):
         return None
     seen = []
     for job in jobs:
+        if job.get("conclusion") == "skipped":
+            # A skipped job never executed (e.g. the heavy workflow's ladder-only `heavy-seg` and
+            # `verdict` jobs when a node is judged in build-targets mode, #716), so GitHub keeps no
+            # log for it and it cannot hold a PASS or a FAIL.  Treating it as "unreadable" would
+            # make every targets-mode heavy run uncertifiable.
+            continue
         log = gh("api", f"repos/{_gh_repo()}/actions/jobs/{job['id']}/logs")
         jid = str(job["id"])
         if log is None:
