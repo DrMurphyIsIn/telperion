@@ -28,6 +28,15 @@ Usage (from the repository root, or with --telperion):
     python telperion/scripts/guard_anchors.py --island rvm_bridge axioms.out
     python telperion/scripts/guard_anchors.py --island li_positivity lp.out zf.out
     python telperion/scripts/guard_anchors.py --island dbn --list      # show the anchors
+    python telperion/scripts/guard_anchors.py --island rvm_bridge --exclude-heavy axioms.out
+    python telperion/scripts/guard_anchors.py --island rvm_bridge --only-heavy hodge1_axioms.out
+
+`judge_via = "heavy"` nodes (2026-10-13): their artifacts import certificates that no AxiomGuard*
+lib may pull in, so their anchors are printed by a separate heavy guard (Hodge1_Guard on
+rvm_bridge). The AxiomGuard* job passes --exclude-heavy and the heavy guard job --only-heavy;
+together they cover every proved node. With a filter, an island that has proved nodes but none
+on that side of the split passes with an OK line (exit 0); an island with no proved node at all
+is still refused (exit 2).
 
 Exit 0 iff every anchor is printed clean; 1 otherwise (each miss is an `::error::` line);
 2 on a registry/usage problem (unreadable node, statement not found in its artifact, an
@@ -211,11 +220,15 @@ def resolve_theorem(artifact_text: str, statement_text: str) -> str:
     return hits[0]
 
 
-def load_anchors(telperion_root: Path, island: str) -> List[Anchor]:
-    anchors: List[Anchor] = []
-    errors: List[str] = []
-    missions = telperion_root / "missions"
-    for toml_path in sorted(missions.glob("*/nodes/*.toml")):
+def is_heavy(doc: dict) -> bool:
+    """`judge_via = "heavy"`: the node's artifact imports certificates no AxiomGuard* lib may pull
+    in, so its anchor is printed by a separate heavy guard (e.g. Hodge1_Guard), not AxiomGuard*."""
+    return str(doc.get("judge_via", "") or "").strip() == "heavy"
+
+
+def _island_nodes(telperion_root: Path, island: str, errors: List[str]):
+    """(node toml, campaign root, node doc, resolved artifact) of every proved island node."""
+    for toml_path in sorted((telperion_root / "missions").glob("*/nodes/*.toml")):
         campaign_root = toml_path.parent.parent
         try:
             doc = tomllib.loads(toml_path.read_text())
@@ -230,6 +243,24 @@ def load_anchors(telperion_root: Path, island: str) -> List[Anchor]:
             continue
         artifact = (campaign_root / art).resolve()
         if island_of(artifact) != island:
+            continue
+        yield toml_path, campaign_root, doc, artifact
+
+
+def count_island_nodes(telperion_root: Path, island: str) -> int:
+    """Proved nodes on the island, heavy or not (the vacuity check: a typo'd island has none)."""
+    return sum(1 for _ in _island_nodes(telperion_root, island, []))
+
+
+def load_anchors(telperion_root: Path, island: str,
+                 heavy: Optional[bool] = None) -> List[Anchor]:
+    """Anchors of the island's proved nodes. heavy=None: all of them (the default); False: only
+    nodes that are NOT judge_via = "heavy"; True: only those that are. Filtered nodes are not
+    resolved at all, so a heavy node's artifact never has to be read by the ordinary job."""
+    anchors: List[Anchor] = []
+    errors: List[str] = []
+    for toml_path, campaign_root, doc, artifact in _island_nodes(telperion_root, island, errors):
+        if heavy is not None and is_heavy(doc) != heavy:
             continue
         slug = str(doc.get("name", toml_path.stem)).replace(".", "_")
         stmt = campaign_root / "lean" / "Statements" / f"{slug}.lean"
@@ -292,20 +323,34 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                     default=Path(__file__).resolve().parents[1],
                     help="telperion/ directory (default: this script's parent)")
     ap.add_argument("--list", action="store_true", help="print the derived anchors and exit")
+    sel = ap.add_mutually_exclusive_group()
+    sel.add_argument("--exclude-heavy", action="store_true",
+                     help="skip judge_via = \"heavy\" nodes (their anchors are printed by a "
+                          "separate heavy guard, never by AxiomGuard*)")
+    sel.add_argument("--only-heavy", action="store_true",
+                     help="check ONLY judge_via = \"heavy\" nodes (run against the heavy guard's "
+                          "output)")
     ap.add_argument("guard_output", nargs="*", type=Path,
                     help="files holding `lake env lean AxiomGuard*.lean` output")
     args = ap.parse_args(list(argv) if argv is not None else None)
 
+    heavy = True if args.only_heavy else False if args.exclude_heavy else None
+    what = {None: "proved", True: "proved heavy", False: "proved non-heavy"}[heavy]
     try:
-        anchors = load_anchors(args.telperion, args.island)
+        anchors = load_anchors(args.telperion, args.island, heavy=heavy)
     except RegistryError as e:
         for line in str(e).splitlines():
             print(f"::error::{line}")
         return 2
     if not anchors:
-        print(f"::error::no proved registry node has its artifact on island `{args.island}`"
-              " -- refusing to pass vacuously")
-        return 2
+        if heavy is None or count_island_nodes(args.telperion, args.island) == 0:
+            print(f"::error::no proved registry node has its artifact on island `{args.island}`"
+                  " -- refusing to pass vacuously")
+            return 2
+        # The island is real (it has proved nodes), just none on this side of the split -- e.g.
+        # the heavy guard job before the first heavy node is granted.
+        print(f"OK: no {what} registry node on `{args.island}` yet; nothing to check here.")
+        return 0
     if args.list:
         for a in anchors:
             print(f"{a.campaign}/{a.node}\t{a.theorem}")
@@ -320,7 +365,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         print(f"FAIL: {len(errs)} problem(s) across {len(anchors)} registry anchors on "
               f"`{args.island}`")
         return 1
-    print(f"OK: all {len(anchors)} proved registry anchors on `{args.island}` are printed by "
+    print(f"OK: all {len(anchors)} {what} registry anchors on `{args.island}` are printed by "
           "the guard with axioms within [propext, Classical.choice, Quot.sound].")
     return 0
 

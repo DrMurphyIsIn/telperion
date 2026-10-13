@@ -258,13 +258,17 @@ def test_live_registry_c1_anchors():
     assert got["RH_zero_free_gamma5"] == "ZeroFreeBridge.riemannZeta_zero_free_poly"
 
 
-@pytest.mark.parametrize("island,guards", [
-    ("rvm_bridge", ["AxiomGuardRvMBridge.lean"]),
-    ("li_positivity", ["AxiomGuardLiPositivity.lean", "AxiomGuardZeroFree.lean"]),
-    ("zero_free_bridge", ["AxiomGuardRH.lean", "AxiomGuardDlvp.lean", "AxiomGuardPolylog.lean"]),
-    ("dbn", ["AxiomGuardDBN.lean"]),
+@pytest.mark.parametrize("island,guards,heavy", [
+    # The two halves of the rvm_bridge split, as CI runs them: AxiomGuardRvMBridge with
+    # --exclude-heavy, Hodge1_Guard (rvm-bridge-hodge1-heavy) with --only-heavy.
+    ("rvm_bridge", ["AxiomGuardRvMBridge.lean"], False),
+    ("rvm_bridge", ["Hodge1_Guard.lean"], True),
+    ("li_positivity", ["AxiomGuardLiPositivity.lean", "AxiomGuardZeroFree.lean"], None),
+    ("zero_free_bridge", ["AxiomGuardRH.lean", "AxiomGuardDlvp.lean", "AxiomGuardPolylog.lean"],
+     None),
+    ("dbn", ["AxiomGuardDBN.lean"], None),
 ])
-def test_live_guard_sources_print_every_anchor(island, guards):
+def test_live_guard_sources_print_every_anchor(island, guards, heavy):
     """Static pre-check: each anchor has a `#print axioms <name>` line in the guards CI runs.
 
     Not a substitute for the Lean run (a printed line could still report sorryAx), but it
@@ -276,6 +280,138 @@ def test_live_guard_sources_print_every_anchor(island, guards):
     for g in guards:
         code = ga.strip_lean_comments((lean / g).read_text())
         printed |= {ga._canon(m) for m in re.findall(r"#print\s+axioms\s+(\S+)", code)}
-    missing = [a.theorem for a in ga.load_anchors(TELPERION, island)
+    missing = [a.theorem for a in ga.load_anchors(TELPERION, island, heavy=heavy)
                if ga._canon(a.theorem) not in printed]
     assert missing == []
+
+
+# ---------------------------------------------------------------------------
+# judge_via = "heavy": --exclude-heavy / --only-heavy (2026-10-13)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def heavy_registry(registry: Path) -> Path:
+    """The fixture registry with C_root marked judge_via = "heavy"."""
+    t = registry / "missions" / "camp" / "nodes" / "C_root.toml"
+    t.write_text('judge_via = "heavy"\n' + t.read_text())
+    return registry
+
+
+def _heavy_split_outputs(tmp_path: Path):
+    light = tmp_path / "light.out"
+    light.write_text("\n".join([f"'Outer.Inner.foo' depends on axioms: {CLEAN}",
+                                "'A.B.bar'' does not depend on any axioms"]))
+    heavy = tmp_path / "heavy.out"
+    heavy.write_text("'rootThm' depends on axioms: [propext]")
+    return light, heavy
+
+
+def test_default_still_requires_the_heavy_node(heavy_registry, tmp_path, capsys):
+    light, _ = _heavy_split_outputs(tmp_path)
+    assert {a.node for a in ga.load_anchors(heavy_registry, "isle")} == {"C_foo", "C_bar", "C_root"}
+    assert ga.main(["--telperion", str(heavy_registry), "--island", "isle", str(light)]) == 1
+    assert "C_root: `rootThm` is never printed" in capsys.readouterr().out
+
+
+def test_exclude_heavy_skips_the_heavy_node(heavy_registry, tmp_path, capsys):
+    light, _ = _heavy_split_outputs(tmp_path)
+    assert {a.node for a in ga.load_anchors(heavy_registry, "isle", heavy=False)} == {"C_foo",
+                                                                                      "C_bar"}
+    assert ga.main(["--telperion", str(heavy_registry), "--island", "isle", "--exclude-heavy",
+                    str(light)]) == 0
+    assert "all 2 proved non-heavy registry anchors" in capsys.readouterr().out
+
+
+def test_only_heavy_requires_the_heavy_node(heavy_registry, tmp_path, capsys):
+    light, heavy = _heavy_split_outputs(tmp_path)
+    assert [a.node for a in ga.load_anchors(heavy_registry, "isle", heavy=True)] == ["C_root"]
+    assert ga.main(["--telperion", str(heavy_registry), "--island", "isle", "--only-heavy",
+                    str(heavy)]) == 0
+    capsys.readouterr()
+    # The light guard's output does not print it: --only-heavy fails.
+    assert ga.main(["--telperion", str(heavy_registry), "--island", "isle", "--only-heavy",
+                    str(light)]) == 1
+    assert "C_root: `rootThm` is never printed" in capsys.readouterr().out
+
+
+def test_only_heavy_with_a_dirty_heavy_print_fails(heavy_registry, tmp_path):
+    bad = tmp_path / "bad.out"
+    bad.write_text("'rootThm' depends on axioms: [propext, sorryAx]")
+    assert ga.main(["--telperion", str(heavy_registry), "--island", "isle", "--only-heavy",
+                    str(bad)]) == 1
+
+
+def test_exclude_heavy_never_resolves_a_heavy_artifact(heavy_registry):
+    """A drifted heavy node breaks the heavy job, not the ordinary one."""
+    t = heavy_registry / "missions" / "camp" / "nodes" / "C_root.toml"
+    t.write_text(t.read_text().replace("Art.lean", "Missing.lean"))
+    with pytest.raises(ga.RegistryError):
+        ga.load_anchors(heavy_registry, "isle", heavy=True)
+    assert len(ga.load_anchors(heavy_registry, "isle", heavy=False)) == 2
+
+
+def test_only_heavy_without_heavy_nodes_passes_but_typo_island_refuses(registry, tmp_path,
+                                                                       capsys):
+    """Before the first heavy grant the heavy job has nothing to check (exit 0, says so); a
+    typo'd island still refuses to pass vacuously (exit 2)."""
+    out = tmp_path / "x.out"
+    out.write_text("")
+    assert ga.main(["--telperion", str(registry), "--island", "isle", "--only-heavy",
+                    str(out)]) == 0
+    assert "no proved heavy registry node on `isle` yet" in capsys.readouterr().out
+    assert ga.main(["--telperion", str(registry), "--island", "nope", "--only-heavy",
+                    str(out)]) == 2
+
+
+def test_heavy_flags_are_mutually_exclusive(registry, tmp_path):
+    with pytest.raises(SystemExit):
+        ga.main(["--telperion", str(registry), "--island", "isle", "--only-heavy",
+                 "--exclude-heavy", "--list"])
+
+
+def test_ci_wires_the_rvm_bridge_split():
+    """The ordinary rvm_bridge job excludes heavy nodes; the HODGE-1 heavy job checks only them;
+    no other island's call changes (zeta_reflection, the only other island with a heavy node,
+    has no guard_anchors call: its ladder is gated by requires_ci_job)."""
+    yaml = pytest.importorskip("yaml")
+    wf = TELPERION.parent / ".github" / "workflows" / "telperion-lean-e2e.yml"
+    jobs = yaml.safe_load(wf.read_text())["jobs"]
+    calls = {}
+    for name, job in jobs.items():
+        for st in job.get("steps", []):
+            run = st.get("run", "") or ""
+            if "scripts/guard_anchors.py" in run:
+                calls.setdefault(name, []).append(" ".join(run.split()))
+    rvm = [c for c in calls["rvm-bridge-compiles"]]
+    assert rvm == ["python ../../../scripts/guard_anchors.py --island rvm_bridge --exclude-heavy "
+                   "axioms.out"]
+    assert calls["rvm-bridge-hodge1-heavy"] == [
+        "python ../../../scripts/guard_anchors.py --island rvm_bridge --only-heavy "
+        "hodge1_axioms.out"]
+    others = [c for n, cs in calls.items() if n not in ("rvm-bridge-compiles",
+                                                        "rvm-bridge-hodge1-heavy") for c in cs]
+    assert others and not any("heavy" in c for c in others)
+    import tomllib
+    heavy_islands = set()
+    for t in (TELPERION / "missions").glob("*/nodes/*.toml"):
+        d = tomllib.loads(t.read_text())
+        art = (d.get("proof") or {}).get("artifact")
+        if ga.is_heavy(d) and art:
+            heavy_islands.add(ga.island_of((t.parent.parent / art).resolve()))
+    for isl in heavy_islands - {"rvm_bridge"}:
+        assert not any(f"--island {isl}" in c for c in others), isl
+
+
+def test_hodge1_reg_modules_are_wired():
+    lean = TELPERION / "examples" / "rvm_bridge" / "lean"
+    order = (lean / "hodge1_heavy_modules.txt").read_text().split()
+    for dep, reg in [("Hodge1_Window45", "Hodge1_RegWindow45"),
+                     ("Hodge1_Window5493", "Hodge1_RegWindow5493"),
+                     ("Hodge1_RHReduction", "Hodge1_RegRH")]:
+        assert order.index(reg) > order.index(dep)
+        assert f'"{reg}"' in (lean / "lakefile.toml").read_text()
+    guard = ga.strip_lean_comments((lean / "Hodge1_Guard.lean").read_text())
+    for thm in ("weil_positivity_poleFree_window45", "weil_positivity_poleFree_window5493",
+                "rh_iff_poleFree_outside_window5493"):
+        assert f"#print axioms {thm}\n" in guard
+    assert guard.count("#print axioms") == 41
