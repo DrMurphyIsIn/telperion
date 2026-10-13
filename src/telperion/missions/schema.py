@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
@@ -414,6 +415,11 @@ class Node:
     judge_via: str = ""
     #: For a `judge_via = "heavy"` node judged in parts (see ComposeSpec); None = one closure.
     compose: Optional[ComposeSpec] = None
+    #: For a `judge_via = "heavy"` node whose island has no Arb4_h<H> ladder: the island modules
+    #: missions-comparator-heavy.yml builds ONE AT A TIME, in this order (a separate `lake build
+    #: <m>` each, peak RSS logged), before it builds the challenge. () = the ladder's segment
+    #: discovery, unchanged. E.g. the HODGE-1 certificates (13.4 GB peak on a 16 GB runner).
+    heavy_build_targets: Tuple[str, ...] = ()
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -433,6 +439,11 @@ class Node:
         if self.compose is not None and self.judge_via != "heavy":
             raise SchemaError("a [compose] table needs judge_via = \"heavy\": compositional "
                               "judging is only for nodes the per-PR bundle excludes by rule")
+        object.__setattr__(self, "heavy_build_targets",
+                           _heavy_build_targets(self.heavy_build_targets))
+        if self.heavy_build_targets and self.judge_via != "heavy":
+            raise SchemaError("heavy_build_targets needs judge_via = \"heavy\": only the heavy "
+                              "workflow reads it")
         # Coerce depends_on to tuple if a list was passed
         if not isinstance(self.depends_on, tuple):
             object.__setattr__(self, "depends_on", tuple(self.depends_on))
@@ -474,6 +485,7 @@ _MODELLED_NODE_KEYS = frozenset({
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
     "requires_ci_job", "ci_record", "heavy_certificates", "judge_via", "compose",
+    "heavy_build_targets",
 })
 
 
@@ -486,6 +498,22 @@ def _judge_via(v) -> str:
     if v not in JUDGE_VIA:
         raise SchemaError(f"judge_via must be one of {JUDGE_VIA!r}, got {v!r}")
     return v
+
+
+#: A Lean module name as `lake build` takes it (dot-separated identifiers, no `+`/`:` facets).
+_MODULE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*")
+
+
+def _heavy_build_targets(v) -> Tuple[str, ...]:
+    """`heavy_build_targets`: a list of distinct Lean module names (order is the build order)."""
+    if isinstance(v, str) or not isinstance(v, (list, tuple)):
+        raise SchemaError(f"heavy_build_targets must be a list of module names, got {v!r}")
+    for m in v:
+        if not isinstance(m, str) or not _MODULE_NAME_RE.fullmatch(m):
+            raise SchemaError(f"heavy_build_targets: {m!r} is not a Lean module name")
+    if len(set(v)) != len(v):
+        raise SchemaError("heavy_build_targets must be distinct")
+    return tuple(v)
 
 
 def _node_to_doc(node: Node) -> dict:
@@ -506,6 +534,8 @@ def _node_to_doc(node: Node) -> dict:
         doc["heavy_certificates"] = True
     if node.judge_via:
         doc["judge_via"] = node.judge_via
+    if node.heavy_build_targets:
+        doc["heavy_build_targets"] = list(node.heavy_build_targets)
     if node.compose is not None:
         c = node.compose
         doc["compose"] = {
@@ -684,6 +714,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             heavy_certificates=bool(doc.get("heavy_certificates", False)),
             judge_via=_judge_via(doc.get("judge_via", "")),
             compose=compose,
+            heavy_build_targets=_heavy_build_targets(doc.get("heavy_build_targets", [])),
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:

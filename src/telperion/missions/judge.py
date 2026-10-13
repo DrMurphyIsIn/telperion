@@ -919,6 +919,38 @@ def _judge_via(node_toml: Path) -> str:
         return ""
 
 
+_SEGMENT_RE = re.compile(r"^Arb4_h([0-9]*)\.lean$")
+
+
+def ladder_segments(lean_dir: Path) -> List[int]:
+    """The Arb4_h<H>.lean ladder segments on an island, ascending: the same set the heavy
+    workflow's validate job used to list with `ls | sed -n ... | sort -n`."""
+    return sorted(int(m.group(1)) for p in Path(lean_dir).iterdir()
+                  if (m := _SEGMENT_RE.match(p.name)) and m.group(1))
+
+
+def heavy_build_plan(telperion_root: Path, island: str, node: str) -> "OrderedDict[str, object]":
+    """What missions-comparator-heavy.yml builds before the challenge, for one heavy node.
+
+    `heavy_build_targets` in the node toml -> mode "targets": exactly those modules, in order,
+    one `lake build` each. Absent -> mode "segments": the island's Arb4_h<H> ladder segments
+    (one heavy-seg job each), exactly as before the field existed. Call it only after
+    `build_bundle(..., heavy=True, only=[node])` has passed the judge_via refusal gate."""
+    from .schema import load_node
+    telperion_root = Path(telperion_root)
+    tomls = sorted((telperion_root / "missions").glob(f"*/nodes/{node}.toml"))
+    if len(tomls) != 1:
+        raise JudgeError(f"{node}: expected exactly one node toml, found {len(tomls)}")
+    targets = list(load_node(tomls[0]).heavy_build_targets)
+    if targets:
+        return OrderedDict(mode="targets", targets=targets, segments=[])
+    segs = ladder_segments(island_dir(telperion_root, island))
+    if not segs:
+        raise JudgeError(f"no Arb4_h<H> segments on island {island} and {node} sets no "
+                         "heavy_build_targets: nothing tells the heavy workflow what to build")
+    return OrderedDict(mode="segments", targets=[], segments=segs)
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -1165,6 +1197,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "judging); write it with --out to a temp dir, never commit it. A pass on "
                          "it cannot be recorded (comparator-record needs a proved node)")
     ap.add_argument("--list", action="store_true", help="print the nodes and exit")
+    ap.add_argument("--build-plan", action="store_true",
+                    help="with --heavy and one --only node: print, as JSON, what the heavy workflow "
+                         "builds before the challenge ({\"mode\": \"targets\"|\"segments\", "
+                         "\"targets\": [...], \"segments\": [...]}) and exit")
     ap.add_argument("--configs", action="store_true",
                     help="print `slug<TAB>config<TAB>solution_module<TAB>theorem<TAB>bridge<TAB>"
                          "nanoda|lean-kernel-only` for the (sharded) node set and exit -- what "
@@ -1207,6 +1243,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("::error::--heavy bundles are never committed, so there is nothing to --check",
               file=sys.stderr)
         return 2
+    if args.build_plan:
+        # After build_bundle: the judge_via refusal gate has already run on --only.
+        if not args.heavy or not args.only or len(args.only) != 1:
+            print("::error::--build-plan needs --heavy and exactly one --only node",
+                  file=sys.stderr)
+            return 2
+        try:
+            plan = heavy_build_plan(args.telperion, args.island, args.only[0])
+        except JudgeError as e:
+            print(f"::error::{e}", file=sys.stderr)
+            return 2
+        print(json.dumps(plan))
+        return 0
     if args.heavy and not args.out and not (args.configs or args.list):
         print("::error::--heavy needs --out <temp dir>: a heavy bundle must never be written "
               "over the committed per-PR bundle", file=sys.stderr)
