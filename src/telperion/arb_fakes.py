@@ -230,19 +230,45 @@ def rigorous_winding(name: str, re0, re1, im0, im1, prec: int = 96, init_per_sid
     return k
 
 
-def certify_zero_box(name: str, re0, re1, im0, im1, expected: int = 1, prec: int = 96) -> dict:
-    """Rigorous zero count ``expected`` in an open rational box (no poles of the fakes lie off the real axis).
+# Declared poles (all simple): zeta, EP5, EPQ2 have s = 1; DH is entire.  A callable has none declared.
+POLES = {"zeta": ((1, 0),), "EP5": ((1, 0),), "EPQ2": ((1, 0),), "DH": ()}
+
+
+def _pole_guard(name, re0, re1, im0, im1, poles):
+    """Refuse a box whose CLOSURE contains a declared pole, unless the caller passes that pole in ``poles``
+    (then it must lie strictly inside, and the winding counts zeros minus poles).  Returns #acknowledged poles."""
+    re0, re1, im0, im1 = map(Fraction, (re0, re1, im0, im1))
+    ack = {(Fraction(a), Fraction(b)) for a, b in (poles or ())}
+    declared = {(Fraction(a), Fraction(b)) for a, b in (POLES.get(name, ()) if not callable(name) else ())}
+    for (a, b) in declared | ack:
+        inside_closed = re0 <= a <= re1 and im0 <= b <= im1
+        if not inside_closed:
+            continue
+        if (a, b) not in ack:
+            raise ValueError(f"{name}: declared pole {a}+{b}i lies in the closed box [{re0},{re1}]x[{im0},{im1}]; "
+                             f"refused (pass poles=[({a}, {b})] to count zeros minus poles)")
+        if not (re0 < a < re1 and im0 < b < im1):
+            raise ValueError(f"{name}: pole {a}+{b}i lies on the box boundary; refused")
+    return sum(1 for (a, b) in ack if re0 < a < re1 and im0 < b < im1)
+
+
+def certify_zero_box(name: str, re0, re1, im0, im1, expected: int = 1, prec: int = 96, poles=()) -> dict:
+    """Rigorous zero count ``expected`` in an open rational box.  A box whose closure contains a declared pole is
+    refused unless the pole is passed in ``poles`` (simple poles; then zeros = winding + #poles).
     Re-run at 1.5x precision with a different initial subdivision; both must agree.  Returns a sidecar dict."""
+    npoles = _pole_guard(name, re0, re1, im0, im1, poles)
     st1, st2 = {}, {}
     w1 = rigorous_winding(name, re0, re1, im0, im1, prec=prec, init_per_side=8, stats=st1)
     w2 = rigorous_winding(name, re0, re1, im0, im1, prec=prec + prec // 2, init_per_side=13, stats=st2)
-    if w1 != w2 or w1 != expected:
-        raise ValueError(f"certify_zero_box({name}): windings {w1}, {w2}; expected {expected} -- refused")
+    if w1 != w2 or w1 + npoles != expected:
+        raise ValueError(f"certify_zero_box({name}): windings {w1}, {w2} with {npoles} pole(s); expected "
+                         f"{expected} zeros -- refused")
     re0, re1, im0, im1 = map(Fraction, (re0, re1, im0, im1))
     return {
         "kind": "winding_box_zero", "trust_class": "arb", "object": name,
         "box": {"re0": str(re0), "re1": str(re1), "im0": str(im0), "im1": str(im1)},
-        "winding": w1, "method": "segment-enclosure (centred form, |f - c| <= |c|/2 per segment)",
+        "winding": w1, "zeros_in_box": w1 + npoles, "poles_in_box": npoles,
+        "method": "segment-enclosure (centred form, |f - c| <= |c|/2 per segment)",
         "prec": prec, "recheck_prec": prec + prec // 2, "segments": st1["segments"],
         "recheck_segments": st2["segments"], "min_segment": st1["min_segment"],
         "off_line": bool(re0 > Fraction(1, 2) or re1 < Fraction(1, 2)),
@@ -287,7 +313,9 @@ def right_halfplane_nonvanishing(name: str, sigma, prec: int = 128) -> dict:
 
 def count_offline(name: str, sigma0, sigma1, t0, t1, cuts, prec: int = 96, log=None) -> dict:
     """Rigorous zero count of f in [sigma0, sigma1] x [t0, t1], split into strips at the heights ``cuts``.
-    Returns per-strip counts and the total.  Every strip is an independent rigorous winding."""
+    Returns per-strip counts and the total.  Every strip is an independent rigorous winding.
+    Refuses if a declared pole lies in the closed box (no pole acknowledgement here: counts are zeros only)."""
+    _pole_guard(name, sigma0, sigma1, t0, t1, ())
     hs = [Fraction(t0)] + [Fraction(c) for c in cuts] + [Fraction(t1)]
     strips = []
     for a, b in zip(hs, hs[1:]):
