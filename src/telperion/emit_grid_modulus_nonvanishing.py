@@ -11,7 +11,7 @@ most ``M * delta``, which is not enough to reach `0`.  The Lean side of this is
 ``SpeiserBoxProbe.nonvanishing_of_grid`` (unconditional, axiom-clean).
 
 WHY A NEW KIND RATHER THAN ``winding_box_zero``.  ``winding_box_zero`` certifies a zero
-COUNT by the quadrant-advance argument principle along a contour, and ships ``nthm = 0``
+COUNT by the argument principle along a contour (segment enclosures since 2026-10-14), and ships ``nthm = 0``
 (a pure Arb sidecar with no Lean identity).  This kind is a different instrument: no
 contour, no integral, no argument principle — and it SHIPS KERNEL THEOREMS, namely the
 rational arithmetic that makes the certificate close.  Its payload (grid geometry, the

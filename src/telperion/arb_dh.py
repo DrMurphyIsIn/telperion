@@ -37,13 +37,26 @@ acb power.  Result: an outward-rounded dyadic rectangle for D(s).
 
 TRUST CLASS: Arb-ball (interval-arithmetic) rigor -- the SAME class as
 `arb_platt` / `arb_enclosure`, NOT Lean kernel.  Every returned box strictly
-contains the true D(s).  The certified off-line-zero claim (see
-`certify_offline_zero`) is a rigorous interval winding-number count on a
-rational-cornered rectangle; it is Arb-trust-class evidence that exactly one
-zero lies in that box, NOT a kernel proof.  conjecture1_proved = False.
+contains the true D(s).
+
+ZERO COUNTS.  `winding_number_rigorous` (and `certify_offline_zero`, which uses
+it) counts zeros in a rational-cornered rectangle by the segment-enclosure
+argument principle of `telperion.arb_winding`: D and D' are enclosed on every
+boundary SEGMENT, so the integer is an Arb-trust-class zero count, NOT a kernel
+proof.
+
+CORRECTION (2026-10-14).  Before this date the module's only counter was the
+node-sampling routine now called `winding_number_sampled_heuristic`.  It
+evaluates D in Arb balls at boundary nodes only.  The ball values are rigorous;
+the COUNT IS NOT, because nothing bounds the argument change between two nodes.
+An independent audit found a box holding 2 zeros on which it returns 1 at every
+density (see `telperion.arb_winding`).  Earlier docstrings here called that
+count rigorous; that was wrong.  `winding_number` is now a deprecated alias that
+warns and delegates to the rigorous method.  conjecture1_proved = False.
 
     from telperion.arb_dh import dh_eval, certify_offline_zero
     dh_eval("4/5", "857/10", prec=128)   # (re_lo, re_hi, im_lo, im_hi)
+    certify_offline_zero("79/100", "83/100", "8568/100", "8572/100")
 """
 from __future__ import annotations
 
@@ -51,11 +64,14 @@ import ctypes
 import ctypes.util
 import glob
 import os
+import warnings
 from fractions import Fraction
 
 __all__ = [
     "dh_eval", "dh_kappa_interval", "certify_offline_zero",
-    "winding_number", "DH_AVAILABLE", "KAPPA_APPROX",
+    "winding_number", "winding_number_rigorous", "winding_number_sampled_heuristic",
+    "dh_series", "dh_analytic", "dh_right_halfplane_nonvanishing",
+    "DH_AVAILABLE", "KAPPA_APPROX",
     "l_chi5_eval", "CHI5", "CHI5_BAR",
 ]
 
@@ -81,7 +97,10 @@ def _find_libflint() -> str | None:
     except Exception:
         return None
     d = os.path.dirname(__import__("flint").__file__)
-    for pat in (".dylibs/libflint*.dylib", "../flint*/lib*flint*.so*"):
+    # macOS wheels: flint/.dylibs/; Linux auditwheel wheels: python_flint.libs/ (a sibling of the
+    # package dir).  The Linux patterns are arb_platt's; without them DH_AVAILABLE was False on CI.
+    for pat in (".dylibs/libflint*.dylib", "../flint*/lib*flint*.so*",
+                "../python_flint.libs/lib*flint*.so*", "../flint.libs/lib*flint*.so*"):
         hits = sorted(glob.glob(os.path.join(d, pat)))
         if hits:
             return hits[0]
@@ -100,7 +119,8 @@ if _LIB_PATH:
             "arb_init", "arb_clear", "arb_set_si", "arb_set_ui", "arb_sqrt_ui",
             "arb_sqrt", "arb_add", "arb_sub", "arb_mul", "arb_div", "arb_sub_ui",
             "arb_div_ui", "arb_get_interval_fmpz_2exp", "arb_set",
-            "fmpz_init", "fmpz_clear", "fmpz_get_str",
+            "fmpz_init", "fmpz_clear", "fmpz_get_str", "fmpz_set_str",
+            "arb_set_fmpz", "arb_div_fmpz",
         )
         for fn in _needed:
             getattr(_L, fn)
@@ -111,6 +131,9 @@ if _LIB_PATH:
         _L.arb_get_interval_fmpz_2exp.restype = None
         _L.arb_sqrt_ui.restype = None
         _L.fmpz_get_str.restype = ctypes.c_char_p
+        _L.fmpz_set_str.restype = ctypes.c_int
+        _L.arb_set_fmpz.restype = None
+        _L.arb_div_fmpz.restype = None
     except (OSError, AttributeError):
         _L = None
 
@@ -161,20 +184,39 @@ def _arb_to_interval(p_arb) -> tuple[Fraction, Fraction]:
             _L.fmpz_clear(fz)
 
 
-def _set_acb_from_fraction(p_acb, re: Fraction, im: Fraction, prec: int) -> None:
-    """acb <- (re) + i(im), each an exact rational, via arb divisions."""
-    for part_ptr, val in ((_acb_real_ptr(p_acb), re), (_acb_imag_ptr(p_acb), im)):
-        _L.arb_set_si(part_ptr, ctypes.c_long(val.numerator))
-        if val.denominator != 1:
-            _L.arb_div_ui(part_ptr, part_ptr, ctypes.c_ulong(val.denominator),
-                          ctypes.c_long(prec))
+def _fits_word(val: Fraction) -> bool:
+    return -(2 ** 63) < val.numerator < 2 ** 63 and val.denominator < 2 ** 64
 
 
 def _set_arb_from_fraction(p_arb, val: Fraction, prec: int) -> None:
-    _L.arb_set_si(p_arb, ctypes.c_long(val.numerator))
-    if val.denominator != 1:
-        _L.arb_div_ui(p_arb, p_arb, ctypes.c_ulong(val.denominator),
-                      ctypes.c_long(prec))
+    """arb <- the exact rational val, divided out at ``prec``.
+
+    Machine-word numerators/denominators take the original arb_set_si / arb_div_ui path (so existing
+    outputs are bit-identical).  Anything larger goes through fmpz (arbitrary size).  ctypes c_long /
+    c_ulong would truncate it silently -- c_long(2**70) is 0 -- so the word path is never used for it."""
+    if _fits_word(val):
+        _L.arb_set_si(p_arb, ctypes.c_long(val.numerator))
+        if val.denominator != 1:
+            _L.arb_div_ui(p_arb, p_arb, ctypes.c_ulong(val.denominator), ctypes.c_long(prec))
+        return
+    num, den = _fmpz_t(0), _fmpz_t(0)
+    for fz in (num, den):
+        _L.fmpz_init(fz)
+    try:
+        for fz, v in ((num, val.numerator), (den, val.denominator)):
+            if _L.fmpz_set_str(fz, str(v).encode(), 10) != 0:
+                raise ValueError(f"arb_dh: fmpz_set_str failed for {v}")
+        _L.arb_set_fmpz(p_arb, num)
+        _L.arb_div_fmpz(p_arb, p_arb, den, ctypes.c_long(prec))
+    finally:
+        for fz in (num, den):
+            _L.fmpz_clear(fz)
+
+
+def _set_acb_from_fraction(p_acb, re: Fraction, im: Fraction, prec: int) -> None:
+    """acb <- (re) + i(im), each an exact rational, via arb divisions."""
+    _set_arb_from_fraction(_acb_real_ptr(p_acb), re, prec)
+    _set_arb_from_fraction(_acb_imag_ptr(p_acb), im, prec)
 
 
 def dh_kappa_interval(prec: int = 128) -> tuple[Fraction, Fraction]:
@@ -359,22 +401,23 @@ def l_chi5_eval(s_re, s_im, prec: int = 128, conj: bool = False
 
 
 # ---------------------------------------------------------------------------
-# Rigorous winding-number (argument-principle) zero count on a rectangle
+# Zero counts on a rectangle: the rigorous segment method, and the old heuristic
 # ---------------------------------------------------------------------------
 # For a rectangle with rational corners on which D has no zero, the number of
 # zeros strictly inside equals (1/2 pi) * (change in arg D) around the boundary.
-# We sample the boundary at rational nodes, evaluate D in balls at each node,
-# and accumulate the QUADRANT the value box lies in.  If every consecutive pair
-# of boxes lies in the same or ADJACENT quadrant (never diagonal / never
-# straddling zero), the winding integer is rigorously determined: the total
-# signed quadrant advance / 4.  A box that contains 0 (all four sign-quadrants
-# possible) or a diagonal jump (arg change ambiguous by +/- pi) ABORTS with a
-# refinement request -- the count is only emitted when every step is rigorous.
 #
-# This is Arb-trust-class, NOT kernel.  It certifies "exactly k zeros in this
-# rational-cornered box" with interval arithmetic; a wrong evaluation yields an
-# abort (refine) or a mismatch, never a false certified count.  conjecture1
-# _proved = False.
+# `winding_number_rigorous` computes that change with `telperion.arb_winding`:
+# D and D' are enclosed on every boundary SEGMENT (an Arb ball covering it), so
+# the argument change along each segment is enclosed, not guessed.  It is the
+# counter every certificate in this repository uses from 2026-10-14 on.
+#
+# `winding_number_sampled_heuristic` is the original routine.  It samples the
+# boundary at rational NODES, evaluates D in balls there, and sums the signed
+# quadrant advances between consecutive nodes.  The ball values are rigorous,
+# but the COUNT IS A HEURISTIC: two nodes in the same or adjacent quadrants say
+# nothing about the path between them, and zeros close to an edge can add 2 pi
+# unseen.  It is kept only for comparison and for the regression tests that
+# document the failure.  conjecture1_proved = False.
 
 def _quadrant_of_box(re_lo, re_hi, im_lo, im_hi):
     """Return the strict quadrant 0..3 of a value box, or None if it touches an
@@ -401,21 +444,22 @@ def _boundary_nodes(re0: Fraction, re1: Fraction, im0: Fraction, im1: Fraction,
     for k in range(n_per_side):
         nodes.append((re1 - (re1 - re0) * Fraction(k, n_per_side), im1))
     for k in range(n_per_side):
-        nodes.append((im0 if False else re0,
-                      im1 - (im1 - im0) * Fraction(k, n_per_side)))
+        nodes.append((re0, im1 - (im1 - im0) * Fraction(k, n_per_side)))
     return nodes
 
 
-def winding_number(re0, re1, im0, im1, prec: int = 200, n_per_side: int = 24
-                   ) -> int:
-    """Rigorous winding number of D around the rectangle [re0,re1] x [im0,im1].
+def winding_number_sampled_heuristic(re0, re1, im0, im1, prec: int = 200,
+                                     n_per_side: int = 24) -> int:
+    """HEURISTIC winding number of D around [re0,re1] x [im0,im1] by node sampling.
 
-    Walks the boundary counter-clockwise through `4*n_per_side` rational nodes,
-    encloses D at each, and sums signed quadrant advances.  Raises
-    RuntimeError (asking for higher n_per_side / prec) if any node box straddles
-    an axis (sign ambiguous) or any step jumps diagonally (arg change +/- pi
-    ambiguous) -- so a returned integer is a RIGOROUS zero count for the open
-    rectangle.  Trust class: Arb interval arithmetic, not kernel."""
+    NOT RIGOROUS.  Walks the boundary counter-clockwise through `4*n_per_side`
+    rational nodes, encloses D at each in an Arb ball, and sums signed quadrant
+    advances.  It raises RuntimeError if a node box straddles an axis or a step
+    jumps diagonally, but a returned integer can still be WRONG: nothing bounds
+    the argument change between nodes, so zeros near an edge can be missed (the
+    2026-10-14 audit's counterexample C, a zero pair at x = 1/7 just above the
+    bottom edge, gives 1 instead of 2 at every density).  Use
+    `winding_number_rigorous` for any count that is certified or published."""
     re0, re1, im0, im1 = map(Fraction, (re0, re1, im0, im1))
     nodes = _boundary_nodes(re0, re1, im0, im1, n_per_side)
     quads = []
@@ -447,34 +491,130 @@ def winding_number(re0, re1, im0, im1, prec: int = 200, n_per_side: int = 24
     return total // 4
 
 
-def certify_offline_zero(re0, re1, im0, im1, prec: int = 200,
-                         n_per_side: int = 24) -> dict:
+def dh_series(s):
+    """D composed with the python-flint acb_series ``s`` (truncated at ctx.cap).
+
+    The same Hurwitz collapse as `dh_eval`, written over acb_series so that one
+    formula gives a point value, a value on a ball, or the jet (D, D') on a ball.
+    kappa is the arb ball built from integer surds, as in `_build_kappa_arb`."""
+    from flint import acb, arb, fmpq
+    s5 = arb(5).sqrt()
+    kappa = acb(((10 - 2 * s5).sqrt() - 2) / (s5 - 1))
+    z = [s.zeta(acb(arb(fmpq(a, 5)))) for a in (1, 2, 3, 4)]
+    return (-s * acb(5).log()).exp() * (z[0] - z[3] + kappa * (z[1] - z[2]))
+
+
+def dh_analytic():
+    """D as a `telperion.arb_winding.ArbAnalytic` (entire: no poles to declare)."""
+    from .arb_winding import from_series
+    return from_series(dh_series, name="DH", poles=())
+
+
+def winding_number_rigorous(re0, re1, im0, im1, prec: int = 96,
+                            init_per_side: int = 8, max_depth: int = 40,
+                            stats: dict | None = None) -> int:
+    """Rigorous winding number of D around [re0,re1] x [im0,im1].
+
+    The segment-enclosure argument principle of `telperion.arb_winding`
+    (method label `arb_winding.METHOD`).  A returned integer is an
+    Arb-trust-class count of the zeros of D in the open rectangle.  Raises
+    RuntimeError if a boundary segment cannot be certified zero-free within
+    ``max_depth`` bisections, or the total is not near an integer.  Not kernel."""
+    from .arb_winding import rigorous_winding
+    return rigorous_winding(dh_analytic(), re0, re1, im0, im1, prec=prec,
+                            init_per_side=init_per_side, max_depth=max_depth,
+                            stats=stats)
+
+
+def winding_number(re0, re1, im0, im1, prec: int = 200, n_per_side: int = 24
+                   ) -> int:
+    """DEPRECATED alias.  Warns, then returns `winding_number_rigorous`.
+
+    This name used to be the node-sampling heuristic, documented as rigorous.
+    It now delegates to the rigorous segment method, so an old caller gets a
+    correct count (or a refusal), never the heuristic's silent undercount.
+    ``n_per_side`` becomes the initial number of segments per side.  Call
+    `winding_number_rigorous` directly, or `winding_number_sampled_heuristic`
+    if the old behaviour is really wanted."""
+    warnings.warn(
+        "arb_dh.winding_number is deprecated: it now delegates to "
+        "winding_number_rigorous (segment enclosure).  The old node-sampling "
+        "count is winding_number_sampled_heuristic and is NOT rigorous.",
+        DeprecationWarning, stacklevel=2)
+    return winding_number_rigorous(re0, re1, im0, im1, prec=prec,
+                                   init_per_side=n_per_side)
+
+
+def certify_offline_zero(re0, re1, im0, im1, prec: int = 96,
+                         n_per_side: int = 8) -> dict:
     """Certify a single off-line zero of D inside a rational-cornered box.
 
     Requires the box to be strictly off the critical line (re0 > 1/2 or
-    re1 < 1/2) and returns a dict describing exactly what was computed: the box,
-    the rigorous winding integer, and the trust label.  A winding of 1 certifies
-    (Arb-trust-class) that D has exactly one zero in the open rectangle, off the
-    line.  Raises if the box is not off-line or the count is not 1."""
+    re1 < 1/2).  The rigorous winding is computed twice, at ``prec`` with
+    ``n_per_side`` initial segments per side and at 1.5 x ``prec`` with
+    ``n_per_side + 5``, and both runs must give 1.  A winding of 1 certifies (Arb trust class, not kernel) that D has
+    exactly one zero in the open rectangle, off the line.  Raises ValueError if
+    the box is not off-line, RuntimeError if the count is not 1 or a run
+    refuses.  Returns a dict describing exactly what was computed."""
+    from .arb_winding import METHOD
     re0, re1, im0, im1 = map(Fraction, (re0, re1, im0, im1))
     half = Fraction(1, 2)
     off_line = re1 < half or re0 > half
     if not off_line:
         raise ValueError(
             f"box [{re0},{re1}] straddles or touches Re=1/2 -- not off-line")
-    w = winding_number(re0, re1, im0, im1, prec=prec, n_per_side=n_per_side)
-    if w != 1:
+    st1, st2 = {}, {}
+    w = winding_number_rigorous(re0, re1, im0, im1, prec=prec,
+                                init_per_side=n_per_side, stats=st1)
+    w2 = winding_number_rigorous(re0, re1, im0, im1, prec=prec + prec // 2,
+                                 init_per_side=n_per_side + 5, stats=st2)
+    if w != 1 or w2 != 1:
         raise RuntimeError(
-            f"winding = {w} (expected exactly 1 zero); box may enclose 0 or >1 "
-            f"zeros, or none")
+            f"winding = {w}, recheck {w2} (expected exactly 1 zero); box may "
+            f"enclose 0 or >1 zeros")
     return {
         "box": {"re": (re0, re1), "im": (im0, im1)},
         "winding": w,
         "zeros_in_box": w,
         "off_line": True,
         "side": "right" if re0 > half else "left",
+        "method": METHOD,
         "prec": prec,
+        "recheck_prec": prec + prec // 2,
         "n_per_side": n_per_side,
-        "trust": "arb-interval (argument-principle winding); NOT kernel",
+        "segments": st1["segments"],
+        "recheck_segments": st2["segments"],
+        "trust": "arb-interval (segment-enclosure argument principle); NOT kernel",
         "conjecture1_proved": False,
     }
+
+
+def dh_right_halfplane_nonvanishing(sigma, prec: int = 128) -> dict:
+    """Certify D(s) != 0 for all Re s >= sigma by a dominant-term bound.
+
+    D = sum c(n) n^{-s} with c(1) = 1 and sum_{n>=2} |c(n)| n^{-sigma} =
+    5^{-sigma}[zeta(sigma,1/5) + kappa zeta(sigma,2/5) + kappa zeta(sigma,3/5)
+    + zeta(sigma,4/5)] - 1.  If that tail is < 1 then |D(s)| >= 1 - tail > 0,
+    and the tail decreases in sigma, so the bound holds on the whole half-plane.
+    (Ported from arb_fakes.right_halfplane_nonvanishing, branch
+    wall2/telperion-fakes.)"""
+    from flint import acb, arb, ctx, fmpq
+    from .arb_winding import _frac_interval
+    sig = Fraction(sigma)
+    if sig <= 1:
+        raise ValueError("dh_right_halfplane_nonvanishing: need sigma > 1")
+    old = ctx.prec
+    ctx.prec = prec
+    try:
+        x = arb(fmpq(sig.numerator, sig.denominator))
+        s5 = arb(5).sqrt()
+        k = ((10 - 2 * s5).sqrt() - 2) / (s5 - 1)
+        zs = [acb(x).zeta(acb(arb(fmpq(a, 5)))).real for a in (1, 2, 3, 4)]
+        total = (-x * arb(5).log()).exp() * (zs[0] + k * zs[1] + k * zs[2] + zs[3])
+        lo, hi = _frac_interval(total - 1)
+    finally:
+        ctx.prec = old
+    return {"kind": "dominant_term_nonvanishing", "trust_class": "arb", "object": "DH",
+            "sigma": str(sig), "tail_upper": str(hi), "tail_upper_float": float(hi),
+            "certified": bool(hi < 1), "claim": f"D(s) != 0 for all Re s >= {sig}",
+            "conjecture1_proved": False}
