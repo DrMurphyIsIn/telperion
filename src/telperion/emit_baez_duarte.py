@@ -1,45 +1,76 @@
 """Báez-Duarte emitter — Face 6 (spectral / approximation) of the RH obstruction.
 
-The Nyman–Beurling–Báez-Duarte criterion: RH ⟺ d²_N → 0, where
+The quantity certified here is the Báez-Duarte / Bagchi distance
 
-    d²_N = inf_c ‖ 1 − Σ_{k=2}^{N} c_k · ρ_{1/k} ‖²_{L²(0,1)},   ρ_a(x) = {a/x},
+    d²_N = inf_c ‖ 1 − Σ_{k=2}^{N} c_k · g_k ‖²_{L²(0,1)},
+    g_k(x) = {1/(kx)} − k⁻¹·{1/x}     (Báez-Duarte's f_{1/k}, Bagchi's g_k),
 
-the L²(0,1) distance from the constant 1 to the span of the dilated fractional
-parts {(1/k)/x}.  A DECREASING certified upper-bound sequence d²_N ≤ U_N is
-finite, kernel-checkable evidence of the spectral face (the Hilbert-space "Bragg
-box").  The uniform d²_N → 0 IS RH; a single N is NOT.
+the L²((0,1], dx) distance from the constant 1 to the span of g_2, …, g_N
+(g_1 ≡ 0).  The spans are nested, so d²_N is non-increasing in N, and
 
-Per-N certificate: an EXPLICIT rational coefficient vector c gives the quadratic
-form value
+    RH  ⟺  1 ∈ closed span{g_k : k ≥ 1} in L²(0,1)  ⟺  d²_N → 0.
 
-    Q(c) = 1 − 2·Σ_k c_k·b_k + Σ_{j,k} c_j c_k·A_{jk},
-    b_k = ∫₀¹ ρ_{1/k},   A_{jk} = ∫₀¹ ρ_{1/j} ρ_{1/k},
+Sources.  Báez-Duarte, "A strengthening of the Nyman–Beurling criterion for the
+Riemann hypothesis", Atti Accad. Naz. Lincei Rend. Lincei Mat. Appl. 14 (2003)
+5–11 (arXiv:math/0202141), proves RH ⟹ (the span condition).  Bagchi, "On Nyman,
+Beurling and Baez-Duarte's Hilbert space reformulation of the Riemann
+hypothesis", Proc. Indian Acad. Sci. (Math. Sci.) 116 (2006) 137–146
+(arXiv:math/0607733), proves both directions: Theorem 2 in the Hardy space
+H²(Ω), Ω = {Re s > 1/2}, for G_l(s) = (l^{−s} − l^{−1})·ζ(s)/s and E(s) = 1/s;
+Theorem 7 in L²((0,1]) for exactly the g_l above (the space and norm used
+here); Theorem 1 in the weighted ℓ² space with ⟨a,b⟩ = Σ a_n b̄_n/(n(n+1)),
+γ_l(n) = {n/l} and target γ = (1,1,…), unitarily equivalent to Theorem 7.
 
-and since d²_N is an INFIMUM, d²_N ≤ Q(c) for every c.  The Gram/linear
-integrals are computed RIGOROUSLY: on x ∈ (0,1) the integrand is piecewise
-(a/x − m)(b/x − n) with elementary antiderivative
-−ab/x − (a·n + b·m)·ln x + mn·x; we integrate exactly on [δ, 1] (finitely many
-breakpoints a/m, b/m) and bound the tail [0, δ] by [0, δ] (the integrand lies in
-[0,1)).  The ln-values are enclosed with flint/Arb.  This yields a rigorous
-rational OUTER enclosure of each integral, hence a rigorous rational UPPER bound
-``U`` on Q(c) ≥ d²_N.
+Per-N certificate.  On x ∈ (1/(n+1), 1/n] each g_k is the constant {n/k}
+(Bagchi eq. (5)), so the residual 1 − Σ c_k g_k is the constant
+h_n = 1 − Σ_k c_k·{n/k} there, and for an EXPLICIT rational c
+
+    Q(c) = ‖1 − Σ c_k g_k‖² = Σ_{n≥1} h_n² / (n(n+1))           (exact),
+
+with d²_N ≤ Q(c) because d²_N is an infimum.  The integral over [δ, 1], δ = 1/Y,
+is the finite sum n < Y: every term is an exact rational (the 1/x and ln x parts
+of the piecewise antiderivative cancel identically for this family, so no
+transcendental value enters), and each term is rounded UP to the 2^−prec_bits
+grid.  The tail [0, δ] is bounded with its integrand weight: h_n depends only on
+n mod L (L = lcm(2..N)), Y = M·L, and for n = jL + r ≥ jL, 1/(n(n+1)) ≤ 1/(jL)²,
+so
+
+    Σ_{n≥Y} h_n²/(n(n+1)) ≤ S/L² · Σ_{j≥M} 1/j² ≤ 2S / (L²(2M − 1)),
+    S = Σ_{r=0}^{L−1} h_r²  (exact rational; 1/j² < 1/(j−½) − 1/(j+½)).
+
+The tail bound is also rounded UP to the 2^−prec_bits grid.  The sum is a
+rigorous dyadic rational ``Uexact ≥ Q(c) ≥ d²_N``; only this upper bound is
+certified.  With Y ≈ 2·10⁵ and the coefficients from the exact Gram (digamma
+closed form, ``optimal_coeffs``), ``Uexact`` is COMPUTED (mpmath, not
+certified) to be within ~10⁻⁹ of the true d²_N.  At N = 2 the gap is certified
+two-sided: d²_2 = 1 − ln 2 exactly and 0 ≤ U_2 − (1 − ln 2) ≈ 6.25·10⁻¹².
 
 HONESTY SEAM (Arb-trust class, like winding_box / li_positivity): the fact
-``d²_N ≤ Uexact`` — combining the analytic inf-inequality with the certified
-enclosure of Q(c) — is the EXTERNAL numeric input, carried as the emitted
-theorem's hypothesis ``hval : dN2 ≤ Uexact``.  The kernel proves only the trivial
-rounding ``Uexact ≤ U`` (norm_num) and chains ``dN2 ≤ Uexact ≤ U``.  Certifying
-one N is NOT progress toward RH.  conjecture1_proved = False.
+``d²_N ≤ Uexact`` — the inf-inequality plus the exact-rational evaluation above —
+is the EXTERNAL numeric input, carried as the emitted theorem's hypothesis
+``hval : dN2 ≤ Uexact``.  The kernel proves only the trivial rounding
+``Uexact ≤ U`` (norm_num) and chains ``dN2 ≤ Uexact ≤ U``.  Certifying one N is
+NOT progress toward RH: unconditionally liminf (log N)·d²_N > 0 (Burnol 2002),
+so no finite rung can approach the limit.  conjecture1_proved = False.
 
-NEGATIVE CONTROL: a claimed upper bound ``U`` BELOW the certified enclosure's
-own upper endpoint (so the bound is not actually established), or a degenerate N
-< 2 / empty coefficient vector, is REFUSED at certification with a ``ValueError``.
+EARLIER VERSIONS (main before the family fix, 2026-10-14) used the family
+{1/(kx)}, k ≥ 2, WITHOUT the −k⁻¹{1/x} term.  That is NOT an RH criterion: on
+(1/2, 1) every element of its span is C/x, so its d²_N ≥ 1/2 − (ln 2)² ≈ 0.019547
+for every N, unconditionally (RH ⟹ d²_N → 0 is false for it).  The old bounds
+(0.516, 0.377, 0.313, 0.270, 0.270, 0.289 for N = 2..7) were valid upper bounds
+on THAT quantity, loose and not monotone.  No kernel theorem was false (each
+rung is abstract in dN2), but the old rungs are not rungs of Face 6.
+
+NEGATIVE CONTROL: a claimed upper bound ``U`` BELOW the certified ``Uexact`` (so
+the bound is not actually established), or a degenerate N < 2 / empty
+coefficient vector, is REFUSED at certification with a ``ValueError``.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Callable, Sequence
+from typing import Callable
 
 import sympy as sp
 
@@ -60,155 +91,58 @@ except ImportError:  # run directly
     from telperion.lean import LeanProfile
     from telperion.workflow import Emitter
 
-
-def _gram_integral_enclose(a: Fraction, b: Fraction, delta: Fraction,
-                           prec_bits: int = 256) -> tuple[Fraction, Fraction]:
-    """Rigorous rational OUTER enclosure (lo, hi) of ∫₀¹ {a/x}{b/x} dx.
-
-    Exact on [δ, 1] via the piecewise antiderivative (rational part + a rational
-    combination of ln(x) values, the ln values enclosed by flint/Arb); the tail
-    [0, δ] is bounded by [0, δ] since 0 ≤ {a/x}{b/x} < 1.  Requires 0 < δ ≤ min(a,b)
-    small enough (a, b ∈ (0, 1/2]).
-    """
-    from flint import arb, ctx
-
-    try:
-        from .rh_jensen.coefficients import _arb_ball_to_fractions
-    except ImportError:
-        from telperion.rh_jensen.coefficients import _arb_ball_to_fractions
-
-    a = Fraction(a)
-    b = Fraction(b)
-    delta = Fraction(delta)
-    # unified breakpoints a/m, b/m in [δ, 1]
-    bset = {delta, Fraction(1)}
-    for c in (a, b):
-        m = 1
-        while c / m >= delta:
-            v = c / m
-            if delta <= v <= 1:
-                bset.add(v)
-            m += 1
-    pts = sorted(bset)
-    rat = Fraction(0)
-    ln_terms: list[tuple[Fraction, Fraction]] = []  # (coeff, x) meaning coeff·ln(x)
-    for i in range(len(pts) - 1):
-        p, q = pts[i], pts[i + 1]
-        xm = (p + q) / 2
-        m = int(a / xm)  # floor(a/x) constant on (p,q)
-        n = int(b / xm)  # floor(b/x)
-        # antiderivative F(x) = −ab/x − (a·n + b·m)·ln x + mn·x
-        rat += (-(a * b) / q + m * n * q) - (-(a * b) / p + m * n * p)
-        c = -(a * n + b * m)
-        ln_terms.append((c, q))
-        ln_terms.append((-c, p))
-    # enclose the ln part rigorously with Arb
-    old_prec = ctx.prec
-    try:
-        ctx.prec = prec_bits
-        lo_ln = Fraction(0)
-        hi_ln = Fraction(0)
-        for c, x in ln_terms:
-            lnx = arb(x.numerator).log() - arb(x.denominator).log()  # ln(num)-ln(den)=ln(x)
-            lx_lo, lx_hi = _arb_ball_to_fractions(lnx)
-            if c >= 0:
-                lo_ln += c * lx_lo
-                hi_ln += c * lx_hi
-            else:
-                lo_ln += c * lx_hi
-                hi_ln += c * lx_lo
-    finally:
-        ctx.prec = old_prec
-    lo = rat + lo_ln            # tail ≥ 0 -> lower endpoint stays
-    hi = rat + hi_ln + delta    # tail ≤ δ -> add to upper endpoint
-    return (lo, hi)
+# default head cut-off: δ = 1/Y with Y ≥ this (rounded UP to a multiple of L)
+DEFAULT_Y = 200_000
 
 
-def _linear_integral_enclose(a: Fraction, delta: Fraction,
-                             prec_bits: int = 256) -> tuple[Fraction, Fraction]:
-    """Rigorous enclosure of ∫₀¹ {a/x} dx = b_k (with a = 1/k).  Same machinery
-    as the Gram entry with the second factor ≡ 1 (i.e. b ≡ 'infinite', floor 0):
-    integrand is (a/x − m), antiderivative a·ln x + ... — reuse via a small direct
-    computation."""
-    from flint import arb, ctx
+def _lcm(ks) -> int:
+    L = 1
+    for k in ks:
+        L = L * k // math.gcd(L, k)
+    return L
 
-    try:
-        from .rh_jensen.coefficients import _arb_ball_to_fractions
-    except ImportError:
-        from telperion.rh_jensen.coefficients import _arb_ball_to_fractions
 
-    a = Fraction(a)
-    delta = Fraction(delta)
-    bset = {delta, Fraction(1)}
-    m = 1
-    while a / m >= delta:
-        v = a / m
-        if delta <= v <= 1:
-            bset.add(v)
-        m += 1
-    pts = sorted(bset)
-    rat = Fraction(0)
-    ln_terms: list[tuple[Fraction, Fraction]] = []
-    for i in range(len(pts) - 1):
-        p, q = pts[i], pts[i + 1]
-        xm = (p + q) / 2
-        m = int(a / xm)
-        # ∫ (a/x − m) dx = a·ln x − m·x
-        rat += (-m * q) - (-m * p)
-        ln_terms.append((a, q))
-        ln_terms.append((-a, p))
-    old_prec = ctx.prec
-    try:
-        ctx.prec = prec_bits
-        lo_ln = Fraction(0)
-        hi_ln = Fraction(0)
-        for c, x in ln_terms:
-            lnx = arb(x.numerator).log() - arb(x.denominator).log()
-            lx_lo, lx_hi = _arb_ball_to_fractions(lnx)
-            if c >= 0:
-                lo_ln += c * lx_lo
-                hi_ln += c * lx_hi
-            else:
-                lo_ln += c * lx_hi
-                hi_ln += c * lx_lo
-    finally:
-        ctx.prec = old_prec
-    return (rat + lo_ln, rat + hi_ln + delta)
+def _residuals(coeffs: dict[int, Fraction]) -> tuple[list[int], int, int]:
+    """Integer residual numerators over one period: h_r = H[r]/D for r = 0..L−1,
+    where h_n = 1 − Σ_k c_k·{n/k} depends only on n mod L.  Returns (H, D, L)."""
+    ks = sorted(coeffs)
+    L = _lcm(ks)
+    D = _lcm(coeffs[k].denominator * k for k in ks)
+    mult = {k: coeffs[k].numerator * (D // (coeffs[k].denominator * k)) for k in ks}
+    H = [D - sum(mult[k] * (r % k) for k in ks) for r in range(L)]
+    return H, D, L
 
 
 def baez_duarte_upper_bound(coeffs: dict[int, Fraction], delta: Fraction | None = None,
-                            prec_bits: int = 256) -> tuple[Fraction, int]:
+                            prec_bits: int = 128) -> tuple[Fraction, int]:
     """A RIGOROUS rational upper bound on d²_N ≤ Q(c) for the explicit coefficient
-    vector ``coeffs`` (a dict k -> c_k, k ≥ 2).  Returns ``(Uexact, N)`` where N is
-    max(k) and ``Uexact`` is the enclosure's UPPER endpoint of Q(c) (so
-    d²_N ≤ Q(c) ≤ Uexact rigorously)."""
+    vector ``coeffs`` (a dict k -> c_k, k ≥ 2) of the Bagchi family g_k.  Returns
+    ``(Uexact, N)`` where N is max(k) and d²_N ≤ Q(c) ≤ Uexact rigorously.
+
+    ``delta``: the head/tail cut δ = 1/Y; Y is rounded UP to a multiple of
+    L = lcm(k), so the effective δ is ≤ the requested one (default Y ≥ 2·10⁵).
+    ``prec_bits``: each head term is rounded UP to a multiple of 2^−prec_bits."""
     ks = sorted(coeffs)
     if not ks or min(ks) < 2:
         raise ValueError("baez_duarte needs coefficients indexed by k ≥ 2")
     N = max(ks)
-    if delta is None:
-        delta = Fraction(1, 4) / N  # δ ≤ min(a) = 1/N, comfortably inside
-    # Q(c) = 1 − 2 Σ c_k b_k + Σ_{j,k} c_j c_k A_{jk}; propagate outward enclosure.
-    lo = Fraction(1)
-    hi = Fraction(1)
-    for k in ks:
-        ck = coeffs[k]
-        blo, bhi = _linear_integral_enclose(Fraction(1, k), delta, prec_bits)
-        term_lo, term_hi = (-2 * ck * bhi, -2 * ck * blo) if ck >= 0 else (-2 * ck * blo, -2 * ck * bhi)
-        lo += term_lo
-        hi += term_hi
-    for j in ks:
-        for k in ks:
-            cj, ck = coeffs[j], coeffs[k]
-            Alo, Ahi = _gram_integral_enclose(Fraction(1, j), Fraction(1, k), delta, prec_bits)
-            w = cj * ck  # sign of the weight sets which endpoint is the upper one
-            if w >= 0:
-                lo += w * Alo
-                hi += w * Ahi
-            else:
-                lo += w * Ahi
-                hi += w * Alo
-    return (hi, N)
+    H, D, L = _residuals(coeffs)
+    Ywant = DEFAULT_Y if delta is None else math.ceil(1 / Fraction(delta))
+    M = max(1, -(-Ywant // L))
+    Y = M * L
+    # head n = 1..Y−1, i.e. ∫ over [1/Y, 1]: Σ ceil(2^p·h_n²/(n(n+1))) / 2^p
+    scale = 1 << prec_bits
+    D2 = D * D
+    head = 0
+    for n in range(1, Y):
+        h = H[n % L]
+        head += -((-h * h * scale) // (D2 * n * (n + 1)))
+    # tail n ≥ Y = M·L, i.e. ∫ over [0, 1/Y]: ≤ 2S/(L²(2M − 1)), S = Σ_period h_r²
+    S = Fraction(sum(h * h for h in H), D2)
+    tail = 2 * S / (L * L * (2 * M - 1))
+    # round the tail UP onto the same grid, so Uexact is one short dyadic rational
+    tail_up = -((-tail.numerator * scale) // tail.denominator)
+    return (Fraction(head + tail_up, scale), N)
 
 
 @dataclass(frozen=True)
@@ -219,11 +153,11 @@ class BaezDuarteCert:
 
     N: int
     coeffs: tuple           # ((k, c_k), …)
-    Uexact: Fraction        # certified enclosure upper endpoint of Q(c) ≥ d²_N
+    Uexact: Fraction        # certified upper bound on Q(c) ≥ d²_N
     U: Fraction             # readable rational bound emitted, Uexact ≤ U
 
 
-def baez_duarte_certificate(coeffs, U=None, delta=None, prec_bits: int = 256) -> BaezDuarteCert:
+def baez_duarte_certificate(coeffs, U=None, delta=None, prec_bits: int = 128) -> BaezDuarteCert:
     """Build (and exactly re-check) a Báez-Duarte rung certificate.
 
     ``coeffs``: dict k -> c_k (k ≥ 2).  ``U``: the readable rational bound to emit;
@@ -256,9 +190,9 @@ def certify_baez_duarte_point(family, pt, name):
 @dataclass
 class BaezDuarteEmitter(Emitter):
     """Emit the N-th Báez-Duarte rung ``dN2 ≤ U`` (with ``dN2`` the L²(0,1)
-    infimum carried abstractly, hypothesis ``hval : dN2 ≤ Uexact`` the Arb-enclosed
-    form value ≥ d²_N) from an explicit coefficient vector.  Deterministic
-    ``le_trans hval (by norm_num)``."""
+    infimum over the Bagchi family g_k carried abstractly, hypothesis
+    ``hval : dN2 ≤ Uexact`` the certified form value ≥ d²_N) from an explicit
+    coefficient vector.  Deterministic ``le_trans hval (by norm_num)``."""
 
     def __post_init__(self):
         self.kind = "baez_duarte"
@@ -274,9 +208,11 @@ class BaezDuarteEmitter(Emitter):
             cvec = ", ".join(f"c_{k}={c}" for k, c in cert.coeffs)
             lines.append(
                 f"-- {nm}: Báez-Duarte rung N={cert.N} — d²_N ≤ {cert.U}.\n"
-                f"-- d²_N = inf_c ‖1 − Σ c_k·{{(1/k)/x}}‖²_{{L²(0,1)}} (RH ⟺ d²_N → 0).\n"
-                f"-- Witnessing coefficient vector: {cvec}.  Its form value Q(c) ≥ d²_N is\n"
-                f"-- Arb-enclosed to Uexact = {cert.Uexact} (the trust seam, hypothesis hval).\n"
+                f"-- d²_N = inf_c ‖1 − Σ_{{k=2}}^N c_k·g_k‖²_{{L²(0,1)}}, g_k(x) = {{1/(kx)}} − {{1/x}}/k\n"
+                f"-- (RH ⟺ d²_N → 0: Báez-Duarte 2003; Bagchi 2006, Thm 2, in L²(0,1) as Thm 7).\n"
+                f"-- Witnessing coefficient vector: {cvec}.  Its form value\n"
+                f"-- Q(c) = Σ_n (1 − Σ c_k{{n/k}})²/(n(n+1)) ≥ d²_N is certified ≤ Uexact\n"
+                f"-- (the trust seam, hypothesis hval).\n"
                 f"-- Kernel proves d²_N ≤ Uexact ≤ U (norm_num).  A finite spectral rung; NOT RH.\n"
                 f"theorem {nm} (dN2 : ℝ) (hval : dN2 ≤ ({Ue} : ℝ)) : dN2 ≤ ({U} : ℝ) :=\n"
                 f"  le_trans hval (by norm_num)\n"
@@ -288,14 +224,24 @@ class BaezDuarteEmitter(Emitter):
 def baez_duarte_refutation_atom_lean() -> str:
     """The Báez-Duarte falsifiability face, emitted ONCE per generated file.
 
-    RH forces d²_N → 0; a certified persistent LOWER bound d²_N ≥ L with the RH
-    tolerance ε ≤ L would refute RH (the equivalence carried as ``hRH``).
-    Term-mode; not expected to fire.  conjecture1_proved = False."""
+    The kernel statement is generic in P, dN2, L, eps.  It may be instantiated
+    with dN2 = the Bagchi-family d²_N of this file, for which RH ⟹ d²_N → 0 is a
+    theorem (Báez-Duarte 2003; Bagchi 2006, Thm 2 / Thm 7) — but hRH at one fixed N needs
+    N beyond an inexplicit N₀(eps), so hRH stays an external hypothesis.  It must
+    NOT be instantiated with the pre-fix family {1/(kx)} (no −k⁻¹{1/x} term):
+    there d²_N ≥ 1/2 − (ln 2)² for every N, so hRH is false for eps ≤ 0.01954 and
+    the face would fire spuriously.  Term-mode; not expected to fire.
+    conjecture1_proved = False."""
     return (
-        "-- bd_neg_refutes: the falsifiability face.  RH forces d²_N → 0; a certified\n"
-        "-- LOWER bound L ≤ d²_N with the RH-tolerance ε ≤ L contradicts d²_N < ε,\n"
-        "-- hence ¬RH through the Báez-Duarte equivalence (carried as hRH : RH →\n"
-        "-- d²_N < ε).  Not expected to fire; makes the sequence falsifiable.\n"
+        "-- bd_neg_refutes: the falsifiability face.  Generic in P, dN2, L, eps: a\n"
+        "-- certified LOWER bound L ≤ dN2 with eps ≤ L contradicts hRH : P → dN2 < eps.\n"
+        "-- Intended instance: P = RH and dN2 = the Báez-Duarte / Bagchi d²_N of THIS\n"
+        "-- file (g_k = {1/(kx)} − {1/x}/k, k ≥ 2, in L²(0,1)), where RH ⟹ d²_N → 0 is\n"
+        "-- a theorem (Báez-Duarte 2003; Bagchi 2006, Thm 2 / Thm 7); hRH at fixed N needs N\n"
+        "-- past an inexplicit N₀(eps), so it is an external hypothesis.  Do NOT use the\n"
+        "-- pre-2026-10-14 family {1/(kx)} without the −{1/x}/k term: its d²_N is\n"
+        "-- ≥ 1/2 − (ln 2)² ≈ 0.019547 for every N, so hRH is false for eps ≤ 0.01954.\n"
+        "-- Not expected to fire; makes the sequence falsifiable.\n"
         "theorem bd_neg_refutes {P : Prop} (dN2 L eps : ℝ)\n"
         "    (hRH : P → dN2 < eps) (hLo : L ≤ dN2) (hbad : eps ≤ L) : ¬P :=\n"
         "  fun hP => absurd (hRH hP) (not_lt.mpr (le_trans hbad hLo))\n"
@@ -321,37 +267,50 @@ def baez_duarte_family(
     )
 
 
-def optimal_coeffs(N: int, prec_bits: int = 256) -> dict[int, Fraction]:
-    """A near-optimal rational coefficient vector for the N-th rung, from solving
-    the (numerically-computed) normal equations A c = b and rationalizing.  The
-    RESULT feeds the RIGOROUS enclosure — its optimality is only a heuristic for a
-    tight bound; the certificate's rigor comes from the exact enclosure of Q(c),
-    not from c being the true minimizer."""
+def exact_gram(N: int, dps: int = 50):
+    """The exact Gram data of g_2..g_N in L²(0,1), as mpmath values at ``dps``
+    digits: ``(ks, A, b)`` with A_jk = ⟨g_j, g_k⟩ = Σ_n {n/j}{n/k}/(n(n+1)) and
+    b_k = ⟨1, g_k⟩ = Σ_n {n/k}/(n(n+1)) (and ‖1‖² = 1).  The summands are
+    L-periodic in n, and Σ_{j≥0} 1/((r+jL)(r+jL+1)) = (ψ((r+1)/L) − ψ(r/L))/L."""
     import mpmath as mp
 
-    old = mp.mp.dps
-    try:
-        mp.mp.dps = max(30, prec_bits // 6)
+    with mp.workdps(dps):
         ks = list(range(2, N + 1))
-        d = Fraction(1, 4 * N)
+        L = _lcm(ks)
+        w = [None] + [(mp.digamma(mp.mpf(r + 1) / L) - mp.digamma(mp.mpf(r) / L)) / L
+                      for r in range(1, L + 1)]
+        fr = {k: [mp.mpf(r % k) / k for r in range(L + 1)] for k in ks}
+        A = mp.matrix([[mp.fsum(fr[j][r] * fr[k][r] * w[r] for r in range(1, L + 1))
+                        for k in ks] for j in ks])
+        b = mp.matrix([mp.fsum(fr[k][r] * w[r] for r in range(1, L + 1)) for k in ks])
+        return ks, A, b
 
-        def _mid(pair):
-            lo, hi = pair
-            return (mp.mpf(lo.numerator) / lo.denominator + mp.mpf(hi.numerator) / hi.denominator) / 2
 
-        def _num_gram(j, k):
-            return _mid(_gram_integral_enclose(Fraction(1, j), Fraction(1, k), d, prec_bits))
+def form_value(coeffs: dict[int, Fraction], dps: int = 50):
+    """Q(c) = Σ_n h_n²/(n(n+1)) in closed form (digamma; mpmath, ``dps`` digits) —
+    a numerical cross-check of ``baez_duarte_upper_bound``, NOT part of the rigour."""
+    import mpmath as mp
 
-        def _num_lin(k):
-            return _mid(_linear_integral_enclose(Fraction(1, k), d, prec_bits))
+    H, D, L = _residuals(coeffs)
+    with mp.workdps(dps):
+        return mp.fsum(mp.mpf(H[r % L] ** 2) / D ** 2
+                       * (mp.digamma(mp.mpf(r + 1) / L) - mp.digamma(mp.mpf(r) / L)) / L
+                       for r in range(1, L + 1))
 
-        A = mp.matrix([[_num_gram(j, k) for k in ks] for j in ks])
-        bvec = mp.matrix([_num_lin(k) for k in ks])
-        c = mp.lu_solve(A, bvec)
-        return {k: Fraction(str(mp.nstr(c[i], 12))).limit_denominator(10**6)
+
+def optimal_coeffs(N: int, prec_bits: int = 128) -> dict[int, Fraction]:
+    """A near-optimal rational coefficient vector for the N-th rung: the solution of
+    the normal equations A c = b on the EXACT Gram (``exact_gram``), rationalized
+    with denominators ≤ 10⁸.  Its optimality is only a heuristic for a tight bound;
+    the certificate's rigour comes from ``baez_duarte_upper_bound``, not from c
+    being the true minimizer.  (``prec_bits`` is accepted for API compatibility.)"""
+    import mpmath as mp
+
+    ks, A, b = exact_gram(N)
+    with mp.workdps(50):
+        c = mp.lu_solve(A, b)
+        return {k: Fraction(mp.nstr(c[i], 25)).limit_denominator(10**8)
                 for i, k in enumerate(ks)}
-    finally:
-        mp.mp.dps = old
 
 
 if __name__ == "__main__":
@@ -361,13 +320,13 @@ if __name__ == "__main__":
     cs = optimal_coeffs(4)
     print("coeffs:", {k: str(v) for k, v in cs.items()})
     cert = baez_duarte_certificate(cs)
-    print(f"cert OK: N={cert.N} Uexact≈{float(cert.Uexact):.6f}")
+    print(f"cert OK: N={cert.N} Uexact≈{float(cert.Uexact):.9f}")
 
-    print("\n=== decreasing sequence check (d²_N upper bounds should shrink) ===")
-    for N in (2, 3, 4, 5):
+    print("\n=== certified upper bounds (non-increasing, as nested spans force) ===")
+    for N in (2, 3, 4, 5, 6, 7):
         c = optimal_coeffs(N)
         ct = baez_duarte_certificate(c)
-        print(f"N={N}: d²_N ≤ {float(ct.Uexact):.6f}")
+        print(f"N={N}: d²_N ≤ {float(ct.Uexact):.9f}")
 
     print("\n=== NEGATIVE CONTROL: U below the certified Uexact must raise ===")
     try:
