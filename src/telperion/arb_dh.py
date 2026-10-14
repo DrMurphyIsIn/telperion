@@ -97,7 +97,10 @@ def _find_libflint() -> str | None:
     except Exception:
         return None
     d = os.path.dirname(__import__("flint").__file__)
-    for pat in (".dylibs/libflint*.dylib", "../flint*/lib*flint*.so*"):
+    # macOS wheels: flint/.dylibs/; Linux auditwheel wheels: python_flint.libs/ (a sibling of the
+    # package dir).  The Linux patterns are arb_platt's; without them DH_AVAILABLE was False on CI.
+    for pat in (".dylibs/libflint*.dylib", "../flint*/lib*flint*.so*",
+                "../python_flint.libs/lib*flint*.so*", "../flint.libs/lib*flint*.so*"):
         hits = sorted(glob.glob(os.path.join(d, pat)))
         if hits:
             return hits[0]
@@ -116,7 +119,8 @@ if _LIB_PATH:
             "arb_init", "arb_clear", "arb_set_si", "arb_set_ui", "arb_sqrt_ui",
             "arb_sqrt", "arb_add", "arb_sub", "arb_mul", "arb_div", "arb_sub_ui",
             "arb_div_ui", "arb_get_interval_fmpz_2exp", "arb_set",
-            "fmpz_init", "fmpz_clear", "fmpz_get_str",
+            "fmpz_init", "fmpz_clear", "fmpz_get_str", "fmpz_set_str",
+            "arb_set_fmpz", "arb_div_fmpz",
         )
         for fn in _needed:
             getattr(_L, fn)
@@ -127,6 +131,9 @@ if _LIB_PATH:
         _L.arb_get_interval_fmpz_2exp.restype = None
         _L.arb_sqrt_ui.restype = None
         _L.fmpz_get_str.restype = ctypes.c_char_p
+        _L.fmpz_set_str.restype = ctypes.c_int
+        _L.arb_set_fmpz.restype = None
+        _L.arb_div_fmpz.restype = None
     except (OSError, AttributeError):
         _L = None
 
@@ -177,29 +184,39 @@ def _arb_to_interval(p_arb) -> tuple[Fraction, Fraction]:
             _L.fmpz_clear(fz)
 
 
-def _check_word(val: Fraction) -> None:
-    """ctypes c_long / c_ulong truncate silently; refuse a rational that does not fit."""
-    if not (-(2 ** 63) < val.numerator < 2 ** 63 and val.denominator < 2 ** 64):
-        raise ValueError(f"arb_dh: rational {val} does not fit a machine word "
-                         f"(numerator or denominator too large for the ctypes shim)")
+def _fits_word(val: Fraction) -> bool:
+    return -(2 ** 63) < val.numerator < 2 ** 63 and val.denominator < 2 ** 64
+
+
+def _set_arb_from_fraction(p_arb, val: Fraction, prec: int) -> None:
+    """arb <- the exact rational val, divided out at ``prec``.
+
+    Machine-word numerators/denominators take the original arb_set_si / arb_div_ui path (so existing
+    outputs are bit-identical).  Anything larger goes through fmpz (arbitrary size).  ctypes c_long /
+    c_ulong would truncate it silently -- c_long(2**70) is 0 -- so the word path is never used for it."""
+    if _fits_word(val):
+        _L.arb_set_si(p_arb, ctypes.c_long(val.numerator))
+        if val.denominator != 1:
+            _L.arb_div_ui(p_arb, p_arb, ctypes.c_ulong(val.denominator), ctypes.c_long(prec))
+        return
+    num, den = _fmpz_t(0), _fmpz_t(0)
+    for fz in (num, den):
+        _L.fmpz_init(fz)
+    try:
+        for fz, v in ((num, val.numerator), (den, val.denominator)):
+            if _L.fmpz_set_str(fz, str(v).encode(), 10) != 0:
+                raise ValueError(f"arb_dh: fmpz_set_str failed for {v}")
+        _L.arb_set_fmpz(p_arb, num)
+        _L.arb_div_fmpz(p_arb, p_arb, den, ctypes.c_long(prec))
+    finally:
+        for fz in (num, den):
+            _L.fmpz_clear(fz)
 
 
 def _set_acb_from_fraction(p_acb, re: Fraction, im: Fraction, prec: int) -> None:
     """acb <- (re) + i(im), each an exact rational, via arb divisions."""
-    for part_ptr, val in ((_acb_real_ptr(p_acb), re), (_acb_imag_ptr(p_acb), im)):
-        _check_word(val)
-        _L.arb_set_si(part_ptr, ctypes.c_long(val.numerator))
-        if val.denominator != 1:
-            _L.arb_div_ui(part_ptr, part_ptr, ctypes.c_ulong(val.denominator),
-                          ctypes.c_long(prec))
-
-
-def _set_arb_from_fraction(p_arb, val: Fraction, prec: int) -> None:
-    _check_word(val)
-    _L.arb_set_si(p_arb, ctypes.c_long(val.numerator))
-    if val.denominator != 1:
-        _L.arb_div_ui(p_arb, p_arb, ctypes.c_ulong(val.denominator),
-                      ctypes.c_long(prec))
+    _set_arb_from_fraction(_acb_real_ptr(p_acb), re, prec)
+    _set_arb_from_fraction(_acb_imag_ptr(p_acb), im, prec)
 
 
 def dh_kappa_interval(prec: int = 128) -> tuple[Fraction, Fraction]:

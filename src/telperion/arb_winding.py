@@ -8,8 +8,7 @@ WHY THIS EXISTS (2026-10-14).  The first DH winding routine, ``arb_dh.winding_nu
 quadrant advances between consecutive nodes.  The ball values were rigorous, but the count was not.  Two
 nodes in the same or adjacent quadrants say nothing about the path between them: a pair of zeros close to an
 edge, between two nodes, adds 2 pi to the true argument change without changing any sampled quadrant.  An
-independent audit (~/e9-research/review_telperion_winding/REVIEW_telperion_winding_2026-10-14.md) built such
-a case: a zero pair at x = 1/7, about 1e-9 above the bottom edge of [0,1]^2.  Node sampling returns 1 at
+independent AI audit (2026-10-14) built such a case: a zero pair at x = 1/7, about 1e-9 above the bottom edge of [0,1]^2.  Node sampling returns 1 at
 every dyadic density (1/7 is never a node), and the true count is 2.  Doubling the density does not help.
 
 THE METHOD here encloses f on every boundary SEGMENT, not just at its endpoints.  For an axis-aligned segment
@@ -32,6 +31,18 @@ A wide endpoint ball can only widen the total and lead to a refusal, never to a 
 number of f is (zeros - poles) inside the box, so a function with poles must declare them.  The routine
 refuses any box whose closed rectangle contains a declared pole (for example s = 1 for zeta).
 
+POLES MUST BE DECLARED.  The guard only knows the poles it is told about.  A bare acb_series function passed
+to ``rigorous_winding`` is wrapped as ENTIRE (``poles=()``): if it has a pole inside the box, the result is
+silently zeros minus poles (one zero and one pole give 0).  For any count that will be certified, wrap the
+function with ``from_series(fn, poles=[...])`` (an empty list for an entire function, stated on purpose).
+A pole ON or very near the contour is safe either way: its enclosures are non-finite or huge, so the segment
+is bisected and finally refused.
+
+REFUSALS ARE RuntimeError.  A segment that cannot be certified, a total that is not near an integer, and a
+non-finite enclosure (``NonFiniteEnclosure``, a RuntimeError subclass, raised for an infinite or NaN ball,
+e.g. near an undeclared pole or on overflow) all raise RuntimeError, so retry loops that catch RuntimeError
+see one exception type.  ValueError is kept for bad requests: an inverted box or a declared pole in the box.
+
 TRUST CLASS: Arb interval arithmetic (python-flint), NOT a Lean kernel proof.  f and its derivative bound
 come from the same FLINT evaluation, so this is not an independent cross-check of the evaluator itself.
 
@@ -45,7 +56,8 @@ from fractions import Fraction
 from typing import Callable, Iterable
 
 __all__ = [
-    "METHOD", "ArbAnalytic", "from_series", "rigorous_winding", "count_strips", "localise_zero",
+    "METHOD", "ArbAnalytic", "NonFiniteEnclosure", "from_series", "rigorous_winding", "count_strips",
+    "localise_zero",
 ]
 
 #: The ``method`` label every certificate made with this module records.
@@ -68,8 +80,17 @@ def _acb_point(re: Fraction, im: Fraction):
     return acb(_arb_q(re), _arb_q(im))
 
 
+class NonFiniteEnclosure(RuntimeError):
+    """An Arb enclosure came back infinite or NaN (near a pole, or on overflow).  A RuntimeError, so it is a
+    refusal of the same kind as an uncertifiable segment."""
+
+
 def _frac_interval(x) -> tuple[Fraction, Fraction]:
-    """Exact outward Fraction interval [mid - rad, mid + rad] of an arb ball."""
+    """Exact outward Fraction interval [mid - rad, mid + rad] of an arb ball.
+
+    Raises NonFiniteEnclosure (a RuntimeError) for an infinite or NaN ball."""
+    if not x.is_finite():
+        raise NonFiniteEnclosure(f"non-finite Arb enclosure {x}")
     def dyadic(a) -> Fraction:
         man, exp = a.man_exp()
         man, exp = int(man), int(exp)
@@ -130,7 +151,7 @@ def _as_analytic(f) -> ArbAnalytic:
 
 def _segment_arg_change(f: ArbAnalytic, p, q, prec, cache):
     """Rigorous argument change of f along the axis-aligned segment p -> q (exact Fraction pairs), as an arb
-    ball, or None when the centred-form disc test fails (the caller bisects)."""
+    ball, or None when the centred-form disc test fails or an enclosure is non-finite (the caller bisects)."""
     acb, _, arb, ctx, _ = _flint()
     (pr, pi_), (qr, qi) = p, q
     mr, mi = (pr + qr) / 2, (pi_ + qi) / 2
@@ -159,6 +180,8 @@ def _segment_arg_change(f: ArbAnalytic, p, q, prec, cache):
             a = (cache[pt] / c).arg()
             out = a * sgn if out is None else out + a * sgn
         return out
+    except NonFiniteEnclosure:
+        return None  # like a failed disc test: bisect, and refuse past max_depth
     finally:
         ctx.prec = old
 

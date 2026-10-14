@@ -1,7 +1,6 @@
 """Rigorous segment-enclosure winding (telperion.arb_winding) and the DH routes through it.
 
-Regression tests for the 2026-10-14 soundness audit
-(~/e9-research/review_telperion_winding/REVIEW_telperion_winding_2026-10-14.md): the old node-sampling
+Regression tests for the independent AI audit of 2026-10-14: the old node-sampling
 count (now arb_dh.winding_number_sampled_heuristic) can return a WRONG integer; the segment method must not.
 conjecture1_proved = False.
 """
@@ -19,8 +18,10 @@ from flint import acb, arb, fmpq  # noqa: E402
 
 from telperion import arb_dh  # noqa: E402
 from telperion.arb_winding import (  # noqa: E402
-    METHOD, _frac_interval, count_strips, from_series, localise_zero, rigorous_winding,
+    METHOD, NonFiniteEnclosure, _frac_interval, count_strips, from_series, localise_zero, rigorous_winding,
 )
+
+_needs_ctypes_dh = pytest.mark.skipif(not arb_dh.DH_AVAILABLE, reason="libflint ctypes shim not found")
 
 _DH_ZEROS = Path(__file__).resolve().parents[1] / "examples/quasicrystal/zoo_data/dh_zeros.json"
 
@@ -131,6 +132,7 @@ def test_localise_zero_shrinks_to_width():
     assert max(box[1] - box[0], box[3] - box[2]) <= F(1, 100)
 
 
+@_needs_ctypes_dh
 def test_dh_series_matches_ctypes_dh_eval():
     v = arb_dh.dh_analytic().point(acb(_q("4/5"), _q("857/10")), 128)
     a = (*_frac_interval(v.real), *_frac_interval(v.imag))
@@ -138,9 +140,55 @@ def test_dh_series_matches_ctypes_dh_eval():
     assert a[0] <= b[1] and b[0] <= a[1] and a[2] <= b[3] and b[2] <= a[3]
 
 
-def test_dh_eval_refuses_oversized_rational():
-    with pytest.raises(ValueError):
-        arb_dh.dh_eval(F(2**70 + 1, 2**70), 10)
+def _encloses(a, b):
+    return a[0] <= b[1] and b[0] <= a[1] and a[2] <= b[3] and b[2] <= a[3]
+
+
+def _series_box(x, y, prec=128):
+    v = arb_dh.dh_analytic().point(acb(_q(x), _q(y)), prec)
+    return (*_frac_interval(v.real), *_frac_interval(v.imag))
+
+
+@_needs_ctypes_dh
+@pytest.mark.parametrize("x", [F(2**64 - 1, 2**64 - 3),        # near 1, 64-bit numerator (used to be refused)
+                               F(2**70 + 1, 2**70),            # c_long would have truncated this to garbage
+                               F(-(2**80) - 7, 2**79 + 3)])
+def test_dh_eval_big_rationals_go_through_fmpz(x):
+    """ctypes c_long silently truncates (c_long(2**70) == 0); values that do not fit a word now take the
+    fmpz path and must agree with the python-flint evaluation."""
+    assert _encloses(arb_dh.dh_eval(x, 10, 128), _series_box(x, 10))
+
+
+def test_nonfinite_enclosure_is_a_runtimeerror():
+    """Retry loops catch RuntimeError; a non-finite ball must not escape as ValueError."""
+    assert issubclass(NonFiniteEnclosure, RuntimeError)
+    with pytest.raises(RuntimeError):
+        _frac_interval(arb("inf"))
+    with pytest.raises(RuntimeError):
+        _frac_interval(arb("nan"))
+
+
+def test_undeclared_pole_on_contour_refused_as_runtimeerror():
+    """1/(s - 1/2) has its pole on the bottom edge of the unit box: enclosures there are non-finite, the
+    segment bisects to max_depth, and the refusal is RuntimeError (the type the retry loops expect)."""
+    half = acb(_q(F(1, 2)), _q(0))
+
+    def f(s):
+        return (s - half).inv()
+    with pytest.raises(RuntimeError):
+        rigorous_winding(f, *_UNIT, prec=96, max_depth=20)
+
+
+def test_undeclared_pole_inside_is_silently_zeros_minus_poles():
+    """DOCUMENTED TRAP (arb_winding module doc): a bare function is treated as entire, so one zero and one
+    pole inside give 0.  Certified counts must declare poles via from_series(fn, poles=...)."""
+    z0, p0 = acb(_q(F(1, 3)), _q(F(1, 3))), acb(_q(F(2, 3)), _q(F(2, 3)))
+
+    def f(s):
+        return (s - z0) * (s - p0).inv()
+    assert rigorous_winding(f, *_UNIT, prec=96) == 0
+    with pytest.raises(ValueError, match="pole"):
+        rigorous_winding(from_series(f, poles=[(F(2, 3), F(2, 3))]), *_UNIT, prec=96)
 
 
 def test_deprecated_alias_warns_and_is_rigorous(monkeypatch):
@@ -182,6 +230,7 @@ def test_dh_inventory_records_rigorous_method():
         assert F(b["re"][0]) < rho[0] < F(b["re"][1]) and F(b["im"][0]) < rho[1] < F(b["im"][1])
     assert ab["winding"] == 1 and ab["re"] == ["35610821/40960000", "1782031077/2048000000"]
     assert new[0]["beta"] == "0.8695305796" and new[0]["gamma"] == "240.4046723514"
+    assert "float" in new[0]["beta_gamma_kind"] and "not certified" in new[0]["beta_gamma_kind"].lower()
     c = d["completeness"]
     assert c["total_winding"] == 214 == d["on_line_count"] + 2 * d["off_line_count"]
     assert c["complete"] and c["low_box"]["winding"] == 1
