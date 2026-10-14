@@ -158,7 +158,7 @@ def test_dh_crown_box_certified():
 
 
 def test_dh_fifth_offline_zero_certified():
-    """The off-line zero rho ~ 0.8695305796 + 240.4046723514i that the literature-seeded inventory missed (audit 4)."""
+    """The off-line zero rho ~ 0.86953 + 240.40467i that the literature-seeded inventory missed (audit 4)."""
     c = arb_dh.certify_offline_zero("35610821/40960000", "1782031077/2048000000",
                                     "19693950062217/81920000000", "2461750006093/10240000000")
     assert c["winding"] == 1
@@ -181,6 +181,7 @@ def test_dh_inventory_records_rigorous_method():
     for b in (new[0], new[0]["localised_box"], ab):     # rho strictly inside every recorded box
         assert F(b["re"][0]) < rho[0] < F(b["re"][1]) and F(b["im"][0]) < rho[1] < F(b["im"][1])
     assert ab["winding"] == 1 and ab["re"] == ["35610821/40960000", "1782031077/2048000000"]
+    assert new[0]["beta"] == "0.8695305796" and new[0]["gamma"] == "240.4046723514"
     c = d["completeness"]
     assert c["total_winding"] == 214 == d["on_line_count"] + 2 * d["off_line_count"]
     assert c["complete"] and c["low_box"]["winding"] == 1
