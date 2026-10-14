@@ -168,6 +168,19 @@ def test_dh_dominant_term_right_halfplane():
     assert arb_dh.dh_right_halfplane_nonvanishing(2)["certified"]
 
 
+def test_dh_inventory_records_rigorous_method():
+    d = json.loads(_DH_ZEROS.read_text())
+    assert d["method"] == METHOD
+    assert d["on_line_count"] == 204 and d["off_line_count"] == 5 and d["total_count"] == 209
+    assert all(z["winding"] == 1 for z in d["zeros"])
+    new = [z for z in d["zeros"] if z.get("source", "").startswith("off-line scan")]
+    assert len(new) == 1 and abs(new[0]["gamma_approx"] - 240.405) < 0.01   # the zero the seed list missed
+    c = d["completeness"]
+    assert c["total_winding"] == 214 == d["on_line_count"] + 2 * d["off_line_count"]
+    assert c["complete"] and c["low_box"]["winding"] == 1
+    assert d["off_line_scan"]["total"] == d["off_line_count"]
+
+
 def test_dh_completeness_to_300():
     """Rigorous total over [-1, 2] x [1/20, 300] is 214 = 204 on-line + 2 * 5 off-line (each off-line
     zero rho has the partner 1 - conj(rho) in the left half).  Re >= 2 is zero-free by the dominant term

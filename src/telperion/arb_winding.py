@@ -249,10 +249,20 @@ def count_strips(f, re0, re1, im0, im1, cuts, prec: int = 96, log=None) -> dict:
             "strips": strips, "total": sum(s["winding"] for s in strips), "prec": prec, "method": METHOD}
 
 
+def _cut(a: Fraction, b: Fraction, nudge: Fraction) -> Fraction:
+    """A cut point near the midpoint of [a, b], nudged by ``nudge`` * (b - a) off the dyadic grid and
+    rounded to a small denominator (so repeated bisection does not grow huge rationals)."""
+    m = ((a + b) / 2 + nudge * (b - a)).limit_denominator(10 ** 12)
+    if not a < m < b:
+        raise RuntimeError(f"cut: interval [{a}, {b}] too narrow")
+    return m
+
+
 def localise_zero(f, re0, re1, im0, im1, width, prec: int = 96, nudge=Fraction(1, 10**7)) -> list[Fraction]:
     """Shrink a box of winding 1 to one of winding 1 with both sides at most ``width``.
 
-    Bisects the longer side (the cut nudged off the dyadic grid by ``nudge``, so it does not land on a zero)
+    Bisects the longer side (the cut nudged off the midpoint by ``nudge`` times the side, so it does not
+    land on a dyadic grid point)
     and keeps the half of winding 1.  Raises RuntimeError if neither half has winding 1 (the zero sits on
     the cut, or the start box is not winding 1)."""
     box = [Fraction(re0), Fraction(re1), Fraction(im0), Fraction(im1)]
@@ -262,10 +272,10 @@ def localise_zero(f, re0, re1, im0, im1, width, prec: int = 96, nudge=Fraction(1
     while max(box[1] - box[0], box[3] - box[2]) > width:
         r0, r1, i0, i1 = box
         if r1 - r0 >= i1 - i0:
-            m = (r0 + r1) / 2 + nudge * (r1 - r0)
+            m = _cut(r0, r1, nudge)
             halves = [[r0, m, i0, i1], [m, r1, i0, i1]]
         else:
-            m = (i0 + i1) / 2 + nudge * (i1 - i0)
+            m = _cut(i0, i1, nudge)
             halves = [[r0, r1, i0, m], [r0, r1, m, i1]]
         for h in halves:
             try:
