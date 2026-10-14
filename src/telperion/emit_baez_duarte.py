@@ -39,9 +39,11 @@ so
     S = Σ_{r=0}^{L−1} h_r²  (exact rational; 1/j² < 1/(j−½) − 1/(j+½)).
 
 The tail bound is also rounded UP to the 2^−prec_bits grid.  The sum is a
-rigorous dyadic rational ``Uexact ≥ Q(c) ≥ d²_N``.  With Y ≈ 2·10⁵ it lies
-within ~10⁻⁹ of Q(c), and the coefficients come from the exact Gram (digamma
-closed form, ``optimal_coeffs``), so ``Uexact`` is within ~10⁻⁹ of d²_N itself.
+rigorous dyadic rational ``Uexact ≥ Q(c) ≥ d²_N``; only this upper bound is
+certified.  With Y ≈ 2·10⁵ and the coefficients from the exact Gram (digamma
+closed form, ``optimal_coeffs``), ``Uexact`` is COMPUTED (mpmath, not
+certified) to be within ~10⁻⁹ of the true d²_N.  At N = 2 the gap is certified
+two-sided: d²_2 = 1 − ln 2 exactly and 0 ≤ U_2 − (1 − ln 2) ≈ 6.25·10⁻¹².
 
 HONESTY SEAM (Arb-trust class, like winding_box / li_positivity): the fact
 ``d²_N ≤ Uexact`` — the inf-inequality plus the exact-rational evaluation above —

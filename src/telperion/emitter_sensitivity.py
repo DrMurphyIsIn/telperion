@@ -1196,12 +1196,14 @@ REGISTRY: dict[str, SensitivityStance] = {
         "n ≤ 5040 (outside Robin's range) refused at certify time (negative control); "
         "no separately-supplied corruptible cofactor"),
     "BaezDuarteEmitter": _S(STRUCTURALLY_NONVACUOUS,
-        "Báez-Duarte rung d²_N ≤ U with d²_N carried as hypothesis hval : Q ≤ U and Q "
-        "the exact quadratic-form value of the chosen coefficient vector (the analytic "
-        "trust seam is d²_N ≤ Q, the closed-form Gram evaluation): the exact rational Q "
-        "and the readable upper bound U ARE the statement, Q ≤ U re-decided by norm_num "
-        "and closed by le_trans; a U below the exact Q refused at certify time (negative "
-        "control); no separately-supplied corruptible cofactor"),
+        "Báez-Duarte rung d²_N ≤ U (Bagchi family g_k = {1/(kx)} − {1/x}/k) with d²_N "
+        "carried as hypothesis hval : d²_N ≤ Uexact; Uexact bounds the form value "
+        "Q(c) = Σ_n h_n²/(n(n+1)) of the chosen coefficient vector by an exact-rational "
+        "head n < Y (each term rounded up, no transcendental values) plus a rigorous "
+        "rational period-mean tail bound (the trust seam is d²_N ≤ Q ≤ Uexact): Uexact "
+        "and the readable upper bound U ARE the statement, Uexact ≤ U re-decided by "
+        "norm_num and closed by le_trans; a U below Uexact refused at certify time "
+        "(negative control); no separately-supplied corruptible cofactor"),
     "LehmerPairEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "certified Lehmer-pair quality inequality quality_short ≤ qcap (< 1) with "
         "quality = δ²·C_n the exact rational Lehmer signature from a close consecutive-"
