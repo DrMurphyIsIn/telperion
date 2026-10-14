@@ -1,19 +1,24 @@
 """winding_box_zero emitter — Arb-trust-class winding-number box certificate (turing_band trust class).
 
-Rigorous winding-number zero count on a rational-cornered box; ships a .cert.json sidecar + a doc stub
-(NO kernel theorem).  Self-check re-runs the winding at DOUBLED precision + density; a claimed count
-the argument principle does not support is the negative control and is refused.
+Winding-number zero count on a rational-cornered box; ships a .cert.json sidecar + a doc stub (NO kernel
+theorem).  Self-check re-runs the winding at DOUBLED precision + subdivision; a claimed count the argument
+principle does not support is the negative control and is refused.  The default backend is the rigorous
+segment-enclosure method (2026-10-14); the libflint-free double used here is labelled float-demo.
 """
 import cmath
 import sys
+from fractions import Fraction as F
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion import WindingBoxZeroEmitter  # noqa: E402
 from telperion.emit_winding_box_zero import (  # noqa: E402
-    winding_box_zero_certificate, winding_box_zero_family,
-    certify_winding_box_zero_point, register_winding_fn,
+    ARB_DH_BACKEND, SEGMENT_METHOD, WindingBackend, winding_box_zero_certificate,
+    winding_box_zero_family, certify_winding_box_zero_point, register_winding_fn,
+    _resolve_winding_fn,
 )
 from telperion.family import GridSpec  # noqa: E402
 
@@ -47,17 +52,38 @@ def _analytic_winding(z0):
 
 
 _WIND = _analytic_winding(complex(0.5, 0.5))
+_DEMO_METHOD = "float-demo (node-sampled float phase of z - z0; NOT rigorous)"
+_DEMO = WindingBackend(fn=_WIND, method=_DEMO_METHOD, trust_class="float-demo")
 
 
 def test_positive_cert_winding_one_reverified():
     cert = winding_box_zero_certificate(
         re0="0", re1="1", im0="0", im1="1", expected_winding=1,
-        prec=64, n_per_side=32, winding_fn=_WIND)
+        prec=64, n_per_side=32, winding_fn=_DEMO)
     assert cert.winding == 1
-    assert cert.trust_class == "arb"
+    assert cert.trust_class == "float-demo"
     assert cert.edge_samples == 4 * 32
     js = cert.to_json_dict()
-    assert js["kind"] == "winding_box_zero" and js["trust_class"] == "arb"
+    assert js["kind"] == "winding_box_zero" and js["trust_class"] == "float-demo"
+    assert js["method"] == _DEMO_METHOD
+
+
+def test_bare_backend_is_never_labelled_arb():
+    # A bare function carries no labels; it must not inherit the "arb" trust class (the pre-2026-10-14
+    # example sidecars were mislabelled exactly this way).
+    cert = winding_box_zero_certificate(
+        re0="0", re1="1", im0="0", im1="1", expected_winding=1,
+        prec=64, n_per_side=32, winding_fn=_WIND)
+    assert cert.trust_class == "unverified"
+    assert cert.method.startswith("unspecified")
+
+
+def test_default_backend_is_rigorous_segment_method():
+    assert _resolve_winding_fn(None) is ARB_DH_BACKEND
+    assert _resolve_winding_fn("arb_dh") is ARB_DH_BACKEND
+    assert ARB_DH_BACKEND.method == SEGMENT_METHOD and ARB_DH_BACKEND.trust_class == "arb"
+    with pytest.raises(ValueError):
+        register_winding_fn("arb_dh", _WIND)   # the built-in name cannot be shadowed
 
 
 def test_positive_cert_winding_zero_outside():
@@ -92,7 +118,7 @@ def test_refuses_winding_zero_claimed_as_one():
 
 
 def test_emit_ships_sidecar_and_no_kernel_theorem():
-    register_winding_fn("_test_double", _WIND)
+    register_winding_fn("_test_double", _WIND, method=_DEMO_METHOD, trust_class="float-demo")
     fam = winding_box_zero_family(
         "WBZ", GridSpec([("_", [0])]), lambda pt: "winding_one",
         spec=lambda pt: {"re0": "0", "re1": "1", "im0": "0", "im1": "1",
@@ -107,9 +133,11 @@ def test_emit_ships_sidecar_and_no_kernel_theorem():
     body, nthm = em.emit_body(_V())
     # Arb sidecar carries NO kernel theorem (honest trust accounting).
     assert nthm == 0
-    assert "Arb-trust-class, NOT kernel" in body
+    assert "trust class float-demo, NOT rigorous, NOT kernel" in body
     assert "NO kernel theorem" in body
-    assert len(em._cert_sink) == 1 and em._cert_sink[0]["trust_class"] == "arb"
+    assert "so the integer is rigorous" not in body
+    assert len(em._cert_sink) == 1 and em._cert_sink[0]["trust_class"] == "float-demo"
+    assert em._cert_sink[0]["method"] == _DEMO_METHOD
 
 
 def test_registered_as_first_class_kind():
@@ -120,3 +148,44 @@ def test_registered_as_first_class_kind():
     assert "winding_box_zero" in _SPECIAL_KINDS
     assert "winding_box_zero" in _SPECIAL_DISPATCH
     assert "WindingBoxZeroEmitter" in REGISTRY
+
+
+def test_segment_method_label_matches_arb_winding():
+    pytest.importorskip("flint")
+    from telperion.arb_winding import METHOD
+    assert SEGMENT_METHOD == METHOD
+
+
+def test_default_backend_certifies_dh_crown_box():
+    """The QC_DH_SCOUT crown box (cited by FEUniformBarrierAM.lean) under the production default."""
+    pytest.importorskip("flint")
+    from telperion.emit_winding_box_zero import render_winding_box_zero_stub
+    cert = winding_box_zero_certificate(
+        re0="79/100", re1="83/100", im0="8568/100", im1="8572/100", expected_winding=1,
+        prec=96, n_per_side=8)
+    assert cert.winding == 1 and cert.trust_class == "arb" and cert.method == SEGMENT_METHOD
+    stub = render_winding_box_zero_stub(cert, name="dh_crown")
+    assert "Arb-trust-class, NOT kernel" in stub and "SEGMENT enclosures" in stub
+
+
+def test_default_backend_refuses_audit_counterexample_c(monkeypatch):
+    """Audit case A' (2026-10-14): under the OLD default (node sampling) the production certificate
+    ACCEPTED expected_winding=1 for a box holding 2 zeros, doubled recheck included.  Under the rigorous
+    default the claim 1 is refused and the true count 2 is certified."""
+    pytest.importorskip("flint")
+    from flint import acb, arb, fmpq
+    from telperion import arb_dh
+    roots = [(F(1, 7), F(1, 10**9)), (F(1, 7) + F(1, 10**10), F(2, 10**9))]
+
+    def poly(s):
+        out = None
+        for (rr, ri) in roots:
+            t = s - acb(arb(fmpq(rr.numerator, rr.denominator)), arb(fmpq(ri.numerator, ri.denominator)))
+            out = t if out is None else out * t
+        return out
+
+    monkeypatch.setattr(arb_dh, "dh_series", poly)
+    with pytest.raises(ValueError):
+        winding_box_zero_certificate(re0=0, re1=1, im0=0, im1=1, expected_winding=1, prec=96, n_per_side=8)
+    cert = winding_box_zero_certificate(re0=0, re1=1, im0=0, im1=1, expected_winding=2, prec=96, n_per_side=8)
+    assert cert.winding == 2

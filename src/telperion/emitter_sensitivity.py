@@ -1081,10 +1081,11 @@ REGISTRY: dict[str, SensitivityStance] = {
         "conjecture1_proved = False"),
     "WindingBoxZeroEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Arb-trust-class winding-number box certificate (the turing_band sidecar trust class): the "
-        "rigorous zero count of an analytic function on a rational-cornered box, via the "
-        "quadrant-advance argument principle over Arb-ball boundary samples. Ships NO kernel theorem "
+        "zero count of an analytic function on a rational-cornered box, via the argument principle "
+        "with Arb segment enclosures by default (arb_winding; node sampling until 2026-10-14 was a "
+        "heuristic). Ships NO kernel theorem "
         "(nthm=0) — only a .cert.json sidecar + a documentation stub — so there is no Lean identity "
-        "to corrupt; the winding integer is RE-VERIFIED at doubled precision + density at certify "
+        "to corrupt; the winding integer is RE-RUN at doubled precision + subdivision at certify "
         "time and a claimed count the argument principle does not support is REFUSED (the negative "
         "control). conjecture1_proved = False"),
     # --- 2026-09-19: the Face-7 pilot's Lipschitz-net ZERO-FREENESS emitter
