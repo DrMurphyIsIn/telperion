@@ -1,7 +1,7 @@
 """Báez-Duarte emitter — RH Face 6 (spectral / approximation).
 
 Certifies a rung of the Báez-Duarte / Bagchi criterion (RH ⟺ d²_N → 0, with
-g_k(x) = {1/(kx)} − {1/x}/k in L²(0,1); Bagchi 2006, Thm 7): a rigorous rational
+g_k(x) = {1/(kx)} − {1/x}/k in L²(0,1); Báez-Duarte 2003; Bagchi 2006, Thm 2, L²(0,1) form Thm 7): a rigorous rational
 UPPER bound on d²_N from an explicit coefficient vector whose quadratic-form
 value Q(c) ≥ d²_N is bounded with exact rationals.  A finite rung, NOT RH.
 """
@@ -82,18 +82,42 @@ def test_family_is_piecewise_constant_on_harmonic_intervals():
                 assert frac(1 / (k * x)) - frac(1 / x) / k == frac(Fraction(n, k))
 
 
-def test_n2_matches_bagchi_closed_form():
-    """N = 2: d²_2 = 1 − ln 2 (h_n = 1 for even n, 1 − c/2 for odd n, and
-    Σ_{n odd} 1/(n(n+1)) = ln 2), attained at c_2 = 2.  The certified U_2 must be
-    ≥ 1 − ln 2 (rigorous Arb comparison) and close to it."""
+def test_n2_matches_bagchi_closed_form_two_sided():
+    """N = 2: d²_2 = 1 − ln 2 EXACTLY (h_n = 1 for even n, 1 − c/2 for odd n, and
+    Σ_{n odd} 1/(n(n+1)) = ln 2), attained at c_2 = 2, so Q(c) = 1 − ln 2 and
+    the only slack in U_2 is the certificate's own:
+
+        U_2 − (1 − ln 2) = (tail bound − true tail) + (head rounding)
+        tail bound = 2S/(L²(2M−1)) = 1/(2(2M−1))      (L = 2, S = 1, Y = 2M)
+        true tail  = Σ_{m≥M} 1/(2m(2m+1)) = (ψ(M+½) − ψ(M))/2
+        rounding   ≤ Y·2^−128 (one round-up per head term, one for the tail).
+
+    With the default Y = 2·10⁵ (M = 10⁵) the slack is 6.2500625·10⁻¹² ≈ 1/(16M²).
+    Asserted two-sided and rigorously (Arb):
+        1 − ln 2  ≤  U_2  ≤  1 − ln 2 + 1/(16M²)·(1 + 2/M) + Y·2^−128,
+    and the slack equals the predicted tail excess up to the rounding term."""
     flint = pytest.importorskip("flint")
+    from telperion.emit_baez_duarte import DEFAULT_Y
+    arb = flint.arb
     cs = _coeffs(2)
     assert cs == {2: Fraction(2)}
     U, _ = baez_duarte_upper_bound(cs)
-    one_minus_ln2 = 1 - flint.arb(2).log()
-    gap = flint.arb(U.numerator) / U.denominator - one_minus_ln2
-    assert gap > 0                       # U_2 ≥ 1 − ln 2, rigorously
-    assert gap < flint.arb("1e-9")
+    Y = DEFAULT_Y
+    M = Y // 2
+    assert 2 * M == Y          # DEFAULT_Y is already a multiple of L = 2
+    old_prec = flint.ctx.prec
+    flint.ctx.prec = 300       # the 1/M correction needs more than 53 bits
+    try:
+        slack = arb(U.numerator) / U.denominator - (1 - arb(2).log())
+        rounding = arb(Y) / 2**128
+        assert slack >= 0                                          # lower side: U_2 ≥ d²_2
+        assert slack <= arb(1) / (16 * M * M) * (1 + arb(2) / M) + rounding   # upper side
+        assert slack < arb("1e-11")
+        true_tail = ((arb(M) + arb(1) / 2).digamma() - arb(M).digamma()) / 2
+        tail_excess = arb(1) / (2 * (2 * M - 1)) - true_tail
+        assert slack >= tail_excess and slack <= tail_excess + rounding
+    finally:
+        flint.ctx.prec = old_prec
 
 
 def test_old_family_has_unconditional_floor():

@@ -394,7 +394,8 @@ _SPECIAL_KINDS = (
     #                    lower bound on the RHS, chained by lt_of_lt_of_le.
     #   baez_duarte   -- Face 6 (spectral): a rational UPPER bound on the
     #                    Báez-Duarte / Bagchi distance d²_N in L²(0,1) for
-    #                    g_k = {1/(kx)} − {1/x}/k (RH ⟺ d²_N → 0, Bagchi 2006 Thm 7),
+    #                    g_k = {1/(kx)} − {1/x}/k (RH ⟺ d²_N → 0: Báez-Duarte 2003;
+    #                    Bagchi 2006 Thm 2, L²(0,1) form Thm 7),
     #                    from an explicit coefficient vector's certified form value.
     #   lehmer_pair   -- Face 5 (de Bruijn–Newman): a certified de Bruijn–Newman Λ
     #                    lower bound from a close ("Lehmer") consecutive-zero pair.

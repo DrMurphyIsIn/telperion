@@ -207,7 +207,7 @@ class BaezDuarteEmitter(Emitter):
             lines.append(
                 f"-- {nm}: Báez-Duarte rung N={cert.N} — d²_N ≤ {cert.U}.\n"
                 f"-- d²_N = inf_c ‖1 − Σ_{{k=2}}^N c_k·g_k‖²_{{L²(0,1)}}, g_k(x) = {{1/(kx)}} − {{1/x}}/k\n"
-                f"-- (RH ⟺ d²_N → 0: Báez-Duarte 2003; Bagchi 2006, Thm 7).\n"
+                f"-- (RH ⟺ d²_N → 0: Báez-Duarte 2003; Bagchi 2006, Thm 2, in L²(0,1) as Thm 7).\n"
                 f"-- Witnessing coefficient vector: {cvec}.  Its form value\n"
                 f"-- Q(c) = Σ_n (1 − Σ c_k{{n/k}})²/(n(n+1)) ≥ d²_N is certified ≤ Uexact\n"
                 f"-- (the trust seam, hypothesis hval).\n"
@@ -224,7 +224,7 @@ def baez_duarte_refutation_atom_lean() -> str:
 
     The kernel statement is generic in P, dN2, L, eps.  It may be instantiated
     with dN2 = the Bagchi-family d²_N of this file, for which RH ⟹ d²_N → 0 is a
-    theorem (Báez-Duarte 2003; Bagchi 2006, Thm 7) — but hRH at one fixed N needs
+    theorem (Báez-Duarte 2003; Bagchi 2006, Thm 2 / Thm 7) — but hRH at one fixed N needs
     N beyond an inexplicit N₀(eps), so hRH stays an external hypothesis.  It must
     NOT be instantiated with the pre-fix family {1/(kx)} (no −k⁻¹{1/x} term):
     there d²_N ≥ 1/2 − (ln 2)² for every N, so hRH is false for eps ≤ 0.01954 and
@@ -235,7 +235,7 @@ def baez_duarte_refutation_atom_lean() -> str:
         "-- certified LOWER bound L ≤ dN2 with eps ≤ L contradicts hRH : P → dN2 < eps.\n"
         "-- Intended instance: P = RH and dN2 = the Báez-Duarte / Bagchi d²_N of THIS\n"
         "-- file (g_k = {1/(kx)} − {1/x}/k, k ≥ 2, in L²(0,1)), where RH ⟹ d²_N → 0 is\n"
-        "-- a theorem (Báez-Duarte 2003; Bagchi 2006, Thm 7); hRH at a fixed N needs N\n"
+        "-- a theorem (Báez-Duarte 2003; Bagchi 2006, Thm 2 / Thm 7); hRH at fixed N needs N\n"
         "-- past an inexplicit N₀(eps), so it is an external hypothesis.  Do NOT use the\n"
         "-- pre-2026-10-14 family {1/(kx)} without the −{1/x}/k term: its d²_N is\n"
         "-- ≥ 1/2 − (ln 2)² ≈ 0.019547 for every N, so hRH is false for eps ≤ 0.01954.\n"
