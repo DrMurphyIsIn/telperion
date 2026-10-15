@@ -288,3 +288,15 @@ def test_exact_rational_inputs_are_not_simplified():
     assert M[0, 0] != sp.Rational(1, 3)
     with pytest.raises((ValueError, TypeError)):
         _q(sp.sqrt(2))
+
+
+def test_exact_rational_strings_accepted_floats_refused():
+    """Exact rational strings (as JSON callers pass them) are parsed exactly; floats are refused."""
+    from telperion.emit_interval_gram_inertia import _q, _to_matrix
+    M = _to_matrix([["17961308007/5000000000", "0.1"], ["-3/7", 2]])
+    assert M[0, 0] == sp.Rational(17961308007, 5000000000)
+    assert M[0, 1] == sp.Rational(1, 10)
+    assert M[1, 0] == sp.Rational(-3, 7) and M[1, 1] == 2
+    for bad in (0.1, sp.Float(0.5)):
+        with pytest.raises(ValueError):
+            _q(bad)

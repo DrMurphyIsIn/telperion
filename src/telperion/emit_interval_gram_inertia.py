@@ -80,6 +80,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
+from fractions import Fraction
+
 import sympy as sp
 
 from .certify import CertifiedInstance
@@ -143,10 +145,17 @@ def _q(v) -> sp.Rational:
     converted with sp.Rational, and only field operations follow), so no simplification is wanted:
     sympy's ``nsimplify`` may silently REPLACE an exact rational by a nearby closed form (e.g.
     333333333333/1000000000000 -> 1/3 with sympy 1.14), which would break the link between the box the
-    caller certified and the box emitted.  ``sp.Rational`` is the identity on Rationals and raises on
-    non-rational input instead of approximating it."""
-    r = sp.Rational(v)
-    if r != v:
+    caller certified and the box emitted.  Accepted: int, Fraction, sympy Rational and exact rational
+    strings ("a/b" or decimal notation); refused: floats and anything non-rational, instead of approximating."""
+    if isinstance(v, (float, sp.Float)):
+        raise ValueError(f"floating-point value in interval Gram certificate (pass an exact rational): {v!r}")
+    if isinstance(v, (int, Fraction, str, sp.Rational)):
+        r = sp.Rational(v)  # exact: "a/b" and decimal strings parse exactly, e.g. "0.1" -> 1/10
+    elif isinstance(v, sp.Expr) and v.is_Rational:
+        r = sp.Rational(v)
+    else:
+        raise ValueError(f"non-rational value in interval Gram certificate: {v!r}")
+    if not r.is_Rational:
         raise ValueError(f"non-rational value in interval Gram certificate: {v!r}")
     return r
 
