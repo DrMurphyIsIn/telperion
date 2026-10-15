@@ -138,8 +138,21 @@ class IntervalGramInertiaCert:
         return sp.Rational(self.delta_y - self.w * self.s_y)
 
 
+def _q(v) -> sp.Rational:
+    """Exact rational, unchanged.  Every quantity in this emitter is an exact rational (inputs are
+    converted with sp.Rational, and only field operations follow), so no simplification is wanted:
+    sympy's ``nsimplify`` may silently REPLACE an exact rational by a nearby closed form (e.g.
+    333333333333/1000000000000 -> 1/3 with sympy 1.14), which would break the link between the box the
+    caller certified and the box emitted.  ``sp.Rational`` is the identity on Rationals and raises on
+    non-rational input instead of approximating it."""
+    r = sp.Rational(v)
+    if r != v:
+        raise ValueError(f"non-rational value in interval Gram certificate: {v!r}")
+    return r
+
+
 def _to_matrix(rows) -> sp.Matrix:
-    return sp.Matrix([[sp.nsimplify(sp.Rational(v)) for v in row] for row in rows])
+    return sp.Matrix([[_q(v) for v in row] for row in rows])
 
 
 def _congruence_diagonalize(M: sp.Matrix) -> tuple[sp.Matrix, sp.Matrix]:
@@ -158,7 +171,7 @@ def _congruence_diagonalize(M: sp.Matrix) -> tuple[sp.Matrix, sp.Matrix]:
             guard += 1
             if guard > 2 * n + 4:  # pragma: no cover - structural safety net
                 raise ValueError("interval_gram_inertia REFUSED: congruence failed to pivot")
-            A = (B.T * M * B).applyfunc(sp.nsimplify)
+            A = (B.T * M * B).applyfunc(_q)
             if A[k, k] != 0:
                 break
             j = next((j for j in range(k + 1, n) if A[j, j] != 0), None)
@@ -179,13 +192,13 @@ def _congruence_diagonalize(M: sp.Matrix) -> tuple[sp.Matrix, sp.Matrix]:
                 "the exact congruence) -- the box straddles a zero eigenvalue and has no constant "
                 "signature"
             )
-        A = (B.T * M * B).applyfunc(sp.nsimplify)
+        A = (B.T * M * B).applyfunc(_q)
         d = A[k, k]
         for i in range(k + 1, n):
-            f = sp.nsimplify(A[i, k] / d)
+            f = _q(A[i, k] / d)
             if f != 0:
                 B[:, i] = B[:, i] - f * B[:, k]
-    D = (B.T * M * B).applyfunc(sp.nsimplify)
+    D = (B.T * M * B).applyfunc(_q)
     return B, D
 
 
@@ -195,7 +208,7 @@ def _normalized_column(B: sp.Matrix, idx: int) -> tuple[sp.Matrix, sp.Rational]:
     s = sp.Rational(sum(abs(sp.Rational(v)) for v in col))
     if s == 0:  # pragma: no cover - B is invertible, so no column vanishes
         raise ValueError("interval_gram_inertia REFUSED: a witness column vanished")
-    return (col / s).applyfunc(sp.nsimplify), s
+    return (col / s).applyfunc(_q), s
 
 
 def interval_gram_inertia_certificate(lo, hi, claimed=None) -> IntervalGramInertiaCert:
@@ -225,7 +238,7 @@ def interval_gram_inertia_certificate(lo, hi, claimed=None) -> IntervalGramInert
                 raise ValueError(
                     f"interval_gram_inertia REFUSED: empty box at ({i},{j}): lo={L[i, j]} > "
                     f"hi={H[i, j]} -- no matrix satisfies the hypotheses (the phantom)")
-    M = ((L + H) / 2).applyfunc(sp.nsimplify)
+    M = ((L + H) / 2).applyfunc(_q)
     w = sp.Rational(max(sp.Rational(H[i, j] - L[i, j]) for i in range(n) for j in range(n))) / 2
     B, D = _congruence_diagonalize(M)
     pos = [i for i in range(n) if D[i, i] > 0]
@@ -247,28 +260,28 @@ def interval_gram_inertia_certificate(lo, hi, claimed=None) -> IntervalGramInert
     for i in pos:
         col, s = _normalized_column(B, i)
         xcols.append(col)
-        cx.append(sp.nsimplify(sp.Rational(D[i, i]) / (s * s)))
+        cx.append(_q(sp.Rational(D[i, i]) / (s * s)))
     ycols, cy = [], []
     for i in neg:
         col, s = _normalized_column(B, i)
         ycols.append(col)
-        cy.append(sp.nsimplify(-sp.Rational(D[i, i]) / (s * s)))
+        cy.append(_q(-sp.Rational(D[i, i]) / (s * s)))
     X = sp.Matrix.hstack(*xcols)
     Y = sp.Matrix.hstack(*ycols)
     # exact self-checks: the compressed forms really are the claimed diagonals.
-    CX = (X.T * M * X).applyfunc(sp.nsimplify)
-    CY = (Y.T * (-M) * Y).applyfunc(sp.nsimplify)
+    CX = (X.T * M * X).applyfunc(_q)
+    CY = (Y.T * (-M) * Y).applyfunc(_q)
     for k in range(p):
         for l in range(p):
             want = cx[k] if k == l else sp.Integer(0)
-            if sp.nsimplify(CX[k, l] - want) != 0:
+            if _q(CX[k, l] - want) != 0:
                 raise ValueError(
                     f"interval_gram_inertia REFUSED: X^T M X is not the claimed diagonal at "
                     f"({k},{l}): {CX[k, l]} != {want}")
     for k in range(q):
         for l in range(q):
             want = cy[k] if k == l else sp.Integer(0)
-            if sp.nsimplify(CY[k, l] - want) != 0:
+            if _q(CY[k, l] - want) != 0:
                 raise ValueError(
                     f"interval_gram_inertia REFUSED: Y^T (-M) Y is not the claimed diagonal at "
                     f"({k},{l}): {CY[k, l]} != {want}")

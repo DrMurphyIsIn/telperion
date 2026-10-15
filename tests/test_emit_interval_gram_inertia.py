@@ -273,3 +273,18 @@ def test_example_lean_is_axiom_guarded_and_sorry_free():
         text = (lean_dir / f).read_text(encoding="utf-8")
         assert "sorry" not in text, f
         assert "conjecture1_proved = False" in text, f
+
+
+def test_exact_rational_inputs_are_not_simplified():
+    """Regression (2026-10-15): exact rational box entries must reach the certificate unchanged.
+    sympy's nsimplify used to replace e.g. 333333333333/1000000000000 by 1/3 (sympy 1.14), silently
+    breaking the link between the caller's enclosure and the emitted box."""
+    from fractions import Fraction
+    from telperion.emit_interval_gram_inertia import _q, _to_matrix
+    vals = [Fraction(333333333333, 1000000000000), Fraction(-226302344943, 500000000000)]
+    M = _to_matrix([vals, list(reversed(vals))])
+    assert M[0, 0] == sp.Rational(333333333333, 1000000000000)
+    assert M[0, 1] == sp.Rational(-226302344943, 500000000000)
+    assert M[0, 0] != sp.Rational(1, 3)
+    with pytest.raises((ValueError, TypeError)):
+        _q(sp.sqrt(2))
