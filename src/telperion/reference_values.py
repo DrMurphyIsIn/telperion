@@ -67,10 +67,13 @@ def read_reference(path, key: str, display_root=None) -> Reference:
 
 
 def compare_ball(ball, ref: Reference, slack: float = 0.0) -> dict:
-    """Does the arb ``ball`` (widened by ``slack``) contain the reference value?  ARB comparison."""
+    """Does the arb ``ball`` (widened by ``slack``) contain the reference value?  ARB comparison:
+    contains iff |mid(ball) - v| <= rad(ball) + slack, with |mid - v| bounded above (so 'contains' is never claimed
+    falsely).  The pre-fix test, |ball - v|.upper() <= rad + slack, counted the radius twice: it reduced to
+    |mid - v| + rad <= rad + ... and reported [0.9, 1.1] as NOT containing 1.05 (bb, review of PR #744)."""
     from flint import arb
     v = arb(repr(float(ref.value))) if not isinstance(ref.value, str) else arb(ref.value)
-    contains = bool(abs(ball - v).upper() <= ball.rad() + slack)
+    contains = bool(abs(arb(ball.mid()) - v).upper() <= ball.rad() + slack)
     return {"contains": contains, "reference_value": ref.value, "reference": ref.provenance()}
 
 
