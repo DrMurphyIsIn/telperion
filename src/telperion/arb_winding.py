@@ -177,6 +177,8 @@ def _segment_arg_change(f: ArbAnalytic, p, q, prec, cache):
         for pt, sgn in ((q, 1), (p, -1)):
             if pt not in cache:
                 cache[pt] = f.point(_acb_point(*pt), prec)
+            if not cache[pt].is_finite():
+                return None  # a NaN endpoint would poison the total; fail the segment (ends at max_depth)
             a = (cache[pt] / c).arg()
             out = a * sgn if out is None else out + a * sgn
         return out

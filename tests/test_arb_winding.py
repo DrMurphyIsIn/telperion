@@ -243,3 +243,32 @@ def test_dh_completeness_to_300():
     and Re <= -1 by the functional equation, so this box holds every zero with 1/20 <= Im <= 300."""
     r = count_strips(arb_dh.dh_analytic(), -1, 2, F(1, 20), 300, cuts=[10 * k for k in range(1, 30)], prec=96)
     assert r["total"] == 214
+
+
+def test_nonfinite_on_wide_balls_bisects_to_the_right_count():
+    """A function whose Arb enclosure is non-finite on wide balls (like Hurwitz zeta at Re s < 0) must make the
+    segment bisect, not crash or poison the total: f = s - z0 with a NaN ball whenever the input ball is wider
+    than 1/50 (the initial segments of the unit box are 1/8 long)."""
+    z0 = acb(_q(F(1, 3)), _q(F(2, 5)))
+
+    def f(s):
+        c = s.coeffs()
+        if len(c) > 0 and float(c[0].rad()) > 0.02:
+            return s * arb("nan")
+        return s - z0
+    assert rigorous_winding(f, *_UNIT, prec=96) == 1
+
+
+def test_nonfinite_endpoint_value_is_refused_not_nan_total():
+    """A point value that is non-finite at a segment ENDPOINT cannot be fixed by bisection (the endpoint stays);
+    it must end in the depth-limit RuntimeError, like any other failed segment."""
+    z0 = acb(_q(F(1, 3)), _q(F(2, 5)))
+    corner = acb(_q(1), _q(1))   # not 0: acb_series strips a zero constant term
+
+    def f(s):
+        c = s.coeffs()
+        if len(c) > 0 and c[0].rad() == 0 and c[0] == corner:
+            return s * arb("nan") + 1
+        return s - z0
+    with pytest.raises(RuntimeError, match="cannot certify segment"):
+        rigorous_winding(f, *_UNIT, prec=96, max_depth=12)
