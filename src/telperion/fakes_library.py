@@ -50,6 +50,9 @@ __all__ = [
 RHO0_RE = "0.85"
 RHO0_IM = "14.134725141734693"          # FULL precision, read exactly; never truncate
 
+# EP = Euler product; R = property (R) of the WALL-3/B memos (the coefficients of 1/F are bounded like those of
+# 1/zeta, e.g. |coeff| <= d_k(n)) -- NOT the Ramanujan axiom (iv), which is noted in the evidence where it fails;
+# F_theta = N(x) = A x + O(x^theta); FE / Gamma = functional equation / standard Gamma-factor.
 INGREDIENTS = ("EP", "R", "F_theta", "FE", "Gamma", "integer_coefficients", "positivity", "density")
 STATUSES = ("has", "lacks", "partial", "n/a", "not recorded")
 
@@ -573,6 +576,8 @@ _ENTRIES = [
         zero_box=Box.of("0.79999", "0.80001", "6.02094", "6.02096"),
         ingredients=_ing(
             EP=("has", "P (selberg.md 3.3): theta = 0.3 < 1/2"),
+            R=("lacks", "P (elementary): 1/SH has coefficient -chi(p)(p^0.3 + p^-0.3) at primes, unbounded "
+                        "(Ramanujan (iv) fails too, selberg.md 3.3)"),
             FE=("has", "P + N (selberg.md 3.3)"),
             Gamma=("has", "P: mu = (1 +- 0.3)/2 >= 0, standard"),
             integer_coefficients=("lacks", "a(p) = chi(p)(p^0.3 + p^-0.3)"),
