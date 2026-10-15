@@ -170,6 +170,24 @@ def test_n8_on_the_rho0_cut():
     assert arb_fakes.rigorous_winding(L.get("N8").series, "-0.6", "-0.4", "14.1", "14.2", prec=96) == 0
 
 
+def test_ein_taylor_tail_bound_is_outward():
+    """The tail bound is built from |c|.upper() as an arb, not from its float (which may round down); the enclosure
+    contains Ein from mpmath at 50 digits, Ein(w) = E1(w) + log w + gamma."""
+    mp = pytest.importorskip("mpmath")
+    from flint import acb, arb, ctx
+    old = ctx.prec
+    try:
+        ctx.prec = 128
+        c = acb(arb("1/3"), arb("1/7"))                    # |c| not a float
+        v, _ = L._ein_taylor(c)
+    finally:
+        ctx.prec = old
+    mp.mp.dps = 50
+    w = mp.mpc(mp.mpf(1) / 3, mp.mpf(1) / 7)
+    ref = mp.e1(w) + mp.log(w) + mp.euler
+    assert v.overlaps(acb(arb(mp.nstr(ref.real, 45)), arb(mp.nstr(ref.imag, 45))))
+
+
 def test_degraded_ball_refuses_never_certifies(monkeypatch):
     """A degraded enclosure (every Ein ball widened to +-10) must make certification REFUSE, never certify a wrong
     count: the N8 box raises, and a wrong expected count is refused too."""

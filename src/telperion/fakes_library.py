@@ -319,8 +319,11 @@ def _ein_taylor(c):
     both tails beyond K are <= R^{K+1}/(K+1)! / (1 - R/(K+2)), R = |c|.  The working precision is raised by
     ~1.5 R bits because the alternating sum cancels like e^R."""
     acb, _, arb, ctx = _flint()
-    R = float(abs(c).upper())
-    K = int(3 * R) + 60
+    # The tail bound uses Ra = |c|.upper() as an ARB (outward); float(...) can round DOWN, so it is used only as a
+    # ceiling for the term count K and the extra precision, never inside the bound (bb, follow-up to PR #744).
+    Ra = abs(c).upper()
+    R = math.ceil(float(Ra)) + 1
+    K = 3 * R + 60
     old = ctx.prec
     ctx.prec = old + int(1.5 * R) + 30
     try:
@@ -330,7 +333,7 @@ def _ein_taylor(c):
             term = term * c / k
             if k <= K:
                 s0 += (term if k % 2 == 1 else -term) / k            # (-1)^(k+1) c^k/(k k!)
-        tb = arb(R) ** (K + 1) / arb(K + 1).fac() / (1 - arb(R) / (K + 2))
+        tb = Ra ** (K + 1) / arb(K + 1).fac() / (1 - Ra / (K + 2))
         e = arb(0, tb.upper())
         return s0 + acb(e, e), d + acb(e, e)
     finally:
