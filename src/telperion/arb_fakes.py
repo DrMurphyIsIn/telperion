@@ -181,8 +181,11 @@ def _edges(re0, re1, im0, im1):
 
 
 def rigorous_winding(name: str, re0, re1, im0, im1, prec: int = 96, init_per_side: int = 8,
-                     max_depth: int = 40, stats: dict | None = None) -> int:
+                     max_depth: int = 40, stats: dict | None = None, poles=()) -> int:
     """Rigorous winding number of f around [re0,re1] x [im0,im1] (= zeros minus poles inside).
+
+    Returns zeros - poles; for guarded zero counts use certify_zero_box / count_offline.  A box whose CLOSURE
+    contains a declared pole (POLES) is refused unless that pole is passed in ``poles`` and lies strictly inside.
 
     Raises RuntimeError if some boundary segment cannot be certified zero-free down to ``max_depth``
     bisections (a zero on or extremely near the contour), or if the total is not within 1/4 of an integer."""
@@ -190,6 +193,7 @@ def rigorous_winding(name: str, re0, re1, im0, im1, prec: int = 96, init_per_sid
     re0, re1, im0, im1 = map(Fraction, (re0, re1, im0, im1))
     if not (re0 < re1 and im0 < im1):
         raise ValueError("rigorous_winding: inverted box")
+    _pole_guard(name, re0, re1, im0, im1, poles)
     cache: dict = {}
     total = arb(0)
     nseg = 0
@@ -258,8 +262,8 @@ def certify_zero_box(name: str, re0, re1, im0, im1, expected: int = 1, prec: int
     Re-run at 1.5x precision with a different initial subdivision; both must agree.  Returns a sidecar dict."""
     npoles = _pole_guard(name, re0, re1, im0, im1, poles)
     st1, st2 = {}, {}
-    w1 = rigorous_winding(name, re0, re1, im0, im1, prec=prec, init_per_side=8, stats=st1)
-    w2 = rigorous_winding(name, re0, re1, im0, im1, prec=prec + prec // 2, init_per_side=13, stats=st2)
+    w1 = rigorous_winding(name, re0, re1, im0, im1, prec=prec, init_per_side=8, stats=st1, poles=poles)
+    w2 = rigorous_winding(name, re0, re1, im0, im1, prec=prec + prec // 2, init_per_side=13, stats=st2, poles=poles)
     if w1 != w2 or w1 + npoles != expected:
         raise ValueError(f"certify_zero_box({name}): windings {w1}, {w2} with {npoles} pole(s); expected "
                          f"{expected} zeros -- refused")
