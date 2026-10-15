@@ -118,23 +118,58 @@ def test_ff_and_h_box_contains_algebraic_zero():
     assert len(inside) == 1 and L.get("H").zero_box == b
 
 
-def test_n8_branches_agree():
-    """N8's near (entire Ein) and far (E1 = e^-w U(1,1,w)) forms agree where both are valid: at s = rho0 + 1/2 the
-    default uses the Ein form for the rho0 term (|w| = 2.3) and near=False uses E1 for it; and the far form matches
-    acb.expint at 256 bits (the lead's 'acb exponential integral')."""
-    from flint import acb, acb_series, arb, ctx
-    old = (ctx.prec, ctx.cap)
+def test_tightest_ball_beats_erratic_expint():
+    """TOOLING BUG CLASS: acb.expint widths are erratic in the precision for |w| ~ 1e2 (wall3-T).  tightest_ball
+    keeps the tightest of several rigorous enclosures; every candidate contains the 512-bit value."""
+    from flint import acb, arb, ctx
+    w = acb(arb("5.33"), arb("79.4"))
+    old = ctx.prec
     try:
-        ctx.prec, ctx.cap = 128, 1
-        s = L._rho0() + arb("1/2")
-        a = L._n8_series(acb_series([s])).coeffs()[0]
-        b = L._n8_series(acb_series([s]), near=False).coeffs()[0]
-        assert a.overlaps(b) and a.rad() < 1e-20 and b.rad() < 1e-20
-        ctx.prec = 256
-        w = acb(arb("5.3"), arb("79.4"))
-        assert ((-w).exp() * w.hypgeom_u(1, 1)).overlaps(w.expint(1))
+        ctx.prec = 512
+        ref = w.expint(1)
+        widths = {}
+        for p in L.EXPINT_PRECS:
+            ctx.prec = p
+            z = w.expint(1)
+            widths[p] = float(z.rad())
+            assert z.overlaps(ref)
+        best = L.tightest_ball(lambda: w.expint(1))
+        assert best.overlaps(ref) and float(best.rad()) <= min(widths.values()) * (1 + 1e-9)
+        assert float(best.rad()) < 1e-15
     finally:
-        ctx.prec, ctx.cap = old
+        ctx.prec = old
+
+
+def test_ein_taylor_matches_e1_form():
+    """Ein(w) by Taylor with tail bound equals E1(w) + log w + gamma (tightest_ball) at |w| = 100, both rigorous."""
+    from flint import acb, arb, ctx
+    old = ctx.prec
+    try:
+        ctx.prec = 128
+        c = acb(arb("30"), arb("95"))
+        v, d = L._ein_taylor(c)
+        e1 = L.tightest_ball(lambda: c.expint(1))
+        assert v.overlaps(e1 + c.log() + arb.const_euler()) and float(v.rad()) < 1e-20
+        assert d.overlaps(-((-c).expm1()) / c)
+    finally:
+        ctx.prec = old
+
+
+def test_degraded_ball_refuses_never_certifies(monkeypatch):
+    """A degraded enclosure (every Ein ball widened to +-10) must make certification REFUSE, never certify a wrong
+    count: the N8 box raises, and a wrong expected count is refused too."""
+    from flint import acb, arb
+    real = L._ein_ball
+
+    def degraded(w):
+        v, d = real(w)
+        big = arb(0, 10)
+        return v + acb(big, big), d + acb(big, big)
+
+    monkeypatch.setattr(L, "_ein_ball", degraded)
+    for expected in (1, 0, 2):
+        with pytest.raises((RuntimeError, ValueError)):
+            L.certify_entry_box("N8", expected=expected, prec=128)
 
 
 def test_n8_matches_e1_formula_right_halfplane():

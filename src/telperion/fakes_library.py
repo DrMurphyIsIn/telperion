@@ -278,49 +278,117 @@ def _hyb(s):
 
 
 N8_U0 = 103                       # u0 = ceil(2^(1/(1-beta0))) + 1 (wall5/n8_continuous.py), v0 = log u0
-_N8_NEAR = 4                      # |w| below this: use the entire Ein form for that term
+EIN_TAYLOR_MAX = 120              # |w| <= this: Ein by Taylor series with tail bound; beyond: E1 + log w + gamma
+EXPINT_PRECS = (53, 64, 96, 128, 192, 256)
 
 
-def _n8_series(s, near=None):
-    """zeta_P(s) = exp(E1((s-1)v0) - E1((s-rho0)v0) - E1((s-conj rho0)v0)), v0 = log 103 (LEAD_NOTES N8).
+def tightest_ball(fn, precs=EXPINT_PRECS, rel=1e-30):
+    """Evaluate ``fn()`` (an acb) at each working precision in ``precs`` and keep the tightest finite ball.
 
-    Each term exp(eps E1(w)), w = (s - a) v0, is evaluated either with Arb's E1(w) = e^-w U(1, 1, w) (far from a;
-    acb.hypgeom_u, principal branch; the 2 pi i jump of E1 across its cut is invisible after exp since eps = +-1;
-    acb.expint(1) is the same function but at 128 bits it loses all accuracy at e.g. w = 5.3 + 79.4i, so it is used
-    only as a cross-check in the tests), or, near a, through the entire
-    identity E1(w) = -gamma - log w + Ein(w), Ein(w) = w 2F2(1,1;2,2;-w):
-        exp(eps E1(w)) = (e^gamma w)^(-eps) exp(eps Ein(w)),
-    which shows the simple pole at s = 1 (eps = +1) and the simple zeros at rho0, conj rho0 (eps = -1) and nothing
-    else.  Jets: d/ds E1((s-a)v0) = -exp(-w)/(s-a); d/ds Ein((s-a)v0) = v0 (1 - e^-w)/w = v0 1F1(1;2;-w).
-    Supports ctx.cap <= 2 (all arb_fakes uses)."""
+    TOOLING BUG CLASS (wall3-T, 2026-10-14): python-flint's acb.expint ball widths are erratic in the precision for
+    |w| ~ 1e2, e.g. E1(5.33 + 79.4i) is tight at 64 bits but +-1e-4 at 128.  Every result is a rigorous enclosure,
+    so keeping the smallest one is still rigorous; it only avoids a needlessly degraded ball (which would make
+    arb_fakes bisect and, at worst, refuse -- never certify falsely).
+    Stops early once the radius is below rel * |value|.  Raises ValueError if no precision gives a finite ball."""
+    _, _, _, ctx = _flint()
+    old = ctx.prec
+    best = None
+    try:
+        for p in precs:
+            ctx.prec = p
+            z = fn()
+            if not z.is_finite():
+                continue
+            if best is None or float(z.rad()) < float(best.rad()):
+                best = z
+            if float(best.rad()) <= rel * max(1e-300, float(abs(best).mid())):
+                break
+    finally:
+        ctx.prec = old
+    if best is None:
+        raise ValueError("tightest_ball: no finite enclosure at any precision")
+    return best
+
+
+def _ein_taylor(c):
+    """(Ein(c), Ein'(c)) at an exact point c by Taylor series, with the tail bounded rigorously:
+    Ein(w) = sum_{k>=1} (-1)^{k+1} w^k / (k k!),  Ein'(w) = sum_{k>=0} (-1)^k w^k / (k+1)!;
+    both tails beyond K are <= R^{K+1}/(K+1)! / (1 - R/(K+2)), R = |c|.  The working precision is raised by
+    ~1.5 R bits because the alternating sum cancels like e^R."""
+    acb, _, arb, ctx = _flint()
+    R = float(abs(c).upper())
+    K = int(3 * R) + 60
+    old = ctx.prec
+    ctx.prec = old + int(1.5 * R) + 30
+    try:
+        s0, d, term = acb(0), acb(0), acb(1)            # term = c^k / k!
+        for k in range(1, K + 2):
+            d += (term if (k - 1) % 2 == 0 else -term) / k          # (-1)^(k-1) c^(k-1)/k!
+            term = term * c / k
+            if k <= K:
+                s0 += (term if k % 2 == 1 else -term) / k            # (-1)^(k+1) c^k/(k k!)
+        tb = arb(R) ** (K + 1) / arb(K + 1).fac() / (1 - arb(R) / (K + 2))
+        e = arb(0, tb.upper())
+        return s0 + acb(e, e), d + acb(e, e)
+    finally:
+        ctx.prec = old
+
+
+def _ein_point(c):
+    """(Ein(c), Ein'(c)) at an exact point c: Taylor for |c| <= EIN_TAYLOR_MAX or near the negative real axis,
+    else Ein = E1 + log c + gamma with E1 from acb.expint via tightest_ball (c off the cut)."""
+    acb, _, arb, ctx = _flint()
+    if float(abs(c).upper()) <= EIN_TAYLOR_MAX or (float(c.real.mid()) < 0 and abs(float(c.imag.mid())) < 1):
+        return _ein_taylor(c)
+    e1 = tightest_ball(lambda: c.expint(1))
+    return e1 + c.log() + arb.const_euler(), -((-c).expm1()) / c
+
+
+def _ein_ball(w):
+    """(Ein, Ein') enclosed over the whole ball w by the centred form: value at the exact centre c plus
+    r * sup_w |Ein'| (resp. |Ein''|), r = |re rad| + |im rad|.  Evaluating the Taylor series directly on the ball would
+    amplify its radius by ~e^|w| (wall3-T); the centred form does not.  sup bounds: Ein' = (1 - e^-w)/w and
+    Ein'' = ((1 + w)e^-w - 1)/w^2 evaluated on the ball when it stays away from 0, else the series bound e^|w|."""
+    acb, _, arb, ctx = _flint()
+    c = acb(w.real.mid(), w.imag.mid())
+    r = arb(w.real.rad()) + arb(w.imag.rad())
+    v, d = _ein_point(c)
+    if r == 0:
+        return v, d
+    if float(abs(w).lower()) < 0.5:
+        d1 = d2 = abs(w).upper().exp()
+    else:
+        d1 = abs((1 - (-w).exp()) / w).upper()
+        d2 = abs(((1 + w) * (-w).exp() - 1) / (w * w)).upper()
+    e0, e1 = arb(0, (r * d1).upper()), arb(0, (r * d2).upper())
+    return v + acb(e0, e0), d + acb(e1, e1)
+
+
+def _n8_series(s):
+    """zeta_P(s) = exp(E1((s-1)v0) - E1((s-rho0)v0) - E1((s-conj rho0)v0)), v0 = log 103 (LEAD_NOTES N8), in the
+    branch-free closed form (E1(w) = -gamma - log w + Ein(w), Ein entire; the 2 pi i jumps of E1 vanish under exp;
+    wall3-T eda45e020):
+        zeta_P(s) = e^gamma v0 (s - rho0)(s - conj rho0)/(s - 1) * exp(Ein(a) - Ein(b) - Ein(bb)),
+        a = (s-1) v0, b = (s-rho0) v0, bb = (s - conj rho0) v0.
+    So zeta_P is meromorphic on C with exactly a simple pole at s = 1 and simple zeros at rho0, conj rho0 (PROVED from
+    the form).  Jets: d/ds Ein((s-x)v0) = v0 Ein'.  Supports ctx.cap <= 2 (all arb_fakes uses)."""
     acb, acb_series, arb, ctx = _flint()
     cap = ctx.cap
     if cap > 2:
         raise ValueError("N8 evaluator supports jets of order <= 1 (ctx.cap <= 2)")
-    near = _N8_NEAR if near is None else near
     co = list(s.coeffs()) + [acb(0)] * 2
     c0, c1 = co[0], co[1]
     v0 = acb(N8_U0).log()
     r = _rho0()
-    eg = acb(arb.const_euler().exp())
-    out = acb_series([1])
-    for a, eps in ((acb(1), 1), (r, -1), (r.conjugate(), -1)):
-        w0 = (c0 - a) * v0
-        w1 = c1 * v0
-        use_near = near is True or (near is not False and float(abs(w0).upper()) < near)
-        if use_near:
-            ein = w0 * (-w0).hypgeom([1, 1], [2, 2])
-            dein = (-w0).hypgeom_1f1(1, 2)
-            ein_s = acb_series([ein, dein * w1][:cap])
-            wser = acb_series([w0, w1][:cap])
-            pre = eg * wser
-            term = (pre.inv() if eps == 1 else pre) * (eps * ein_s).exp()
-        else:
-            e1 = (-w0).exp() * w0.hypgeom_u(1, 1)
-            de1 = -(-w0).exp() / w0
-            term = (eps * acb_series([e1, de1 * w1][:cap])).exp()
-        out = out * term
-    return out
+    rb = r.conjugate()
+    L0, L1 = acb(0), acb(0)
+    for x, sgn in ((acb(1), 1), (r, -1), (rb, -1)):
+        e, de = _ein_ball((c0 - x) * v0)
+        L0 += sgn * e
+        L1 += sgn * de * v0
+    one = acb_series([1])
+    pre = acb(arb.const_euler().exp()) * v0 * (s - r * one) * (s - rb * one) * (s - one).inv()
+    return pre * acb_series([L0, L1 * c1][:cap]).exp()
 
 
 def _n8(s):
@@ -604,7 +672,9 @@ _ENTRIES = [
         known_zeros="rho0 and conj rho0 only (simple)",
         provenance={"memo": "rh-team:wall5/LEAD_NOTES.md N8", "review": "bb in-session check (LEAD_NOTES N8); full "
                     "referee pending", "script": "rh-team:wall5/n8_continuous.py (uses gamma0 = 14.134725; this entry "
-                    "uses the full-precision string)"},
+                    "uses the full-precision string)",
+                    "prior_cert": "telperion/examples/wall3/certs/N8_continuous.cert.json (wall3-T, eda45e020; "
+                                  "gamma0 = 14.134725, a different nearby object; its count is T's, not this library's)"},
     ),
 ]
 
