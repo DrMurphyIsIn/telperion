@@ -374,7 +374,14 @@ def _n8_series(s):
         zeta_P(s) = e^gamma v0 (s - rho0)(s - conj rho0)/(s - 1) * exp(Ein(a) - Ein(b) - Ein(bb)),
         a = (s-1) v0, b = (s-rho0) v0, bb = (s - conj rho0) v0.
     So zeta_P is meromorphic on C with exactly a simple pole at s = 1 and simple zeros at rho0, conj rho0 (PROVED from
-    the form).  Jets: d/ds Ein((s-x)v0) = v0 Ein'.  Supports ctx.cap <= 2 (all arb_fakes uses)."""
+    the form).  Jets: d/ds Ein((s-x)v0) = v0 Ein'.  Supports ctx.cap <= 2 (all arb_fakes uses).
+
+    E1's cut.  bb (PR #744 review) found the earlier two-branch E1 evaluator valid but useless exactly ON the rho0 cut
+    (s = -1/2 + i gamma0: relative radius 3.9).  This form has no cut: Ein is entire, the centre of each w-ball is
+    exact, and a centre on or near the negative real axis is always evaluated by Taylor (_ein_point).  At
+    s = -1/2 + i gamma0 the relative radius is ~1e-34 and a winding box straddling the cut certifies (tests).
+    Further left, |zeta_P| is astronomically large (log10 |zeta_P| ~ 8e9 at sigma = -5 on that line, mpmath) and
+    _guarded's 1e300 cap turns the value into 'unknown', so boxes there are REFUSED, never mis-counted."""
     acb, acb_series, arb, ctx = _flint()
     cap = ctx.cap
     if cap > 2:

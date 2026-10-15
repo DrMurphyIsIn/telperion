@@ -155,6 +155,21 @@ def test_ein_taylor_matches_e1_form():
         ctx.prec = old
 
 
+def test_n8_on_the_rho0_cut():
+    """bb (PR #744 review): exactly on E1's cut through rho0 the old evaluator gave relative radius 3.9.  The Ein form
+    is tight there, and a box straddling the cut (Im s = gamma0, Re s < 0) certifies zero-free."""
+    from flint import acb, ctx
+    old = ctx.prec
+    try:
+        ctx.prec = 128                                  # build the exact-decimal point at 128 bits too
+        z = acb(L._arbq("-1/2"), L._arbq(L.RHO0_IM))
+    finally:
+        ctx.prec = old
+    v = L.get("N8").eval(z, prec=128)
+    assert float(v.rad()) < 1e-20 * float(abs(v).mid())
+    assert arb_fakes.rigorous_winding(L.get("N8").series, "-0.6", "-0.4", "14.1", "14.2", prec=96) == 0
+
+
 def test_degraded_ball_refuses_never_certifies(monkeypatch):
     """A degraded enclosure (every Ein ball widened to +-10) must make certification REFUSE, never certify a wrong
     count: the N8 box raises, and a wrong expected count is refused too."""
