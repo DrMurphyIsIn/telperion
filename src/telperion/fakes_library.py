@@ -783,40 +783,58 @@ class Claim:
     statement: str = "no off-line zeros"
 
 
+def _judge(e: FakeEntry, claim, recertify: bool, prec: int) -> dict:
+    """One entry's verdict on one claim (raises on a malformed claim; calibrate turns that into an error row)."""
+    if claim is None:
+        return {"status": "declined"}
+    if not isinstance(claim, Claim) or not isinstance(claim.region, Box):
+        raise TypeError(f"mechanism returned {type(claim).__name__}, expected Claim(region=Box) or None")
+    row = {"claim": claim.region.as_dict()}
+    if e.zero_box is None:
+        row["status"] = "no_reference_zero"
+        return row
+    if e.zero_box.re0 <= Fraction(1, 2) <= e.zero_box.re1:
+        raise AssertionError(f"{e.name}: registered zero box is not off-line")
+    if claim.region.contains_box(e.zero_box):
+        if recertify:
+            c = certify_entry_box(e, prec=prec)
+            row["zero_box_cert"] = {k: c[k] for k in ("zeros_in_box", "winding", "poles_in_box", "prec")}
+            if e.pole_exclusion:
+                row["pole_exclusion"] = [p["zeros_in_box"] for p in certify_pole_exclusion(e)]
+        row.update(status="contradicted", zero_box=e.zero_box.as_dict(),
+                   detail=f"{e.name} has a zero in {e.zero_box.as_dict()} inside the claimed region")
+    elif claim.region.meets(e.zero_box):
+        row["status"] = "inconclusive"
+    else:
+        row["status"] = "not_contradicted"
+    return row
+
+
 def calibrate(mechanism, entries=None, recertify: bool = False, prec: int = 128) -> dict:
     """Negative-control harness.  ``mechanism(evaluator, meta)`` gets the entry's acb -> acb evaluator (``entry.eval``)
     and its PUBLIC metadata (no zero box, no zero list) and returns a ``Claim`` or None (declines).
 
     A claim is CONTRADICTED by an entry when the entry's zero box (off-line, exactly one zero; ARB once certified)
     lies inside the claimed region.  A box that only overlaps the region is INCONCLUSIVE (the zero might sit in the
-    part outside).  With ``recertify`` the box is re-certified before use, so the verdict is ARB end to end.
+    part outside).  With ``recertify`` the box is re-certified before use, and for region-based entries (TW, SYM)
+    so are the zeta zero-free boxes behind the pole list, so "exactly one zero" is ARB end to end.  (Without the
+    pole exclusion the verdict is still sound: zeros = winding + poles >= 1.)
+
+    ONE REFERENCE ZERO PER ENTRY.  Each entry carries a single registered zero box, so "not_contradicted" means
+    "this entry's reference zero is not in the claimed region", NOT "the claim survives the entry": EP5 has >> T
+    off-line zeros, but a claim covering only Im s > 20 is not caught by its box at Im 15.67.  There is no aggregate
+    pass flag.  The mechanism sees the entry's name in the metadata; as a negative control that is acceptable.
+
+    Errors are captured PER ENTRY: a mechanism that raises, or returns something that is not Claim(region=Box) or
+    None, gets an "error" row and the run continues.
     Returns {"rows": [...], "contradicted": [...], "inconclusive": [...], "declined": [...], "errors": [...]}."""
     rows = []
     for e in (REGISTRY.values() if entries is None else [_entry(x) for x in entries]):
         row = {"entry": e.name}
         try:
-            claim = mechanism(e.eval, e.public_meta())
-        except Exception as exc:  # a crashing mechanism is a finding, not a pass
+            row.update(_judge(e, mechanism(e.eval, e.public_meta()), recertify, prec))
+        except Exception as exc:  # a crashing mechanism or a malformed claim is a finding, not a pass
             row.update(status="error", detail=f"{type(exc).__name__}: {exc}")
-            rows.append(row)
-            continue
-        if claim is None:
-            row["status"] = "declined"
-        elif e.zero_box is None:
-            row.update(status="no_reference_zero", claim=claim.region.as_dict())
-        else:
-            if e.zero_box.re0 <= Fraction(1, 2) <= e.zero_box.re1:
-                raise AssertionError(f"{e.name}: registered zero box is not off-line")
-            row["claim"] = claim.region.as_dict()
-            if claim.region.contains_box(e.zero_box):
-                if recertify:
-                    certify_entry_box(e, prec=prec)
-                row.update(status="contradicted", zero_box=e.zero_box.as_dict(),
-                           detail=f"{e.name} has a zero in {e.zero_box.as_dict()} inside the claimed region")
-            elif claim.region.meets(e.zero_box):
-                row["status"] = "inconclusive"
-            else:
-                row["status"] = "not_contradicted"
         rows.append(row)
     by = lambda st: [r["entry"] for r in rows if r["status"] == st]
     return {"rows": rows, "contradicted": by("contradicted"), "inconclusive": by("inconclusive"),

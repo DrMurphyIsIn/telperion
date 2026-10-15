@@ -252,8 +252,18 @@ def test_calibrate_reports_errors_and_partial_overlap():
 
 
 def test_calibrate_recertify_is_arb_end_to_end():
-    rep = L.calibrate(lambda f, m: Claim(GRID), entries=["EP5", "N8"], recertify=True)
-    assert rep["contradicted"] == ["EP5", "N8"] and rep["recertified"]
+    rep = L.calibrate(lambda f, m: Claim(GRID), entries=["EP5", "N8", "TW_fix"], recertify=True)
+    assert rep["contradicted"] == ["EP5", "N8", "TW_fix"] and rep["recertified"]
+    tw = rep["rows"][2]
+    assert tw["zero_box_cert"]["zeros_in_box"] == 1 and tw["pole_exclusion"] == [0, 0]
+
+
+def test_calibrate_malformed_claim_is_an_error_row_not_an_abort():
+    """bb (PR #744 review): a claim without .region used to raise outside the try and abort the whole run."""
+    rep = L.calibrate(lambda f, m: "no zeros, trust me" if m["name"] == "EP5" else Claim(GRID),
+                      entries=["EP5", "DH", "ZP"])
+    assert rep["errors"] == ["EP5"] and rep["contradicted"] == ["DH", "ZP"]
+    assert "expected Claim" in rep["rows"][0]["detail"]
 
 
 def test_mechanism_does_not_see_the_answer():
