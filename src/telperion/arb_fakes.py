@@ -156,6 +156,10 @@ def _segment_arg_change(name, p, q, prec, cache):
         mid = _acb_point(mr, mi)
         ball = mid + (acb(rad) if qi == pi_ else acb(0, rad))
         _, d = fake_jet(name, ball, prec)
+        # Arb's zeta/Hurwitz series can return non-finite balls (wide balls at Re s < 0, some sigma = 2 verticals):
+        # that is a failed enclosure, so the segment fails and the caller bisects -- it must not crash.
+        if not (fm.is_finite() and d.is_finite()):
+            return None
         D = _upper(d.abs_upper())
         cr_lo, cr_hi = _frac_interval(fm.real)
         ci_lo, ci_hi = _frac_interval(fm.imag)
@@ -168,6 +172,8 @@ def _segment_arg_change(name, p, q, prec, cache):
         for pt, sgn in ((q, 1), (p, -1)):
             if pt not in cache:
                 cache[pt] = _eval_point(name, pt[0], pt[1], prec)
+            if not cache[pt].is_finite():
+                return None
             a = (cache[pt] / c).arg()
             out = a * sgn if out is None else out + a * sgn
         return out
