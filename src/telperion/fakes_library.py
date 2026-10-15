@@ -735,10 +735,15 @@ def certify_entry_box(e, box: Box | None = None, expected: int | None = None, pr
 def count_entry(e, box: Box, cuts=(), prec: int = 96) -> dict:
     """Rigorous zero count in ``box``, split at the heights ``cuts`` (like arb_fakes.count_offline), with the declared
     poles passed per strip, so each strip's count is winding + poles inside.  Refuses outside the region, and on any
-    declared pole lying on a strip boundary (arb_fakes)."""
+    declared pole lying on a strip boundary (arb_fakes).  ``cuts`` must be strictly increasing and strictly inside
+    (im0, im1); this is checked before any winding is computed."""
     e = _entry(e)
     _require_region(e, box)
-    hs = [box.im0] + [Fraction(c) for c in cuts] + [box.im1]
+    cs = [Fraction(c) for c in cuts]
+    if any(not (box.im0 < c < box.im1) for c in cs) or any(a >= b for a, b in zip(cs, cs[1:])):
+        raise ValueError(f"count_entry({e.name}): cuts {[str(c) for c in cs]} must be strictly increasing and strictly "
+                         f"inside ({box.im0}, {box.im1}); refused")
+    hs = [box.im0] + cs + [box.im1]
     strips = []
     for a, b in zip(hs, hs[1:]):
         sb = Box(box.re0, box.re1, a, b)

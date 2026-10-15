@@ -283,6 +283,16 @@ def test_box_outside_region_refused():
         L.certify_entry_box("FF", Box.of("0.9", "1.1", "-0.1", "0.1"), expected=0)
 
 
+@pytest.mark.parametrize("cuts", [["-1/5"], ["1/5"], ["1/20", "-1/20"], ["0", "0"], ["-1/10"]])
+def test_count_entry_validates_cuts_first(cuts, monkeypatch):
+    """bb (PR #744 review): cuts outside (im0, im1) or unsorted are refused up front, before any strip is wound."""
+    calls = []
+    monkeypatch.setattr(arb_fakes, "rigorous_winding", lambda *a, **k: calls.append(a) or 0)
+    with pytest.raises(ValueError, match="cuts"):
+        L.count_entry("N8", NEAR_ONE, cuts=cuts)
+    assert calls == []
+
+
 def test_count_entry_adds_poles():
     c = L.count_entry("N8", NEAR_ONE, cuts=["1/20"])
     assert c["total"] == 0 and sum(s["poles"] for s in c["strips"]) == 1
