@@ -517,6 +517,10 @@ _SPECIAL_KINDS = (
     # the B D7 cast face `p = ((P : R) : C)` (`push_cast; ring`, then `Complex.ofReal_re`).
     # Split computed by sympy, re-verified by an independent exact engine; nothing about RH.
     "complex_re_im_split",
+    # Emitter survey N2 (2026-10-22): a kernel-checked rational enclosure of a ratio of
+    # Real.Gamma values at rational points in (0, 1) by the Bohr-Mollerup bounds, an exact
+    # blocked range product and four q-th-root brackets.  Nothing about RH.
+    "bohr_mollerup_gamma_ratio",
 )
 
 # kind -> "module:certify_point_fn" for the generic (family.special) emitters.
@@ -835,6 +839,10 @@ _SPECIAL_DISPATCH = {
     "complex_re_im_split":
         ("emit_complex_re_im_split", "certify_complex_re_im_split_point",
          "ComplexReImSplitEmitter"),
+    # Emitter survey N2: Bohr-Mollerup Gamma-ratio enclosures (Real.Gamma at rational points).
+    "bohr_mollerup_gamma_ratio":
+        ("emit_bohr_mollerup_gamma_ratio", "certify_bohr_mollerup_gamma_ratio_point",
+         "BohrMollerupGammaRatioEmitter"),
 }
 
 

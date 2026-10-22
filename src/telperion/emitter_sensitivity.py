@@ -787,6 +787,18 @@ REGISTRY: dict[str, SensitivityStance] = {
         "Affine-in-parameter endpoint collapse: abstract core proved by nlinarith from the algebraic identity (hi-lo)(A+muB)=(hi-mu)(A+loB)+(mu-lo)(A+hiB)"),
     "AlgebraicBracketEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Rigorous-rational-enclosure shape: lo,a,hi ARE the statement, not a separate cofactor. norm_num decides the three pure-rational side-goals"),
+    "BohrMollerupGammaRatioEmitter": _S(CERTIFICATE_SENSITIVE,
+        "LO <= Real.Gamma x1 / Real.Gamma x2 <= HI at rationals in (0,1) by the Bohr-Mollerup "
+        "bounds: the witness is the four q-th-root bracket integers (l1 u2 u3 l4 at a scale S) and "
+        "the two Nat comparisons LOn*u2*gB <= LOd*n*l1*gA, HId*u3*gA <= HIn*n*l4*gB, all decided by "
+        "`decide +kernel` against the kernel-computed blocked products gA gB; a forged bracket or a "
+        "claim outside the certified enclosure makes a Nat fact FALSE and the kernel rejects it. "
+        "certify REFUSES (ValueError, not a printed flag) a claim the exact comparisons do not "
+        "imply.  One ratio of Gamma values; nothing about class numbers or RH "
+        "(conjecture1_proved = False)",
+        # Kernel control: LO forged to the certified upper decimal (above the true value), so
+        # key_lo is a false Nat inequality.  See negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py.
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "BilinearCornerBoxEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Worst-corner box positivity: reusable affine-min-at-corners lemma closed by sign-cased mul_nonneg/nlinarith + 4 corner facts each norm_num-recomputed"),
     "BoxRobustEmitter": _S(STRUCTURALLY_NONVACUOUS,

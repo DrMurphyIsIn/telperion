@@ -3,6 +3,7 @@ from __future__ import annotations
 from . import adapter_affine_hull_dominance  # noqa: F401
 from . import adapter_anchored_monotone_extension  # noqa: F401
 from . import adapter_bragg_floor  # noqa: F401
+from . import adapter_bohr_mollerup_gamma_ratio  # noqa: F401
 from . import adapter_c_g_round  # noqa: F401
 from . import adapter_complex_re_im_split  # noqa: F401
 from . import adapter_concave_pooled_induction  # noqa: F401
@@ -58,6 +59,7 @@ __all__ = [
     'adapter_affine_hull_dominance',
     'adapter_anchored_monotone_extension',
     'adapter_bragg_floor',
+    'adapter_bohr_mollerup_gamma_ratio',
     'adapter_c_g_round',
     'adapter_complex_re_im_split',
     'adapter_concave_pooled_induction',
