@@ -1,0 +1,40 @@
+{
+  "imports": [
+    "ClosureAuditExample.Example",
+    "ClosureAuditExample.Redeclare"
+  ],
+  "targets": [
+    "ClosureAuditExample.prime_101"
+  ],
+  "library_roots": [
+    "Init",
+    "Lean",
+    "Std",
+    "Batteries",
+    "Mathlib",
+    "Aesop",
+    "Qq",
+    "ProofWidgets",
+    "Plausible",
+    "LeanSearchClient",
+    "ImportGraph",
+    "Lake",
+    "Cli"
+  ],
+  "scan_patterns": [
+    "sorry",
+    "fake",
+    "negcontrol"
+  ],
+  "absent_constants": [
+    "sorryAx"
+  ],
+  "absent_module_prefixes": [],
+  "allowed_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ],
+  "include_recursors": true,
+  "closure_out": null
+}

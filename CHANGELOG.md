@@ -32,17 +32,23 @@
   transitive constant closure of named theorems (types + proof terms + definition
   bodies; constructors and, by default, recursors), reports a census by root
   module, lists every non-library constant, scans names, checks that listed
-  constants/modules (`sorryAx`, a negative-control library) are absent and that
-  `collectAxioms` stays inside the allowed set; JSON out.  `--no-recursors`
-  reproduces the `getUsedConstantsAsSet` walk an independent reviewer used.
+  constants/modules (`sorryAx`, a negative-control library) are absent, that every
+  axiom IN the closure is in the allowed set, that `collectAxioms` per target stays
+  inside it, and that the two axiom lists agree (they do not when a module
+  re-declares a target's name: `collectAxioms` reads the declaring module's cached
+  record, independently demonstrated); every protocol line carries a per-run nonce
+  and the verdict must be unique and consistent with the failure lines; JSON out.
+  `--no-recursors` reproduces the `getUsedConstantsAsSet` walk an independent
+  reviewer used.
   `telperion freeze-manifest` / `verify-manifest` pin a Lake project's sources,
-  lake files, toolchain (file + elan `lean` binary), dependency git state (HEAD,
+  lake files, toolchain (file + elan `lean` and `lake` binaries), dependency git state (HEAD,
   dirty diff, untracked files, patch reverse-check), tool binaries and config
   files, and re-check them after a run.  Tools, not emitters; they audit the
   elaborated environment of one build, not an exporter's view, and hash bytes, not
   behaviour.  `docs/CLOSURE_AUDIT_MANIFEST_DESIGN_2026-10-22.md`;
   `examples/closure_audit/` (PASS on honest theorems with the tainted module
-  imported; FAIL on the tainted ones).
+  imported; FAIL on the tainted ones; FAIL on a control that re-declares a target's
+  name).
 
 ## Earlier -- STAGE 3 CAPSTONE: RH VERIFIED IN A BOX (Turing-style, NOT a proof of RH)
 

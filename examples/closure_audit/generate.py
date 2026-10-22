@@ -14,9 +14,15 @@ Example.lean, a negative-control module Tainted.lean with an axiom, a `sorry` an
       `sorryAx`) is real rather than vacuous; must PASS;
   lean/AuditTainted.lean / audit_tainted.spec.json
       the audit of the three tainted theorems; must FAIL (forbidden module in the closure,
-      `sorryAx` present, axioms `fake_fact` / `sorryAx` / `Lean.ofReduceBool` not allowed).
+      `sorryAx` present, axioms `fake_fact` / `sorryAx` / the `native_decide` axiom not
+      allowed, in the closure and per target).
+  lean/AuditRedeclare.lean / audit_redeclare.spec.json
+      the audit of `prime_101` with Redeclare.lean imported beside Example.lean; must FAIL
+      with "inconsistent environment": the closure holds the `native_decide` axiom while
+      the per-target `collectAxioms` record (cached from Example's .olean) is clean.
 
-Run them (after `lake build` in lean/):
+The committed scripts carry the placeholder nonce "EXAMPLE" and are for reading; the runner
+renders its own copy with a fresh nonce.  Run them (after `lake build` in lean/):
 
   PYTHONPATH=src python -m telperion.cli audit-closure --project examples/closure_audit/lean \\
       --spec examples/closure_audit/audit.spec.json --json /tmp/audit.json
@@ -57,11 +63,19 @@ TAINTED = AuditSpec(
     absent_module_prefixes=("ClosureAuditExample.Tainted",),
 )
 
+REDECLARE = AuditSpec(
+    imports=("ClosureAuditExample.Example", "ClosureAuditExample.Redeclare"),
+    targets=("ClosureAuditExample.prime_101",),
+    scan_patterns=("sorry", "fake", "negcontrol"),
+)
+
 OUTPUTS = {
     _LEAN / "Audit.lean": lambda: render_audit_script(CLEAN),
     _HERE / "audit.spec.json": lambda: json.dumps(asdict(CLEAN), indent=2) + "\n",
     _LEAN / "AuditTainted.lean": lambda: render_audit_script(TAINTED),
     _HERE / "audit_tainted.spec.json": lambda: json.dumps(asdict(TAINTED), indent=2) + "\n",
+    _LEAN / "AuditRedeclare.lean": lambda: render_audit_script(REDECLARE),
+    _HERE / "audit_redeclare.spec.json": lambda: json.dumps(asdict(REDECLARE), indent=2) + "\n",
 }
 
 

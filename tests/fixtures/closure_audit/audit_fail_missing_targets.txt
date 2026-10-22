@@ -1,72 +1,74 @@
-@@protocol	telperion-closure-audit/1
-@@lean_version	4.32.0
-@@include_recursors	true
-@@target	Nat.Prime.two_le	theorem	∀ {p : ℕ}, Nat.Prime p → 2 ≤ p
-@@target	Nat.exists_infinite_primes	missing	
-@@target	Nat.NoSuchThing	missing	
-@@closure_size	629
+@@FIXTURENONCE	protocol	telperion-closure-audit/1
+@@FIXTURENONCE	lean_version	4.32.0
+@@FIXTURENONCE	include_recursors	true
+@@FIXTURENONCE	target	Nat.Prime.two_le	theorem	∀ {p : ℕ}, Nat.Prime p → 2 ≤ p
+@@FIXTURENONCE	target	Nat.exists_infinite_primes	missing	
+@@FIXTURENONCE	target	Nat.NoSuchThing	missing	
+@@FIXTURENONCE	closure_size	629
 closure of [Nat.Prime.two_le, Nat.exists_infinite_primes, Nat.NoSuchThing]: 629 constants
 -- constants per root module --
-@@per_root	Init	490
+@@FIXTURENONCE	per_root	Init	490
   Init: 490
-@@per_root	Mathlib	139
+@@FIXTURENONCE	per_root	Mathlib	139
   Mathlib: 139
 -- EVERY constant outside the library roots, by module --
 -- name scan for [prime, sorry] --
-@@scan_hit	Mathlib.Algebra.Prime.Defs	Irreducible.ne_zero
+@@FIXTURENONCE	scan_hit	Mathlib.Algebra.Prime.Defs	Irreducible.ne_zero
   HIT Mathlib.Algebra.Prime.Defs :: Irreducible.ne_zero
-@@scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.Prime
+@@FIXTURENONCE	scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.Prime
   HIT Mathlib.Data.Nat.Prime.Defs :: Nat.Prime
-@@scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.Prime.two_le
+@@FIXTURENONCE	scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.Prime.two_le
   HIT Mathlib.Data.Nat.Prime.Defs :: Nat.Prime.two_le
-@@scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.not_prime_one
+@@FIXTURENONCE	scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.not_prime_one
   HIT Mathlib.Data.Nat.Prime.Defs :: Nat.not_prime_one
-@@scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.not_prime_zero
+@@FIXTURENONCE	scan_hit	Mathlib.Data.Nat.Prime.Defs	Nat.not_prime_zero
   HIT Mathlib.Data.Nat.Prime.Defs :: Nat.not_prime_zero
-@@scan_hit	Mathlib.Algebra.Prime.Defs	_private.Mathlib.Algebra.Prime.Defs.0.Irreducible.ne_zero.match_1_1
+@@FIXTURENONCE	scan_hit	Mathlib.Algebra.Prime.Defs	_private.Mathlib.Algebra.Prime.Defs.0.Irreducible.ne_zero.match_1_1
   HIT Mathlib.Algebra.Prime.Defs :: _private.Mathlib.Algebra.Prime.Defs.0.Irreducible.ne_zero.match_1_1
-@@scan_hit	Mathlib.Algebra.Prime.Defs	_private.Mathlib.Algebra.Prime.Defs.0.not_irreducible_zero.match_1_1
+@@FIXTURENONCE	scan_hit	Mathlib.Algebra.Prime.Defs	_private.Mathlib.Algebra.Prime.Defs.0.not_irreducible_zero.match_1_1
   HIT Mathlib.Algebra.Prime.Defs :: _private.Mathlib.Algebra.Prime.Defs.0.not_irreducible_zero.match_1_1
-@@scan_hit	Mathlib.Data.Nat.Prime.Defs	_private.Mathlib.Data.Nat.Prime.Defs.0.Nat.Prime.two_le.match_1_1
+@@FIXTURENONCE	scan_hit	Mathlib.Data.Nat.Prime.Defs	_private.Mathlib.Data.Nat.Prime.Defs.0.Nat.Prime.two_le.match_1_1
   HIT Mathlib.Data.Nat.Prime.Defs :: _private.Mathlib.Data.Nat.Prime.Defs.0.Nat.Prime.two_le.match_1_1
-@@scan_hit	Mathlib.Algebra.Prime.Defs	not_irreducible_zero
+@@FIXTURENONCE	scan_hit	Mathlib.Algebra.Prime.Defs	not_irreducible_zero
   HIT Mathlib.Algebra.Prime.Defs :: not_irreducible_zero
-@@scan_hits	9
-@@scan_module_hit	Init.Data.Nat.Coprime
+@@FIXTURENONCE	scan_hits	9
+@@FIXTURENONCE	scan_module_hit	Init.Data.Nat.Coprime
   MODULE HIT Init.Data.Nat.Coprime
-@@scan_module_hit	Lean.Util.Sorry
+@@FIXTURENONCE	scan_module_hit	Lean.Util.Sorry
   MODULE HIT Lean.Util.Sorry
-@@scan_module_hit	Lean.Meta.Sorry
+@@FIXTURENONCE	scan_module_hit	Lean.Meta.Sorry
   MODULE HIT Lean.Meta.Sorry
-@@scan_module_hit	Mathlib.Tactic.Linter.DocPrime
+@@FIXTURENONCE	scan_module_hit	Mathlib.Tactic.Linter.DocPrime
   MODULE HIT Mathlib.Tactic.Linter.DocPrime
-@@scan_module_hit	Mathlib.Algebra.Prime.Defs
+@@FIXTURENONCE	scan_module_hit	Mathlib.Algebra.Prime.Defs
   MODULE HIT Mathlib.Algebra.Prime.Defs
-@@scan_module_hit	Mathlib.Algebra.Prime.Lemmas
+@@FIXTURENONCE	scan_module_hit	Mathlib.Algebra.Prime.Lemmas
   MODULE HIT Mathlib.Algebra.Prime.Lemmas
-@@scan_module_hit	Mathlib.Data.Nat.Prime.Defs
+@@FIXTURENONCE	scan_module_hit	Mathlib.Data.Nat.Prime.Defs
   MODULE HIT Mathlib.Data.Nat.Prime.Defs
-@@scan_module_hit	Mathlib.Data.Nat.Prime.Basic
+@@FIXTURENONCE	scan_module_hit	Mathlib.Data.Nat.Prime.Basic
   MODULE HIT Mathlib.Data.Nat.Prime.Basic
-@@scan_module_hit	Lean.Compiler.IR.Sorry
+@@FIXTURENONCE	scan_module_hit	Lean.Compiler.IR.Sorry
   MODULE HIT Lean.Compiler.IR.Sorry
-@@env_modules_per_root	Aesop	132
-@@env_modules_per_root	Batteries	65
-@@env_modules_per_root	ImportGraph	10
-@@env_modules_per_root	Init	601
-@@env_modules_per_root	Lean	1193
-@@env_modules_per_root	LeanSearchClient	4
-@@env_modules_per_root	Mathlib	343
-@@env_modules_per_root	Plausible	13
-@@env_modules_per_root	ProofWidgets	10
-@@env_modules_per_root	Qq	14
-@@env_modules_per_root	Std	476
-@@absent_const	sorryAx	false
-@@absent_module	Mathlib.Tactic.Linarith	0
-@@axioms	Nat.Prime.two_le	propext
+@@FIXTURENONCE	env_modules_per_root	Aesop	132
+@@FIXTURENONCE	env_modules_per_root	Batteries	65
+@@FIXTURENONCE	env_modules_per_root	ImportGraph	10
+@@FIXTURENONCE	env_modules_per_root	Init	601
+@@FIXTURENONCE	env_modules_per_root	Lean	1193
+@@FIXTURENONCE	env_modules_per_root	LeanSearchClient	4
+@@FIXTURENONCE	env_modules_per_root	Mathlib	343
+@@FIXTURENONCE	env_modules_per_root	Plausible	13
+@@FIXTURENONCE	env_modules_per_root	ProofWidgets	10
+@@FIXTURENONCE	env_modules_per_root	Qq	14
+@@FIXTURENONCE	env_modules_per_root	Std	476
+@@FIXTURENONCE	absent_const	sorryAx	false
+@@FIXTURENONCE	absent_module	Mathlib.Tactic.Linarith	0
+@@FIXTURENONCE	closure_axioms	propext
+axioms in the closure: #[propext]
+@@FIXTURENONCE	axioms	Nat.Prime.two_le	propext
 'Nat.Prime.two_le' depends on axioms: #[propext]
-@@closure_written	/tmp/closure_432.txt
-@@failure	target Nat.exists_infinite_primes not found
-@@failure	target Nat.NoSuchThing not found
-@@verdict	FAIL
+@@FIXTURENONCE	axioms_consistent	true
+@@FIXTURENONCE	failure	target Nat.exists_infinite_primes not found
+@@FIXTURENONCE	failure	target Nat.NoSuchThing not found
+@@FIXTURENONCE	verdict	FAIL
 EXIT 0

@@ -20,8 +20,16 @@ What the audit does
   caller's patterns (e.g. ``heegner``), and the same scan over every imported module name;
 * an absence check: named constants (``sorryAx`` by default) and module prefixes (e.g. a
   negative-control library) that must NOT appear in the closure;
-* ``collectAxioms`` per target against an allowed list (``propext``, ``Classical.choice``,
-  ``Quot.sound`` by default) -- the machine-checked form of ``#print axioms``;
+* every ``axiomInfo`` the walk reached, against an allowed list (``propext``,
+  ``Classical.choice``, ``Quot.sound`` by default) -- the independent axiom check, since it
+  follows the values the environment holds;
+* ``collectAxioms`` per target against the same list -- the machine-checked form of
+  ``#print axioms`` -- and a cross-check that the union of those records equals the
+  closure's axioms.  For an imported declaration ``collectAxioms`` reads the axioms its module
+  recorded at compile time (``exportedAxiomsExt`` through ``getModuleIdxFor?``), not a
+  re-walk, so a module that RE-DECLARES a target's name with another proof makes the two
+  disagree: the audit then fails with "inconsistent environment" (an independent reviewer
+  demonstrated exactly this with a ``native_decide`` control re-declaring the CN-1 theorem);
 * the non-library modules that are IMPORTED into the environment but contribute nothing to
   the closure (an imported-but-unused module is not a soundness problem; it is listed so a
   reviewer can ask why it is there).
@@ -39,9 +47,20 @@ What it does NOT guarantee
 * It says nothing about the CONTENT of the library constants it counts.  A dependency that
   is itself unsound is invisible to a census.
 * The walk is over the kernel environment's constants.  ``native_decide`` leaves a trace (an
-  axiom outside the allowed set: a generated ``<thm>._native.native_decide.ax_*`` on v4.32.0,
-  ``Lean.ofReduceBool`` on later toolchains) but ``implemented_by`` / ``extern`` bodies and
-  the compiled code they run are not inspected.
+  axiom outside the allowed set: a generated ``<thm>._native.native_decide.ax_*`` on v4.32.0
+  and v4.34.1, ``Lean.ofReduceBool`` on older toolchains) but ``implemented_by`` /
+  ``extern`` bodies and the compiled code they run are not inspected.
+* The per-target axiom list is the compiler's cached record from the ``.olean``; the
+  closure-based list is the independent one, and the two are required to agree.
+* UNSANDBOXED.  ``lake env lean`` runs inside the audited project with the caller's
+  privileges, and imported modules' initializers run at import time.  The per-run nonce on
+  every protocol line and the one-protocol-line / one-verdict-line / PASS-means-no-failures
+  check stop a stray or forged line from being read as ours, but a hostile project can do
+  anything the caller can; the ``wrapper`` argument is where a sandbox goes.
+* A negative-control module must NEVER re-declare a target's name.  Lean imports two
+  modules declaring the same constant without complaint; ``env.find?`` then returns one of
+  the proofs and ``collectAxioms`` the other module's cached record.  The consistency check
+  catches this, but only as a failure: it cannot tell you which proof you meant.
 
 The recursor option
 -------------------
@@ -56,6 +75,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import tempfile
@@ -184,6 +204,9 @@ def absentModulePrefixes : List Name := __ABSENT_MODULE_PREFIXES__
 def allowedAxioms : List Name := __ALLOWED_AXIOMS__
 def includeRecursors : Bool := __INCLUDE_RECURSORS__
 def closureOut : Option String := __CLOSURE_OUT__
+/-- Per-run token the runner generated; every protocol line carries it, so a line printed by
+anything other than this script (an import-time initializer, say) is not mistaken for ours. -/
+def nonce : String := __NONCE__
 
 def rootOf (n : Name) : Name :=
   match n.components with
@@ -236,7 +259,7 @@ def closureOf (env : Environment) (roots : List Name) : NameSet := Id.run do
   return visited
 
 def emit (key : String) (fields : List String) : IO Unit :=
-  IO.println ("@@" ++ key ++ String.join (fields.map (fun f => "\\t" ++ f)))
+  IO.println ("@@" ++ nonce ++ "\\t" ++ key ++ String.join (fields.map (fun f => "\\t" ++ f)))
 
 end TelperionClosureAudit
 
@@ -323,14 +346,38 @@ open TelperionClosureAudit in
     let k := absentModCount.getD p 0
     emit "absent_module" [toString p, toString k]
     if k > 0 then failures := failures.push s!"{k} constant(s) from forbidden module prefix {p} in the closure"
-  -- axioms per target
+  -- axioms IN THE CLOSURE: every axiomInfo the walk reached.  This is the independent check:
+  -- it follows the values the environment actually holds, not a cached record.
+  let mut axiomAcc : Array Name := #[]
+  for n in visited.toList do
+    match env.find? n with
+    | some (.axiomInfo _) => axiomAcc := axiomAcc.push n
+    | _ => pure ()
+  let closureAxioms := axiomAcc.qsort (fun a b => a.toString < b.toString)
+  emit "closure_axioms" (closureAxioms.map toString).toList
+  IO.println s!"axioms in the closure: {closureAxioms}"
+  let badClosure := closureAxioms.filter (fun a => !(allowedAxioms.contains a))
+  if !badClosure.isEmpty then
+    failures := failures.push s!"closure contains non-allowed axioms {badClosure}"
+  -- axioms per target, as `#print axioms` reports them.  For an IMPORTED declaration
+  -- `collectAxioms` reads the axioms its module recorded at compile time (exportedAxiomsExt via
+  -- getModuleIdxFor?), so this is the compiler's cached record, not a re-walk; a module that
+  -- re-declares a target's name under another proof makes it disagree with the closure above.
+  let mut reported : NameSet := {}
   for t in found do
     let axs <- collectAxioms t
     let axs := axs.qsort (fun a b => a.toString < b.toString)
+    for a in axs do reported := reported.insert a
     let bad := axs.filter (fun a => !(allowedAxioms.contains a))
     emit "axioms" ([toString t] ++ (axs.map toString).toList)
     IO.println s!"'{t}' depends on axioms: {axs}"
     if !bad.isEmpty then failures := failures.push s!"{t} uses non-allowed axioms {bad}"
+  -- cross-check: the union of the per-target records must be exactly the closure's axioms
+  let reportedArr := reported.toArray.qsort (fun a b => a.toString < b.toString)
+  let consistent := reportedArr == closureAxioms
+  emit "axioms_consistent" [toString consistent]
+  if !consistent then
+    failures := failures.push s!"inconsistent environment (duplicate declaration or stale .olean): collectAxioms over the targets gives {reportedArr}, the closure contains {closureAxioms}"
   match closureOut with
   | some path =>
     IO.FS.writeFile path (String.intercalate "\\n" (allLines.qsort (· < ·)).toList ++ "\\n")
@@ -341,12 +388,21 @@ open TelperionClosureAudit in
 """
 
 
-def render_audit_script(spec: AuditSpec) -> str:
-    """The Lean source of the audit, with the spec baked in."""
+#: The nonce a rendering gets when none is supplied.  A script rendered with it is for
+#: READING (the committed example scripts); `run_closure_audit` always renders with a fresh
+#: random nonce and parses only lines that carry it.
+PLACEHOLDER_NONCE = "EXAMPLE"
+
+
+def render_audit_script(spec: AuditSpec, *, nonce: str = PLACEHOLDER_NONCE) -> str:
+    """The Lean source of the audit, with the spec and the run nonce baked in."""
+    if not re.fullmatch(r"[A-Za-z0-9]+", nonce):
+        raise ValueError("nonce must be alphanumeric")
     imports = "\n".join(f"import {m}" for m in spec.imports)
     out = _TEMPLATE
     repl = {
         "__IMPORTS__": imports,
+        "__NONCE__": lean_string_literal(nonce),
         "__TARGETS__": _name_list(spec.targets),
         "__LIBRARY_ROOTS__": _name_list(spec.library_roots),
         "__SCAN_PATTERNS__": _string_list(spec.scan_patterns),
@@ -390,6 +446,11 @@ class AuditResult:
     unused_nonlib_modules: list[str] = field(default_factory=list)
     absent_constants: dict[str, bool] = field(default_factory=dict)   # name -> present?
     absent_modules: dict[str, int] = field(default_factory=dict)      # prefix -> count
+    #: every axiomInfo the walk reached (the independent axiom check)
+    closure_axioms: list[str] = field(default_factory=list)
+    #: True iff the union of the per-target collectAxioms records equals closure_axioms
+    axioms_consistent: bool | None = None
+    nonce: str = ""
     closure_written: str | None = None
     failures: list[str] = field(default_factory=list)
     verdict: str = ""            # "PASS" | "FAIL" | "" (no verdict line: the script died)
@@ -419,6 +480,8 @@ class AuditResult:
         n_nonlib = sum(len(v) for v in self.nonlib_modules.values())
         lines.append(f"  non-library constants: {n_nonlib} in {len(self.nonlib_modules)} module(s)")
         lines.append(f"  scan hits: {len(self.scan_hits)} constant(s), {len(self.scan_module_hits)} module(s)")
+        lines.append(f"  axioms in closure: {self.closure_axioms}; consistent with the per-target "
+                     f"records: {self.axioms_consistent}")
         for name, present in self.absent_constants.items():
             lines.append(f"  {name} in closure: {str(present).lower()} (must be false)")
         for pfx, k in self.absent_modules.items():
@@ -431,18 +494,28 @@ class AuditResult:
         return "\n".join(lines)
 
 
-def parse_audit_output(text: str) -> AuditResult:
-    """Read the ``@@`` protocol lines out of the Lean output.  Everything else (warnings,
-    the human listing) is ignored; the last 20 lines are kept in ``raw_tail``."""
-    res = AuditResult()
+def parse_audit_output(text: str, *, nonce: str = PLACEHOLDER_NONCE) -> AuditResult:
+    """Read the ``@@<nonce>`` protocol lines out of the Lean output.  Everything else
+    (warnings, the human listing, a line with another or no nonce) is ignored; the last 20
+    lines are kept in ``raw_tail``.
+
+    Integrity: exactly one ``protocol`` line and exactly one ``verdict`` line must be present,
+    and a ``PASS`` verdict must come with no ``failure`` line.  Anything else makes the result
+    a FAIL with an ``integrity`` failure recorded, because the audit runs UNSANDBOXED inside
+    the audited project and an import-time initializer could print lines of its own.
+    """
+    res = AuditResult(nonce=nonce)
     by_name: dict[str, TargetInfo] = {}
+    prefix = PROTOCOL_PREFIX + nonce + "\t"
+    n_protocol = n_verdict = 0
     for raw in text.splitlines():
-        if not raw.startswith(PROTOCOL_PREFIX):
+        if not raw.startswith(prefix):
             continue
-        parts = raw[len(PROTOCOL_PREFIX):].split("\t")
+        parts = raw[len(prefix):].split("\t")
         key, args = parts[0], parts[1:]
         try:
             if key == "protocol":
+                n_protocol += 1
                 res.protocol = args[0]
             elif key == "lean_version":
                 res.lean_version = args[0]
@@ -477,16 +550,34 @@ def parse_audit_output(text: str) -> AuditResult:
             elif key == "axioms":
                 if args[0] in by_name:
                     by_name[args[0]].axioms = list(args[1:])
+            elif key == "closure_axioms":
+                res.closure_axioms = list(args)
+            elif key == "axioms_consistent":
+                res.axioms_consistent = args[0] == "true"
             elif key == "closure_written":
                 res.closure_written = args[0]
             elif key == "failure":
                 res.failures.append(args[0])
             elif key == "verdict":
+                n_verdict += 1
                 res.verdict = args[0]
             # unknown keys from a newer script are ignored, not fatal
         except (IndexError, ValueError) as exc:
             raise ClosureAuditError(f"malformed protocol line {raw!r}: {exc}") from exc
     res.raw_tail = "\n".join(text.splitlines()[-20:])
+    if n_verdict:
+        problems = []
+        if n_protocol != 1:
+            problems.append(f"{n_protocol} protocol lines (expected 1)")
+        if n_verdict != 1:
+            problems.append(f"{n_verdict} verdict lines (expected 1)")
+        if res.verdict == "PASS" and res.failures:
+            problems.append("verdict PASS with failure lines present")
+        if res.verdict not in ("PASS", "FAIL"):
+            problems.append(f"unknown verdict {res.verdict!r}")
+        if problems:
+            res.failures.append("integrity: " + "; ".join(problems))
+            res.verdict = "FAIL"
     return res
 
 
@@ -523,7 +614,8 @@ def run_closure_audit(
     project_dir = Path(project_dir)
     if not project_dir.is_dir():
         raise ClosureAuditError(f"project directory {project_dir} does not exist")
-    text = render_audit_script(spec)
+    nonce = secrets.token_hex(16)
+    text = render_audit_script(spec, nonce=nonce)
     if script_path is None:
         fd, tmp = tempfile.mkstemp(prefix="telperion_closure_audit_", suffix=".lean",
                                    dir=str(project_dir))
@@ -557,7 +649,7 @@ def run_closure_audit(
             except OSError:
                 pass
     out = (proc.stdout or "") + (proc.stderr or "")
-    res = parse_audit_output(out)
+    res = parse_audit_output(out, nonce=nonce)
     res.lean_exit_code = proc.returncode
     if proc.returncode != 0 and not res.verdict:
         res.failures.append(f"lean exited {proc.returncode} before a verdict")

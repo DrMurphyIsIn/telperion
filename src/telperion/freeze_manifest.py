@@ -14,7 +14,8 @@ What the manifest records
 * the Lake files: ``lakefile.lean`` / ``lakefile.toml``, ``lake-manifest.json``,
   ``lean-toolchain``;
 * the toolchain: the ``lean-toolchain`` string AND, when the named elan toolchain is
-  installed, the sha256 of its ``lean`` binary (the file alone pins only a name);
+  installed, the sha256 of its ``lean`` and ``lake`` binaries (the file alone pins only a
+  name);
 * every dependency in ``lake-manifest.json`` (type, url, rev, inputRev) and, for each
   package directory present under the packages dir: git HEAD, whether tracked files are
   modified, the sha256 of ``git diff HEAD`` when they are, every untracked file with its
@@ -247,15 +248,17 @@ def _toolchain_record(project: Path, hash_binary: bool) -> dict:
     rec: dict = {"file": tc_file.read_text(encoding="utf-8").strip() if tc_file.is_file() else None}
     if not hash_binary or not rec["file"]:
         rec["binary"] = None
+        rec["lake_binary"] = None
         return rec
-    # elan names the toolchain directory by replacing '/' and ':' with '---' and '--'.
+    # elan names the toolchain directory by replacing '/' and ':' with '--' and '---'.
     name = rec["file"].replace("/", "--").replace(":", "---")
     home = Path(os.environ.get("ELAN_HOME", Path.home() / ".elan"))
-    lean_bin = home / "toolchains" / name / "bin" / "lean"
-    if lean_bin.is_file():
-        rec["binary"] = {"toolchain_dir": name, **_hashes(lean_bin)}
-    else:
-        rec["binary"] = None
+    bin_dir = home / "toolchains" / name / "bin"
+    lean_bin, lake_bin = bin_dir / "lean", bin_dir / "lake"
+    # `lean` elaborates; `lake` resolves the imports and decides what is up to date, so it is
+    # part of what produced the verdict and is hashed too (reviewer's nit on the first cut).
+    rec["binary"] = {"toolchain_dir": name, **_hashes(lean_bin)} if lean_bin.is_file() else None
+    rec["lake_binary"] = _hashes(lake_bin) if lake_bin.is_file() else None
     return rec
 
 
@@ -458,8 +461,10 @@ def render_text(doc: Mapping) -> str:
              f"# digest {doc.get('digest')}"]
     tc = doc.get("toolchain", {})
     b = tc.get("binary")
+    lk = tc.get("lake_binary")
     lines.append(f"# toolchain {tc.get('file')}  lean binary sha256 "
-                 f"{b['sha256'] if b else 'not hashed'}")
+                 f"{b['sha256'] if b else 'not hashed'}  lake binary sha256 "
+                 f"{lk['sha256'] if lk else 'not hashed'}")
     for section in ("lake_files", "files"):
         for k, v in doc.get(section, {}).items():
             tag = f"  -> {v['symlink']}" if v.get("symlink") else ""

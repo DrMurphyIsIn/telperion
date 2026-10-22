@@ -23,6 +23,9 @@ def absentModulePrefixes : List Name := [`ClosureAuditExample.Tainted]
 def allowedAxioms : List Name := [`propext, `Quot.sound, `Classical.choice]
 def includeRecursors : Bool := true
 def closureOut : Option String := none
+/-- Per-run token the runner generated; every protocol line carries it, so a line printed by
+anything other than this script (an import-time initializer, say) is not mistaken for ours. -/
+def nonce : String := "EXAMPLE"
 
 def rootOf (n : Name) : Name :=
   match n.components with
@@ -75,7 +78,7 @@ def closureOf (env : Environment) (roots : List Name) : NameSet := Id.run do
   return visited
 
 def emit (key : String) (fields : List String) : IO Unit :=
-  IO.println ("@@" ++ key ++ String.join (fields.map (fun f => "\t" ++ f)))
+  IO.println ("@@" ++ nonce ++ "\t" ++ key ++ String.join (fields.map (fun f => "\t" ++ f)))
 
 end TelperionClosureAudit
 
@@ -162,14 +165,38 @@ open TelperionClosureAudit in
     let k := absentModCount.getD p 0
     emit "absent_module" [toString p, toString k]
     if k > 0 then failures := failures.push s!"{k} constant(s) from forbidden module prefix {p} in the closure"
-  -- axioms per target
+  -- axioms IN THE CLOSURE: every axiomInfo the walk reached.  This is the independent check:
+  -- it follows the values the environment actually holds, not a cached record.
+  let mut axiomAcc : Array Name := #[]
+  for n in visited.toList do
+    match env.find? n with
+    | some (.axiomInfo _) => axiomAcc := axiomAcc.push n
+    | _ => pure ()
+  let closureAxioms := axiomAcc.qsort (fun a b => a.toString < b.toString)
+  emit "closure_axioms" (closureAxioms.map toString).toList
+  IO.println s!"axioms in the closure: {closureAxioms}"
+  let badClosure := closureAxioms.filter (fun a => !(allowedAxioms.contains a))
+  if !badClosure.isEmpty then
+    failures := failures.push s!"closure contains non-allowed axioms {badClosure}"
+  -- axioms per target, as `#print axioms` reports them.  For an IMPORTED declaration
+  -- `collectAxioms` reads the axioms its module recorded at compile time (exportedAxiomsExt via
+  -- getModuleIdxFor?), so this is the compiler's cached record, not a re-walk; a module that
+  -- re-declares a target's name under another proof makes it disagree with the closure above.
+  let mut reported : NameSet := {}
   for t in found do
     let axs <- collectAxioms t
     let axs := axs.qsort (fun a b => a.toString < b.toString)
+    for a in axs do reported := reported.insert a
     let bad := axs.filter (fun a => !(allowedAxioms.contains a))
     emit "axioms" ([toString t] ++ (axs.map toString).toList)
     IO.println s!"'{t}' depends on axioms: {axs}"
     if !bad.isEmpty then failures := failures.push s!"{t} uses non-allowed axioms {bad}"
+  -- cross-check: the union of the per-target records must be exactly the closure's axioms
+  let reportedArr := reported.toArray.qsort (fun a b => a.toString < b.toString)
+  let consistent := reportedArr == closureAxioms
+  emit "axioms_consistent" [toString consistent]
+  if !consistent then
+    failures := failures.push s!"inconsistent environment (duplicate declaration or stale .olean): collectAxioms over the targets gives {reportedArr}, the closure contains {closureAxioms}"
   match closureOut with
   | some path =>
     IO.FS.writeFile path (String.intercalate "\n" (allLines.qsort (· < ·)).toList ++ "\n")

@@ -95,7 +95,7 @@ def test_freeze_records_sources_lake_files_and_skips_build_products(project):
     for rec in doc["files"].values():
         assert len(rec["sha256"]) == 64 and len(rec["md5"]) == 32 and rec["size"] > 0
     assert doc["toolchain"]["file"] == "leanprover/lean4:v0.0.0-telperion-test"
-    assert doc["toolchain"]["binary"] is None
+    assert doc["toolchain"]["binary"] is None and doc["toolchain"]["lake_binary"] is None
     assert "created" in doc and doc["digest"] == manifest_digest(doc)
 
 
@@ -223,6 +223,27 @@ def test_verify_unchanged_then_changed(project, tmp_path):
     assert "CHANGED (1 added, 1 removed, 2 changed)" in text and "~ files/Lib/A.lean" in text
 
 
+def test_toolchain_lean_and_lake_binaries_are_hashed(project, tmp_path, monkeypatch):
+    """An installed elan toolchain: both `lean` and `lake` are hashed, and a changed `lake`
+    (it decides what is up to date) is a changed toolchain record."""
+    home = tmp_path / "elan"
+    bin_dir = home / "toolchains" / "leanprover--lean4---v0.0.0-telperion-test" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "lean").write_bytes(b"lean-bytes")
+    (bin_dir / "lake").write_bytes(b"lake-bytes")
+    monkeypatch.setenv("ELAN_HOME", str(home))
+    doc = freeze_manifest(project)
+    tc = doc["toolchain"]
+    assert tc["binary"]["toolchain_dir"] == "leanprover--lean4---v0.0.0-telperion-test"
+    assert tc["binary"]["size"] == 10 and tc["lake_binary"]["size"] == 10
+    assert tc["binary"]["sha256"] != tc["lake_binary"]["sha256"]
+    m = tmp_path / "m.json"
+    m.write_text(dumps_manifest(doc))
+    (bin_dir / "lake").write_bytes(b"lake-bytes-2")
+    diff, _ = verify_manifest(m, project)
+    assert diff.changed == ["toolchain"]
+
+
 def test_verify_with_tool_override_compares_content_not_path(project, tmp_path):
     tool = tmp_path / "t1"
     tool.write_bytes(b"same bytes")
@@ -244,6 +265,7 @@ def test_render_text_lists_every_file_and_dependency(project):
     doc = freeze_manifest(project, ManifestOptions(patches=(("dep", str(patch)),),
                                                    extras=(("x", "notes.md"),)))
     text = render_text(doc)
+    assert "lean binary sha256 not hashed  lake binary sha256 not hashed" in text
     for k, v in {**doc["lake_files"], **doc["files"]}.items():
         assert f"{v['sha256']}  {k}" in text
     assert "Lib/C.lean  -> " in text
