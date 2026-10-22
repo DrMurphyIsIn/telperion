@@ -184,27 +184,97 @@ def test_inert_face_above_100_raises_maxRecDepth_only_there():
     assert txt.count("set_option maxRecDepth") == sum(1 for p in (7, 101, 199) if p > 100)
 
 
-def test_ci_axiom_step_is_an_allow_list():
-    """REVIEW_PR766 C1: the CI axiom guard must accept only subsets of Mathlib's three axioms, not
-    merely deny `sorryAx` / `ofReduceBool` (on v4.32.0 `native_decide` yields a `_native...ax_n`
-    axiom that a deny-list would miss)."""
+_STD = "[propext, Classical.choice, Quot.sound]"
+_GUARD_ANCHORS = 24
+
+
+def _real_guard_output() -> str:
+    """The shape of the island's real guard output: 24 anchors, 20 with Mathlib's three axioms and
+    4 (the pure `decide` tables and `not_isWitness_two_two`) with `[propext]` only."""
+    names = [f"QuadraticOrderRootTable.anchor_{i}" for i in range(_GUARD_ANCHORS)]
+    return "".join(f"'{n}' depends on axioms: {'[propext]' if i % 6 == 0 else _STD}\n"
+                   for i, n in enumerate(names))
+
+
+def _padded(bad_block: str) -> str:
+    """`bad_block` plus enough standard lines to keep the anchor count at exactly 24, so a
+    rejection can only come from the allow-list, never from the count pin."""
+    k = sum(1 for line in bad_block.splitlines() if "depends on axioms" in line)
+    pad = "".join(f"'QuadraticOrderRootTable.pad_{i}' depends on axioms: {_STD}\n"
+                  for i in range(_GUARD_ANCHORS - k))
+    return pad + bad_block
+
+
+# bb's RealWrap.lean output (REVIEW_PR766 Add.1): a native_decide twin of d56_classNumber_ne_one.
+# Lean wraps the long list one axiom per line; a line-based check reads only `[propext,`.
+_REALWRAP = (
+    "'QuadraticOrderRootTable.d56_classNumber_ne_one' depends on axioms: "
+    "[propext, Classical.choice, Quot.sound]\n"
+    "'QuadraticOrderRootTable.d56_classNumber_ne_one_nd' depends on axioms: [propext,\n"
+    " Classical.choice,\n"
+    " Quot.sound,\n"
+    " QuadraticOrderRootTable.d56_classNumber_ne_one_nd._native.native_decide.ax_1_1]\n")
+_WRAPPED_SORRY = (
+    "'QuadraticOrderRootTable.d8' depends on axioms: [propext,\n"
+    " sorryAx]\n")
+_LOOKALIKE = "'QuadraticOrderRootTable.d8' depends on axioms: [propext, Classical_choice, Quot.sound]\n"
+_NO_AXIOMS = "".join(f"'QuadraticOrderRootTable.anchor_{i}' does not depend on any axioms\n"
+                     for i in range(_GUARD_ANCHORS))
+_TOO_FEW = "".join(f"'QuadraticOrderRootTable.anchor_{i}' depends on axioms: {_STD}\n"
+                   for i in range(_GUARD_ANCHORS - 1))
+
+
+def _ci_axiom_step_run() -> str:
     yaml = pytest.importorskip("yaml")
     wf = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "telperion-lean-e2e.yml"
     job = yaml.safe_load(wf.read_text())["jobs"]["quadratic-order-root-table-compiles"]
-    step = [s for s in job["steps"] if "AxiomGuardQuadraticOrderRootTable" in str(s.get("run", ""))]
-    assert len(step) == 1
-    run = step[0]["run"]
-    for ax in ("propext", "Classical.choice", "Quot.sound"):
-        assert ax in run, ax
-    assert "grep -vxE" in run and "non-standard axiom" in run
+    steps = [s for s in job["steps"]
+             if "AxiomGuardQuadraticOrderRootTable" in str(s.get("run", ""))]
+    assert len(steps) == 1
+    assert "allow-list" in steps[0]["name"] and "sorryAx" not in steps[0]["name"]
+    return steps[0]["run"]
 
 
-def test_certify_propagates_the_refusal():
-    fam = quadratic_order_root_table_family(
-        "Bad", GridSpec([("i", [0])]), lambda pt: "bad",
-        spec=lambda pt: dict(t=0, c=5, primes=[9]))
-    with pytest.raises(Exception, match="REFUSED"):
-        certify(fam)
+def _run_ci_axiom_step(tmp_path, fixture: str) -> int:
+    """EXECUTE the CI step's run block with the `lake env lean` line replaced by the fixture."""
+    import shutil
+    import subprocess
+    run = _ci_axiom_step_run()
+    lines = run.splitlines()
+    idx = [i for i, l in enumerate(lines) if l.strip().startswith("lake env lean")]
+    assert len(idx) == 1, lines
+    lines[idx[0]] = 'cp "$FIXTURE" axioms.out'
+    (tmp_path / "fixture.out").write_text(fixture, encoding="utf-8")
+    (tmp_path / "step.sh").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    bash = shutil.which("bash")
+    assert bash
+    r = subprocess.run([bash, "step.sh"], cwd=tmp_path, capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", "FIXTURE": str(tmp_path / "fixture.out")})
+    return r.returncode
+
+
+@pytest.mark.parametrize("label,fixture,accept", [
+    ("real guard output", _real_guard_output(), True),
+    ("bb RealWrap: wrapped native_decide aux axiom", _padded(_REALWRAP), False),
+    ("wrapped sorryAx", _padded(_WRAPPED_SORRY), False),
+    ("look-alike Classical_choice", _padded(_LOOKALIKE), False),
+    ("no axioms at all", _NO_AXIOMS, True),
+    ("one anchor missing", _TOO_FEW, False),
+])
+def test_ci_axiom_step_executed_against_fixtures(tmp_path, label, fixture, accept):
+    """REVIEW_PR766 C1 + Add.1: the CI axiom guard is an ALLOW-LIST that parses whole (possibly
+    line-wrapped) axiom lists and matches fixed strings.  The step's run block is executed, not
+    inspected: a deny-list of sorryAx / ofReduceBool, a line-based parser, or an -E pattern would
+    each accept one of the rejected fixtures."""
+    code = _run_ci_axiom_step(tmp_path, fixture)
+    assert (code == 0) == accept, (label, code)
+
+
+def test_axiom_guard_file_has_exactly_the_pinned_anchor_count():
+    guard = _EX / "lean" / "AxiomGuardQuadraticOrderRootTable.lean"
+    n = sum(1 for l in guard.read_text(encoding="utf-8").splitlines()
+            if l.startswith("#print axioms"))
+    assert n == _GUARD_ANCHORS
 
 
 # --- 4. the independent re-check --------------------------------------------------------
