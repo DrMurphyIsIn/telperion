@@ -117,6 +117,12 @@ from .emit_scaled_interval_eval import (  # noqa: F401
     certify_scaled_interval_eval_point, scaled_interval_prelude_lean,
     scaled_interval_prelude_body,
 )
+from .emit_quadratic_order_root_table import (  # noqa: F401
+    QuadraticOrderRootTableEmitter, QuadraticOrderRootTableCert, PrimeFace,
+    quadratic_order_root_table_certificate, quadratic_order_root_table_family,
+    certify_quadratic_order_root_table_point, verify_certificate as verify_quadratic_order_root_table,
+    quadratic_order_root_prelude_lean, quadratic_order_root_prelude_body,
+)
 from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,

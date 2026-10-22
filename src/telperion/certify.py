@@ -435,6 +435,11 @@ _SPECIAL_KINDS = (
     # {+, -, *, integer powers, exp}, every box recomputed by `decide +kernel` and lifted to R
     # by once-proved mem_* lemmas (the ScaledInterval prelude).  Nothing about RH.
     "scaled_interval_eval",
+    # quadratic_order_root_table (2026-10-22, CN-1 survey N3): Kummer-Dedekind split / inert /
+    # ramified faces of a monogenic quadratic order X^2 - t X + c, each a pure-N fact decided by
+    # the kernel, consumed by the QuadraticOrderRoot prelude; split primes with 4p <= d, p != c
+    # are class-number witnesses (h != 1).  Nothing about RH.
+    "quadratic_order_root_table",
     # exp_threshold (2026-09-22, SHAPES_AUDIT_48H section 2 rank 5; B N2, C 4.5): from a rational
     # or symbolic threshold on the Gaussian width to exponential domination via `1 + t <= e^t`
     # (linear / log bundles reading a nested-max threshold with the `max 1` guard folded in, plus
@@ -783,6 +788,10 @@ _SPECIAL_DISPATCH = {
     "scaled_interval_eval":
         ("emit_scaled_interval_eval", "certify_scaled_interval_eval_point",
          "ScaledIntervalEvalEmitter"),
+    # quadratic_order_root_table (kernel-decided Kummer-Dedekind faces of a quadratic order).
+    "quadratic_order_root_table":
+        ("emit_quadratic_order_root_table", "certify_quadratic_order_root_table_point",
+         "QuadraticOrderRootTableEmitter"),
     # exp_threshold (threshold-to-exponential-domination bundles and atoms, Real.add_one_le_exp).
     "exp_threshold":
         ("emit_exp_threshold", "certify_exp_threshold_point", "ExpThresholdEmitter"),
