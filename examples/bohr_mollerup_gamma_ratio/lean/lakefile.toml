@@ -1,0 +1,17 @@
+name = "BohrMollerupGammaRatio"
+defaultTargets = ["BohrMollerupPrelude", "BohrMollerupGammaRatio"]
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+# BohrMollerupPrelude: the once-proved Bohr-Mollerup bounds on Real.Gamma, the q-th-root
+# brackets for rpow and the range-product chunker.  Emitted by
+# telperion.bohr_mollerup_prelude_lean and drift-checked by generate.py --check.
+[[lean_lib]]
+name = "BohrMollerupPrelude"
+
+# BohrMollerupGammaRatio: the emitted per-instance products, kernel comparisons and enclosures.
+[[lean_lib]]
+name = "BohrMollerupGammaRatio"
