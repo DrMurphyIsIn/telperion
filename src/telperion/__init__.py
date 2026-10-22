@@ -123,6 +123,11 @@ from .emit_nat_root_bracket_table import (  # noqa: F401
     nat_root_bracket_table_family, certify_nat_root_bracket_table_point,
     nat_root_bracket_prelude_lean, nat_root_bracket_prelude_body, nat_iroot,
 )
+from .emit_range_completeness import (  # noqa: F401
+    RangeCompletenessEmitter, RangeCompletenessCert, SquarefreeSurrogate,
+    range_completeness_certificate, range_completeness_family,
+    certify_range_completeness_point,
+)
 from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,
