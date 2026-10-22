@@ -435,6 +435,11 @@ _SPECIAL_KINDS = (
     # {+, -, *, integer powers, exp}, every box recomputed by `decide +kernel` and lifted to R
     # by once-proved mem_* lemmas (the ScaledInterval prelude).  Nothing about RH.
     "scaled_interval_eval",
+    # nat_root_bracket_table (2026-10-22, CN-1 emitter survey N1): kernel-decided ℕ facts
+    # `L^q m^p <= S^q <= U^q m^p` bracketing a rational power m^(+-p/q), singly or as blocked
+    # `List ℕ` tables with block sums, lifted to ℝ by the once-proved NatRootBracket prelude.
+    # Finite arithmetic facts about rational powers and their partial sums; nothing about RH.
+    "nat_root_bracket_table",
     # exp_threshold (2026-09-22, SHAPES_AUDIT_48H section 2 rank 5; B N2, C 4.5): from a rational
     # or symbolic threshold on the Gaussian width to exponential domination via `1 + t <= e^t`
     # (linear / log bundles reading a nested-max threshold with the `max 1` guard folded in, plus
@@ -783,6 +788,10 @@ _SPECIAL_DISPATCH = {
     "scaled_interval_eval":
         ("emit_scaled_interval_eval", "certify_scaled_interval_eval_point",
          "ScaledIntervalEvalEmitter"),
+    # nat_root_bracket_table (kernel-decided q-th-root brackets of m^(+-p/q), single and blocked).
+    "nat_root_bracket_table":
+        ("emit_nat_root_bracket_table", "certify_nat_root_bracket_table_point",
+         "NatRootBracketTableEmitter"),
     # exp_threshold (threshold-to-exponential-domination bundles and atoms, Real.add_one_le_exp).
     "exp_threshold":
         ("emit_exp_threshold", "certify_exp_threshold_point", "ExpThresholdEmitter"),
