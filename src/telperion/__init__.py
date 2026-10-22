@@ -117,6 +117,11 @@ from .emit_scaled_interval_eval import (  # noqa: F401
     certify_scaled_interval_eval_point, scaled_interval_prelude_lean,
     scaled_interval_prelude_body,
 )
+from .emit_range_completeness import (  # noqa: F401
+    RangeCompletenessEmitter, RangeCompletenessCert, SquarefreeSurrogate,
+    range_completeness_certificate, range_completeness_family,
+    certify_range_completeness_point,
+)
 from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,
