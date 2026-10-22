@@ -387,9 +387,80 @@ def test_adapter_twins_differ_by_one_entry_only():
     # the list, its block sum, the two one-sided theorem statements, the conjunction and its gate
     assert 3 <= len(diff) <= 6, diff
     assert diff[0][0].startswith("def twin_lo_1 : List ℕ := [")
+    # the forged CLAIM stays TRUE (the forged lower total is still below the true sum), so the
+    # kernel's rejection is of a corrupted WITNESS under a true claim (REVIEW_PR765 question 3)
+    import mpmath
+    mpmath.mp.dps = 50
+    true = mpmath.fsum(mpmath.mpf(i + 1) ** (-mpmath.mpf(3) / 4) for i in range(40))
+    assert mpmath.mpf(f.lo_total) / f.scale < true < mpmath.mpf(f.hi_total) / f.scale
+    assert f.lo_total == t.lo_total + 1 == 66495196525
 
 
-# --- 6. Lean end to end (gated on a built env) ------------------------------------------
+_WF = _ROOT.parent / ".github" / "workflows" / "telperion-lean-e2e.yml"
+_FIX = Path(__file__).resolve().parent / "fixtures" / "nat_root_bracket_table"
+
+
+def _run_ci_axiom_check(tmp_path, axioms_text: str) -> int:
+    """EXECUTE the CI axiom step's run block (everything but the `lake env lean | tee` line) in a
+    directory holding the given `axioms.out`, under `bash -e` like a GitHub `run:` block."""
+    yaml = pytest.importorskip("yaml")
+    job = yaml.safe_load(_WF.read_text())["jobs"]["nat-root-bracket-table-compiles"]
+    step = [s for s in job["steps"] if s.get("name", "").startswith("Axiom guard")][0]
+    lines = [ln for ln in step["run"].splitlines() if "lake env lean" not in ln]
+    (tmp_path / "axioms.out").write_text(axioms_text, encoding="utf-8")
+    return subprocess.run(["bash", "-e", "-c", "\n".join(lines)], cwd=str(tmp_path),
+                          capture_output=True, text=True).returncode
+
+
+def _real_guard() -> str:
+    return (_FIX / "guard_real.txt").read_text(encoding="utf-8")
+
+
+def test_ci_axiom_guard_accepts_the_real_guard_output(tmp_path):
+    real = _real_guard()
+    assert real.count("depends on axioms: [propext, Classical.choice, Quot.sound]") == 10
+    assert _run_ci_axiom_check(tmp_path, real) == 0
+    # the guard file names exactly the ten anchors the step pins
+    guard = (_ENV / "AxiomGuardNatRootBracketTable.lean").read_text(encoding="utf-8")
+    assert guard.count("#print axioms ") == 10
+
+
+def test_ci_axiom_guard_accepts_ten_axiom_free_declarations(tmp_path):
+    noax = "".join(f"'NatRootBracket.l{i}' does not depend on any axioms\n" for i in range(10))
+    assert _run_ci_axiom_check(tmp_path, noax) == 0
+
+
+def test_ci_axiom_guard_rejects_real_wrapped_native_decide_output(tmp_path):
+    """REVIEW_PR766 Add.1: real v4.32.0 output wraps the list one axiom per line, so a first-line
+    check reads `[propext,` and accepts the `<thm>._native.native_decide.ax_1_1` axiom."""
+    wrapped = (_FIX / "realwrap_native_decide.txt").read_text(encoding="utf-8")
+    assert "\n Classical.choice,\n" in wrapped                 # it really is wrapped
+    assert "._native.native_decide.ax_1_1]" in wrapped
+    # eight clean anchors + the two real lines = ten anchors, so only the axiom check can reject it
+    real8 = "".join(_real_guard().splitlines(True)[:8])
+    assert _run_ci_axiom_check(tmp_path, real8 + wrapped) != 0
+
+
+def test_ci_axiom_guard_rejects_wrapped_sorry_and_look_alike(tmp_path):
+    real9 = "".join(_real_guard().splitlines(True)[:9])
+    sorry_wrapped = ("'NatRootBracketTable.z' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n"
+                     " Quot.sound]\n")
+    assert _run_ci_axiom_check(tmp_path, real9 + sorry_wrapped) != 0
+    look_alike = "'NatRootBracketTable.w' depends on axioms: [propext, ClassicalXchoice, Quot.sound]\n"
+    assert _run_ci_axiom_check(tmp_path, real9 + look_alike) != 0
+    extra = "'NatRootBracketTable.v' depends on axioms: [propext, Classical.choice, Quot.sound, myAxiom]\n"
+    assert _run_ci_axiom_check(tmp_path, real9 + extra) != 0
+
+
+def test_ci_axiom_guard_pins_the_anchor_count_and_closed_lists(tmp_path):
+    real = _real_guard().splitlines(True)
+    assert _run_ci_axiom_check(tmp_path, "".join(real[:9])) != 0            # one anchor dropped
+    assert _run_ci_axiom_check(tmp_path, "".join(real) + real[0]) != 0      # one anchor too many
+    truncated = "".join(real[:9]) + "'NatRootBracketTable.t' depends on axioms: [propext,\n"
+    assert _run_ci_axiom_check(tmp_path, truncated) != 0                    # header without a closed list
+
+
+# --- 7. Lean end to end (gated on a built env) ------------------------------------------
 
 def _env_ready():
     from lean_env import lean_env_ready
