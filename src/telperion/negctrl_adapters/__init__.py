@@ -34,6 +34,7 @@ from . import adapter_monotone_tail  # noqa: F401
 from . import adapter_nullstellensatz  # noqa: F401
 from . import adapter_order_balance  # noqa: F401
 from . import adapter_preordering_multiplier  # noqa: F401
+from . import adapter_range_completeness  # noqa: F401
 from . import adapter_rational_identity  # noqa: F401
 from . import adapter_rational_s_o_s  # noqa: F401
 from . import adapter_real_nullstellensatz  # noqa: F401
@@ -89,6 +90,7 @@ __all__ = [
     'adapter_nullstellensatz',
     'adapter_order_balance',
     'adapter_preordering_multiplier',
+    'adapter_range_completeness',
     'adapter_rational_identity',
     'adapter_rational_s_o_s',
     'adapter_real_nullstellensatz',
