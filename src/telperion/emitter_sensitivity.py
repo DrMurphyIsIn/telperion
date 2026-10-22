@@ -812,8 +812,10 @@ REGISTRY: dict[str, SensitivityStance] = {
         "certify REFUSES (ValueError, not a printed flag) a claim the exact comparisons do not "
         "imply.  One ratio of Gamma values; nothing about class numbers or RH "
         "(conjecture1_proved = False)",
-        # Kernel control: LO forged to the certified upper decimal (above the true value), so
-        # key_lo is a false Nat inequality.  See negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py.
+        # Kernel control (witness forgery): l1 raised by one with the claims unchanged, so the
+        # root inequality behind hA is a false Nat fact; a second control forges the claim (LO :=
+        # HI, above the true value), so key_lo is false.  See
+        # negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py.
         neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "BilinearCornerBoxEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Worst-corner box positivity: reusable affine-min-at-corners lemma closed by sign-cased mul_nonneg/nlinarith + 4 corner facts each norm_num-recomputed"),
