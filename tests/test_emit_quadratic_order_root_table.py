@@ -172,10 +172,31 @@ def test_inert_cap_is_explicit():
 
 
 def test_inert_face_above_100_raises_maxRecDepth_only_there():
-    txt = _emit_text([dict(t=0, c=2, primes=[101, 199])], ["r"])
-    assert "theorem r_noroot_101 : ∀ z : ZMod 101" in txt
+    """The rule is `p > 100` (INERT_RECDEPTH_PRIME): the default depth fails at p = 193 and 199 and
+    passes at p = 101, and the band between is unmeasured, so the knob is applied from 101 up.  It
+    is an elaboration setting; the emitted Lean is the same statement either way."""
+    txt = _emit_text([dict(t=0, c=2, primes=[7, 101, 199])], ["r"])
+    assert "theorem r_noroot_7 : ∀ z : ZMod 7" in txt
+    assert "set_option maxRecDepth 8192 in\ntheorem r_noroot_7" not in txt
+    assert "set_option maxRecDepth 8192 in\ntheorem r_noroot_101 : ∀ z : ZMod 101" in txt
     assert "set_option maxRecDepth 8192 in\ntheorem r_noroot_199 : ∀ z : ZMod 199" in txt
-    assert txt.count("set_option maxRecDepth") == 1
+    assert txt.count("set_option maxRecDepth") == 2
+    assert txt.count("set_option maxRecDepth") == sum(1 for p in (7, 101, 199) if p > 100)
+
+
+def test_ci_axiom_step_is_an_allow_list():
+    """REVIEW_PR766 C1: the CI axiom guard must accept only subsets of Mathlib's three axioms, not
+    merely deny `sorryAx` / `ofReduceBool` (on v4.32.0 `native_decide` yields a `_native...ax_n`
+    axiom that a deny-list would miss)."""
+    yaml = pytest.importorskip("yaml")
+    wf = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "telperion-lean-e2e.yml"
+    job = yaml.safe_load(wf.read_text())["jobs"]["quadratic-order-root-table-compiles"]
+    step = [s for s in job["steps"] if "AxiomGuardQuadraticOrderRootTable" in str(s.get("run", ""))]
+    assert len(step) == 1
+    run = step[0]["run"]
+    for ax in ("propext", "Classical.choice", "Quot.sound"):
+        assert ax in run, ax
+    assert "grep -vxE" in run and "non-standard axiom" in run
 
 
 def test_certify_propagates_the_refusal():
