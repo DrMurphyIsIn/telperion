@@ -1,0 +1,45 @@
+{
+  "imports": [
+    "ClosureAuditExample.Example",
+    "ClosureAuditExample.Tainted"
+  ],
+  "targets": [
+    "ClosureAuditExample.prime_101",
+    "ClosureAuditExample.two_le_of_prime",
+    "ClosureAuditExample.sum_le",
+    "ClosureAuditExample.smallPrimes_prime"
+  ],
+  "library_roots": [
+    "Init",
+    "Lean",
+    "Std",
+    "Batteries",
+    "Mathlib",
+    "Aesop",
+    "Qq",
+    "ProofWidgets",
+    "Plausible",
+    "LeanSearchClient",
+    "ImportGraph",
+    "Lake",
+    "Cli"
+  ],
+  "scan_patterns": [
+    "sorry",
+    "fake",
+    "negcontrol"
+  ],
+  "absent_constants": [
+    "sorryAx"
+  ],
+  "absent_module_prefixes": [
+    "ClosureAuditExample.Tainted"
+  ],
+  "allowed_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ],
+  "include_recursors": true,
+  "closure_out": null
+}
