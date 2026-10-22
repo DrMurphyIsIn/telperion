@@ -794,6 +794,22 @@ REGISTRY: dict[str, SensitivityStance] = {
     "FiniteDecideEmitter": _S(STRUCTURALLY_NONVACUOUS,
                               "a finite proposition discharged by the Lean kernel "
                               "`decide` — decidable, no corruptible certificate"),
+    "RangeCompletenessEmitter": _S(STRUCTURALLY_NONVACUOUS,
+        "range-completeness face of finite_decide (CN-1 survey N6): `∀ m ∈ Finset.range N, "
+        "P' m → guards → m ∉ excl → m ∈ L` by `decide +kernel`, plus the once-proved bridge "
+        "`Squarefree m → SqfBelow K m` and the optional length / nodup / soundness companions. "
+        "The list L IS the statement, not a witness FOR it: the kernel re-decides every "
+        "membership, so there is no separately-supplied identity to corrupt and the shape is "
+        "structural.  certify REFUSES a false coverage (names the uncovered m), a VACUOUS "
+        "coverage (no m in the range satisfies the guards -- the one way this shape can be "
+        "empty), a surrogate bound with K^2 <= N, a repeated element when nodup is requested, "
+        "an element outside the guarded set when soundness is requested, and floats.  A finite "
+        "decidability fact about an explicit list; nothing about RH (conjecture1_proved = False)",
+        # Structural, yet a kernel control exists and is demonstrated: drop one element of L
+        # (the largest squarefree below N) and the coverage theorem's `decide +kernel` is
+        # false, so the kernel rejects it; the unmodified twin compiles.  See
+        # negctrl_adapters/adapter_range_completeness.py.
+        neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "PolyaZerosEmitter": _S(STRUCTURALLY_NONVACUOUS,
                             "Castle–Powers–Reznick Pólya-with-zeros homogeneous "
                             "lift; positivity (zeros allowed on faces)"),

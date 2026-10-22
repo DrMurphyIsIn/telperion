@@ -88,13 +88,13 @@ def test_zp_count_matches_factor():
 
 # ------------------------------------------------------------------------------------------------ definitions
 def test_tw_no_fe_value_matches_bb():
-    """bb's ARB: TW(1 - conj rho0) = 0.0875640 + 0.0706352i != 0 (selberg.md 3.4)."""
+    """Independent ARB check: TW(1 - conj rho0) = 0.0875640 + 0.0706352i != 0 (memo S 3.4)."""
     v = L.get("TW_raw").eval(1 - L._rho0().conjugate())
     assert v.real.overlaps(flint.arb("0.0875640", "1e-7")) and v.imag.overlaps(flint.arb("0.0706352", "1e-7"))
 
 
 def test_sym_not_zero_at_reflected_points():
-    """1 - rho0 and rho0 - 1 are zeros of Lambda_SYM only, not of SYM (bb N: |SYM| = 0.0544, 0.199)."""
+    """1 - rho0 and rho0 - 1 are zeros of Lambda_SYM only, not of SYM (independent review, N: |SYM| = 0.0544, 0.199)."""
     r = L._rho0()
     e = L.get("SYM")
     a, b = abs(e.eval(1 - r)), abs(e.eval(r - 1))
@@ -156,7 +156,7 @@ def test_ein_taylor_matches_e1_form():
 
 
 def test_n8_on_the_rho0_cut():
-    """bb (PR #744 review): exactly on E1's cut through rho0 the old evaluator gave relative radius 3.9.  The Ein form
+    """PR #744 review: exactly on E1's cut through rho0 the old evaluator gave relative radius 3.9.  The Ein form
     is tight there, and a box straddling the cut (Im s = gamma0, Re s < 0) certifies zero-free."""
     from flint import acb, ctx
     old = ctx.prec
@@ -277,7 +277,7 @@ def test_calibrate_recertify_is_arb_end_to_end():
 
 
 def test_calibrate_malformed_claim_is_an_error_row_not_an_abort():
-    """bb (PR #744 review): a claim without .region used to raise outside the try and abort the whole run."""
+    """PR #744 review: a claim without .region used to raise outside the try and abort the whole run."""
     rep = L.calibrate(lambda f, m: "no zeros, trust me" if m["name"] == "EP5" else Claim(GRID),
                       entries=["EP5", "DH", "ZP"])
     assert rep["errors"] == ["EP5"] and rep["contradicted"] == ["DH", "ZP"]
@@ -328,7 +328,7 @@ def test_box_outside_region_refused():
 
 @pytest.mark.parametrize("cuts", [["-1/5"], ["1/5"], ["1/20", "-1/20"], ["0", "0"], ["-1/10"]])
 def test_count_entry_validates_cuts_first(cuts, monkeypatch):
-    """bb (PR #744 review): cuts outside (im0, im1) or unsorted are refused up front, before any strip is wound."""
+    """PR #744 review: cuts outside (im0, im1) or unsorted are refused up front, before any strip is wound."""
     calls = []
     monkeypatch.setattr(arb_fakes, "rigorous_winding", lambda *a, **k: calls.append(a) or 0)
     with pytest.raises(ValueError, match="cuts"):
@@ -343,9 +343,9 @@ def test_count_entry_adds_poles():
 
 def test_resolve_provenance_uses_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TELPERION_RH_TEAM", str(tmp_path))
-    p = L.resolve_provenance("rh-team:wall4/S/selberg.md 3.2")
-    assert p == tmp_path / "wall4/S/selberg.md"
-    assert L.resolve_provenance("bb in-session check") is None
+    p = L.resolve_provenance("rh-team:memo/S.md 3.2")
+    assert p == tmp_path / "memo/S.md"
+    assert L.resolve_provenance("independent review") is None
 
 
 def test_repo_provenance_paths_exist():

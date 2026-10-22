@@ -123,6 +123,11 @@ from .emit_quadratic_order_root_table import (  # noqa: F401
     certify_quadratic_order_root_table_point, verify_certificate as verify_quadratic_order_root_table,
     quadratic_order_root_prelude_lean, quadratic_order_root_prelude_body,
 )
+from .emit_range_completeness import (  # noqa: F401
+    RangeCompletenessEmitter, RangeCompletenessCert, SquarefreeSurrogate,
+    range_completeness_certificate, range_completeness_family,
+    certify_range_completeness_point,
+)
 from .emit_exp_threshold import (  # noqa: F401
     ExpThresholdEmitter, ExpThresholdCert, ExpThresholdStep, exp_threshold_certificate,
     exp_threshold_family, certify_exp_threshold_point,
