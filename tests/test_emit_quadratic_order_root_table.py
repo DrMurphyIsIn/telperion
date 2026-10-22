@@ -277,6 +277,14 @@ def test_axiom_guard_file_has_exactly_the_pinned_anchor_count():
     assert n == _GUARD_ANCHORS
 
 
+def test_certify_propagates_the_refusal():
+    fam = quadratic_order_root_table_family(
+        "Bad", GridSpec([("i", [0])]), lambda pt: "bad",
+        spec=lambda pt: dict(t=0, c=5, primes=[9]))
+    with pytest.raises(Exception, match="REFUSED"):
+        certify(fam)
+
+
 # --- 4. the independent re-check --------------------------------------------------------
 
 def test_verify_rejects_every_forgery():
