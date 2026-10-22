@@ -1,0 +1,2 @@
+import ClosureAuditExample.Example
+import ClosureAuditExample.Tainted
