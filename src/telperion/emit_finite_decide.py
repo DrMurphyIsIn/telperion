@@ -19,9 +19,20 @@ any Lean is written) and rendered to Lean (`by decide`), eliminating the
 text/semantics divergence channel.  The Lean kernel is the final gate.
 
 AST:  ForallIn(var, table, body) · Imp(hyp, body) · Cmp(op, lhs, rhs)
-      with op in {le, lt, eq, ne} and expressions built from
-      Var/Lit/Xor/Pop (ℕ sort) and Lookup/Mul/Lit (ℤ sort, table lookups
+      with op in {le, lt, eq, ne, dvd} and expressions built from
+      Var/Lit/Xor/Pop/Mod (ℕ sort) and Lookup/Mul/Lit (ℤ sort, table lookups
       defaulting to 0 off-table).
+
+Range-completeness face (2026-10-22, CN-1 survey item N6): the same AST
+also states that an explicit list covers a guarded initial segment of ℕ,
+
+      ∀ m ∈ Finset.range N, guard m → m ∈ L,
+
+through ForallRange(var, n, body) (the domain `Finset.range n`),
+ForallIcc(var, lo, hi, body) (a bounded inner quantifier, `Finset.Icc lo hi`),
+Not(body), And(lhs, rhs) and Mem/NotMem(elem, table) (list membership).
+These nodes are consumed by `emit_range_completeness.py`, which adds the
+surrogate-predicate bridge; `FiniteDecideEmitter` itself renders them too.
 """
 from __future__ import annotations
 
@@ -97,8 +108,15 @@ class Mul:
 
 
 @dataclass(frozen=True)
+class Mod:
+    """ℕ remainder `lhs % rhs` (rhs a positive literal; Lean's `%` on ℕ)."""
+    lhs: object
+    rhs: object
+
+
+@dataclass(frozen=True)
 class Cmp:
-    op: str  # le | lt | eq | ne
+    op: str  # le | lt | eq | ne | dvd
     lhs: object
     rhs: object
 
@@ -116,7 +134,52 @@ class ForallIn:
     body: object
 
 
-Node = Union[Var, Lit, Xor, Pop, Lookup, Mul, Cmp, Imp, ForallIn]
+# --- range-completeness face (N6) ---------------------------------------
+
+@dataclass(frozen=True)
+class ForallRange:
+    """`∀ var ∈ Finset.range n, body` — the initial segment {0, …, n-1}."""
+    var: str
+    n: int
+    body: object
+
+
+@dataclass(frozen=True)
+class ForallIcc:
+    """`∀ var ∈ Finset.Icc lo hi, body` — the closed integer interval."""
+    var: str
+    lo: int
+    hi: int
+    body: object
+
+
+@dataclass(frozen=True)
+class Not:
+    body: object
+
+
+@dataclass(frozen=True)
+class And:
+    lhs: object
+    rhs: object
+
+
+@dataclass(frozen=True)
+class Mem:
+    """`elem ∈ table` for a NatTable (Lean `List ℕ` membership)."""
+    elem: object
+    table: str
+
+
+@dataclass(frozen=True)
+class NotMem:
+    """`elem ∉ table` for a NatTable."""
+    elem: object
+    table: str
+
+
+Node = Union[Var, Lit, Xor, Pop, Lookup, Mul, Mod, Cmp, Imp, ForallIn,
+             ForallRange, ForallIcc, Not, And, Mem, NotMem]
 
 
 # ------------------------------------------------------- exact evaluation
@@ -138,11 +201,29 @@ def _eval_expr(node, env, tables):
         return 0
     if isinstance(node, Mul):
         return _eval_expr(node.lhs, env, tables) * _eval_expr(node.rhs, env, tables)
+    if isinstance(node, Mod):
+        a, b = _eval_expr(node.lhs, env, tables), _eval_expr(node.rhs, env, tables)
+        if a < 0 or b <= 0:
+            raise ValueError(f"Mod is ℕ-sorted with a positive modulus, got {a} % {b}")
+        return a % b
     raise ValueError(f"not an expression node: {node!r}")
 
 
+def _dvd(a, b):
+    """`a ∣ b` on ℕ, with Lean's convention `0 ∣ b ↔ b = 0`."""
+    return b == 0 if a == 0 else b % a == 0
+
+
 _OPS = {"le": lambda a, b: a <= b, "lt": lambda a, b: a < b,
-        "eq": lambda a, b: a == b, "ne": lambda a, b: a != b}
+        "eq": lambda a, b: a == b, "ne": lambda a, b: a != b,
+        "dvd": _dvd}
+
+
+def _nat_table(tables, name, who):
+    table = tables[name]
+    if not isinstance(table, NatTable):
+        raise ValueError(f"{who} ranges over NatTable, got {name}")
+    return table
 
 
 def _eval_prop(node, env, tables, counter):
@@ -155,13 +236,31 @@ def _eval_prop(node, env, tables, counter):
             return True
         return _eval_prop(node.body, env, tables, counter)
     if isinstance(node, ForallIn):
-        table = tables[node.table]
-        if not isinstance(table, NatTable):
-            raise ValueError(f"ForallIn ranges over NatTable, got {node.table}")
+        table = _nat_table(tables, node.table, "ForallIn")
         for v in table.values:
             if not _eval_prop(node.body, {**env, node.var: v}, tables, counter):
                 return False
         return True
+    if isinstance(node, ForallRange):
+        for v in range(node.n):
+            if not _eval_prop(node.body, {**env, node.var: v}, tables, counter):
+                return False
+        return True
+    if isinstance(node, ForallIcc):
+        for v in range(node.lo, node.hi + 1):
+            if not _eval_prop(node.body, {**env, node.var: v}, tables, counter):
+                return False
+        return True
+    if isinstance(node, Not):
+        return not _eval_prop(node.body, env, tables, counter)
+    if isinstance(node, And):
+        return (_eval_prop(node.lhs, env, tables, counter)
+                and _eval_prop(node.rhs, env, tables, counter))
+    if isinstance(node, (Mem, NotMem)):
+        counter[0] += 1
+        table = _nat_table(tables, node.table, type(node).__name__)
+        found = _eval_expr(node.elem, env, tables) in table.values
+        return found if isinstance(node, Mem) else not found
     raise ValueError(f"not a prop node: {node!r}")
 
 
@@ -180,10 +279,20 @@ def _lean_expr(node, prefix):
         return f"{prefix}_{node.table}_get {_lean_expr(node.key, prefix)}"
     if isinstance(node, Mul):
         return f"({_lean_expr(node.lhs, prefix)} * {_lean_expr(node.rhs, prefix)})"
+    if isinstance(node, Mod):
+        return f"({_lean_expr(node.lhs, prefix)} % {_lean_expr(node.rhs, prefix)})"
     raise ValueError(f"not an expression node: {node!r}")
 
 
-_LEAN_OPS = {"le": "≤", "lt": "<", "eq": "=", "ne": "≠"}
+_LEAN_OPS = {"le": "≤", "lt": "<", "eq": "=", "ne": "≠", "dvd": "∣"}
+
+
+def _lean_atom(node, prefix):
+    """Render a prop, parenthesised unless it is an atomic comparison / membership
+    (an Imp hyp, a Not body or an And operand that is itself a binder or an
+    arrow would otherwise re-associate)."""
+    text = _lean_prop(node, prefix)
+    return text if isinstance(node, (Cmp, Mem, NotMem)) else f"({text})"
 
 
 def _lean_prop(node, prefix):
@@ -191,10 +300,26 @@ def _lean_prop(node, prefix):
         return (f"{_lean_expr(node.lhs, prefix)} {_LEAN_OPS[node.op]} "
                 f"{_lean_expr(node.rhs, prefix)}")
     if isinstance(node, Imp):
-        return f"{_lean_prop(node.hyp, prefix)} → {_lean_prop(node.body, prefix)}"
+        hyp = node.hyp
+        hyp_text = (_lean_prop(hyp, prefix) if isinstance(hyp, (Cmp, Mem, NotMem, Not))
+                    else f"({_lean_prop(hyp, prefix)})")
+        return f"{hyp_text} → {_lean_prop(node.body, prefix)}"
     if isinstance(node, ForallIn):
         return (f"∀ {node.var} ∈ {prefix}_{node.table}, "
                 f"{_lean_prop(node.body, prefix)}")
+    if isinstance(node, ForallRange):
+        return f"∀ {node.var} ∈ Finset.range {node.n}, {_lean_prop(node.body, prefix)}"
+    if isinstance(node, ForallIcc):
+        return (f"∀ {node.var} ∈ Finset.Icc {node.lo} {node.hi}, "
+                f"{_lean_prop(node.body, prefix)}")
+    if isinstance(node, Not):
+        return f"¬ {_lean_atom(node.body, prefix)}"
+    if isinstance(node, And):
+        return f"{_lean_atom(node.lhs, prefix)} ∧ {_lean_atom(node.rhs, prefix)}"
+    if isinstance(node, Mem):
+        return f"{_lean_expr(node.elem, prefix)} ∈ {prefix}_{node.table}"
+    if isinstance(node, NotMem):
+        return f"{_lean_expr(node.elem, prefix)} ∉ {prefix}_{node.table}"
     raise ValueError(f"not a prop node: {node!r}")
 
 
