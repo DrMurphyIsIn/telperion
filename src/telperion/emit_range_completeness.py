@@ -23,8 +23,9 @@ about `P`:
 
 The bridge is sound for EVERY K (it is the direction P → P').  What K controls
 is whether P' AGREES with P on the range, so that L means "the squarefree
-numbers": the exact condition is that K is at least every prime p with
-p² ≤ N - 1, i.e. K ≥ isqrt(N - 1).  The emitter enforces the simpler SUFFICIENT
+numbers": the exact condition is K ≥ 2 and K at least every prime p with
+p² ≤ N - 1 (K ≥ isqrt(N - 1) suffices; the exact minimum is the largest prime
+≤ isqrt(N - 1)).  The emitter enforces the simpler SUFFICIENT
 bound K² > N as a stated POLICY (a non-squarefree m < N has a square factor
 p² ≤ m < N, so p < √N ≤ K), and refuses K² ≤ N even where a smaller K would
 still be exact (K = 14 or 13 against N = 200, for instance).  The authority on
