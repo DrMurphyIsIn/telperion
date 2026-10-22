@@ -21,6 +21,7 @@ from . import adapter_exp_enclosure  # noqa: F401
 from . import adapter_exp_laurent_identity  # noqa: F401
 from . import adapter_exp_threshold  # noqa: F401
 from . import adapter_scaled_interval_eval  # noqa: F401
+from . import adapter_nat_root_bracket_table  # noqa: F401
 from . import adapter_factored_endpoint_enclosure  # noqa: F401
 from . import adapter_finite_argmax  # noqa: F401
 from . import adapter_fwd_telescope  # noqa: F401
@@ -78,6 +79,7 @@ __all__ = [
     'adapter_exp_laurent_identity',
     'adapter_exp_threshold',
     'adapter_scaled_interval_eval',
+    'adapter_nat_root_bracket_table',
     'adapter_factored_endpoint_enclosure',
     'adapter_finite_argmax',
     'adapter_fwd_telescope',

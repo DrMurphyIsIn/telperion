@@ -117,6 +117,12 @@ from .emit_scaled_interval_eval import (  # noqa: F401
     certify_scaled_interval_eval_point, scaled_interval_prelude_lean,
     scaled_interval_prelude_body,
 )
+from .emit_nat_root_bracket_table import (  # noqa: F401
+    NatRootBracketTableEmitter, NatRootBracketCert, NatRootBracketTableCert,
+    nat_root_bracket_certificate, nat_root_bracket_table_certificate,
+    nat_root_bracket_table_family, certify_nat_root_bracket_table_point,
+    nat_root_bracket_prelude_lean, nat_root_bracket_prelude_body, nat_iroot,
+)
 from .emit_range_completeness import (  # noqa: F401
     RangeCompletenessEmitter, RangeCompletenessCert, SquarefreeSurrogate,
     range_completeness_certificate, range_completeness_family,

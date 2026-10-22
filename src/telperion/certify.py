@@ -435,6 +435,11 @@ _SPECIAL_KINDS = (
     # {+, -, *, integer powers, exp}, every box recomputed by `decide +kernel` and lifted to R
     # by once-proved mem_* lemmas (the ScaledInterval prelude).  Nothing about RH.
     "scaled_interval_eval",
+    # nat_root_bracket_table (2026-10-22, CN-1 emitter survey N1): kernel-decided ℕ facts
+    # `L^q m^p <= S^q <= U^q m^p` bracketing a rational power m^(+-p/q), singly or as blocked
+    # `List ℕ` tables with block sums, lifted to ℝ by the once-proved NatRootBracket prelude.
+    # Finite arithmetic facts about rational powers and their partial sums; nothing about RH.
+    "nat_root_bracket_table",
     # range_completeness_decide (2026-10-22, CN-1 emitter survey N6, a face of finite_decide):
     # "every m < N satisfying the guards is in the explicit list", `decide +kernel` over
     # `Finset.range N`, with the surrogate-predicate bridge (Squarefree -> SqfBelow K) and the
@@ -793,6 +798,10 @@ _SPECIAL_DISPATCH = {
     "scaled_interval_eval":
         ("emit_scaled_interval_eval", "certify_scaled_interval_eval_point",
          "ScaledIntervalEvalEmitter"),
+    # nat_root_bracket_table (kernel-decided q-th-root brackets of m^(+-p/q), single and blocked).
+    "nat_root_bracket_table":
+        ("emit_nat_root_bracket_table", "certify_nat_root_bracket_table_point",
+         "NatRootBracketTableEmitter"),
     # range_completeness_decide (kernel-decided coverage of a guarded range by an explicit list).
     "range_completeness_decide":
         ("emit_range_completeness", "certify_range_completeness_point",
