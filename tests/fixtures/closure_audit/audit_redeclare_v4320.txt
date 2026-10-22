@@ -1,0 +1,54 @@
+@@FIXTURENONCE	protocol	telperion-closure-audit/1
+@@FIXTURENONCE	lean_version	4.32.0
+@@FIXTURENONCE	include_recursors	true
+@@FIXTURENONCE	target	ClosureAuditExample.prime_101	theorem	Nat.Prime 101
+@@FIXTURENONCE	closure_size	1880
+closure of [ClosureAuditExample.prime_101]: 1880 constants
+-- constants per root module --
+@@FIXTURENONCE	per_root	Batteries	1
+  Batteries: 1
+@@FIXTURENONCE	per_root	ClosureAuditExample	2
+  ClosureAuditExample: 2
+@@FIXTURENONCE	per_root	Init	1641
+  Init: 1641
+@@FIXTURENONCE	per_root	Mathlib	236
+  Mathlib: 236
+-- EVERY constant outside the library roots, by module --
+@@FIXTURENONCE	nonlib_module	ClosureAuditExample.Example	1
+[ClosureAuditExample.Example] (1)
+@@FIXTURENONCE	nonlib_const	ClosureAuditExample.Example	ClosureAuditExample.prime_101
+    ClosureAuditExample.prime_101
+@@FIXTURENONCE	nonlib_module	ClosureAuditExample.Redeclare	1
+[ClosureAuditExample.Redeclare] (1)
+@@FIXTURENONCE	nonlib_const	ClosureAuditExample.Redeclare	ClosureAuditExample.prime_101._native.native_decide.ax_1_1
+    ClosureAuditExample.prime_101._native.native_decide.ax_1_1
+-- name scan for [sorry, fake, negcontrol] --
+@@FIXTURENONCE	scan_hits	0
+@@FIXTURENONCE	scan_module_hit	Lean.Util.Sorry
+  MODULE HIT Lean.Util.Sorry
+@@FIXTURENONCE	scan_module_hit	Lean.Meta.Sorry
+  MODULE HIT Lean.Meta.Sorry
+@@FIXTURENONCE	scan_module_hit	Lean.Compiler.IR.Sorry
+  MODULE HIT Lean.Compiler.IR.Sorry
+@@FIXTURENONCE	env_modules_per_root	Aesop	132
+@@FIXTURENONCE	env_modules_per_root	Batteries	66
+@@FIXTURENONCE	env_modules_per_root	ClosureAuditExample	2
+@@FIXTURENONCE	env_modules_per_root	ImportGraph	10
+@@FIXTURENONCE	env_modules_per_root	Init	601
+@@FIXTURENONCE	env_modules_per_root	Lean	1193
+@@FIXTURENONCE	env_modules_per_root	LeanSearchClient	4
+@@FIXTURENONCE	env_modules_per_root	Mathlib	357
+@@FIXTURENONCE	env_modules_per_root	Plausible	13
+@@FIXTURENONCE	env_modules_per_root	ProofWidgets	10
+@@FIXTURENONCE	env_modules_per_root	Qq	14
+@@FIXTURENONCE	env_modules_per_root	Std	476
+@@FIXTURENONCE	absent_const	sorryAx	false
+@@FIXTURENONCE	closure_axioms	Classical.choice	ClosureAuditExample.prime_101._native.native_decide.ax_1_1	Quot.sound	propext
+axioms in the closure: #[Classical.choice, ClosureAuditExample.prime_101._native.native_decide.ax_1_1, Quot.sound, propext]
+@@FIXTURENONCE	axioms	ClosureAuditExample.prime_101	Classical.choice	Quot.sound	propext
+'ClosureAuditExample.prime_101' depends on axioms: #[Classical.choice, Quot.sound, propext]
+@@FIXTURENONCE	axioms_consistent	false
+@@FIXTURENONCE	failure	closure contains non-allowed axioms #[ClosureAuditExample.prime_101._native.native_decide.ax_1_1]
+@@FIXTURENONCE	failure	inconsistent environment (duplicate declaration or stale .olean): collectAxioms over the targets gives #[Classical.choice, Quot.sound, propext], the closure contains #[Classical.choice, ClosureAuditExample.prime_101._native.native_decide.ax_1_1, Quot.sound, propext]
+@@FIXTURENONCE	verdict	FAIL
+EXIT 0

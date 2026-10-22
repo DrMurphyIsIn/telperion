@@ -440,6 +440,11 @@ _SPECIAL_KINDS = (
     # the kernel, consumed by the QuadraticOrderRoot prelude; split primes with 4p <= d, p != c
     # are class-number witnesses (h != 1).  Nothing about RH.
     "quadratic_order_root_table",
+    # nat_root_bracket_table (2026-10-22, CN-1 emitter survey N1): kernel-decided ℕ facts
+    # `L^q m^p <= S^q <= U^q m^p` bracketing a rational power m^(+-p/q), singly or as blocked
+    # `List ℕ` tables with block sums, lifted to ℝ by the once-proved NatRootBracket prelude.
+    # Finite arithmetic facts about rational powers and their partial sums; nothing about RH.
+    "nat_root_bracket_table",
     # range_completeness_decide (2026-10-22, CN-1 emitter survey N6, a face of finite_decide):
     # "every m < N satisfying the guards is in the explicit list", `decide +kernel` over
     # `Finset.range N`, with the surrogate-predicate bridge (Squarefree -> SqfBelow K) and the
@@ -802,6 +807,10 @@ _SPECIAL_DISPATCH = {
     "quadratic_order_root_table":
         ("emit_quadratic_order_root_table", "certify_quadratic_order_root_table_point",
          "QuadraticOrderRootTableEmitter"),
+    # nat_root_bracket_table (kernel-decided q-th-root brackets of m^(+-p/q), single and blocked).
+    "nat_root_bracket_table":
+        ("emit_nat_root_bracket_table", "certify_nat_root_bracket_table_point",
+         "NatRootBracketTableEmitter"),
     # range_completeness_decide (kernel-decided coverage of a guarded range by an explicit list).
     "range_completeness_decide":
         ("emit_range_completeness", "certify_range_completeness_point",

@@ -51,11 +51,18 @@ the load-bearing one -- a claimed ``LO`` above the certified rational lower boun
 ``Nat`` inequalities the kernel decides, so a certificate that passes here compiles and one that
 fails here is never emitted.  (The CN-1 generator only PRINTED ``key1: False``; REVIEW_E C6.)
 
-NEGATIVE CONTROL (``negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py``): the Gamma(3/8) /
-Gamma(7/8) certificate with ``LO`` forged to the certified upper decimal ``HI`` -- a claim above
-the true value, which Layer 1 refuses -- makes ``nm_key_lo`` a FALSE ``Nat`` inequality, so
-``decide +kernel`` fails.  CERTIFICATE_SENSITIVE: the integers ``l1 u2 u3 l4`` and the two
-comparisons ARE the witness.
+NEGATIVE CONTROLS (``negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py``).  CERTIFICATE_
+SENSITIVE: the integers ``l1 u2 u3 l4`` and the two comparisons ARE the witness, so the registered
+control forges the WITNESS with the statement unchanged: the Gamma(3/8)/Gamma(7/8) certificate at
+``n = 200`` with ``l1`` raised by one (one above the maximal lower bracket) makes ``nm_hA``'s root
+inequality a FALSE ``Nat`` fact, and ``decide +kernel`` reports it false.  A second control forges
+the CLAIM (``LO`` := the certified upper decimal ``HI``, above the true value, which Layer 1
+refuses): ``nm_key_lo`` is then FALSE.  In both cases ``lean`` reports the error and exits 1; the
+declarations are still added by error recovery, carrying ``sorryAx``, which is what the harness's
+axiom check sees.  The adapter renders both twins with ``decide_rec_depth`` set, so the failure
+message is the readable "Tactic `decide` proved that the proposition ... is false"; under the
+default depth a failing ``key_lo`` exhausts ``maxRecDepth`` while its message is FORMATTED (the
+proposition is short; it names ``gA gB`` without expanding them).
 
 PRELUDE.  :func:`bohr_mollerup_prelude_lean` is the module ``BohrMollerupPrelude`` (Mathlib
 only): ``Gamma_add_nat_eq``, ``Gamma_add_le``, ``Gamma_add_ge``, ``Gamma_ratio_bounds``,
@@ -391,8 +398,23 @@ def _key_hi(c: BohrMollerupGammaRatioCert, gA: str, gB: str) -> str:
             f"{c.claim_hi.numerator} * {c.n} * {c.l4} * {gB}")
 
 
-def _render_instance(c: BohrMollerupGammaRatioCert, nm: str) -> tuple[list[str], int]:
+def _render_instance(c: BohrMollerupGammaRatioCert, nm: str,
+                     rec_depth: int | None = None) -> tuple[list[str], int]:
+    """The twelve declarations of one instance.  ``rec_depth`` prefixes each of the six
+    ``decide +kernel`` lemmas with ``set_option maxRecDepth <rec_depth> in``; the emitted proofs do
+    not need it (the kernel's depth is bounded by the block), but a FAILING ``key_lo`` / ``key_hi``
+    formats its message under the elaborator's default depth and runs out while doing so (a failing
+    root bracket does not), so the negative controls set it to record a readable rejection."""
     P = _PRELUDE_NS
+    opt = f"set_option maxRecDepth {rec_depth} in" if rec_depth is not None else None
+
+    def decide_lemma(doc: str | None, head: str) -> None:
+        if opt is not None:
+            L.append(opt)
+        if doc is not None:
+            L.append(doc)
+        L.append(head)
+
     n, C, K, q, S = c.n, c.blocks, c.block, c.q, c.scale
     x1, x2 = c.x1, c.x2
     p1, q1 = x1.numerator, x1.denominator
@@ -434,34 +456,34 @@ def _render_instance(c: BohrMollerupGammaRatioCert, nm: str) -> tuple[list[str],
     L.append(f"  unfold {gB}")
     L.append("  exact Finset.prod_pos fun c _ => Finset.prod_pos fun j _ => by omega")
     L.append("")
-    L.append(f"/-- `LOn u2 gB ≤ LOd n l1 gA`: the lower claim against the certified lower bound. -/")
-    L.append(f"lemma {nm}_key_lo : {_key_lo(c, gA, gB)} := by")
+    decide_lemma("/-- `LOn u2 gB ≤ LOd n l1 gA`: the lower claim against the certified lower bound. -/",
+                 f"lemma {nm}_key_lo : {_key_lo(c, gA, gB)} := by")
     L.append("  decide +kernel")
     L.append("")
-    L.append(f"/-- `HId u3 gA ≤ HIn n l4 gB`: the upper claim against the certified upper bound. -/")
-    L.append(f"lemma {nm}_key_hi : {_key_hi(c, gA, gB)} := by")
+    decide_lemma("/-- `HId u3 gA ≤ HIn n l4 gB`: the upper claim against the certified upper bound. -/",
+                 f"lemma {nm}_key_hi : {_key_hi(c, gA, gB)} := by")
     L.append("  decide +kernel")
     L.append("")
     # The four root brackets (scale S), each a kernel-decided Nat fact under a transport lemma.
-    L.append(f"lemma {nm}_hA : ({c.l1} : ℝ) / {S} ≤ {_shift_pow(n, x1)} := by")
+    decide_lemma(None, f"lemma {nm}_hA : ({c.l1} : ℝ) / {S} ≤ {_shift_pow(n, x1)} := by")
     L.append(f"  have := {P}.rpow_rat_neg_div_lower {n * q1 + p1} {q1} {q1 - p1} {q1} {c.l1} {S}")
     L.append("    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by decide +kernel)")
     L.append("  convert this using 2")
     L.append("  all_goals norm_num")
     L.append("")
-    L.append(f"lemma {nm}_hB : {_n_pow(n, x2)} ≤ ({c.u2} : ℝ) / {S} := by")
+    decide_lemma(None, f"lemma {nm}_hB : {_n_pow(n, x2)} ≤ ({c.u2} : ℝ) / {S} := by")
     L.append(f"  have := {P}.rpow_div_upper {n} {p2} {q2} {c.u2} {S} (by norm_num) (by norm_num)")
     L.append("    (by decide +kernel)")
     L.append("  convert this using 2")
     L.append("  all_goals norm_num")
     L.append("")
-    L.append(f"lemma {nm}_hC : {_n_pow(n, x1)} ≤ ({c.u3} : ℝ) / {S} := by")
+    decide_lemma(None, f"lemma {nm}_hC : {_n_pow(n, x1)} ≤ ({c.u3} : ℝ) / {S} := by")
     L.append(f"  have := {P}.rpow_div_upper {n} {p1} {q1} {c.u3} {S} (by norm_num) (by norm_num)")
     L.append("    (by decide +kernel)")
     L.append("  convert this using 2")
     L.append("  all_goals norm_num")
     L.append("")
-    L.append(f"lemma {nm}_hD : ({c.l4} : ℝ) / {S} ≤ {_shift_pow(n, x2)} := by")
+    decide_lemma(None, f"lemma {nm}_hD : ({c.l4} : ℝ) / {S} ≤ {_shift_pow(n, x2)} := by")
     L.append(f"  have := {P}.rpow_rat_neg_div_lower {n * q2 + p2} {q2} {q2 - p2} {q2} {c.l4} {S}")
     L.append("    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by decide +kernel)")
     L.append("  convert this using 2")
@@ -531,6 +553,11 @@ class BohrMollerupGammaRatioEmitter(Emitter):
     ``LO ≤ Real.Gamma x1 / Real.Gamma x2 ≤ HI``, against the ``BohrMollerupPrelude`` module
     (import it, or splice :func:`bohr_mollerup_prelude_body`)."""
 
+    #: When set, each of the six ``decide +kernel`` lemmas is prefixed with
+    #: ``set_option maxRecDepth <n> in``.  Off by default (the proofs do not need it); the negative
+    #: controls turn it on so a failing ``key_lo`` / ``key_hi`` can format its message.
+    decide_rec_depth: int | None = None
+
     def __post_init__(self):
         self.kind = "bohr_mollerup_gamma_ratio"
         self.requires_prelude = (
@@ -545,7 +572,7 @@ class BohrMollerupGammaRatioEmitter(Emitter):
         n_thm = 0
         for inst in fam.instances:
             cert: BohrMollerupGammaRatioCert = inst.payload  # type: ignore[assignment]
-            L, n = _render_instance(cert, inst.lean_name)
+            L, n = _render_instance(cert, inst.lean_name, self.decide_rec_depth)
             lines.extend(L)
             lines.append(self.emit_gate(inst.lean_name, _statement(cert)))
             n_thm += n

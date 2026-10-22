@@ -467,7 +467,10 @@ Three surfaces, all on the same enforced workflow:
 - **CLI** — `telperion <verb>`: `init` (scaffold a project), `certify`, `probe`,
   `prove` (the single-goal backend), `diagnose`, `verify` (regenerate +
   byte-diff the drift net), `lint-lean` (the soundness gate), `audit` (the
-  proof-auditor), `benchmark`, plus analysis (`margins`, `ties`, `hunt`,
+  proof-auditor), `audit-closure` (the kernel-level dependency-closure census of
+  a built theorem), `freeze-manifest` / `verify-manifest` (pin a Lake project's
+  source state around a verdict-of-record run; see
+  `docs/CLOSURE_AUDIT_MANIFEST_DESIGN_2026-10-22.md`), `benchmark`, plus analysis (`margins`, `ties`, `hunt`,
   `relax`, `sharpen`) and reporting (`latex`, `ledger`, `status`, `package`,
   `export-certs`, `recheck`). Every string-taking surface parses through a
   token whitelist — sympy's evaluating parser never sees raw input.

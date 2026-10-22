@@ -16,9 +16,11 @@ does, so the kernel is the arbiter.
 TRUE twin: the same certificate unmodified -- compiles clean and axiom-clean.  The two emitted
 texts differ in exactly one line (the list literal).
 
-Only the coverage theorem is emitted for the control (no length / nodup / soundness
-companions), so the rejection is pinned to the coverage `decide`, not to a companion that
-would ALSO be false (`length = 31` against a 30-element list).
+No length / nodup / soundness companion is emitted for the control, so the rejection is
+pinned to the coverage `decide` and not to a companion that would ALSO be false (`length = 31`
+against a 30-element list).  The surrogate's bridge lemma and the consumer theorem
+`<name>_of_squarefree` ARE emitted with the coverage theorem; the bridge compiles on its own,
+and the consumer inherits `sorryAx` from the rejected coverage theorem in the false twin.
 
 Both twins elaborate over Mathlib alone.  conjecture1_proved = False.
 """

@@ -283,6 +283,26 @@ REGISTRY: dict[str, SensitivityStance] = {
                                    # one ulp and that node's _calc decide is false, so the kernel
                                    # rejects it.  See negctrl_adapters/adapter_scaled_interval_eval.py.
                                    neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "NatRootBracketTableEmitter": _S(CERTIFICATE_SENSITIVE,
+                                     "kernel-decided q-th-root brackets of a rational power: the "
+                                     "emitted theorem carries the SUPPLIED naturals L, U (and, on "
+                                     "the table face, two List ℕ of them per block plus the block "
+                                     "sums) as literal witnesses of `L^q m^p <= S^q <= U^q m^p`; "
+                                     "the kernel re-decides each fact (`decide +kernel`) and the "
+                                     "once-proved NatRootBracket prelude lifts it to `L/S <= "
+                                     "m^(-p/q) <= U/S` (natural or rational base, either sign) and "
+                                     "to the blocked range sum ∑ (i+1)^(-p/q) (sum_block_lo_neg/"
+                                     "hi_neg + sum_range_chunk + linarith).  A forged entry (U := L "
+                                     "on a non-exact bracket, or one table entry +1) makes its "
+                                     "_fact false and the kernel rejects it.  certify REFUSES a "
+                                     "supplied endpoint that fails the exact integer fact, p or q "
+                                     "or scale < 1, a non-positive base, floats, a block above the "
+                                     "measured depth cap and a term count not a multiple of the "
+                                     "block.  Finite arithmetic facts about rational powers and "
+                                     "their partial sums; nothing about RH (conjecture1_proved = "
+                                     "False)",
+                                     # See negctrl_adapters/adapter_nat_root_bracket_table.py.
+                                     neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "ExpThresholdEmitter": _S(STRUCTURALLY_NONVACUOUS,
                              "threshold-to-exponential domination via `1 + t <= e^t` "
                              "(Real.add_one_le_exp): a bundle reads a nested-max threshold "
@@ -836,8 +856,10 @@ REGISTRY: dict[str, SensitivityStance] = {
         "certify REFUSES (ValueError, not a printed flag) a claim the exact comparisons do not "
         "imply.  One ratio of Gamma values; nothing about class numbers or RH "
         "(conjecture1_proved = False)",
-        # Kernel control: LO forged to the certified upper decimal (above the true value), so
-        # key_lo is a false Nat inequality.  See negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py.
+        # Kernel control (witness forgery): l1 raised by one with the claims unchanged, so the
+        # root inequality behind hA is a false Nat fact; a second control forges the claim (LO :=
+        # HI, above the true value), so key_lo is false.  See
+        # negctrl_adapters/adapter_bohr_mollerup_gamma_ratio.py.
         neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "BilinearCornerBoxEmitter": _S(STRUCTURALLY_NONVACUOUS,
         "Worst-corner box positivity: reusable affine-min-at-corners lemma closed by sign-cased mul_nonneg/nlinarith + 4 corner facts each norm_num-recomputed"),

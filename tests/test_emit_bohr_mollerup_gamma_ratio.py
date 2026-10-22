@@ -42,6 +42,7 @@ from telperion.emit_bohr_mollerup_gamma_ratio import (  # noqa: E402
     rat_neg_lower,
 )
 from telperion.lean_lint import lint_lean_text  # noqa: E402
+from telperion.negative_control_harness import emit_via_single_instance_family  # noqa: E402
 
 mpmath.mp.dps = 60
 F = Fraction
@@ -257,27 +258,71 @@ def test_emitter_is_classified_certificate_sensitive_with_adapter():
     assert "BohrMollerupGammaRatioEmitter" in registered_adapters()
 
 
-def test_adapter_forges_a_genuinely_false_claim_and_twins_differ_only_there():
-    from telperion.negctrl_adapters.adapter_bohr_mollerup_gamma_ratio import make_false_cert
+def test_adapter_registered_control_forges_the_witness_only():
+    """The CERTIFICATE_SENSITIVE control: l1 raised by one, statement unchanged.  The forged l1
+    violates the exact root inequality the kernel decides in _hA, while key_lo stays true, so the
+    rejection is the bracket's alone; the twins differ only in the lines carrying l1."""
+    from telperion.negctrl_adapters.adapter_bohr_mollerup_gamma_ratio import REC_DEPTH, make_false_cert
     from telperion.negative_control_harness import registered_adapters
     ad = registered_adapters()["BohrMollerupGammaRatioEmitter"]
     f, t = ad.make_false_cert(), ad.make_true_cert()
     assert f == make_false_cert()
-    assert f.claim_lo == t.claim_hi and f.claim_hi == t.claim_hi
-    # The forged LO is above the true value (so the forged theorem is FALSE), and Layer 1 refuses it.
+    assert f.l1 == t.l1 + 1 and (f.claim_lo, f.claim_hi, f.u2, f.u3, f.l4) == (t.claim_lo, t.claim_hi, t.u2, t.u3, t.l4)
+    p1, q1, S = t.x1.numerator, t.x1.denominator, t.scale
+    a, b, p = t.n * q1 + p1, q1, q1 - p1
+    assert t.l1 ** q1 * a ** p <= b ** p * S ** q1          # the honest bracket holds ...
+    assert f.l1 ** q1 * a ** p > b ** p * S ** q1           # ... and l1 + 1 violates it (what _hA decides)
+    _q, _a1, _a2, gA, gB = gamma_ratio_products(t.x1, t.x2, t.n)
+    assert f.key_lo_holds(gA, gB)                           # key_lo is unaffected
+    ft, tt = ad.emit_call(f, "twin").splitlines(), ad.emit_call(t, "twin").splitlines()
+    assert len(ft) == len(tt)
+    diff = [(a_, b_) for a_, b_ in zip(ft, tt) if a_ != b_]
+    assert diff
+    for a_, b_ in diff:
+        assert str(t.l1) in b_ and str(f.l1) in a_, (a_, b_)
+    assert ad.prelude == bohr_mollerup_prelude_body()
+    # Both twins carry the raised depth on exactly the six decide lemmas.
+    assert tt.count(f"set_option maxRecDepth {REC_DEPTH} in") == 6
+
+
+def test_second_control_forges_a_genuinely_false_claim():
+    """The claim forgery (LO := HI): a FALSE theorem, refused by Layer 1, with key_lo false."""
+    from telperion.negctrl_adapters.adapter_bohr_mollerup_gamma_ratio import (
+        make_false_claim_cert, make_true_cert)
+    f, t = make_false_claim_cert(), make_true_cert()
+    assert f.claim_lo == t.claim_hi and f.claim_hi == t.claim_hi and f.l1 == t.l1
     true = _true_ratio(t.x1, t.x2)
     assert mpmath.mpf(f.claim_lo.numerator) / f.claim_lo.denominator > true
     with pytest.raises(ValueError, match="ABOVE the certified lower bound"):
         bohr_mollerup_gamma_ratio_certificate(t.x1, t.x2, t.n, claim_lo=f.claim_lo, claim_hi=f.claim_hi)
-    ft, tt = ad.emit_call(f, "twin").splitlines(), ad.emit_call(t, "twin").splitlines()
-    assert len(ft) == len(tt)
-    diff = [(a, b) for a, b in zip(ft, tt) if a != b]
+    _q, _a1, _a2, gA, gB = gamma_ratio_products(t.x1, t.x2, t.n)
+    assert not f.key_lo_holds(gA, gB)
+    em = BohrMollerupGammaRatioEmitter(decide_rec_depth=10000)
+    ft = emit_via_single_instance_family(em, lean_name="twin", instance_kwargs={"payload": f}).splitlines()
+    tt = emit_via_single_instance_family(em, lean_name="twin", instance_kwargs={"payload": t}).splitlines()
+    diff = [(a_, b_) for a_, b_ in zip(ft, tt) if a_ != b_]
     assert diff
     lo_t, lo_f = _real_rat(t.claim_lo), _real_rat(f.claim_lo)
-    for a, b in diff:
-        assert (lo_t in b or str(t.claim_lo.numerator) in b or str(t.claim_lo) in b), (a, b)
-        assert (lo_f in a or str(f.claim_lo.numerator) in a or str(f.claim_lo) in a), (a, b)
-    assert ad.prelude == bohr_mollerup_prelude_body()
+    for a_, b_ in diff:
+        assert (lo_t in b_ or str(t.claim_lo.numerator) in b_), (a_, b_)
+        assert (lo_f in a_ or str(f.claim_lo.numerator) in a_), (a_, b_)
+
+
+def test_decide_rec_depth_is_off_by_default():
+    """The example sets no options; the depth prefix is opt-in, on the six decide lemmas only."""
+    txt = _emit_text([("g38", dict(x1="3/8", x2="7/8", n=400))])
+    assert "set_option" not in txt
+    c = bohr_mollerup_gamma_ratio_certificate("3/8", "7/8", 400)
+    body = emit_via_single_instance_family(
+        BohrMollerupGammaRatioEmitter(decide_rec_depth=4000), lean_name="g38",
+        instance_kwargs={"payload": c})
+    assert body.count("set_option maxRecDepth 4000 in") == 6
+    lines = body.splitlines()
+    heads = [lines[i + 1] if not lines[i + 1].startswith("/--") else lines[i + 2]
+             for i, ln in enumerate(lines) if ln == "set_option maxRecDepth 4000 in"]
+    assert sorted(h.split(" :")[0] for h in heads) == sorted(
+        f"lemma g38_{x}" for x in ("key_lo", "key_hi", "hA", "hB", "hC", "hD"))
+    assert lint_lean_text(body) == []
 
 
 # --- 5. the example is byte-stable ------------------------------------------------------
@@ -318,9 +363,25 @@ def test_lean_end_to_end_small_instance_axiom_clean():
 
 
 @lean
-def test_lean_negative_control_lo_above_true_value():
+def test_lean_negative_control_witness_forgery():
+    """The registered control through the generic harness: l1 + 1 is kernel-rejected (at _hA),
+    the unmodified twin compiles clean."""
     from telperion.negative_control_harness import (
         generic_negative_control, registered_adapters)
     res = generic_negative_control(registered_adapters()["BohrMollerupGammaRatioEmitter"],
                                    env_dir=str(_ENV))
     assert res.kernel_rejects and res.true_compiles and res.okay, res.detail
+
+
+@lean
+def test_lean_negative_control_claim_forgery():
+    """The second control: LO := HI (a false theorem; Layer 1 bypassed) is kernel-rejected at
+    key_lo."""
+    from telperion.negative_control import assert_kernel_rejects
+    from telperion.negctrl_adapters.adapter_bohr_mollerup_gamma_ratio import (
+        REC_DEPTH, make_false_claim_cert)
+    body = emit_via_single_instance_family(
+        BohrMollerupGammaRatioEmitter(decide_rec_depth=REC_DEPTH), lean_name="bmgr_false_lo",
+        instance_kwargs={"payload": make_false_claim_cert()})
+    assert assert_kernel_rejects(f"import Mathlib\nimport BohrMollerupPrelude\n{body}\n",
+                                 "bmgr_false_lo", env_dir=_ENV)

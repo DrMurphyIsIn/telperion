@@ -640,6 +640,124 @@ def cmd_audit(args) -> int:
     return 0 if report.ok else 1
 
 
+def cmd_audit_closure(args) -> int:
+    """Kernel-level closure audit of named theorems inside a built Lake project.
+
+    Exit 0 PASS, 1 FAIL (a forbidden constant/module in the closure, a non-allowed axiom, a
+    missing target, or a scan hit with --fail-on-scan-hit), 2 when the audit could not run or
+    Lean died before a verdict.  The JSON (--json) is the record; the terminal gets a summary.
+    """
+    import json as _json
+
+    from .closure_audit import (AuditSpec, ClosureAuditError, DEFAULT_ABSENT_CONSTANTS,
+                                DEFAULT_LIBRARY_ROOTS, render_audit_script, run_closure_audit)
+    from .comparator import CLEAN_AXIOMS
+
+    if args.spec:
+        try:
+            raw = _json.loads(Path(args.spec).read_text(encoding="utf-8"))
+            spec = AuditSpec(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in raw.items()})
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"audit-closure: cannot read spec {args.spec}: {exc}")
+            return 2
+    else:
+        if not args.imports or not args.target:
+            print("audit-closure: pass --spec FILE, or --import MODULE... and --target NAME...")
+            return 2
+        try:
+            spec = AuditSpec(
+                imports=tuple(args.imports), targets=tuple(args.target),
+                library_roots=tuple(args.library_root) if args.library_root else DEFAULT_LIBRARY_ROOTS,
+                scan_patterns=tuple(args.scan or ()),
+                absent_constants=tuple(args.absent_const) if args.absent_const else DEFAULT_ABSENT_CONSTANTS,
+                absent_module_prefixes=tuple(args.absent_module or ()),
+                allowed_axioms=tuple(args.allow_axiom) if args.allow_axiom else CLEAN_AXIOMS,
+                include_recursors=not args.no_recursors,
+                closure_out=args.closure_out,
+            )
+        except ValueError as exc:
+            print(f"audit-closure: {exc}")
+            return 2
+    if args.render_only:
+        Path(args.render_only).write_text(render_audit_script(spec), encoding="utf-8")
+        print(f"rendered audit script to {args.render_only} (not run)")
+        return 0
+    try:
+        res = run_closure_audit(spec, args.project, wrapper=args.wrapper, timeout=args.timeout,
+                                script_path=args.script_path, keep_script=bool(args.script_path))
+    except ClosureAuditError as exc:
+        print(f"audit-closure: {exc}")
+        return 2
+    if args.fail_on_scan_hit and (res.scan_hits or res.scan_module_hits):
+        res.failures.append(f"{len(res.scan_hits)} scan hit(s) and {len(res.scan_module_hits)} "
+                            "module-name hit(s) with --fail-on-scan-hit")
+        res.verdict = "FAIL"
+    if args.json:
+        Path(args.json).write_text(res.to_json() + "\n", encoding="utf-8")
+    print(res.render())
+    if not res.verdict:
+        print(res.raw_tail)
+        return 2
+    return 0 if res.ok else 1
+
+
+def _manifest_options_from_args(args):
+    from .freeze_manifest import DEFAULT_INCLUDE_GLOBS, ManifestOptions, parse_kv_pairs
+
+    return ManifestOptions(
+        include_globs=tuple(args.include) if args.include else DEFAULT_INCLUDE_GLOBS,
+        packages_dir=args.packages_dir,
+        tools=parse_kv_pairs(args.tool or (), "tool"),
+        extras=parse_kv_pairs(args.extra or (), "extra"),
+        patches=parse_kv_pairs(args.patch or (), "patch"),
+        include_ignored=bool(args.include_ignored),
+        hash_toolchain_binary=not args.no_toolchain_binary,
+    )
+
+
+def cmd_freeze_manifest(args) -> int:
+    """Pin a Lake project's source state (sources, lake files, toolchain + binary, dependency
+    git state, tool binaries, extra files) as JSON, before a verdict-of-record run."""
+    from .freeze_manifest import ManifestError, dumps_manifest, freeze_manifest, render_text
+
+    try:
+        doc = freeze_manifest(args.project, _manifest_options_from_args(args),
+                              timestamp=not args.no_timestamp)
+    except ManifestError as exc:
+        print(f"freeze-manifest: {exc}")
+        return 2
+    Path(args.out).write_text(dumps_manifest(doc), encoding="utf-8")
+    if args.text:
+        Path(args.text).write_text(render_text(doc), encoding="utf-8")
+    missing = [k for sec in ("lake_files", "files", "tools", "extras") for k, v in doc[sec].items()
+               if v.get("missing")]
+    print(f"manifest written: {args.out}  digest {doc['digest']}  "
+          f"({len(doc['files'])} source files, {len(doc['dependencies'])} dependencies, "
+          f"{len(doc['tools'])} tools, {len(doc['extras'])} extras)")
+    for k in missing:
+        print(f"  MISSING: {k}")
+    return 1 if missing else 0
+
+
+def cmd_verify_manifest(args) -> int:
+    """Re-freeze and diff against a recorded manifest.  Exit 0 unchanged, 1 changed."""
+    from .freeze_manifest import ManifestError, dumps_manifest, parse_kv_pairs, verify_manifest
+
+    try:
+        overrides = dict(parse_kv_pairs(args.tool or (), "tool")) or None
+        diff, new = verify_manifest(args.manifest, args.project, tool_overrides=overrides)
+    except ManifestError as exc:
+        print(f"verify-manifest: {exc}")
+        return 2
+    if args.out:
+        Path(args.out).write_text(dumps_manifest(new), encoding="utf-8")
+    if args.json:
+        import json as _json
+        Path(args.json).write_text(_json.dumps(diff.to_dict(), indent=2) + "\n", encoding="utf-8")
+    print(diff.render())
+    return 0 if diff.unchanged else 1
+
+
 def cmd_benchmark(args) -> int:
     """Run the certifiable-fragment benchmark; print the deterministic table."""
     from .benchmark import certifiable_seed_corpus, run_benchmark
@@ -2093,6 +2211,83 @@ def main(argv=None) -> int:
                        help="audit external Lean for sorry/axiom/stub/vacuity (the referee role)")
     p.add_argument("file")
     p.set_defaults(fn=cmd_audit)
+
+    p = sub.add_parser("audit-closure",
+                       help="kernel-level dependency-closure audit of theorems in a built Lake "
+                            "project (census by root, non-library constants, name scan, "
+                            "absences, axioms); see docs/CLOSURE_AUDIT_MANIFEST_DESIGN_2026-10-22.md")
+    p.add_argument("--project", required=True, help="the built Lake project directory")
+    p.add_argument("--spec", default=None, help="an AuditSpec as JSON (replaces the flags below)")
+    p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
+                   help="module to import (repeatable)")
+    p.add_argument("--target", action="append", default=None, metavar="NAME",
+                   help="fully qualified theorem/definition to audit (repeatable)")
+    p.add_argument("--library-root", dest="library_root", action="append", default=None,
+                   help="root module counted as library, not listed (default: Init Lean Std "
+                        "Batteries Mathlib Aesop Qq ProofWidgets Plausible LeanSearchClient "
+                        "ImportGraph Lake Cli)")
+    p.add_argument("--scan", action="append", default=None, metavar="SUBSTRING",
+                   help="case-insensitive substring to scan constant and module names for "
+                        "(repeatable; hits are reported, not failed)")
+    p.add_argument("--absent-const", dest="absent_const", action="append", default=None,
+                   help="constant that must not be in the closure (default: sorryAx)")
+    p.add_argument("--absent-module", dest="absent_module", action="append", default=None,
+                   help="module-name prefix that must not be in the closure (repeatable)")
+    p.add_argument("--allow-axiom", dest="allow_axiom", action="append", default=None,
+                   help="allowed axiom (default: propext Quot.sound Classical.choice)")
+    p.add_argument("--no-recursors", dest="no_recursors", action="store_true",
+                   help="reproduce the ConstantInfo.getUsedConstantsAsSet walk (no .rec for "
+                        "every inductive); the default adds them")
+    p.add_argument("--closure-out", dest="closure_out", default=None,
+                   help="write the full module<TAB>constant listing here (absolute path)")
+    p.add_argument("--fail-on-scan-hit", dest="fail_on_scan_hit", action="store_true")
+    p.add_argument("--wrapper", default=None,
+                   help="command prefix placed before `lake env lean` (a build lock, nice, a sandbox)")
+    p.add_argument("--timeout", type=int, default=3600)
+    p.add_argument("--script-path", dest="script_path", default=None,
+                   help="write the rendered script here and keep it (default: temp file in the project)")
+    p.add_argument("--render-only", dest="render_only", default=None, metavar="FILE",
+                   help="write the rendered Lean script and exit without running it")
+    p.add_argument("--json", default=None, help="write the AuditResult as JSON here")
+    p.set_defaults(fn=cmd_audit_closure)
+
+    def _manifest_common(q):
+        q.add_argument("--project", required=True, help="the Lake project directory")
+        q.add_argument("--include", action="append", default=None, metavar="GLOB",
+                       help="source glob relative to the project (default: **/*.lean; .lake and "
+                            ".git are always excluded)")
+        q.add_argument("--packages-dir", dest="packages_dir", default=None,
+                       help="dependency checkout dir (default: lake-manifest packagesDir)")
+        q.add_argument("--tool", action="append", default=None, metavar="LABEL=PATH",
+                       help="tool binary to pin (checker, exporter, second kernel, sandbox shim)")
+        q.add_argument("--extra", action="append", default=None, metavar="LABEL=PATH",
+                       help="any other file to pin (Comparator JSON configs, scripts)")
+        q.add_argument("--patch", action="append", default=None, metavar="PACKAGE=PATCHFILE",
+                       help="patch whose reverse application is checked against that package")
+        q.add_argument("--include-ignored", dest="include_ignored", action="store_true",
+                       help="also list git-ignored files inside each package (outside .lake/)")
+        q.add_argument("--no-toolchain-binary", dest="no_toolchain_binary", action="store_true",
+                       help="do not hash the elan `lean` binary named by lean-toolchain")
+
+    p = sub.add_parser("freeze-manifest",
+                       help="pin a Lake project's source state (sources, lake files, toolchain, "
+                            "dependency git state, tool binaries, configs) as JSON")
+    _manifest_common(p)
+    p.add_argument("--out", required=True, help="manifest JSON to write")
+    p.add_argument("--text", default=None, help="also write a one-line-per-file text rendering")
+    p.add_argument("--no-timestamp", dest="no_timestamp", action="store_true",
+                   help="omit `created` (the digest never includes it)")
+    p.set_defaults(fn=cmd_freeze_manifest)
+
+    p = sub.add_parser("verify-manifest",
+                       help="re-freeze with the manifest's own options and diff; exit 1 on any change")
+    p.add_argument("--project", required=True, help="the Lake project directory")
+    p.add_argument("--manifest", required=True, help="the manifest JSON written by freeze-manifest")
+    p.add_argument("--tool", action="append", default=None, metavar="LABEL=PATH",
+                   help="re-point a tool label whose binary moved (content is still compared)")
+    p.add_argument("--out", default=None, help="write the recomputed manifest here")
+    p.add_argument("--json", default=None, help="write the diff as JSON here")
+    p.set_defaults(fn=cmd_verify_manifest)
 
     p = sub.add_parser("sonc",
                        help="find + verify a SONC circuit-polynomial nonnegativity certificate")

@@ -33,6 +33,14 @@ ForallIcc(var, lo, hi, body) (a bounded inner quantifier, `Finset.Icc lo hi`),
 Not(body), And(lhs, rhs) and Mem/NotMem(elem, table) (list membership).
 These nodes are consumed by `emit_range_completeness.py`, which adds the
 surrogate-predicate bridge; `FiniteDecideEmitter` itself renders them too.
+
+Rendering fix made with that extension (2026-10-22, found in review): an `Imp`
+whose hypothesis is itself an `Imp` or a binder is now parenthesised,
+`(∀ v ∈ T, a) → b`.  The old text `∀ v ∈ T, a → b` was re-associated by Lean as
+`∀ v ∈ T, (a → b)`, a different proposition from the one Python evaluated: a
+latent text/semantics divergence.  Evaluation is unchanged, and the text is
+byte-identical whenever every `Imp` hypothesis is a `Cmp`, the only form
+existing callers (the finite_decide example, test_pc_emitters) use.
 """
 from __future__ import annotations
 
