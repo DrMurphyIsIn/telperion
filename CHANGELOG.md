@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased -- ALL NONTRIVIAL ZEROS UP TO HEIGHT 100 ON THE LINE (Turing verification, NOT a proof of RH)
+## Unreleased -- range_completeness_decide emitter (2026-10-22, PR #762 + follow-up)
+
+- **`RangeCompletenessEmitter`** / `range_completeness_family` (kind
+  `range_completeness_decide`, a FACE of `finite_decide`): "every `m < N`
+  satisfying P is in the explicit list L", decided by `decide +kernel` over
+  `Finset.range N` against a kernel-friendly surrogate (`SqfBelow K` for
+  Mathlib's `Squarefree`, whose `Decidable` instance does not reduce under
+  `decide`) with a once-proved bridge `Squarefree m -> SqfBelow K m` and a
+  consumer theorem; optional `length` / `nodup` / `soundness` companions.
+  `K^2 > N` is enforced as a sufficient policy bound; the per-`m` cross-check of
+  the surrogate against exact `Squarefree` is the authority on agreement.
+  Stance STRUCTURALLY_NONVACUOUS with a registered kernel adapter (drop one
+  element of L: `decide +kernel` reports the proposition false).  Design note
+  `docs/EMITTER_RANGE_COMPLETENESS_DECIDE_DESIGN_2026-10-22.md`.
+  `conjecture1_proved = False`.
+- **`finite_decide` AST extended** with `ForallRange`, `ForallIcc`, `Not`, `And`,
+  `Mem`, `NotMem`, `Mod` and the `dvd` comparison, in the one evaluator and the
+  one renderer.  **Rendering fix (found in review):** an `Imp` whose hypothesis
+  is itself an `Imp` or a `ForallIn` is now parenthesised; the old text
+  `∀ v ∈ T, a → b` was re-associated by Lean as `∀ v ∈ T, (a → b)`, a different
+  proposition from the one Python evaluated (a latent text/semantics
+  divergence).  Evaluation is unchanged and the text is byte-identical for every
+  AST whose `Imp` hypotheses are `Cmp`, the only form existing callers use (the
+  `finite_decide` example regenerates without drift).
+
+## Earlier -- ALL NONTRIVIAL ZEROS UP TO HEIGHT 100 ON THE LINE (Turing verification, NOT a proof of RH)
 
 - **CONCRETE T=100 certificate (dVP + box combination).**
   `AllZeros_h100.all_nontrivial_zeros_up_to_height_100`

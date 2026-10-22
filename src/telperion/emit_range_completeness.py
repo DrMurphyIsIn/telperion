@@ -21,12 +21,15 @@ about `P`:
 
     theorem <nm>_of_squarefree : ∀ m < N, Squarefree m → G₁ m → … → m ∉ excl → m ∈ list
 
-The bridge is sound for EVERY K (it is the direction P → P').  The bound
-K² > N is what makes P' AGREE with P on the range: a non-squarefree m < N has a
-square factor p² ≤ m < N, so p < √N ≤ K and `SqfBelow K` rejects it.  Without the
-bound the coverage theorem would force L to contain non-squarefree numbers, so
-the emitter REFUSES K² ≤ N (the certificate would be sound but the list would
-not mean "the squarefree numbers").
+The bridge is sound for EVERY K (it is the direction P → P').  What K controls
+is whether P' AGREES with P on the range, so that L means "the squarefree
+numbers": the exact condition is that K is at least every prime p with
+p² ≤ N - 1, i.e. K ≥ isqrt(N - 1).  The emitter enforces the simpler SUFFICIENT
+bound K² > N as a stated POLICY (a non-squarefree m < N has a square factor
+p² ≤ m < N, so p < √N ≤ K), and refuses K² ≤ N even where a smaller K would
+still be exact (K = 14 or 13 against N = 200, for instance).  The authority on
+agreement is the per-m cross-check of the surrogate against exact `Squarefree`
+over the whole range, which runs on every certificate.
 
 Optionally the emitter also states the list's length (`<nm>_length`), its
 duplicate-freedom (`<nm>_nodup`, `List.Nodup` by `decide +kernel`) and its
@@ -46,8 +49,9 @@ nothing here concerns zeta.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Sequence
+import math
+from dataclasses import dataclass
+from typing import Callable
 
 import sympy as sp
 
@@ -102,8 +106,9 @@ class SquarefreeSurrogate:
         if self.k * self.k <= n:
             raise ValueError(
                 f"{KIND} REFUSED: surrogate bound K^2 > N fails ({self.k}^2 = "
-                f"{self.k * self.k} <= {n}); SqfBelow {self.k} would be weaker than "
-                f"Squarefree on the range")
+                f"{self.k * self.k} <= {n}); K^2 > N is the policy bound (sufficient, "
+                f"not necessary) for SqfBelow K to agree with Squarefree on the range -- "
+                f"raise K to at least {math.isqrt(n) + 1}")
 
     def guard(self, var: str):
         return ForallIcc("k", 2, self.k,
@@ -146,6 +151,40 @@ class SquarefreeSurrogate:
 
 
 # ------------------------------------------------------------- certificate
+
+def _free_vars_and_tables(node, bound: frozenset) -> tuple[set, set]:
+    """Free `Var` names (not bound by an enclosing binder) and table names in an AST."""
+    free: set = set()
+    tabs: set = set()
+    if isinstance(node, Var):
+        if node.name not in bound:
+            free.add(node.name)
+    elif isinstance(node, Lit):
+        pass
+    elif isinstance(node, (ForallRange, ForallIcc, ForallIn)):
+        if isinstance(node, ForallIn):
+            tabs.add(node.table)
+        f, t = _free_vars_and_tables(node.body, bound | {node.var})
+        free |= f
+        tabs |= t
+    elif isinstance(node, (Mem, NotMem)):
+        tabs.add(node.table)
+        f, t = _free_vars_and_tables(node.elem, bound)
+        free |= f
+        tabs |= t
+    else:
+        # Cmp / Imp / And / Not / Mul / Mod / Xor / Pop / Lookup: recurse into every field.
+        for child in vars(node).values():
+            if isinstance(child, str):
+                if type(node).__name__ == "Lookup":
+                    tabs.add(child)
+                continue
+            if hasattr(child, "__dataclass_fields__"):
+                f, t = _free_vars_and_tables(child, bound)
+                free |= f
+                tabs |= t
+    return free, tabs
+
 
 def _nat(v, what: str) -> int:
     """A natural-number literal; floats and negatives are refused (exact arithmetic only)."""
@@ -216,11 +255,13 @@ def range_completeness_certificate(
 ) -> tuple[RangeCompletenessCert, int]:
     """Build and EXACTLY check the certificate; returns `(cert, n_atomic_checks)`.
 
-    Refuses: a float or negative anywhere; N = 0; a surrogate bound with K² ≤ N;
-    a coverage that is FALSE (names the first uncovered element); a VACUOUS
-    coverage (no element of the range satisfies the guards); a duplicate in L
-    when `emit_nodup`; an element of L outside the guarded set when
-    `emit_soundness`; a guard that mentions a variable other than `var`.
+    Refuses: a float or negative anywhere; N = 0; a surrogate bound with K² ≤ N
+    (the policy bound, see the module docstring); a coverage that is FALSE (names
+    the first uncovered element); a VACUOUS coverage (no element of the range
+    satisfies the guards); a duplicate in L when `emit_nodup`; an element of L
+    outside the guarded set when `emit_soundness`; a guard with a free variable
+    other than `var` (or one that refers to a table other than the list and the
+    exclusions).
     """
     n = _nat(n, "N")
     if n == 0:
@@ -230,6 +271,16 @@ def range_completeness_certificate(
     members = tuple(_nat(v, "a list element") for v in members)
     exclude = tuple(_nat(v, "an excluded element") for v in exclude)
     guards = tuple(guards)
+    for g in guards:
+        free, tabs = _free_vars_and_tables(g, frozenset({var}))
+        if free:
+            raise ValueError(
+                f"{KIND} REFUSED: guard {g!r} mentions free variable(s) "
+                f"{sorted(free)} other than the bound variable {var!r}")
+        bad_tabs = tabs - ({"list", "excl"} if exclude else {"list"})
+        if bad_tabs:
+            raise ValueError(
+                f"{KIND} REFUSED: guard {g!r} refers to unknown table(s) {sorted(bad_tabs)}")
     if surrogate is not None:
         if not isinstance(surrogate, SquarefreeSurrogate):
             raise ValueError(f"{KIND} REFUSED: unknown surrogate {surrogate!r}")

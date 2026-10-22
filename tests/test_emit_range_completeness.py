@@ -115,13 +115,33 @@ def test_refuses_a_dropped_element_naming_it():
                                        surrogate=SquarefreeSurrogate(15))
 
 
-def test_refuses_a_weak_surrogate_bound():
-    """K = 14 against N = 200: 14^2 = 196 <= 200, refused even though the bridge is sound."""
-    with pytest.raises(ValueError, match=r"K\^2 > N fails"):
+def test_refuses_below_the_policy_surrogate_bound():
+    """K = 14 against N = 200: 14^2 = 196 <= 200, refused by the K^2 > N POLICY even though
+    the bridge is sound for every K and SqfBelow 14 is in fact exact on [0, 200)."""
+    assert all(SquarefreeSurrogate(14).holds_exact(m) == SquarefreeSurrogate.real_holds_exact(m)
+               for m in range(200))
+    with pytest.raises(ValueError, match=r"K\^2 > N fails.*policy.*raise K to at least 15"):
         range_completeness_certificate(200, _members_200(), exclude=HEEGNER_NINE,
                                        surrogate=SquarefreeSurrogate(14))
     with pytest.raises(ValueError, match="REFUSED"):
         range_completeness_certificate(10, [1, 2, 3], surrogate=SquarefreeSurrogate(1))
+
+
+def test_refuses_a_guard_over_a_foreign_variable_or_table():
+    """REVIEW_PR762 N1: a guard mentioning a variable other than `var` is a clear REFUSED,
+    not a bare KeyError; a bound inner variable (the surrogate's k) is fine."""
+    members = [m for m in _sqf(60, 8) if m % 4 == 3]
+    with pytest.raises(ValueError, match=r"REFUSED: guard .* free variable.*\['x'\]"):
+        range_completeness_certificate(
+            60, members, guards=(Cmp("eq", Mod(Var("x"), Lit(4)), Lit(3)),),
+            surrogate=SquarefreeSurrogate(8))
+    with pytest.raises(ValueError, match=r"REFUSED: guard .* unknown table"):
+        range_completeness_certificate(60, members, guards=(NotMem(Var("m"), "other"),))
+    # an inner binder over its own variable is not foreign
+    inner = ForallIcc("j", 2, 3, Not(Cmp("dvd", Mul(Var("j"), Var("j")), Var("m"))))
+    cert, _ = range_completeness_certificate(
+        10, [1, 2, 3, 5, 6, 7], guards=(inner,))
+    assert cert.guards == (inner,)
 
 
 def test_refuses_vacuous_coverage():

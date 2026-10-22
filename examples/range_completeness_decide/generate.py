@@ -17,7 +17,10 @@ template is `mem_nonHeegner190` in the tenth-discriminant formalization):
 The NEGATIVE CONTROL at the emission layer: dropping 199 from the first list is refused by
 `range_completeness_certificate` ("coverage is FALSE -- m = 199 ..."); the kernel-level
 control (the same drop, Layer 1 bypassed, `decide +kernel` fails) is
-`negctrl_adapters/adapter_range_completeness.py`.
+`negctrl_adapters/adapter_range_completeness.py`.  The second validation check exercises the
+POLICY bound: K = 14 against N = 200 is refused because 14^2 = 196 <= 200, although SqfBelow 14
+(and SqfBelow 13) would in fact agree with Squarefree on [0, 200); K^2 > N is a sufficient
+condition kept as policy, and the per-m cross-check is the authority on agreement.
 
 conjecture1_proved = False -- finite decidability facts about two explicit lists; nothing
 here concerns zeta.
@@ -78,8 +81,10 @@ def _validation() -> ValidationReport:
         raise AssertionError("a list missing 199 was not refused")
 
     def weak_bound_refused():
+        """K = 14 is below the K^2 > N policy bound (though exact on this range)."""
         spec = dict(_SPECS[0][1])
-        spec["surrogate"] = SquarefreeSurrogate(14)          # 14^2 = 196 <= 200
+        spec["surrogate"] = SquarefreeSurrogate(14)          # 14^2 = 196 <= 200: policy refusal
+        # (SqfBelow 14 is exact on [0, 200); the bound K^2 > N is sufficient, not necessary)
         bad = range_completeness_family(
             "Bad", GridSpec([("i", [0])]), lambda pt: "bad", lambda pt: spec)
         try:
@@ -91,7 +96,7 @@ def _validation() -> ValidationReport:
 
     return ValidationReport.from_asserts([
         ("range_completeness_refuses_dropped_element", dropped_element_refused),
-        ("range_completeness_refuses_weak_surrogate_bound", weak_bound_refused),
+        ("range_completeness_refuses_policy_surrogate_bound", weak_bound_refused),
     ])
 
 
