@@ -117,6 +117,12 @@ from .emit_scaled_interval_eval import (  # noqa: F401
     certify_scaled_interval_eval_point, scaled_interval_prelude_lean,
     scaled_interval_prelude_body,
 )
+from .emit_quadratic_order_root_table import (  # noqa: F401
+    QuadraticOrderRootTableEmitter, QuadraticOrderRootTableCert, PrimeFace,
+    quadratic_order_root_table_certificate, quadratic_order_root_table_family,
+    certify_quadratic_order_root_table_point, verify_certificate as verify_quadratic_order_root_table,
+    quadratic_order_root_prelude_lean, quadratic_order_root_prelude_body,
+)
 from .emit_nat_root_bracket_table import (  # noqa: F401
     NatRootBracketTableEmitter, NatRootBracketCert, NatRootBracketTableCert,
     nat_root_bracket_certificate, nat_root_bracket_table_certificate,

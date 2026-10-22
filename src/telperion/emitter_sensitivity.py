@@ -650,6 +650,30 @@ REGISTRY: dict[str, SensitivityStance] = {
                                            # pair (margin -+ 1/1000) runs in the tests.  See
                                            # negctrl_adapters/adapter_factored_endpoint_enclosure.py.
                                            neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
+    "QuadraticOrderRootTableEmitter": _S(CERTIFICATE_SENSITIVE,
+                                         "Kummer-Dedekind faces of a monogenic quadratic order "
+                                         "X^2 - t X + c (kind quadratic_order_root_table): per "
+                                         "prime p one of RAMIFIED (p | 4c - t^2), SPLIT "
+                                         "(IsRootMod t c p y: a residue y with p | y^2 - t y + c) "
+                                         "or INERT (forall z : ZMod p, z^2 - t z + c != 0), each "
+                                         "decided by the kernel from the literals; split primes "
+                                         "with 4p <= d and p != c are class-number witnesses "
+                                         "(IsWitness t c p y, then classNumber K != 1 under the "
+                                         "QuadInt hypothesis).  The residue y IS a corruptible "
+                                         "witness: forge it and the divisibility decide is false, "
+                                         "so the stance is certificate-sensitive even though the "
+                                         "kernel recomputes everything.  certify REFUSES t "
+                                         "outside {0, 1}, c < 1, floats, composite or repeated "
+                                         "primes, and inert primes above the ZMod-decide cap.  "
+                                         "Splitting facts about explicit quadratic orders; "
+                                         "nothing about RH (conjecture1_proved = False)",
+                                         # Kernel control: t = 0, c = 5, p = 3 with the root
+                                         # forged to y = 0 (3 does not divide 0 + 5); the true
+                                         # twin y = 1 compiles.  The structural control (drop
+                                         # p != c and the soundness lemma is FALSE at d = 8) is
+                                         # the prelude theorem not_isWitness_two_two.  See
+                                         # negctrl_adapters/adapter_quadratic_order_root_table.py.
+                                         neg_control=NegControlStance(NEG_CONTROL_ADAPTER)),
     "GapBudgetMultiplicityEmitter": _S(STRUCTURALLY_NONVACUOUS,
                                        "tangent-price GAP BUDGET pruning of a multiset "
                                        "optimisation (kind gap_budget_multiplicity): from a "
