@@ -1,4 +1,4 @@
-/- telperion 0.1.6 | family BohrMollerupGammaRatio | input-hash 7630afe89718e1cb
+/- telperion 0.1.6 | family BohrMollerupGammaRatio | input-hash 9225513708f1b840
    36 theorems, 18 generation-time self-checks passed.
    Regenerate & verify:  forge diff --family <module:attr> --manifest <manifest.json> --check
    DO NOT EDIT BY HAND — edits are flagged by the regeneration diff.  -/
