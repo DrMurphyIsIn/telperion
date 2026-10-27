@@ -132,8 +132,9 @@ def _cli(mroot: Path, *args: str) -> int:
     return main(["mission", "--missions-root", str(mroot), *args])
 
 
-def _campaign(tmp_path: Path, *, heavy: bool = True, status: str = "proved") -> Path:
-    """A minimal campaign with one proved node and its artifact on disk."""
+def _campaign(tmp_path: Path, *, heavy: bool = True, status: str = "proved",
+             deprecated_reason: str = "") -> Path:
+    """A minimal campaign with one node (status *status*) and its artifact on disk."""
     mroot = tmp_path / "missions"
     croot = mroot / "demo"
     (croot / "nodes").mkdir(parents=True)
@@ -148,6 +149,7 @@ def _campaign(tmp_path: Path, *, heavy: bool = True, status: str = "proved") -> 
         statement_module="Statements.Demo_hv",
         proof=Proof("proof/Demo_hv.lean", "lean_module", "direct"),
         heavy_certificates=heavy, created="2026-10-27", updated="2026-10-27",
+        deprecated_reason=deprecated_reason,
     )
     save_node(node, croot / "nodes" / "Demo_hv.toml")
     art = croot / "proof" / "Demo_hv.lean"
@@ -259,14 +261,28 @@ def test_cli_non_heavy_node_exit2_no_record(tmp_path, capsys):
 
 
 def test_cli_non_proved_node_exit2_no_record(tmp_path, capsys):
-    mroot = _campaign(tmp_path, status="open")
-    log = tmp_path / "pass.log"
+    """Controller ruling 6 (2026-10-27): a draft heavy node WITH its artifact on disk is
+    pre-grant judging -- it now records. A deprecated one is still refused regardless of its
+    artifact: a deprecated node is never a candidate for `mission grant`."""
+    mroot = _campaign(tmp_path / "draft", status="draft")
+    log = tmp_path / "draft-pass.log"
     log.write_text(_header(mroot) + PASS_LOG)
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
-    assert rc == 2
-    assert "'proved'" in capsys.readouterr().err
-    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+    assert rc == 0
+    node = load_node(mroot / "demo" / "nodes" / "Demo_hv.toml")
+    assert node.rejudge is not None and node.rejudge.verdict == "pass"
+    assert node.status == "draft"              # rejudge-record never flips status itself
+
+    mroot2 = _campaign(tmp_path / "dep", status="deprecated",
+                       deprecated_reason="superseded by a later node")
+    log2 = tmp_path / "dep-pass.log"
+    log2.write_text(_header(mroot2) + PASS_LOG)
+    rc2 = _cli(mroot2, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log2),
+              "--comparator-tag", "v4.32.0")
+    assert rc2 == 2
+    assert "deprecated" in capsys.readouterr().err
+    assert load_node(mroot2 / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
 
 
 # ---------------------------------------------------------------------------
@@ -345,3 +361,55 @@ def test_grant_status_refuses_heavy_node_without_rejudge(tmp_path):
         grant_status(campaign, "Demo_hv3", identity="gate@test", session="gate-session")
     # Refused: the on-disk status must remain open.
     assert load_node(root / "nodes" / "Demo_hv3.toml").status == "open"
+
+
+def test_rejudge_record_then_grant_status_closes_the_loop(tmp_path):
+    """Controller ruling 6 (2026-10-27): with `rejudge-record` accepting a pre-grant `open`
+    heavy node (its proof linked, its artifact on disk), the full sequence --
+    `rejudge-record` on a fresh heavy node, then `grant_status` -- succeeds end to end. Before
+    ruling 6, `rejudge-record` required `status == 'proved'` while `grant_status` (Task 5)
+    required a passing re-judge to grant, so no heavy node could ever freshly reach `proved`;
+    this is the regression test for that deadlock."""
+    mroot = tmp_path / "missions"
+    croot = mroot / "loop"
+    (croot / "nodes").mkdir(parents=True)
+    manifest = MissionManifest(
+        name="Loop.goal", title="Loop Campaign", description="synthetic",
+        goal_node="Loop_hv", environment_toolchain="leanprover/lean4:v4.32.0",
+        environment_mathlib_rev="v4.32.0", sources=(),
+    )
+    save_manifest(manifest, croot / "mission.toml")
+
+    stmt = "theorem loop_hv : 1 + 1 = 2"
+    node = Node(
+        name="Loop.hv", title="heavy node closing the loop", kind="lemma", status="open",
+        depends_on=(), statement_module="Statements.Loop_hv",
+        proof=Proof(artifact="proof/Loop_hv.lean", artifact_kind="lean_module",
+                   via="direct", closure_clean=False),
+        readback=Readback(text="read-back of Loop.hv, rendering the formal statement in the "
+                               "auditor's own words at some length so it clears the "
+                               "read-back floor", auditor="test-auditor", date="2026-10-27"),
+        heavy_certificates=True, created="2026-10-27", updated="2026-10-27",
+    )
+    save_node(node, croot / "nodes" / "Loop_hv.toml")
+    write_statement(croot, node, stmt, manifest)
+    art = croot / "proof" / "Loop_hv.lean"
+    art.parent.mkdir(parents=True, exist_ok=True)
+    art.write_text(f"{stmt} := by simp\n")
+
+    # Pre-grant judging: the node is still `open`, with no `[rejudge]` yet.
+    assert load_node(croot / "nodes" / "Loop_hv.toml").rejudge is None
+    log = tmp_path / "pass.log"
+    art_sha = hashlib.sha256(art.read_bytes()).hexdigest()
+    log.write_text(f"REJUDGE-HEADER node=Loop_hv artifact_sha256={art_sha}\n" + PASS_LOG)
+    rc = _cli(mroot, "rejudge-record", "Loop_hv", "--campaign", "loop", "--log", str(log),
+             "--comparator-tag", "v4.32.0")
+    assert rc == 0
+    n = load_node(croot / "nodes" / "Loop_hv.toml")
+    assert n.rejudge is not None and n.rejudge.verdict == "pass"
+    assert n.status == "open"                 # rejudge-record never flips status itself
+
+    granted = grant_status(load_campaign(croot), "Loop_hv", identity="gate@test",
+                           session="gate-session")
+    assert granted.status == "proved"
+    assert load_node(croot / "nodes" / "Loop_hv.toml").status == "proved"

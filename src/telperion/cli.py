@@ -1609,8 +1609,16 @@ def cmd_mission_rejudge_record(args) -> int:
     different node, or for an older artifact, could be recorded as THIS node's re-judge.
     Refuses (exit 2, no record written) when that header is missing, names a different
     node, or names an artifact digest that is not the one currently on disk. Also refuses
-    (exit 2, no record) when the node is not `heavy_certificates = true` or its status is
-    not "proved" -- a re-judge is meaningless for either.
+    (exit 2, no record) when the node is not `heavy_certificates = true`.
+
+    Controller ruling 6 (2026-10-27): a node's status may be `proved`, OR `draft`/`open`
+    with a proof link whose artifact exists on disk -- pre-grant judging, so a fresh heavy
+    node can be re-judged locally BEFORE `mission grant` ever runs, closing the loop Task 5's
+    `grant_status` check otherwise leaves shut (that check refuses to grant a heavy node with
+    no passing re-judge, and a `proved`-only `rejudge-record` could never produce one for a
+    node that isn't proved yet). Still refused (exit 2, no record): no proof link, a missing
+    artifact, and status `deprecated` or `refuted` -- neither is a node a re-judge is ever
+    meaningful for.
     """
     import dataclasses as _dc
     import hashlib as _hashlib
@@ -1640,17 +1648,18 @@ def cmd_mission_rejudge_record(args) -> int:
         print(f"{slug}: heavy_certificates is not set; a re-judge is only meaningful for a "
               "node hosted CI judges Lean-kernel-only.", file=sys.stderr)
         return 2
-    if node.status != "proved":
-        print(f"{slug}: status is {node.status!r}, not 'proved'; refusing to record a "
-              "re-judge for it.", file=sys.stderr)
-        return 2
     if node.proof is None:
-        print(f"{slug}: no artifact linked; a re-judge is about an artifact.")
-        return 1
+        print(f"{slug}: no artifact linked; a re-judge is about an artifact.", file=sys.stderr)
+        return 2
     art = camp_root / node.proof.artifact
     if not art.exists():
-        print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
-        return 1
+        print(f"{slug}: artifact {node.proof.artifact!r} does not exist", file=sys.stderr)
+        return 2
+    if node.status != "proved" and node.status not in ("draft", "open"):
+        print(f"{slug}: status is {node.status!r}; a re-judge may only be recorded for a "
+              "'proved' node, or a 'draft'/'open' heavy node whose artifact is already on "
+              "disk (pre-grant judging).", file=sys.stderr)
+        return 2
     raw = args.log.read_bytes()
     text = raw.decode(errors="replace")
     header = parse_rejudge_header(text)
