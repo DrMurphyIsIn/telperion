@@ -122,7 +122,8 @@ docs = ["docs/ARCHITECTURE.md", "docs/ANALYTIC_CERT_STRUCTURES.md", "docs/COMPAR
         "docs/superpowers/plans/2026-10-27-step2-extraction.md",
         "docs/superpowers/plans/2026-10-27-step3-kernel-policy.md",
         "docs/superpowers/plans/2026-10-27-step4-checks.md",
-        "docs/superpowers/plans/2026-10-27-step5-process.md"]
+        "docs/superpowers/plans/2026-10-27-step5-process.md",
+        "docs/superpowers/plans/2026-10-27-step6-islands.md"]
 # Files kept because a kept test reads them (Task 2 fills; each entry names the test in [resolutions]).
 extra_files = []
 canonical_examples = ["rational_sos", "sos_refutation", "handelman", "putinar", "real_nullstellensatz",
