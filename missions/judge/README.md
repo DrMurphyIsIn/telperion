@@ -28,6 +28,16 @@ checks the axiom whitelist on the export and replays the proof through the Lean 
 nanoda. `MANIFEST.json` lists the nodes, the toolchain and the Comparator tag (which follows
 the island toolchain), and any proved node on the island the judge cannot consume.
 
+**The re-judge rule (step 0, owner ruling 2026-10-27).** Hosted CI never runs nanoda against
+a `heavy_certificates` node, so the Comparator record it writes only ever says
+`lean-kernel-only`. A `heavy_certificates` node therefore stays `proved` only with a passing
+LOCAL re-judge (Comparator, nanoda on) on its CURRENT artifact, recorded with `mission
+rejudge-record` once the node is already proved. `mission verify` and the `mission grant` gate
+both enforce this (`rejudge_problem` in `telperion.missions.provenance`): a proved heavy node
+whose `[rejudge]` is missing, failing, or stale against the artifact on disk is a verify error,
+and the gate refuses to grant a heavy node that lacks one. See `REJUDGE_2026-10.md` for the
+per-node run log and `rejudge_queue.sh` for the script that drives the local queue.
+
 **bg** (the Brualdi-Goldwasser campaign) is the one island outside `telperion/examples`: its
 package is R3Cert at `proof/formalization` (toolchain v4.32.0, Comparator tag v4.32.0), listed
 in `judge.OUT_OF_TREE_ISLANDS`, so `bg/lakefile.toml` path-requires

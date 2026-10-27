@@ -17,11 +17,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion.cli import main  # noqa: E402
+from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
-    MissionManifest, Node, Proof, RejudgeRecord, SchemaError,
+    MissionManifest, Node, Proof, Readback, RejudgeRecord, SchemaError,
     load_node, save_manifest, save_node,
 )
 from telperion.missions.rejudge import parse_comparator_log, parse_rejudge_header  # noqa: E402
+from telperion.missions.statements import write_statement  # noqa: E402
+from telperion.missions.verify import GateError, grant_status, verify_campaign  # noqa: E402
+
+TELPERION_ROOT = Path(__file__).resolve().parents[1]
 
 PASS_LOG = ("Lean default kernel accepts the solution\n"
             "Nanoda kernel accepts the solution\nYour solution is okay!\n")
@@ -262,3 +267,81 @@ def test_cli_non_proved_node_exit2_no_record(tmp_path, capsys):
     assert rc == 2
     assert "'proved'" in capsys.readouterr().err
     assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+# ---------------------------------------------------------------------------
+# Enforcement (step 0, Task 5): `mission verify` and the grant gate both refuse a
+# proved heavy_certificates node that lacks a passing, current local nanoda re-judge.
+# ---------------------------------------------------------------------------
+
+def _verify_copy_without_rejudge(tmp_path, campaign, slug):
+    """Copy a real campaign, drop one node's [rejudge] record, run verify_campaign on the copy.
+
+    The copy is rooted at ``tmp_path/telperion/missions/<campaign>``, mirroring the real
+    ``<repo>/telperion/missions/<campaign>`` layout, rather than at ``tmp_path/<campaign>``: a
+    campaign root two levels too shallow breaks two things verify_campaign needs. (1)
+    `_repo_root` walks up three parents from the campaign root looking for
+    `.github/workflows`; a shallow root makes it resolve outside tmp_path into the real
+    filesystem. (2) several anduril nodes' `proof.artifact` is a path like
+    `../../examples/zeta_reflection/lean/Arb4_h8000.lean`, relative to the campaign root; a
+    shallow root makes that resolve to a nonexistent file, and verify_campaign reports the
+    generic "artifact does not exist" and `continue`s past the node WITHOUT ever reaching the
+    re-judge check for it. The real `examples/zeta_reflection/lean` tree (the only subtree
+    anduril's nodes reference) is copied alongside the campaign so those artifact paths
+    resolve to real files instead.
+    """
+    import shutil
+    from telperion.missions.schema import load_node, save_node
+    from telperion.missions.verify import verify_campaign
+    troot = tmp_path / "telperion"
+    dst = troot / "missions" / campaign
+    shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
+    examples_lean = TELPERION_ROOT / "examples" / "zeta_reflection" / "lean"
+    if examples_lean.is_dir():
+        shutil.copytree(examples_lean, troot / "examples" / "zeta_reflection" / "lean")
+    p = dst / "nodes" / f"{slug}.toml"
+    save_node(dataclasses.replace(load_node(p), rejudge=None), p)
+    return verify_campaign(dst).errors
+
+
+def test_verify_rejects_proved_heavy_node_without_rejudge(tmp_path):
+    errors = _verify_copy_without_rejudge(tmp_path, "anduril", "AND_ladder_h8000_kernel")
+    assert any("AND_ladder_h8000_kernel" in e and "re-judge" in e for e in errors)
+
+
+def test_grant_status_refuses_heavy_node_without_rejudge(tmp_path):
+    """The grant gate enforces the same rule required_ci_problem already enforces: a heavy
+    node may not be granted `proved` without a passing local nanoda re-judge on record."""
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    manifest = MissionManifest(
+        name="Demo.gate", title="Demo Campaign", description="synthetic",
+        goal_node="Demo_hv3", environment_toolchain="leanprover/lean4:v4.32.0",
+        environment_mathlib_rev="v4.32.0", sources=(),
+    )
+    save_manifest(manifest, root / "mission.toml")
+
+    stmt = "theorem lemma_hv3 : 1 + 1 = 2"
+    node = Node(
+        name="Demo.hv3", title="heavy node awaiting grant", kind="lemma", status="open",
+        depends_on=(), statement_module="Statements.Demo_hv3",
+        proof=Proof(artifact="proof/Demo_hv3.lean", artifact_kind="lean_module",
+                   via="direct", closure_clean=False),
+        readback=Readback(text="read-back of Demo.hv3, rendering the formal statement in "
+                               "the auditor's own words at length", auditor="test-auditor",
+                          date="2026-10-27"),
+        heavy_certificates=True, created="2026-10-27", updated="2026-10-27",
+    )
+    save_node(node, root / "nodes" / "Demo_hv3.toml")
+    write_statement(root, node, stmt, manifest)
+
+    artifact_path = root / "proof" / "Demo_hv3.lean"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(f"{stmt} := by simp\n")
+
+    campaign = load_campaign(root)
+    with pytest.raises(GateError, match="re-judge|heavy_certificates"):
+        grant_status(campaign, "Demo_hv3", identity="gate@test", session="gate-session")
+    # Refused: the on-disk status must remain open.
+    assert load_node(root / "nodes" / "Demo_hv3.toml").status == "open"

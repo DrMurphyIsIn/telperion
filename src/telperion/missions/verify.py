@@ -36,6 +36,7 @@ from .provenance import (
     comparator_staleness,
     grant_digest_errors,
     readback_is_self_audit,
+    rejudge_problem,
     require_identity,
     required_ci_problem,
 )
@@ -586,6 +587,11 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
     ci = required_ci_problem(campaign.root, node)
     if ci:
         raise GateError(f"Node {slug!r}: {ci}")
+    # Owner ruling 2026-10-27: a heavy_certificates node (nanoda skipped by hosted CI) stays
+    # proved only with a passing LOCAL nanoda re-judge on its current artifact.
+    rj = rejudge_problem(campaign.root, node)
+    if rj:
+        raise GateError(f"Node {slug!r}: {rj}")
 
     stmt_ok = statement_matches(artifact_text, norm_stmt)
     refut_ok = refutation_matches(artifact_text, node, campaign.root)
@@ -816,6 +822,9 @@ def verify_campaign(
         ci = required_ci_problem(root, node)
         if ci and node.status == "proved":
             errors.append(f"Node {sl!r}: status is 'proved' but it {ci}")
+        rj = rejudge_problem(root, node)
+        if rj and node.status == "proved":
+            errors.append(f"Node {sl!r}: status is 'proved' but {rj} (re-judge)")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":
