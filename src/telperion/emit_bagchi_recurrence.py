@@ -60,10 +60,7 @@ def _zeta_self_dev_upper(sigma: Fraction, t: Fraction, tau: Fraction,
     bound of the true modulus), converted to an outward rational."""
     from flint import acb, ctx
 
-    try:
-        from .rh_jensen.coefficients import _arb_ball_to_fractions
-    except ImportError:
-        from telperion.rh_jensen.coefficients import _arb_ball_to_fractions
+    from .arb_enclosure import _arb_ball_to_fractions
 
     old = ctx.prec
     try:

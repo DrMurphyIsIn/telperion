@@ -77,10 +77,7 @@ def robin_rhs_lower_bound(n: int, prec_bits: int = 256) -> Fraction:
         raise ValueError(f"robin_rhs_lower_bound needs n ≥ 3 (log log n > 0); got {n}")
     from flint import arb, ctx
 
-    try:
-        from .rh_jensen.coefficients import _arb_ball_to_fractions
-    except ImportError:
-        from telperion.rh_jensen.coefficients import _arb_ball_to_fractions
+    from .arb_enclosure import _arb_ball_to_fractions
 
     old_prec = ctx.prec
     try:

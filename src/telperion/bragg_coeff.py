@@ -98,7 +98,7 @@ def enclose_arch_floors(count: int, prec_bits: int = 256) -> list[tuple[Fraction
     """
     import mpmath as mp
     from flint import acb, acb_series, ctx
-    from .rh_jensen.coefficients import _arb_ball_to_fractions  # flint-gated
+    from .arb_enclosure import _arb_ball_to_fractions  # flint-gated
 
     if count <= 0:
         raise ValueError(f"enclose_arch_floors: need count >= 1, got {count}")
@@ -163,7 +163,7 @@ def enclose_bragg_truncation(
     ``ValueError`` on ``s0 ≤ 1`` (tail diverges) or a failed small-prime anchor.
     """
     from flint import acb, arb, ctx
-    from .rh_jensen.coefficients import _arb_ball_to_fractions  # flint-gated
+    from .arb_enclosure import _arb_ball_to_fractions  # flint-gated
 
     if s0 <= 1:
         raise ValueError(f"enclose_bragg_truncation: need s0 > 1 (convergence), got {s0}")

@@ -102,7 +102,7 @@ def _acb_point(re: Fraction, im: Fraction):
 
 def _frac_interval(x):
     """Outward exact Fraction interval of an arb ball."""
-    from .rh_jensen.coefficients import _arb_ball_to_fractions
+    from .arb_enclosure import _arb_ball_to_fractions
     return _arb_ball_to_fractions(x)
 
 
