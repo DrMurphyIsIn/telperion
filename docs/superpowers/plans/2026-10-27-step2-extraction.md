@@ -28,7 +28,8 @@ creating the GitHub repository is an owner gate after this plan.
 **Owner decisions folded in (2026-10-27):**
 - Canonical examples are exactly `rational_sos, sos_refutation, handelman, putinar, real_nullstellensatz, sturm_positive,
   polya_zeros, wz, primality, padic_valuation`.
-- `missions/judge_tools` stays with the engine.
+- `missions/judge_tools` stays with the engine. `missions/judge/` ships only its README. Its island bundles and the step 0
+  re-judge queue are Arda data. Lead's finding, 2026-10-27, recorded for the owner's gate review.
 - The entry-point plugin seam is dropped (step 1).
 
 ## Global Constraints
@@ -97,8 +98,12 @@ creating the GitHub repository is an owner gate after this plan.
 # Everything not listed is NOT kept. Paths are relative to telperion/.
 
 [keep]
-dirs = ["src/telperion/", "tests/", "missions/judge/", "missions/judge_tools/"]
+dirs = ["src/telperion/", "tests/", "missions/judge_tools/"]
+# missions/judge/ holds Arda's committed judge BUNDLES for RH/BG islands (rvm_bridge, li_positivity, zeta_reflection,
+# dbn, bg, quasicrystal, liu_dbn_bridge, oai_qrh_bridge) and step 0's Arda-specific rejudge_queue.sh / REJUDGE log:
+# lab data. Only its README (the judge's how-to) ships.
 files = ["pyproject.toml", "README.md", "LICENSE", "CLA.md", "CONTRIBUTING.md", "CHANGELOG.md", "NANODA_REV",
+         "missions/judge/README.md",
          "scripts/guard_anchors.py", "scripts/judge_materialize.sh"]
 # docs/ is ~380 files, almost all RH/BG mission notes: ENGINE docs are an explicit allowlist (owner reviews at the gate).
 docs = ["docs/ARCHITECTURE.md", "docs/ANALYTIC_CERT_STRUCTURES.md", "docs/COMPARATOR.md", "docs/GETTING_STARTED.md",
@@ -168,8 +173,11 @@ def test_moving_missions_dropped_and_judge_kept():
     kept = _kept()
     for c in ("rh", "mirrormere", "anduril", "bg"):
         assert not any(p.startswith(f"telperion/missions/{c}/") for p in kept)
-    assert any(p.startswith("telperion/missions/judge/") for p in kept)
+    assert "telperion/missions/judge/README.md" in kept
     assert any(p.startswith("telperion/missions/judge_tools/") for p in kept)
+    # committed island bundles and the Arda-specific re-judge queue are lab data
+    assert not any(p.startswith("telperion/missions/judge/") and p != "telperion/missions/judge/README.md"
+                   for p in kept)
 
 
 def test_canonical_examples_kept_and_others_not():
