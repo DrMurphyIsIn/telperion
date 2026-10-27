@@ -413,3 +413,48 @@ def test_rejudge_record_then_grant_status_closes_the_loop(tmp_path):
                            session="gate-session")
     assert granted.status == "proved"
     assert load_node(croot / "nodes" / "Loop_hv.toml").status == "proved"
+
+
+def test_grant_status_refutation_of_heavy_node_not_blocked_by_missing_rejudge(tmp_path):
+    """Controller ruling 7 (2026-10-27): the re-judge check in `grant_status` is scoped to a
+    grant that would set `proved`. A heavy node correctly granted `refuted` must not be
+    blocked by it -- a refutation artifact has no theorem for nanoda to replay, so it can
+    never produce a passing re-judge log; model on
+    test_gate_refuted_via_refutation_statement in test_missions_verify.py."""
+    root = tmp_path / "campaign"
+    root.mkdir()
+    (root / "nodes").mkdir()
+    manifest = MissionManifest(
+        name="Demo.refute", title="Demo Campaign", description="synthetic",
+        goal_node="Demo_hv4", environment_toolchain="leanprover/lean4:v4.32.0",
+        environment_mathlib_rev="v4.32.0", sources=(),
+    )
+    save_manifest(manifest, root / "mission.toml")
+
+    node_stmt = "theorem lemma_hv4 : False"
+    refutation = "theorem lemma_hv4_neg : ¬False"
+    node = Node(
+        name="Demo.hv4", title="heavy node to be refuted", kind="lemma", status="open",
+        depends_on=(), statement_module="Statements.Demo_hv4",
+        proof=Proof(artifact="proof/Demo_hv4.lean", artifact_kind="lean_module",
+                   via="direct", closure_clean=False),
+        readback=Readback(text="read-back of Demo.hv4, rendering the formal statement in "
+                               "the auditor's own words at some length so it clears the "
+                               "read-back floor", auditor="test-auditor", date="2026-10-27"),
+        refutation_statement=refutation,
+        heavy_certificates=True, created="2026-10-27", updated="2026-10-27",
+    )
+    save_node(node, root / "nodes" / "Demo_hv4.toml")
+    write_statement(root, node, node_stmt, manifest)
+
+    artifact_path = root / "proof" / "Demo_hv4.lean"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    # Artifact matches the refutation statement (NOT the original proposition).
+    artifact_path.write_text(f"{refutation} := by\n  simp\n")
+
+    campaign = load_campaign(root)
+    # No [rejudge] record at all -- would block a grant to 'proved', must not block 'refuted'.
+    assert load_node(root / "nodes" / "Demo_hv4.toml").rejudge is None
+    result = grant_status(campaign, "Demo_hv4", identity="gate@test", session="gate-session")
+    assert result.status == "refuted"
+    assert load_node(root / "nodes" / "Demo_hv4.toml").status == "refuted"

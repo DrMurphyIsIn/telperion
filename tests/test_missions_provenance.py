@@ -478,12 +478,21 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
     assert _cli(mroot, "provenance-report", "demo") == 0
     out = capsys.readouterr().out
     assert "HV_one" in out and "Lean kernel only" in out
-    # Task 5 (2026-10-27): a proved heavy node with no passing local re-judge is now a
-    # `mission verify` error -- that is the whole point of the new rule, so the campaign is
-    # no longer clean (it was, pre-Task-5, when only CI's Lean-kernel-only judge was required).
-    rep = verify_campaign(croot)
-    assert not rep.ok
-    assert any("HV_one" in e and "re-judge" in e for e in rep.errors)
+    # Fix round 1 (2026-10-27): this test protects a specific invariant -- a correctly
+    # labelled lean-kernel-only comparator record (log_check = "skipped", second_kernel =
+    # "none: heavy_certificates") produces NO verify error on its own. That invariant is
+    # unchanged by Task 5's re-judge rule; a MISSING re-judge is a separate, now-also-checked
+    # condition, covered by test_verify_rejects_proved_heavy_node_without_rejudge and
+    # test_grant_status_refuses_heavy_node_without_rejudge in test_missions_rejudge.py. So
+    # attach a passing local re-judge on the current artifact here too, and assert the
+    # campaign is clean again, as it was before Task 5 touched this test.
+    n2 = load_node(croot / "nodes" / "HV_one.toml")
+    rec2 = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                         comparator_tag="v4.32.0",
+                         artifact_sha256=prov.sha256_file(croot / "proof" / "HV_one.lean"),
+                         verdict="pass", log_sha256="d" * 64)
+    save_node(dataclasses.replace(n2, rejudge=rec2), croot / "nodes" / "HV_one.toml")
+    assert verify_campaign(croot).ok
 
 
 def test_provenance_report_heavy_node_without_comparator_reads_lean_kernel_only(tmp_path, capsys):

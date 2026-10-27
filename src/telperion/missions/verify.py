@@ -587,11 +587,6 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
     ci = required_ci_problem(campaign.root, node)
     if ci:
         raise GateError(f"Node {slug!r}: {ci}")
-    # Owner ruling 2026-10-27: a heavy_certificates node (nanoda skipped by hosted CI) stays
-    # proved only with a passing LOCAL nanoda re-judge on its current artifact.
-    rj = rejudge_problem(campaign.root, node)
-    if rj:
-        raise GateError(f"Node {slug!r}: {rj}")
 
     stmt_ok = statement_matches(artifact_text, norm_stmt)
     refut_ok = refutation_matches(artifact_text, node, campaign.root)
@@ -605,6 +600,16 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
             f"Node {slug!r}: artifact does not contain the node's statement "
             f"or refutation. Normalized statement: {norm_stmt!r}"
         )
+
+    # Owner ruling 2026-10-27, scoped by controller ruling 7: a heavy_certificates node
+    # stays PROVED only with a passing LOCAL nanoda re-judge on its current artifact. Checked
+    # only when this grant would set `proved` -- a refutation artifact cannot produce a
+    # passing re-judge log (there is no theorem for nanoda to replay), so this must not block
+    # a heavy node being correctly granted `refuted`.
+    if new_status == "proved":
+        rj = rejudge_problem(campaign.root, node)
+        if rj:
+            raise GateError(f"Node {slug!r}: {rj}")
 
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":
