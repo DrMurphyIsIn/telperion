@@ -413,17 +413,23 @@ def render_provenance_report(campaign) -> str:
     covered = [r for r in proved if r.comparator_run and not r.comparator_stale]
     if covered:
         lines.append(f"  ({len(covered)} proved node(s) covered by a passing Comparator run)")
-    lko = [r for r in covered if r.lean_kernel_only]
-    for r in lko:
+    # Driven from `heavy_certificates` (not from having a `[comparator]` block at all: a
+    # heavy node can be proved with NO comparator record yet, e.g. AND_ladder_h11000_kernel
+    # on the real registry, and must still be reported on). `lean_kernel_only` is kept as an
+    # OR so a legacy record that marks itself Lean-kernel-only without the flag still shows.
+    heavy_rows = [r for r in proved
+                 if r.lean_kernel_only or campaign.nodes[r.slug].heavy_certificates]
+    for r in heavy_rows:
         node = campaign.nodes[r.slug]
         problem = rejudge_problem(campaign.root, node)
+        comp = f"comparator={r.comparator_run}" if r.comparator_run else "comparator=-"
         if not problem and node.rejudge is not None:
             rj = node.rejudge
-            lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel + nanoda "
+            lines.append(f"  {r.slug:<48} {comp} Lean kernel + nanoda "
                          f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]})")
         else:
             suffix = f" -- {problem}" if problem else ""
-            lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
+            lines.append(f"  {r.slug:<48} {comp} Lean kernel only "
                          f"(heavy_certificates: nanoda not run){suffix}")
     for r in covered:
         weak = weak_record_reasons(r)

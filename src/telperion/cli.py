@@ -1602,6 +1602,15 @@ def cmd_mission_rejudge_record(args) -> int:
     LOCAL re-judge -- Comparator, nanoda ON -- on its CURRENT artifact, run on a large
     machine at the pinned telperion/NANODA_REV. The verdict comes from the log text
     (`parse_comparator_log`), never from a flag: there is no `--pass`/`--fail` option.
+
+    Owner ruling (fix round 1, 2026-10-27): a log must bind itself to ONE node and ONE
+    artifact digest via a `REJUDGE-HEADER node=<slug> artifact_sha256=<64-hex>` line the
+    re-judge runner writes before Comparator starts -- otherwise a passing log for a
+    different node, or for an older artifact, could be recorded as THIS node's re-judge.
+    Refuses (exit 2, no record written) when that header is missing, names a different
+    node, or names an artifact digest that is not the one currently on disk. Also refuses
+    (exit 2, no record) when the node is not `heavy_certificates = true` or its status is
+    not "proved" -- a re-judge is meaningless for either.
     """
     import dataclasses as _dc
     import hashlib as _hashlib
@@ -1610,7 +1619,7 @@ def cmd_mission_rejudge_record(args) -> int:
 
     from .missions.provenance import sha256_file
     from .missions.registry import load_campaign
-    from .missions.rejudge import parse_comparator_log
+    from .missions.rejudge import parse_comparator_log, parse_rejudge_header
     from .missions.schema import RejudgeRecord, SchemaError, save_node, slug_of
 
     slug = slug_of(args.slug)
@@ -1627,6 +1636,14 @@ def cmd_mission_rejudge_record(args) -> int:
     if node is None:
         print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
         return 1
+    if not node.heavy_certificates:
+        print(f"{slug}: heavy_certificates is not set; a re-judge is only meaningful for a "
+              "node hosted CI judges Lean-kernel-only.", file=sys.stderr)
+        return 2
+    if node.status != "proved":
+        print(f"{slug}: status is {node.status!r}, not 'proved'; refusing to record a "
+              "re-judge for it.", file=sys.stderr)
+        return 2
     if node.proof is None:
         print(f"{slug}: no artifact linked; a re-judge is about an artifact.")
         return 1
@@ -1634,21 +1651,39 @@ def cmd_mission_rejudge_record(args) -> int:
     if not art.exists():
         print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
         return 1
-    text = args.log.read_text(errors="replace")
+    raw = args.log.read_bytes()
+    text = raw.decode(errors="replace")
+    header = parse_rejudge_header(text)
+    if header is None:
+        print(f"{slug}: log has no 'REJUDGE-HEADER node=<slug> artifact_sha256=<64-hex>' "
+              "line; the re-judge runner must write it before Comparator starts. Refusing "
+              "to bind this log to any node.", file=sys.stderr)
+        return 2
+    header_node, header_sha = header
+    if slug_of(header_node) != slug:
+        print(f"{slug}: log's REJUDGE-HEADER names node {header_node!r}, not {slug!r}; "
+              "refusing a log from a different node.", file=sys.stderr)
+        return 2
+    cur_sha = sha256_file(art)
+    if header_sha != cur_sha:
+        print(f"{slug}: log's REJUDGE-HEADER names artifact sha256 {header_sha[:12]}..., but "
+              f"the artifact on disk is {cur_sha[:12]}...; re-run the re-judge on the "
+              "CURRENT artifact.", file=sys.stderr)
+        return 2
     verdict = parse_comparator_log(text)
     nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
     rev = nanoda_rev_path.read_text().strip()
     try:
         rec = RejudgeRecord(
             date=_date.today().isoformat(), machine=_platform.node(), nanoda_rev=rev,
-            comparator_tag=args.comparator_tag, artifact_sha256=sha256_file(art),
-            verdict=verdict, log_sha256=_hashlib.sha256(text.encode()).hexdigest(),
+            comparator_tag=args.comparator_tag, artifact_sha256=cur_sha,
+            verdict=verdict, log_sha256=_hashlib.sha256(raw).hexdigest(),
             peak_rss_kb=args.peak_rss_kb, note=args.note,
         )
     except SchemaError as exc:
         print(f"{slug}: {exc}")
         return 1
-    save_node(_dc.replace(node, rejudge=rec), camp_root / "nodes" / f"{slug}.toml")
+    save_node(_dc.replace(node, rejudge=rec, updated=rec.date), camp_root / "nodes" / f"{slug}.toml")
     if verdict != "pass":
         print(f"REJUDGE FAIL {slug}: nanoda/Comparator did not accept -- REPORT TO OWNER",
               file=sys.stderr)

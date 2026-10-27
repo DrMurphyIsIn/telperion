@@ -11,9 +11,21 @@ Exact wording confirmed against a real `missions-comparator.yml` CI run (2026-10
 "Nanoda kernel accepts the solution", "Lean default kernel accepts the solution", and
 "Your solution is okay!" -- matching the strings below verbatim.
 """
+from __future__ import annotations
+
+import re
+from typing import Optional, Tuple
+
 REQUIRED = ("Lean default kernel accepts the solution",
             "Nanoda kernel accepts the solution",
             "Your solution is okay!")
+
+#: Owner ruling (fix round 1, 2026-10-27): a re-judge log must bind itself to ONE node and
+#: ONE artifact digest, or a passing log from a different node (or an older artifact) could
+#: be recorded against the wrong `[rejudge]`. The re-judge runner writes this line itself,
+#: before Comparator starts; `mission rejudge-record` refuses a log without it.
+_REJUDGE_HEADER_RE = re.compile(
+    r"^REJUDGE-HEADER\s+node=(?P<node>\S+)\s+artifact_sha256=(?P<sha>[0-9a-fA-F]{64})\s*$")
 
 
 def parse_comparator_log(text: str) -> str:
@@ -29,3 +41,17 @@ def parse_comparator_log(text: str) -> str:
     if any(l.lstrip().lower().startswith(("error", "uncaught exception")) for l in lines):
         return "fail"
     return "pass" if all(any(req in l for l in lines) for req in REQUIRED) else "fail"
+
+
+def parse_rejudge_header(text: str) -> Optional[Tuple[str, str]]:
+    """Find the `REJUDGE-HEADER node=<slug> artifact_sha256=<64-hex>` line.
+
+    The re-judge runner writes this line before invoking Comparator, binding the log that
+    follows to exactly one node and one artifact digest. Returns `(node, sha256)` -- `sha256`
+    lower-cased -- from the first matching line, or `None` if no line matches.
+    """
+    for line in text.splitlines():
+        m = _REJUDGE_HEADER_RE.match(line.strip())
+        if m:
+            return m.group("node"), m.group("sha").lower()
+    return None

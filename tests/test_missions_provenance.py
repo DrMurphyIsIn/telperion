@@ -468,6 +468,45 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
     assert verify_campaign(croot).ok
 
 
+def test_provenance_report_heavy_node_without_comparator_reads_lean_kernel_only(tmp_path, capsys):
+    """Fix round 1 (2026-10-27): the heavy report line is driven from `heavy_certificates`,
+    not from having a `[comparator]` block at all -- a heavy node proved with NO comparator
+    record yet (e.g. AND_ladder_h11000_kernel on the real registry) must still be reported."""
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem hv2 : 2 = 2"
+    node = _open_with_proof(croot, "HV_two", stmt, f"{stmt} := by rfl\n")
+    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_two.toml")
+    grant_status(load_campaign(croot), "HV_two", **GATE)
+    assert load_node(croot / "nodes" / "HV_two.toml").comparator is None
+    capsys.readouterr()
+    assert _cli(mroot, "provenance-report", "demo") == 0
+    out = capsys.readouterr().out
+    assert "HV_two" in out
+    assert "Lean kernel only" in out
+    assert "Lean kernel + nanoda" not in out
+
+
+def test_provenance_report_heavy_node_with_passing_rejudge_reads_lean_kernel_plus_nanoda(tmp_path, capsys):
+    from telperion.missions.schema import RejudgeRecord
+    mroot, croot = _demo(tmp_path)
+    stmt = "theorem hv3 : 3 = 3"
+    node = _open_with_proof(croot, "HV_three", stmt, f"{stmt} := by rfl\n")
+    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_three.toml")
+    grant_status(load_campaign(croot), "HV_three", **GATE)
+    n = load_node(croot / "nodes" / "HV_three.toml")
+    art = croot / "proof" / "HV_three.lean"
+    rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=prov.sha256_file(art),
+                        verdict="pass", log_sha256="c" * 64)
+    save_node(dataclasses.replace(n, rejudge=rec), croot / "nodes" / "HV_three.toml")
+    capsys.readouterr()
+    assert _cli(mroot, "provenance-report", "demo") == 0
+    out = capsys.readouterr().out
+    assert "HV_three" in out
+    assert "Lean kernel + nanoda (local re-judge" in out
+    assert "nanoda aaaaaaaa" in out
+
+
 def test_ordinary_record_round_trips_without_second_kernel_key(tmp_path):
     from telperion.missions.schema import ComparatorRecord
     node = Node(name="S.k", title="t", kind="lemma", status="open", depends_on=(),
