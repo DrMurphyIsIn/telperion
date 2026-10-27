@@ -91,6 +91,15 @@ because they are reusable certificate shapes.
 - **Moving the consumers over.** Arda goes first. Then tenth-discriminant, brualdi-goldwasser and riemann-hypothesis-lean,
   one PR each. The owner approves every PR to a public repository. Published releases and Zenodo records are not touched; the
   change appears in each repository's next release.
+- **Arda's labs (owner decision, 2026-10-27): separate lab packages.** After vendoring, Arda's `telperion/` is byte-identical to
+  the release. The labs move out into Arda packages, with imports rewritten from `telperion.<lab>` to `telperion_<lab>.<...>`:
+  - the RH lab goes to `labs/rh/` as package `telperion_rh` (rh_jensen, li_coeff, weil_form_eval, missions/rh, mirrormere,
+    anduril, RH examples, research/);
+  - the BG lab (`telperion/bg`, bg_* modules, missions/bg, BG examples) moves to the brualdi-goldwasser repo, per the spec.
+  Rollout step 7 is split:
+  - **7a:** the release, the `telperion vendor` tool, and the three public repos;
+  - **7b:** the Arda lab-package refactor, planned after step 2 fixes the final classification.
+  The rejected alternative was consumer-owned overlay paths inside `telperion/`.
 - **Arda worktrees** (about 60) are not edited. Branches re-vendor when they rebase, and CI flags any branch that still
   carries the old copy.
 
