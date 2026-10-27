@@ -377,6 +377,32 @@ class CIRecord:
 
 
 @dataclass(frozen=True)
+class RejudgeRecord:
+    """A local Comparator run with nanoda ON for a `heavy_certificates` node (spec 5.1, step 0).
+
+    Hosted runners (16 GB) cannot replay heavy certificates under nanoda, so these nodes are
+    judged Lean-kernel-only in CI. They stay proved only with a passing re-judge on the CURRENT
+    artifact, run on a large machine at the pinned telperion/NANODA_REV.
+    """
+    date: str
+    machine: str
+    nanoda_rev: str
+    comparator_tag: str
+    artifact_sha256: str
+    verdict: str
+    log_sha256: str
+    peak_rss_kb: int = 0
+    note: str = ""
+
+    def __post_init__(self):
+        for f in ("date", "machine", "nanoda_rev", "comparator_tag", "artifact_sha256", "log_sha256"):
+            if not str(getattr(self, f)).strip():
+                raise SchemaError(f"rejudge.{f} must be non-empty")
+        if self.verdict not in ("pass", "fail"):
+            raise SchemaError(f"rejudge.verdict must be 'pass' or 'fail', not {self.verdict!r}")
+
+
+@dataclass(frozen=True)
 class Node:
     name: str
     title: str
@@ -403,6 +429,9 @@ class Node:
     requires_ci_job: str = ""
     #: The recorded passing run of that job (see CIRecord); written by `mission ci-record`.
     ci_record: Optional[CIRecord] = None
+    #: A passing LOCAL re-judge (Comparator, nanoda ON) on the current artifact, for a
+    #: `heavy_certificates` node (see RejudgeRecord); written by `mission rejudge-record`.
+    rejudge: Optional[RejudgeRecord] = None
     #: True when the artifact's exact certificates (`decide +kernel` LDL^T blocks, ~16 GB to
     #: replay) cannot be run through nanoda on a hosted runner: the judge then asserts the
     #: node with `enable_nanoda = false` and the record says "Lean kernel only".
@@ -484,7 +513,7 @@ _MODELLED_NODE_KEYS = frozenset({
     "name", "title", "kind", "status", "statement_module", "source",
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
-    "requires_ci_job", "ci_record", "heavy_certificates", "judge_via", "compose",
+    "requires_ci_job", "ci_record", "rejudge", "heavy_certificates", "judge_via", "compose",
     "heavy_build_targets",
 })
 
@@ -619,6 +648,13 @@ def _node_to_doc(node: Node) -> dict:
         }
         if c.run_url:
             doc["ci_record"]["run_url"] = c.run_url
+    if node.rejudge is not None:
+        r = node.rejudge
+        doc["rejudge"] = {k: getattr(r, k) for k in (
+            "date", "machine", "nanoda_rev", "comparator_tag", "artifact_sha256", "verdict",
+            "log_sha256", "peak_rss_kb")}
+        if r.note:
+            doc["rejudge"]["note"] = r.note
     return doc
 
 
@@ -680,6 +716,14 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 head_sha=c["head_sha"], artifact_sha256=c["artifact_sha256"],
                 conclusion=c["conclusion"], date=c["date"], run_url=c.get("run_url", ""),
             )
+        rejudge = None
+        if "rejudge" in doc:
+            r = doc["rejudge"]
+            rejudge = RejudgeRecord(
+                date=r["date"], machine=r["machine"], nanoda_rev=r["nanoda_rev"],
+                comparator_tag=r["comparator_tag"], artifact_sha256=r["artifact_sha256"],
+                verdict=r["verdict"], log_sha256=r["log_sha256"],
+                peak_rss_kb=int(r.get("peak_rss_kb", 0)), note=r.get("note", ""))
         compose = None
         if "compose" in doc:
             c = doc["compose"]
@@ -711,6 +755,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             comparator=comparator,
             requires_ci_job=doc.get("requires_ci_job", ""),
             ci_record=ci_record,
+            rejudge=rejudge,
             heavy_certificates=bool(doc.get("heavy_certificates", False)),
             judge_via=_judge_via(doc.get("judge_via", "")),
             compose=compose,

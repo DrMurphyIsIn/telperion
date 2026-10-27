@@ -278,6 +278,26 @@ def required_ci_problem(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+def rejudge_problem(campaign_root: Path, node: Node) -> str:
+    """"" unless a heavy node lacks a passing nanoda re-judge on its current artifact."""
+    if not node.heavy_certificates:
+        return ""
+    r = node.rejudge
+    if r is None:
+        return "heavy_certificates: no local nanoda re-judge recorded (`mission rejudge-record`)"
+    if r.verdict != "pass":
+        return f"local nanoda re-judge on {r.date} FAILED (nanoda {r.nanoda_rev[:8]})"
+    if node.proof is None:
+        return "heavy node has no artifact"
+    art = Path(campaign_root) / node.proof.artifact
+    if not art.exists():
+        return f"artifact {node.proof.artifact!r} does not exist"
+    if sha256_file(art) != r.artifact_sha256:
+        return (f"re-judge of {r.date} was on artifact sha256 {r.artifact_sha256[:12]}, "
+                "which is no longer the artifact")
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Migration and report
 # ---------------------------------------------------------------------------
@@ -395,8 +415,16 @@ def render_provenance_report(campaign) -> str:
         lines.append(f"  ({len(covered)} proved node(s) covered by a passing Comparator run)")
     lko = [r for r in covered if r.lean_kernel_only]
     for r in lko:
-        lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
-                     "(heavy_certificates: nanoda not run)")
+        node = campaign.nodes[r.slug]
+        problem = rejudge_problem(campaign.root, node)
+        if not problem and node.rejudge is not None:
+            rj = node.rejudge
+            lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel + nanoda "
+                         f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]})")
+        else:
+            suffix = f" -- {problem}" if problem else ""
+            lines.append(f"  {r.slug:<48} comparator={r.comparator_run} Lean kernel only "
+                         f"(heavy_certificates: nanoda not run){suffix}")
     for r in covered:
         weak = weak_record_reasons(r)
         if weak:

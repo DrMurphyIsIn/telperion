@@ -1594,6 +1594,69 @@ def cmd_mission_ci_record(args) -> int:
     return 0 if rec.conclusion == "success" else 1
 
 
+def cmd_mission_rejudge_record(args) -> int:
+    """Record a local Comparator run with nanoda ON for a `heavy_certificates` node.
+
+    Hosted CI judges a heavy node Lean-kernel-only (its certificates exhaust a 16 GB
+    runner under nanoda). The owner's rule: such a node stays proved only with a passing
+    LOCAL re-judge -- Comparator, nanoda ON -- on its CURRENT artifact, run on a large
+    machine at the pinned telperion/NANODA_REV. The verdict comes from the log text
+    (`parse_comparator_log`), never from a flag: there is no `--pass`/`--fail` option.
+    """
+    import dataclasses as _dc
+    import hashlib as _hashlib
+    import platform as _platform
+    from datetime import date as _date
+
+    from .missions.provenance import sha256_file
+    from .missions.registry import load_campaign
+    from .missions.rejudge import parse_comparator_log
+    from .missions.schema import RejudgeRecord, SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    camp_root = _resolve_campaign(_missions_root(args), slug,
+                                  getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+    if node.proof is None:
+        print(f"{slug}: no artifact linked; a re-judge is about an artifact.")
+        return 1
+    art = camp_root / node.proof.artifact
+    if not art.exists():
+        print(f"{slug}: artifact {node.proof.artifact!r} does not exist")
+        return 1
+    text = args.log.read_text(errors="replace")
+    verdict = parse_comparator_log(text)
+    nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
+    rev = nanoda_rev_path.read_text().strip()
+    try:
+        rec = RejudgeRecord(
+            date=_date.today().isoformat(), machine=_platform.node(), nanoda_rev=rev,
+            comparator_tag=args.comparator_tag, artifact_sha256=sha256_file(art),
+            verdict=verdict, log_sha256=_hashlib.sha256(text.encode()).hexdigest(),
+            peak_rss_kb=args.peak_rss_kb, note=args.note,
+        )
+    except SchemaError as exc:
+        print(f"{slug}: {exc}")
+        return 1
+    save_node(_dc.replace(node, rejudge=rec), camp_root / "nodes" / f"{slug}.toml")
+    if verdict != "pass":
+        print(f"REJUDGE FAIL {slug}: nanoda/Comparator did not accept -- REPORT TO OWNER",
+              file=sys.stderr)
+        return 1
+    print(f"REJUDGE PASS {slug} nanoda={rev[:8]} artifact={rec.artifact_sha256[:12]}")
+    return 0
+
+
 def cmd_mission_comparator_record(args) -> int:
     """Record a PASSING Comparator run on a proved node (a sidecar, never a status change)."""
     import dataclasses as _dc
@@ -2528,6 +2591,17 @@ def main(argv=None) -> int:
                         "satisfies requires_ci_job when it is \"success\"")
     p.add_argument("--run-url", default=None, dest="run_url")
     p.set_defaults(mission_fn=cmd_mission_ci_record)
+
+    # rejudge-record SLUG --campaign C --log PATH --comparator-tag TAG [--peak-rss-kb N] [--note S]
+    p = msub.add_parser("rejudge-record",
+                        help="record a local Comparator run with nanoda ON for a heavy node")
+    p.add_argument("slug")
+    p.add_argument("--campaign", required=True)
+    p.add_argument("--log", required=True, type=Path)
+    p.add_argument("--comparator-tag", required=True, dest="comparator_tag")
+    p.add_argument("--peak-rss-kb", type=int, default=0, dest="peak_rss_kb")
+    p.add_argument("--note", default="")
+    p.set_defaults(mission_fn=cmd_mission_rejudge_record)
 
     # verify [CAMPAIGN] [--deep-lean]
     p = msub.add_parser("verify", help="run the full invariant battery")
