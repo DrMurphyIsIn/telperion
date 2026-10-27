@@ -92,8 +92,7 @@ class JensenPolynomialHyperbolicityEmitter(Emitter):
         (disc2_margin(box) <= 0) or if the leading coefficient c2 straddles zero.
         Returns (lean_text, 1).
         """
-        # Lazy import to avoid a hard module-load dependency cycle.
-        from .rh_jensen.jensen import disc2_margin
+        from .jensen_margin import disc2_margin
 
         if len(box) != 3:
             raise ValueError(
