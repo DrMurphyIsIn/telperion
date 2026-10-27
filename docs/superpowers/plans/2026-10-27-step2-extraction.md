@@ -35,6 +35,9 @@ creating the GitHub repository is an owner gate after this plan.
 
 - Base: branch `telperion/step1-lab-boundary` at `e0b40d933` or later, worktree `~/arda-telperion-step1`. Do NOT use
   `~/arda-telperion-standalone`, where the step 0 re-judge queue runs.
+- PRECONDITION: step 0 is complete. Its Task 4 records and Task 5 verify gate are on `docs/telperion-standalone-spec`, and
+  that branch has been merged into `telperion/step1-lab-boundary`, so the extracted history carries the `[rejudge]` work.
+  Task 1 Step 0 checks this.
 - New repository path: `~/telperion-repo`. Scratch area: `~/telperion-tools/extract/`. Nothing is created on GitHub, nothing
   is pushed, no remote is added.
 - Kept history: commits touching kept paths only. Each kept path is renamed `telperion/<x>` -> `<x>`. Commit messages drop
@@ -83,6 +86,9 @@ creating the GitHub repository is an owner gate after this plan.
     line is a file path or a directory prefix ending in `/`. This is the format `git filter-repo --paths-from-file` reads.
   - `extraction_paths.py --check` exits 1 when the file is stale.
   - `kept_paths(root) -> list[str]` and `kept_files(root) -> list[str]`, the latter expanding directories over `git ls-files`.
+
+- [ ] **Step 0: Precondition check.** Run `git -C ~/arda-telperion-step1 merge-base --is-ancestor $(git -C ~/arda-telperion-standalone rev-parse docs/telperion-standalone-spec) HEAD && echo merged`.
+  If the output is not `merged`, STOP and report BLOCKED: the step 0 branch has not been merged in yet.
 
 - [ ] **Step 1: Write the rules file** `telperion/docs/extraction/extraction_rules.toml`:
 
