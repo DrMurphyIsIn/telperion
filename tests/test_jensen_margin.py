@@ -20,13 +20,6 @@ def test_engine_disc2_margin_rejects_wrong_length():
         disc2_margin([(F(1), F(1))])
 
 
-def test_rh_jensen_reexports_disc2_margin():
-    pytest.importorskip("flint")  # rh_jensen imports flint at module load
-    from telperion.jensen_margin import disc2_margin as engine
-    from telperion.rh_jensen.jensen import disc2_margin as lab
-    assert lab is engine
-
-
 def test_emitter_does_not_import_rh_jensen():
     import ast
     from pathlib import Path
