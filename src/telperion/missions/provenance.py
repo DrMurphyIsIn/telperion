@@ -349,6 +349,12 @@ def lake_workspace(campaign_root: Path, node: Node) -> Path:
         return lean_dir       # off-island: no recognised workspace to search at all
 
     module = judge.module_name_of(lean_dir, artifact)
+    # Controller Ruling 0b-9 (2026-10-28): the closure as the island model resolves it --
+    # every module imported anywhere in it, mapped to its file (None = external). A
+    # candidate build workspace must resolve EVERY one of these the same way (the 0b-8
+    # same-file guard, extended transitively), or the build would compile a different
+    # closure from the one `closure_digest` hashes.
+    _files, _ws, resolution = _closure_resolution(campaign_root, node)
 
     candidates = [lean_dir]
     try:
@@ -373,6 +379,13 @@ def lake_workspace(campaign_root: Path, node: Node) -> Path:
         # export would be looking at two different files.
         if got is None or got != artifact:
             continue
+        # Ruling 0b-9: transitively, not only the artifact module. The island lean dir
+        # IS the island model, so it agrees with itself by construction.
+        if d != lean_dir:
+            cand_ws = coverage._workspace(d)
+            if any(coverage._module_file(cand_ws, mod) != want
+                   for mod, want in resolution.items()):
+                continue
         key = (len(pkg.libs), str(d))
         if best is None or key < best[0]:
             best = (key, d)
@@ -415,10 +428,22 @@ def _resolve_closure(campaign_root: Path, node: Node) -> Tuple[List[Path], tuple
     matches a non-path `lake-manifest.json` dependency (`_resolve_external_entry`);
     anything else raises `ClosureError` naming the module and the importing file.
     """
+    files, ws, _resolution = _closure_resolution(campaign_root, node)
+    return files, ws
+
+
+def _closure_resolution(campaign_root: Path, node: Node
+                        ) -> Tuple[List[Path], tuple, dict]:
+    """`_resolve_closure` plus the RESOLUTION it used: `{module: file-or-None}` for every
+    module imported anywhere in the closure (None = external: a core root or a manifest
+    package). Controller Ruling 0b-9: `lake_workspace` checks a candidate build workspace
+    against exactly this map, so the closure the digest hashes is the closure the build
+    actually sees."""
     artifact, ws = _closure_workspace(campaign_root, node)
     from . import coverage
 
     resolved: set = set()
+    resolution: dict = {}
     stack = [artifact]
     while stack:
         f = stack.pop()
@@ -427,6 +452,7 @@ def _resolve_closure(campaign_root: Path, node: Node) -> Tuple[List[Path], tuple
         resolved.add(f)
         for mod in coverage._imports(f):
             g = coverage._module_file(ws, mod)
+            resolution[mod] = g
             if g is not None:
                 if g not in resolved:
                     stack.append(g)
@@ -437,7 +463,7 @@ def _resolve_closure(campaign_root: Path, node: Node) -> Tuple[List[Path], tuple
             raise ClosureError(
                 f"import {mod!r} in {f} resolves to no local file, matches no "
                 "manifest package, and is not a core root; the closure cannot be bound")
-    return sorted(resolved), ws
+    return sorted(resolved), ws, resolution
 
 
 def closure_files(campaign_root: Path, node: Node) -> List[Path]:
@@ -464,9 +490,44 @@ def closure_support_files(campaign_root: Path, node: Node) -> List[Path]:
     chosen = lake_workspace(campaign_root, node)
     chosen_ws = coverage._workspace(chosen.resolve())
     out = []
-    for pkg in tuple(ws) + chosen_ws:
-        for name in ("lakefile.toml", "lake-manifest.json"):
-            f = Path(pkg.dir) / name
+    for d in _package_dirs(tuple(ws) + chosen_ws):
+        # Controller Ruling 0b-9: `lean-toolchain` (which Lean the build used) and a
+        # `lakefile.lean` (a path-required package coverage.py cannot parse) are in the
+        # git rule too -- they are in the digest now (`_build_config_files`).
+        for name in ("lakefile.toml", "lakefile.lean", "lake-manifest.json", "lean-toolchain"):
+            f = Path(d) / name
+            if f.is_file():
+                out.append(f.resolve())
+    return sorted(set(out))
+
+
+def _package_dirs(ws: tuple) -> List[Path]:
+    """Every package directory of *ws*, plus each `path`-required directory of those
+    packages that `coverage._workspace` itself dropped (a `lakefile.lean` package it does
+    not parse) -- deduplicated, in a stable order."""
+    seen: List[Path] = []
+    for pkg in ws:
+        for d in [Path(pkg.dir)] + [Path(r) for r in pkg.requires]:
+            try:
+                d = d.resolve()
+            except OSError:
+                continue
+            if d.is_dir() and d not in seen:
+                seen.append(d)
+    return seen
+
+
+def _build_config_files(build_dir: Path) -> List[Path]:
+    """Controller Ruling 0b-9 (2026-10-28): the build configuration `closure_digest`
+    hashes by CONTENT -- `lean-toolchain`, `lakefile.toml` and `lakefile.lean` of the
+    build workspace `lake_workspace` picks and of each of its path-required packages.
+    Before this, a toolchain bump or a lakefile edit (an option, a `moreLeanArgs`, a lib
+    `srcDir`) left a bound re-judge looking current."""
+    from . import coverage
+    out = []
+    for d in _package_dirs(coverage._workspace(Path(build_dir).resolve())):
+        for name in ("lean-toolchain", "lakefile.toml", "lakefile.lean"):
+            f = d / name
             if f.is_file():
                 out.append(f.resolve())
     return sorted(set(out))
@@ -488,12 +549,20 @@ def closure_digest(campaign_root: Path, node: Node) -> str:
     island with no slimmer sub-workspace (every island this ruling does not touch),
     `lake_workspace` returns the same lean dir `_resolve_closure` already used, so the
     pins are unchanged too -- a record time/verify time MUST agree, which they do
-    because both call this same function."""
+    because both call this same function.
+
+    Controller Ruling 0b-9 (2026-10-28): followed by `CFG` lines -- the path and sha256 of
+    every `lean-toolchain`, `lakefile.toml` and `lakefile.lean` of that same build workspace
+    and its path-required packages (`_build_config_files`), so a toolchain bump or a
+    lakefile edit also makes a bound record stale. Since the same ruling, `lake_workspace`
+    only picks a build workspace that resolves every closure module to the same file as
+    the island model, so the FILE set above is also the set the build compiles."""
     campaign_root = Path(campaign_root).resolve()
     troot = campaign_root.parent.parent
     files, _ws = _resolve_closure(campaign_root, node)
     from . import coverage
-    pin_ws = coverage._workspace(lake_workspace(campaign_root, node).resolve())
+    build_dir = lake_workspace(campaign_root, node).resolve()
+    pin_ws = coverage._workspace(build_dir)
     h = hashlib.sha256()
     for f in files:
         try:
@@ -507,6 +576,19 @@ def closure_digest(campaign_root: Path, node: Node) -> str:
     for pin in _manifest_pins(pin_ws):
         h.update(b"PIN\0")
         h.update(pin.encode("utf-8"))
+        h.update(b"\n")
+    # Controller Ruling 0b-9 (2026-10-28): the build configuration's CONTENT --
+    # lean-toolchain + lakefile.toml/lakefile.lean of the build workspace and its
+    # path-required packages.
+    for cfg in _build_config_files(build_dir):
+        try:
+            rel = cfg.relative_to(troot)
+        except ValueError:
+            rel = cfg
+        h.update(b"CFG\0")
+        h.update(str(rel).encode("utf-8"))
+        h.update(b"\0")
+        h.update(sha256_file(cfg).encode("utf-8"))
         h.update(b"\n")
     return h.hexdigest()
 
@@ -641,8 +723,15 @@ def needs_rejudge(node: Node) -> bool:
     Before, deleting `heavy_certificates = true` from a node toml made `rejudge_problem`
     return "" -- a node judged Lean-kernel-only in CI then stayed proved with no nanoda run at
     all. A `[comparator]` record that says nanoda was off now makes the node heavy too.
+
+    Controller Ruling 0b-9 (2026-10-28): `judge_via = "heavy"` also counts. A node excluded
+    from the per-PR bundle BY RULE (heavy workflow) is exactly the node the owner approved a
+    Comparator re-judge for; before this, an h11000-shaped node with its `heavy_certificates`
+    flag deleted and no `[comparator]` record read as "not needs_rejudge", so a nanoda-direct
+    record could stand in for the Comparator re-judge Ruling 0b-4 demands.
     """
-    return bool(node.heavy_certificates) or judged_lean_kernel_only(node)
+    return (bool(node.heavy_certificates) or judged_lean_kernel_only(node)
+            or (getattr(node, "judge_via", "") or "").strip() == "heavy")
 
 
 def second_kernel_claimed(node: Node) -> bool:
@@ -657,8 +746,13 @@ def second_kernel_claimed(node: Node) -> bool:
     non-heavy, no-`[comparator]` node completely invisible to `rejudge_problem` (and so to
     `mission verify`, the grant gate, and `render_provenance_report`) -- the record existed on
     disk, said something was wrong, and nothing downstream ever looked at it.
+
+    Controller Ruling 0b-9 (2026-10-28): OR the node carries the durable registry marker
+    `second_kernel_route`. Without it, deleting the `[rejudge]` table from one of the 7
+    nanoda-direct nodes made this False, and the claim vanished with no error anywhere.
     """
-    return bool(needs_rejudge(node)) or node.rejudge is not None
+    return (bool(needs_rejudge(node)) or bool(getattr(node, "second_kernel_route", ""))
+            or node.rejudge is not None)
 
 
 def rejudge_problem(campaign_root: Path, node: Node) -> str:
@@ -671,16 +765,34 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     """
     if not second_kernel_claimed(node):
         return ""
+    marker = (getattr(node, "second_kernel_route", "") or "").strip()
     if node.heavy_certificates:
         why = "heavy_certificates"
     elif judged_lean_kernel_only(node):
         why = (f"judged Lean-kernel-only (second_kernel = {node.comparator.second_kernel!r}, "
                "heavy_certificates absent)")
+    elif (getattr(node, "judge_via", "") or "").strip() == "heavy":
+        why = 'judge_via = "heavy"'
+    elif marker:
+        why = f"second_kernel_route = {marker!r}"
     else:
         why = "a [rejudge] record is present"
     r = node.rejudge
+    # Controller Ruling 0b-9 (2026-10-28): the durable marker. A marked node whose
+    # `[rejudge]` table was deleted, or whose record's route was edited, must fail --
+    # never silently drop or change the claim. And a node that `needs_rejudge` may not be
+    # MARKED nanoda-direct either (Ruling 0b-4 applies to the claim, not just the record).
+    if marker and r is None:
+        return f"second_kernel_route={marker} declared but no re-judge recorded"
+    if marker and needs_rejudge(node) and marker != "comparator":
+        return (f"second_kernel_route={marker} declared on a node that needs a Comparator "
+                "re-judge (heavy, judge_via = \"heavy\", or judged Lean-kernel-only); "
+                "nanoda-direct is not sufficient")
     if r is None:
         return f"{why}: no local nanoda re-judge recorded (`mission rejudge-record`)"
+    if marker and r.route != marker:
+        return (f"second_kernel_route={marker} declared but the [rejudge] record's route is "
+                f"{r.route!r}")
     # Controller ruling 0b-5 (2026-10-28, review fix round 2): a record whose `route` is not
     # one of `rejudge.VALID_ROUTES` names nothing this codebase understands how to check --
     # reject it outright rather than let it fall through to the Comparator-only ruling below

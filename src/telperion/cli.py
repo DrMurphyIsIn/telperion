@@ -1631,6 +1631,10 @@ def cmd_mission_rejudge_record(args) -> int:
     (`nanoda_direct.verdict_of_log`), never from rendering a bundle. The record's `route`
     field is set from the log, so `render_provenance_report` labels it distinctly from a
     Comparator re-judge.
+
+    Controller Ruling 0b-9 (2026-10-28): a nanoda-direct log is REFUSED (exit 2, no
+    record) for a node that `needs_rejudge` (Ruling 0b-4 at record time), and must bind
+    itself to the node's own registered theorem and module (`_nanoda_direct_binding_problem`).
     """
     import dataclasses as _dc
     import hashlib as _hashlib
@@ -1672,13 +1676,22 @@ def cmd_mission_rejudge_record(args) -> int:
     raw = args.log.read_bytes()
     text = raw.decode(errors="replace")
     # Step 0b Task 3 (2026-10-28): a nanoda-direct log (one of the 7 nodes no Comparator
-    # bundle can consume) is accepted for ANY proved node, heavy or not -- there is no
+    # bundle can consume) is accepted for a proved node that does NOT need_rejudge -- there is no
     # `[comparator]`-driven "this node is judged Lean-kernel-only" signal to gate on, because
     # these nodes were never judged by Comparator at all. The needs_rejudge gate below stays
     # exactly as it was for every other route.
     route = _rejudge.parse_rejudge_route(text)
+    from .missions.provenance import needs_rejudge
+    if route == "nanoda-direct" and needs_rejudge(node):
+        # Controller Ruling 0b-9 (2026-10-28), Minor 2: Ruling 0b-4 at RECORD time. A node
+        # that needs a Comparator re-judge (heavy, judge_via = "heavy", or judged
+        # Lean-kernel-only) cannot be satisfied by nanoda-direct, so its record is refused
+        # outright instead of being written and then flagged by `mission verify`.
+        print(f"{slug}: needs a Comparator re-judge (heavy_certificates, judge_via = "
+              "\"heavy\", or judged Lean-kernel-only); a nanoda-direct log cannot satisfy it "
+              "(Ruling 0b-4). Refusing to record.", file=sys.stderr)
+        return 2
     if route != "nanoda-direct":
-        from .missions.provenance import needs_rejudge
         if not needs_rejudge(node):
             # Final-fix 1: the same predicate `rejudge_problem` uses -- the flag, OR a
             # `[comparator]` record saying nanoda was off -- so a node verify demands a re-judge
@@ -1719,6 +1732,10 @@ def cmd_mission_rejudge_record(args) -> int:
                   "refusing to record a verdict whose part count is unknown.", file=sys.stderr)
             return 2
     verdict = _rejudge.rejudge_log_verdict(text, parts)
+    if route == "nanoda-direct":
+        rc = _nanoda_direct_binding_problem(camp_root, node, slug, art, text, verdict)
+        if rc:
+            return rc
     nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
     rev = nanoda_rev_path.read_text().strip()
     # Step 0b Task 1 (2026-10-28): bind the record to the artifact's WHOLE import closure,
@@ -1767,6 +1784,65 @@ def cmd_mission_rejudge_record(args) -> int:
     return 0
 
 
+def _nanoda_direct_binding_problem(camp_root, node, slug, art, text, verdict) -> int:
+    """Controller Ruling 0b-9 (2026-10-28), Fix 2: bind a nanoda-direct log to the node's
+    OWN registered theorem and module. 0 when bound; 2 (after printing why) when not.
+
+    The log must carry exactly one `REJUDGE-INFO ... theorem=T module=M ...` line before its
+    EXPORT section (`nanoda_direct.info_binding`); T must equal
+    `guard_anchors.resolve_theorem(artifact, statement)` -- the resolver `run_direct` uses --
+    and M must equal `judge.module_name_of(<island lean dir>, artifact)`. A PASSING log's
+    export must also declare T as a theorem (`export_declares_theorem`, lean4export's
+    ndjson): a pass over an export of some other constant is no pass for this node. A
+    failing log is still recorded as FAIL once its INFO binding checks out.
+    """
+    from .missions import judge as _judge
+    from .missions import nanoda_direct as _nd
+    from .missions.rejudge import RejudgeSetupError, island_of_artifact
+    from .missions.statements import statement_path
+
+    try:
+        log_thm, log_mod = _nd.info_binding(text)
+    except _nd.BindingError as exc:
+        print(f"{slug}: nanoda-direct log does not bind its export to one theorem/module "
+              f"({exc}); refusing to record.", file=sys.stderr)
+        return 2
+    artifact = Path(art).resolve()
+    camp_root = Path(camp_root).resolve()
+    troot = camp_root.parent.parent
+    stmt = statement_path(camp_root, node)
+    ga = _judge._guard_anchors()
+    try:
+        want_thm = ga.resolve_theorem(artifact.read_text(), stmt.read_text())
+    except (OSError, ga.RegistryError) as exc:
+        print(f"{slug}: cannot resolve the node's registered theorem ({exc}); refusing to "
+              "record.", file=sys.stderr)
+        return 2
+    try:
+        island = island_of_artifact(troot, artifact)
+        want_mod = _judge.module_name_of(_judge.island_dir(troot, island), artifact)
+    except (RejudgeSetupError, _judge.JudgeError, ValueError) as exc:
+        print(f"{slug}: cannot resolve the artifact's module ({exc}); refusing to record.",
+              file=sys.stderr)
+        return 2
+    if log_thm != want_thm:
+        print(f"{slug}: log exported theorem {log_thm!r}, but the node's registered theorem is "
+              f"{want_thm!r}; refusing to record.", file=sys.stderr)
+        return 2
+    if log_mod != want_mod:
+        print(f"{slug}: log exported from module {log_mod!r}, but the artifact's module is "
+              f"{want_mod!r}; refusing to record.", file=sys.stderr)
+        return 2
+    if verdict == "pass":
+        parsed = _nd._parse_sections(text)
+        if parsed is None or not _nd.export_declares_theorem(parsed[1], want_thm):
+            print(f"{slug}: the log's export does not declare theorem {want_thm!r}; a pass "
+                  "over some other constant is no pass for this node. Refusing to record.",
+                  file=sys.stderr)
+            return 2
+    return 0
+
+
 def cmd_mission_rejudge_backfill_closure(args) -> int:
     """Back-fill `[rejudge].closure_sha256` for a node whose closure files are
     git-verified unchanged since the re-judge queue started (step 0b Task 2, 2026-10-28).
@@ -1791,7 +1867,12 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
     from .missions.schema import SchemaError, save_node, slug_of
 
     rebind = bool(getattr(args, "rebind", False))
+    reason = " ".join(str(getattr(args, "reason", "") or "").split())
     slug = slug_of(args.slug)
+    if rebind and not reason:
+        print(f"{slug_of(args.slug)}: --rebind needs --reason TEXT (why the closure digest is "
+              "being re-bound); it goes into the record's note.", file=sys.stderr)
+        return 2
     camp_root = _resolve_campaign(_missions_root(args), slug, getattr(args, "campaign", None))
     if camp_root is None:
         return 1
@@ -1879,13 +1960,18 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
         print(f"{slug}: cannot resolve its import closure ({exc}); refusing to write.",
               file=sys.stderr)
         return 2
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    git_clause = (f"git: no change to {len(files)} closure files and {len(support)} support "
+                  f"files since {args.since}")
     if rebind:
-        extra = (f"closure re-bound 2026-10-28 after srcDir fix (git: no change to "
-                 f"{len(files)} closure files since {args.since})")
+        # Controller Ruling 0b-9 (2026-10-28), Fix 4: the reason is the caller's, not a
+        # hardcoded "after srcDir fix"; and a re-bind REPLACES any earlier re-bind clause
+        # (they described a digest that no longer exists), so clauses never pile up.
+        extra = f"closure re-bound {today}: {reason} ({git_clause})"
     else:
-        extra = (f"closure back-filled 2026-10-28 (git: no change to {len(files)} closure "
-                 f"files since {args.since})")
-    note = f"{node.rejudge.note}; {extra}" if node.rejudge.note else extra
+        extra = f"closure back-filled {today} ({git_clause})"
+    note = _rebind_note(node.rejudge.note, extra, rebind=rebind)
     try:
         rec = _dc.replace(node.rejudge, closure_sha256=digest, closure_files=len(files),
                           note=note)
@@ -1897,6 +1983,74 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
     verb = "re-bound" if rebind else "back-filled"
     print(f"{slug}: closure {verb} ({len(files)} files, sha256 {digest[:16]}..., "
           f"no change since {args.since})")
+    return 0
+
+
+def _rebind_note(note: str, extra: str, *, rebind: bool) -> str:
+    """The record's note with *extra* appended as a "; "-separated clause. Duplicate clauses
+    are dropped; on a re-bind every earlier "closure re-bound ..." clause is dropped first
+    (Controller Ruling 0b-9)."""
+    clauses = [c.strip() for c in (note or "").split("; ") if c.strip()]
+    if rebind:
+        clauses = [c for c in clauses if not c.startswith("closure re-bound")]
+    out = []
+    for c in clauses + [extra]:
+        if c not in out:
+            out.append(c)
+    return "; ".join(out)
+
+
+def cmd_mission_second_kernel_mark(args) -> int:
+    """Set the durable registry marker `second_kernel_route` (Controller Ruling 0b-9,
+    2026-10-28) on a node -- refused (exit 2, no write) unless the node's CURRENT
+    `[rejudge]` record is on exactly that route AND `rejudge_problem` finds nothing wrong
+    with the node once marked (passing, current artifact, current closure digest, and for a
+    node that needs a Comparator re-judge, route "comparator").
+
+    Once set, deleting the `[rejudge]` table or editing its route fails `mission verify`
+    instead of silently dropping or changing the claim."""
+    import dataclasses as _dc
+
+    from .missions.provenance import rejudge_problem
+    from .missions.registry import load_campaign
+    from .missions.schema import SECOND_KERNEL_ROUTES, SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    route = (args.route or "").strip()
+    if route not in SECOND_KERNEL_ROUTES or not route:
+        print(f"{slug}: --route must be one of {SECOND_KERNEL_ROUTES[1:]!r}, not {route!r}",
+              file=sys.stderr)
+        return 2
+    camp_root = _resolve_campaign(_missions_root(args), slug, getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+    r = node.rejudge
+    if r is None:
+        print(f"{slug}: no [rejudge] record; record a passing re-judge on route {route!r} "
+              "first.", file=sys.stderr)
+        return 2
+    if r.route != route:
+        print(f"{slug}: its [rejudge] record is on route {r.route!r}, not {route!r}; "
+              "refusing to mark.", file=sys.stderr)
+        return 2
+    marked = _dc.replace(node, second_kernel_route=route)
+    problem = rejudge_problem(camp.root, marked)
+    if problem:
+        print(f"{slug}: its current [rejudge] does not pass on route {route!r}: {problem}; "
+              "refusing to mark.", file=sys.stderr)
+        return 2
+    save_node(marked, camp_root / "nodes" / f"{slug}.toml")
+    print(f"{slug}: second_kernel_route = {route!r} (record {r.date}, verdict {r.verdict}, "
+          f"closure {r.closure_sha256[:12]}...)")
     return 0
 
 
@@ -2858,7 +3012,19 @@ def main(argv=None) -> int:
     p.add_argument("--rebind", action="store_true",
                    help="replace an EXISTING closure_sha256 (refused without this flag); "
                         "same git rule, applied over the newly computed closure")
+    p.add_argument("--reason", default="",
+                   help="with --rebind: why the digest is re-bound; written into the note, "
+                        "replacing any earlier re-bind clause (required with --rebind)")
     p.set_defaults(mission_fn=cmd_mission_rejudge_backfill_closure)
+
+    # second-kernel-mark SLUG --campaign C --route R
+    p = msub.add_parser("second-kernel-mark",
+                        help="set the durable second_kernel_route marker on a node; refused "
+                             "(exit 2) unless its current [rejudge] passes on that route")
+    p.add_argument("slug")
+    p.add_argument("--campaign", required=True)
+    p.add_argument("--route", required=True, choices=("comparator", "nanoda-direct"))
+    p.set_defaults(mission_fn=cmd_mission_second_kernel_mark)
 
     # verify [CAMPAIGN] [--deep-lean]
     p = msub.add_parser("verify", help="run the full invariant battery")

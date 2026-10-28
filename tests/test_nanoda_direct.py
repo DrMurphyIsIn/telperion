@@ -649,8 +649,17 @@ def _cli(mroot: Path, *args: str) -> int:
     return main(["mission", "--missions-root", str(mroot), *args])
 
 
-def _campaign(tmp_path: Path, *, heavy: bool = False) -> Path:
-    mroot = tmp_path / "missions"
+def _campaign(tmp_path: Path, *, heavy: bool = False, judge_via: str = "") -> Path:
+    """A campaign whose node's artifact lives on a real (synthetic) judge island, with a
+    statement file written by the grant gate's own renderer -- Controller Ruling 0b-9's
+    record-time binding resolves the theorem (`guard_anchors.resolve_theorem`) and module
+    (`judge.module_name_of`) from exactly these files."""
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text('name = "Isl"\n\n[[lean_lib]]\nname = "A"\n')
+    (lean / "A.lean").write_text("theorem demo_hv : True := trivial\n")
+    mroot = tel / "missions"
     croot = mroot / "demo"
     (croot / "nodes").mkdir(parents=True)
     manifest = MissionManifest(
@@ -662,26 +671,39 @@ def _campaign(tmp_path: Path, *, heavy: bool = False) -> Path:
     node = Node(
         name="Demo.hv", title="node", kind="lemma", status="proved", depends_on=(),
         statement_module="Statements.Demo_hv",
-        proof=Proof("proof/Demo_hv.lean", "lean_module", "direct"),
-        heavy_certificates=heavy, created="2026-10-28", updated="2026-10-28",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=heavy, judge_via=judge_via,
+        created="2026-10-28", updated="2026-10-28",
     )
     save_node(node, croot / "nodes" / "Demo_hv.toml")
-    art = croot / "proof" / "Demo_hv.lean"
-    art.parent.mkdir(parents=True, exist_ok=True)
-    art.write_text("theorem demo_hv : 1 = 1 := by rfl\n")
+    write_statement(croot, node, "import Mathlib\ntheorem demo_hv : True", manifest)
     return mroot
 
 
+def _art(mroot: Path) -> Path:
+    return mroot.parent / "examples" / "isl" / "lean" / "A.lean"
+
+
+#: A minimal lean4export 3.1.0-shaped export that declares theorem `demo_hv`: the name
+#: interned as `{"in":N,"str":{"pre":P,"str":S}}`, then a `thm` line naming it.
+_EXPORT_DEMO = ('{"in":1,"str":{"pre":0,"str":"demo_hv"}}\n'
+                '{"thm":{"all":[1],"levelParams":[],"name":1,"type":0,"value":0}}\n')
+
+
 def _direct_log(mroot: Path, *, nanoda_out: str = "Checked 4 declarations with no errors\n",
-               export_rc: int = 0, nanoda_rc: int = 0) -> str:
-    art = mroot / "demo" / "proof" / "Demo_hv.lean"
+               export_rc: int = 0, nanoda_rc: int = 0, theorem: str = "demo_hv",
+               module: str = "A", info: bool = True, export_body: str = _EXPORT_DEMO) -> str:
+    art = _art(mroot)
     sha = hashlib.sha256(art.read_bytes()).hexdigest()
     from telperion.missions.schema import load_node
     csha = closure_digest(mroot / "demo", load_node(mroot / "demo" / "nodes" / "Demo_hv.toml"))
+    info_line = (f"REJUDGE-INFO artifact={art.resolve()} theorem={theorem} module={module} "
+                 "island=isl\n") if info else ""
     return (f"REJUDGE-HEADER node=Demo_hv artifact_sha256={sha} closure_sha256={csha}\n"
            "REJUDGE-ROUTE nanoda-direct\n"
+           + info_line +
            f"==================== REJUDGE-EXPORT exit={export_rc} ====================\n"
-           "<export bytes>\n"
+           + export_body +
            f"==================== REJUDGE-NANODA exit={nanoda_rc} ====================\n"
            f"{nanoda_out}")
 
@@ -727,8 +749,7 @@ def test_cli_nanoda_direct_stale_artifact_refused(tmp_path, capsys):
     mroot = _campaign(tmp_path, heavy=False)
     log = tmp_path / "direct.log"
     text = _direct_log(mroot).replace(
-        hashlib.sha256((mroot / "demo" / "proof" / "Demo_hv.lean").read_bytes()).hexdigest(),
-        "0" * 64, 1)
+        hashlib.sha256(_art(mroot).read_bytes()).hexdigest(), "0" * 64, 1)
     log.write_text(text)
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
@@ -947,3 +968,374 @@ def test_closure_support_files_follows_lake_workspace(tmp_path):
     assert (root_dir / "lake-manifest.json").resolve() in support
     assert (sub_dir / "lakefile.toml").resolve() in support
     assert (sub_dir / "lake-manifest.json").resolve() in support
+
+
+# ===========================================================================
+# Controller Ruling 0b-9 (2026-10-28): the final fix wave.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Fix 1: the durable registry marker `second_kernel_route`
+# ---------------------------------------------------------------------------
+
+def _passing_direct_record(root: Path, node: Node, route: str = "nanoda-direct") -> RejudgeRecord:
+    return RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
+                         comparator_tag="v4.32.0",
+                         artifact_sha256=sha256_file(root / node.proof.artifact),
+                         verdict="pass", log_sha256="c" * 64,
+                         closure_sha256=closure_digest(root, node),
+                         closure_files=len(closure_files(root, node)), route=route)
+
+
+def test_second_kernel_route_roundtrips_and_validates(tmp_path):
+    from telperion.missions.schema import SchemaError, _doc_to_node, _node_to_doc
+    from missions_fixtures import minimal_proved_node
+    node = dataclasses.replace(minimal_proved_node(tmp_path, heavy=False),
+                               second_kernel_route="nanoda-direct")
+    doc = _node_to_doc(node)
+    assert doc["second_kernel_route"] == "nanoda-direct"
+    assert _doc_to_node(doc, tmp_path / "n.toml").second_kernel_route == "nanoda-direct"
+    assert "second_kernel_route" not in _node_to_doc(
+        dataclasses.replace(node, second_kernel_route=""))      # unset: not serialised
+    with pytest.raises(SchemaError, match="second_kernel_route"):
+        dataclasses.replace(node, second_kernel_route="lean-only")
+
+
+def test_marker_without_record_fails(tmp_path):
+    """Deleting `[rejudge]` from a MARKED node is a problem -- before the marker, the same
+    deletion on a non-heavy node made `second_kernel_claimed` False and the claim vanished."""
+    from missions_fixtures import minimal_proved_node
+    from telperion.missions.provenance import second_kernel_claimed
+    node = minimal_proved_node(tmp_path, heavy=False)
+    unmarked = dataclasses.replace(node, rejudge=None)
+    assert rejudge_problem(tmp_path, unmarked) == ""            # no claim: nothing to check
+    marked = dataclasses.replace(unmarked, second_kernel_route="nanoda-direct")
+    assert second_kernel_claimed(marked)
+    assert rejudge_problem(tmp_path, marked) == (
+        "second_kernel_route=nanoda-direct declared but no re-judge recorded")
+
+
+def test_marker_route_mismatch_fails(tmp_path):
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    rec = _passing_direct_record(tmp_path, node)
+    ok = dataclasses.replace(node, rejudge=rec, second_kernel_route="nanoda-direct")
+    assert rejudge_problem(tmp_path, ok) == ""
+    edited = dataclasses.replace(ok, rejudge=dataclasses.replace(rec, route="comparator"))
+    problem = rejudge_problem(tmp_path, edited)
+    assert "second_kernel_route=nanoda-direct declared" in problem and "'comparator'" in problem
+
+
+def test_needs_rejudge_node_marked_nanoda_direct_fails(tmp_path):
+    """Ruling 0b-4 applies to the CLAIM as well as the record."""
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=True)
+    rec = _passing_direct_record(tmp_path, node)
+    marked = dataclasses.replace(node, rejudge=rec, second_kernel_route="nanoda-direct")
+    assert "nanoda-direct is not sufficient" in rejudge_problem(tmp_path, marked)
+
+
+def test_needs_rejudge_includes_judge_via_heavy(tmp_path):
+    from missions_fixtures import minimal_proved_node
+    from telperion.missions.provenance import needs_rejudge
+    node = minimal_proved_node(tmp_path, heavy=False)
+    assert not needs_rejudge(node)
+    assert needs_rejudge(dataclasses.replace(node, judge_via="heavy"))
+
+
+def _verify_copy(tmp_path, campaign, islands, edit):
+    """Copy a real campaign (+ the named islands' lean sources, never .lake) under
+    `<tmp>/telperion/`, apply `edit(nodes_dir)`, return verify_campaign's errors."""
+    import shutil
+    from telperion.missions.verify import verify_campaign
+    troot = tmp_path / "telperion"
+    dst = troot / "missions" / campaign
+    if not (TELPERION_ROOT / "missions" / campaign).is_dir():
+        pytest.skip("real registry absent")
+    shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
+    for isl in islands:
+        src = TELPERION_ROOT / "examples" / isl / "lean"
+        if src.is_dir():
+            shutil.copytree(src, troot / "examples" / isl / "lean",
+                            ignore=shutil.ignore_patterns(".lake"))
+    edit(dst / "nodes")
+    return verify_campaign(dst).errors
+
+
+def test_verify_fails_when_rejudge_deleted_from_marked_node(tmp_path):
+    from telperion.missions.schema import load_node
+    slug = "MM_leakage_composite_zero"
+
+    def edit(nd):
+        p = nd / f"{slug}.toml"
+        n = load_node(p)
+        save_node(dataclasses.replace(n, second_kernel_route="nanoda-direct", rejudge=None), p)
+    errors = _verify_copy(tmp_path, "mirrormere", ["quasicrystal"], edit)
+    assert any(slug in e and "second_kernel_route=nanoda-direct declared but no re-judge "
+               "recorded" in e for e in errors), errors
+
+
+def test_verify_fails_when_marked_route_edited(tmp_path):
+    from telperion.missions.schema import load_node
+    slug = "MM_leakage_composite_zero"
+
+    def edit(nd):
+        p = nd / f"{slug}.toml"
+        n = load_node(p)
+        assert n.rejudge is not None and n.rejudge.route == "nanoda-direct"
+        save_node(dataclasses.replace(n, second_kernel_route="nanoda-direct",
+                                      rejudge=dataclasses.replace(n.rejudge, route="comparator")),
+                  p)
+    errors = _verify_copy(tmp_path, "mirrormere", ["quasicrystal"], edit)
+    assert any(slug in e and "second_kernel_route=nanoda-direct declared but the [rejudge] "
+               "record's route is 'comparator'" in e for e in errors), errors
+
+
+def test_verify_fails_h11000_style_judge_via_heavy_with_nanoda_direct_record(tmp_path):
+    """The reviewer's shape: an h11000-style node (no [comparator] record), its
+    heavy_certificates flag DELETED, judge_via = "heavy" kept, and a nanoda-direct record.
+    Before Ruling 0b-9, needs_rejudge ignored judge_via, so the nanoda-direct record stood in
+    for the Comparator re-judge Ruling 0b-4 demands."""
+    from telperion.missions.schema import load_node
+    slug = "AND_ladder_h11000_kernel"
+
+    def edit(nd):
+        p = nd / f"{slug}.toml"
+        n = load_node(p)
+        assert n.comparator is None and n.judge_via == "heavy"
+        save_node(dataclasses.replace(n, heavy_certificates=False,
+                                      rejudge=dataclasses.replace(n.rejudge, route="nanoda-direct")),
+                  p)
+    errors = _verify_copy(tmp_path, "anduril", ["zeta_reflection"], edit)
+    assert any(slug in e and "nanoda-direct is not sufficient" in e for e in errors), errors
+
+
+def test_cli_second_kernel_mark(tmp_path, capsys):
+    """`mission second-kernel-mark` refuses without a record, on the wrong route, and on a
+    stale record; writes the marker only when the current record passes on that route."""
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path, heavy=False)
+    p = mroot / "demo" / "nodes" / "Demo_hv.toml"
+    args = ["second-kernel-mark", "Demo_hv", "--campaign", "demo"]
+    assert _cli(mroot, *args, "--route", "nanoda-direct") == 2          # no record yet
+    log = tmp_path / "direct.log"
+    log.write_text(_direct_log(mroot))
+    assert _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
+                "--comparator-tag", "v4.32.0") == 0
+    assert _cli(mroot, *args, "--route", "comparator") == 2             # wrong route
+    assert load_node(p).second_kernel_route == ""
+    art = _art(mroot)
+    original = art.read_text()
+    art.write_text(original + "-- edited after the re-judge\n")
+    assert _cli(mroot, *args, "--route", "nanoda-direct") == 2          # stale record
+    assert load_node(p).second_kernel_route == ""
+    art.write_text(original)
+    assert _cli(mroot, *args, "--route", "nanoda-direct") == 0
+    n = load_node(p)
+    assert n.second_kernel_route == "nanoda-direct"
+    assert 'second_kernel_route = "nanoda-direct"' in p.read_text()
+    assert rejudge_problem(mroot / "demo", n) == ""
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: bind the exported theorem (and module) at record time
+# ---------------------------------------------------------------------------
+
+def _record(mroot: Path, tmp_path: Path, text: str) -> int:
+    log = tmp_path / "direct.log"
+    log.write_text(text)
+    return _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
+                "--comparator-tag", "v4.32.0")
+
+
+def test_cli_direct_swapped_theorem_refused(tmp_path, capsys):
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path)
+    assert _record(mroot, tmp_path, _direct_log(mroot, theorem="other_thm")) == 2
+    assert "registered theorem is 'demo_hv'" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_cli_direct_missing_info_line_refused(tmp_path, capsys):
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path)
+    assert _record(mroot, tmp_path, _direct_log(mroot, info=False)) == 2
+    assert "exactly one REJUDGE-INFO line" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_cli_direct_duplicate_info_line_refused(tmp_path, capsys):
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path)
+    text = _direct_log(mroot)
+    dup = [l for l in text.splitlines(keepends=True) if "theorem=" in l][0]
+    text = text.replace(dup, dup + dup.replace("theorem=demo_hv", "theorem=other_thm"), 1)
+    assert _record(mroot, tmp_path, text) == 2
+    assert "found 2" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_cli_direct_wrong_module_refused(tmp_path, capsys):
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path)
+    assert _record(mroot, tmp_path, _direct_log(mroot, module="B")) == 2
+    assert "artifact's module is 'A'" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_cli_direct_pass_whose_export_lacks_the_theorem_refused(tmp_path, capsys):
+    """The INFO line names the right theorem, but the export (what nanoda checked) declares
+    a DIFFERENT constant: a pass over it is no pass for this node."""
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path)
+    other = _EXPORT_DEMO.replace('"str":"demo_hv"', '"str":"other_thm"')
+    assert _record(mroot, tmp_path, _direct_log(mroot, export_body=other)) == 2
+    assert "does not declare theorem 'demo_hv'" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_info_binding_must_precede_export_section():
+    """An INFO line inside the export (tool output) never counts as the binding."""
+    from telperion.missions.nanoda_direct import BindingError, info_binding
+    text = ("REJUDGE-HEADER node=X artifact_sha256=" + "a" * 64 + "\n"
+            "REJUDGE-ROUTE nanoda-direct\n"
+            "==================== REJUDGE-EXPORT exit=0 ====================\n"
+            "REJUDGE-INFO theorem=t module=M\n"
+            "==================== REJUDGE-NANODA exit=0 ====================\n")
+    with pytest.raises(BindingError, match="found 0"):
+        info_binding(text)
+
+
+def test_export_declares_theorem_reads_lean4export_names():
+    from telperion.missions.nanoda_direct import export_declares_theorem
+    exp = ('{"in":1,"str":{"pre":0,"str":"Foo"}}\n'
+           '{"in":2,"str":{"pre":1,"str":"bar"}}\n'
+           '{"in":3,"str":{"pre":0,"str":"bar"}}\n'
+           '{"thm":{"all":[2],"levelParams":[],"name":2,"type":0,"value":0}}\n'
+           '{"def":{"all":[3],"hints":"abbrev","levelParams":[],"name":3,"safety":"safe","type":0,"value":0}}\n')
+    assert export_declares_theorem(exp, "Foo.bar")
+    assert not export_declares_theorem(exp, "bar")          # interned, but a def, not a thm
+    assert not export_declares_theorem(exp, "Foo.baz")      # not interned at all
+
+
+# ---------------------------------------------------------------------------
+# Fix 6 (Minor 2): a nanoda-direct log for a needs_rejudge node is refused at record time
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("heavy,judge_via", [(True, ""), (False, "heavy")])
+def test_cli_direct_log_refused_for_needs_rejudge_node(tmp_path, capsys, heavy, judge_via):
+    from telperion.missions.schema import load_node
+    mroot = _campaign(tmp_path, heavy=heavy, judge_via=judge_via)
+    assert _record(mroot, tmp_path, _direct_log(mroot)) == 2
+    assert "Ruling 0b-4" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_run_direct_writes_build_info_line(tmp_path):
+    tel, camp, node = _tmp_island_node(tmp_path)
+    run, _calls = _stub_run()
+    tools = Tools(telperion_root=tel, lean4export=Path("/tools/lean4export"),
+                  nanoda=Path("/tools/nanoda_bin"), nanoda_rev="f" * 40, out_dir=tmp_path / "rj")
+    text = run_direct(camp, node, tools=tools, run=run,
+                      build_info="exit=0 result=Build completed successfully (12 jobs).").read_text()
+    pre = text.split("REJUDGE-EXPORT")[0]
+    assert "REJUDGE-INFO build=exit=0 result=Build completed successfully (12 jobs)." in pre
+    assert rejudge_log_verdict(text, []) == "pass"           # the line is preamble-legal
+    from telperion.missions.nanoda_direct import info_binding
+    assert info_binding(text) == ("a_thm", "A")               # still exactly one binding
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: closure consistency in the BUILD workspace (0b-8 guard, transitively)
+# ---------------------------------------------------------------------------
+
+def _shadow_island(tmp_path, *, shadow: bool):
+    """Target imports Mid imports Leaf, all in the island lean dir. Subdir `sub_aux` declares
+    Target with a lib-level `srcDir = ".."` -- so the 0b-8 check (Target resolves to the
+    artifact itself) passes -- but its PACKAGE srcDir is its own directory, and with
+    *shadow* it carries its own `Leaf.lean`: in that workspace the transitive import Leaf
+    resolves to the copy, not to the file the closure digest hashes."""
+    camp, node, root_dir, _sub = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "O2", "O3", "Target", "Mid", "Leaf"], sub_libs=None)
+    (root_dir / "Target.lean").write_text("import Mid\ntheorem target_thm : True := trivial\n")
+    (root_dir / "Mid.lean").write_text("import Leaf\ntheorem mid : True := trivial\n")
+    (root_dir / "Leaf.lean").write_text("theorem leaf : True := trivial\n")
+    sub = root_dir / "sub_aux"
+    sub.mkdir()
+    (sub / "lakefile.toml").write_text(
+        'name = "sub_aux"\n\n[[lean_lib]]\nname = "Target"\nsrcDir = ".."\n')
+    if shadow:
+        (sub / "Leaf.lean").write_text("theorem leaf : True := trivial  -- SHADOW COPY\n")
+    return camp, node, root_dir, sub.resolve()
+
+
+def test_lake_workspace_rejects_candidate_shadowing_a_transitive_import(tmp_path):
+    from telperion.missions import coverage
+    camp, node, root_dir, sub = _shadow_island(tmp_path, shadow=True)
+    # the 0b-8 guard alone is satisfied: Target itself resolves to the artifact ...
+    assert coverage._lib_module_file((coverage._package(sub),), "Target") == \
+        (root_dir / "Target.lean").resolve()
+    # ... but Leaf, two imports down, resolves to the shadow copy in sub_aux's workspace
+    assert coverage._module_file(coverage._workspace(sub), "Leaf") == (sub / "Leaf.lean").resolve()
+    assert lake_workspace(camp, node) == root_dir
+
+
+def test_lake_workspace_accepts_same_candidate_without_the_shadow(tmp_path):
+    """Control: the identical layout minus the shadow copy -- sub_aux resolves every closure
+    module to the island model's file, so it is accepted and wins on size."""
+    camp, node, root_dir, sub = _shadow_island(tmp_path, shadow=False)
+    assert lake_workspace(camp, node) == sub
+
+
+@pytest.mark.parametrize("slug", ["MM_bragg_defect_witness", "MM_bragg_defect_witness_sie",
+                                  "MM_offline_pairs_le_defect", "MM_recurrence_deficit_eq_excess"])
+def test_real_zzl_nodes_still_pick_zzl_aux(slug):
+    from telperion.missions.schema import load_node
+    camp = TELPERION_ROOT / "missions" / "mirrormere"
+    p = camp / "nodes" / f"{slug}.toml"
+    if not p.is_file():
+        pytest.skip("real registry absent")
+    assert lake_workspace(camp, load_node(p)).name == "zzl_aux"
+
+
+# ---------------------------------------------------------------------------
+# Fix 6: coverage._imports fails CLOSED on an unparseable header line
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("header", [
+    "import\n  B\n",                         # bare `import`, modules on the next line
+    "import A\n  B\n",                       # continuation line after a one-line import
+    "import A\nB C\n",
+    "public import\n  B\n",
+])
+def test_imports_multiline_header_raises(tmp_path, header):
+    from telperion.missions import coverage
+    from telperion.missions.provenance import ClosureError
+    f = tmp_path / "M.lean"
+    f.write_text(header + "\ntheorem m : True := trivial\n")
+    with pytest.raises(ClosureError, match="cannot parse import header line"):
+        coverage._imports(f.resolve())
+
+
+@pytest.mark.parametrize("after", [
+    "open Real", "noncomputable section", "namespace Foo", "set_option maxHeartbeats 0",
+    "@[simp] theorem m : True := trivial", "/-- doc -/\ntheorem m : True := trivial",
+    "theorem m : True := trivial", "lean_lib Foo where", "universe u", "#check Nat",
+])
+def test_imports_normal_header_end_does_not_raise(tmp_path, after):
+    from telperion.missions import coverage
+    f = tmp_path / "M.lean"
+    f.write_text("import A\nimport B C -- comment\n/- block\n comment -/\n" + after + "\n")
+    assert coverage._imports(f.resolve()) == ("A", "B", "C")
+
+
+def test_multiline_import_fails_the_closure(tmp_path):
+    """End to end: a closure file with a multi-line import makes `closure_files` raise
+    ClosureError (so rejudge-record/back-fill exit 2 and verify reports it), instead of
+    dropping the continued modules from the digest."""
+    from telperion.missions.provenance import ClosureError
+    camp, node, root_dir, _sub = _tmp_two_level_island(tmp_path, root_libs=["Target", "B"])
+    (root_dir / "B.lean").write_text("theorem b : True := trivial\n")
+    (root_dir / "Target.lean").write_text("import\n  B\ntheorem target_thm : True := trivial\n")
+    with pytest.raises(ClosureError, match="cannot parse import header line"):
+        closure_files(camp, node)

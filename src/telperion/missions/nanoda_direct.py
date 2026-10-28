@@ -216,6 +216,104 @@ def verdict_of_log(text: str) -> str:
     return classify(*parsed)
 
 
+# ---------------------------------------------------------------------------
+# Binding the exported theorem (Controller Ruling 0b-9, 2026-10-28)
+#
+# A nanoda-direct verdict says "nanoda accepted SOME export". Before this, nothing at record
+# time checked that the export was of the node's OWN registered theorem in its OWN module:
+# the log named them only in an informational line nobody read. `mission rejudge-record`
+# now requires exactly one `REJUDGE-INFO ... theorem=T module=M ...` line before the EXPORT
+# section, checks T against `guard_anchors.resolve_theorem` (the resolver `run_direct`
+# uses) and M against `judge.module_name_of`, and checks that a PASSING export actually
+# declares T as a theorem.
+# ---------------------------------------------------------------------------
+
+_INFO_THEOREM_RE = re.compile(r"(?:^|\s)theorem=(?P<v>\S+)")
+_INFO_MODULE_RE = re.compile(r"(?:^|\s)module=(?P<v>\S+)")
+
+
+class BindingError(Exception):
+    """The log does not bind itself to exactly one (theorem, module); message says why."""
+
+
+def preamble_info_lines(text: str) -> List[str]:
+    """The `REJUDGE-INFO` lines that come BEFORE the first `REJUDGE-EXPORT` delimiter (from
+    line 3 on -- lines 1-2 are the header and the route line). Raises BindingError when the
+    log has no EXPORT delimiter at all, or when a line in that preamble is neither blank nor
+    `REJUDGE-INFO` (the same structure `_parse_sections` demands)."""
+    lines = text.splitlines()
+    out: List[str] = []
+    for line in lines[2:]:
+        st = line.strip()
+        m = _SECTION_RE.match(st)
+        if m is not None:
+            if m.group("which") != "EXPORT":
+                raise BindingError("the first section after the preamble is not REJUDGE-EXPORT")
+            return out
+        if not st:
+            continue
+        if not st.startswith("REJUDGE-INFO"):
+            raise BindingError(f"unexpected line before the EXPORT section: {st[:80]!r}")
+        out.append(st)
+    raise BindingError("the log has no REJUDGE-EXPORT section")
+
+
+def info_binding(text: str) -> Tuple[str, str]:
+    """`(theorem, module)` from the ONE preamble `REJUDGE-INFO` line carrying both
+    `theorem=` and `module=`. Raises BindingError when there is none, more than one, or a
+    line carries only one of the two (an ambiguous binding is no binding)."""
+    hits = []
+    for line in preamble_info_lines(text):
+        t, m = _INFO_THEOREM_RE.search(line), _INFO_MODULE_RE.search(line)
+        if t is None and m is None:
+            continue
+        if t is None or m is None:
+            raise BindingError(f"a REJUDGE-INFO line carries only one of theorem=/module=: "
+                               f"{line[:120]!r}")
+        hits.append((t.group("v"), m.group("v")))
+    if len(hits) != 1:
+        raise BindingError(f"expected exactly one REJUDGE-INFO line carrying theorem= and "
+                           f"module= before the EXPORT section, found {len(hits)}")
+    return hits[0]
+
+
+#: lean4export 3.1.0 ndjson (checked against a real export,
+#: ~/telperion-tools/rejudge/direct/MM_leakage_composite_zero/export.txt): a name is interned
+#: as `{"in":N,"str":{"pre":P,"str":"S"}}` (P = 0 is the anonymous root), and a theorem
+#: declaration is a line `{"thm":{"all":[..],"levelParams":[..],"name":N,"type":..,"value":..}}`.
+_EXPORT_NAME_RE = re.compile(r'^\{"in":(?P<i>\d+),"str":\{"pre":(?P<p>\d+),"str":(?P<s>"(?:[^"\\]|\\.)*")\}\}$')
+
+
+def _name_components(theorem: str) -> List[str]:
+    return [c[1:-1] if c.startswith("«") and c.endswith("»") else c
+            for c in theorem.split(".")]
+
+
+def export_declares_theorem(export_text: str, theorem: str) -> bool:
+    """True iff *export_text* (lean4export ndjson) interns the name *theorem* and has a
+    `thm` declaration line with that name -- i.e. the export is OF that theorem, not merely
+    of something that mentions it."""
+    want = _name_components(theorem)
+    by_pre: dict = {}
+    thm_names: set = set()
+    for line in export_text.splitlines():
+        if line.startswith('{"in":'):
+            m = _EXPORT_NAME_RE.match(line)
+            if m is not None:
+                by_pre[(int(m.group("p")), json.loads(m.group("s")))] = int(m.group("i"))
+        elif line.startswith('{"thm":'):
+            try:
+                thm_names.add(int(json.loads(line)["thm"]["name"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+    idx = 0
+    for comp in want:
+        idx = by_pre.get((idx, comp))
+        if idx is None:
+            return False
+    return idx in thm_names
+
+
 @dataclass(frozen=True)
 class Tools:
     """Paths `run_direct` needs, plus where it writes the node's export/config/log files.
@@ -244,7 +342,8 @@ RunFn = Callable[..., Tuple[int, str, str]]
 
 def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
                pre_artifact_sha256: Optional[str] = None,
-               pre_closure_sha256: Optional[str] = None) -> Path:
+               pre_closure_sha256: Optional[str] = None,
+               build_info: Optional[str] = None) -> Path:
     """Export the node's OWN registered theorem and its closure, run nanoda on it, and write
     one node log: the `REJUDGE-HEADER` (artifact sha256 + closure sha256, exactly as
     `rejudge-record` computes them), `REJUDGE-ROUTE nanoda-direct`, informational lines, then
@@ -262,6 +361,11 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
     error-line check fails it, never a silent pass for the wrong source) rather than a
     separate out-of-band signal. Omitting either falls back to hashing at call time (every
     existing caller/test that does not pre-hash keeps its previous behaviour).
+
+    Controller Ruling 0b-9 (2026-10-28): *build_info* is the caller's `lake build` evidence
+    (its exit code and lake's "Build completed successfully (N jobs)." line), written as one
+    `REJUDGE-INFO build=...` line so the node log -- the file the record's log_sha256 names --
+    carries it, not only build.log.
     """
     from . import judge
     from .provenance import (
@@ -370,6 +474,10 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
         f"REJUDGE-INFO nanoda_rev={tools.nanoda_rev} nanoda_bin={tools.nanoda} "
         f"lean4export={tools.lean4export}",
         f"REJUDGE-INFO closure_files={len(cur_files)}",
+    ]
+    if build_info:
+        lines.append(f"REJUDGE-INFO build={' '.join(str(build_info).split())}")
+    lines += [
         f"==================== REJUDGE-EXPORT exit={export_rc} ====================",
         _combined(export_stdout, export_stderr),
         f"==================== REJUDGE-NANODA exit={nanoda_rc} ====================",

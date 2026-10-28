@@ -1113,7 +1113,9 @@ def test_backfill_writes_when_unchanged(tmp_path):
     assert n2.rejudge.closure_sha256 == closure_digest(camp, node)
     assert n2.rejudge.closure_files == 2            # A.lean + B.lean
     assert "closure back-filled" in n2.rejudge.note
-    assert f"no change to 2 closure files since {since}" in n2.rejudge.note
+    # Ruling 0b-9: the git clause names the support files (lakefiles, manifests,
+    # lean-toolchain) the rule also covered -- here the island's lakefile.toml.
+    assert f"no change to 2 closure files and 1 support files since {since}" in n2.rejudge.note
     assert n2.rejudge.note.startswith("local macOS re-judge, nanoda ON; ")
 
 
@@ -1145,3 +1147,104 @@ def test_backfill_refused_on_dirty_closure_file(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "dirty" in err.lower()
     assert load_node(camp / "nodes" / "HV_x.toml").rejudge.closure_sha256 == ""
+
+
+# ---------------------------------------------------------------------------
+# Controller Ruling 0b-9 (2026-10-28), Fix 4: lean-toolchain and lakefile CONTENT are in
+# the digest; lean-toolchain is in the back-fill git rule; the re-bind note takes --reason.
+# ---------------------------------------------------------------------------
+
+def test_digest_covers_lean_toolchain(tmp_path):
+    from telperion.missions.provenance import closure_digest
+    camp, node = _closure_island(tmp_path)
+    tc = tmp_path / "telperion" / "examples" / "isl" / "lean" / "lean-toolchain"
+    tc.write_text("leanprover/lean4:v4.32.0\n")
+    before = closure_digest(camp, node)
+    tc.write_text("leanprover/lean4:v4.33.0\n")
+    assert closure_digest(camp, node) != before
+
+
+def test_digest_covers_lakefile_content(tmp_path):
+    """An edit to the lakefile that changes neither the closure set nor any pin (here a
+    package option) must still move the digest."""
+    from telperion.missions.provenance import closure_digest, closure_files
+    camp, node = _closure_island(tmp_path)
+    lf = tmp_path / "telperion" / "examples" / "isl" / "lean" / "lakefile.toml"
+    files = closure_files(camp, node)
+    before = closure_digest(camp, node)
+    lf.write_text(lf.read_text().replace('name = "Isl"\n',
+                                         'name = "Isl"\nmoreLeanArgs = ["-DmaxHeartbeats=0"]\n'))
+    from telperion.missions import coverage
+    coverage._package.cache_clear(); coverage._workspace.cache_clear()
+    assert closure_files(camp, node) == files
+    assert closure_digest(camp, node) != before
+
+
+def test_digest_covers_path_required_lakefile_lean(tmp_path):
+    """A path-required package with a `lakefile.lean` (which coverage.py does not parse)
+    still has its lakefile and toolchain hashed."""
+    from telperion.missions.provenance import closure_digest, closure_support_files
+    camp, node = _closure_island(tmp_path)
+    lean = tmp_path / "telperion" / "examples" / "isl" / "lean"
+    dep = tmp_path / "telperion" / "examples" / "dep" / "lean"
+    dep.mkdir(parents=True)
+    (dep / "lakefile.lean").write_text("import Lake\nopen Lake DSL\npackage dep\n")
+    (lean / "lakefile.toml").write_text((lean / "lakefile.toml").read_text()
+                                        + '\n[[require]]\nname = "dep"\npath = "../../dep/lean"\n')
+    from telperion.missions import coverage
+    coverage._package.cache_clear(); coverage._workspace.cache_clear()
+    before = closure_digest(camp, node)
+    assert (dep / "lakefile.lean").resolve() in closure_support_files(camp, node)
+    (dep / "lakefile.lean").write_text("import Lake\nopen Lake DSL\npackage dep where\n")
+    assert closure_digest(camp, node) != before
+
+
+def test_support_files_include_lean_toolchain(tmp_path):
+    from telperion.missions.provenance import closure_support_files
+    camp, node = _closure_island(tmp_path)
+    tc = tmp_path / "telperion" / "examples" / "isl" / "lean" / "lean-toolchain"
+    tc.write_text("leanprover/lean4:v4.32.0\n")
+    assert tc.resolve() in closure_support_files(camp, node)
+
+
+def test_backfill_refused_when_lean_toolchain_changed(tmp_path, capsys):
+    """lean-toolchain is in the git rule now: bumping it after the re-judge refuses a
+    back-fill/re-bind (it must be re-judged)."""
+    mroot, camp, since, repo = _backfill_repo(tmp_path)
+    (repo / "telperion" / "examples" / "isl" / "lean" / "lean-toolchain").write_text(
+        "leanprover/lean4:v4.33.0\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "toolchain bump after the re-judge")
+    rc = _cli(mroot, "rejudge-backfill-closure", "HV_x", "--campaign", "demo", "--since", since)
+    assert rc == 2
+    assert "commit(s) touched its closure" in capsys.readouterr().err
+
+
+def test_rebind_requires_reason_and_replaces_earlier_rebind_clauses(tmp_path, capsys):
+    from telperion.missions.provenance import closure_digest
+    mroot, camp, since, repo = _backfill_repo(tmp_path)
+    p = camp / "nodes" / "HV_x.toml"
+    n = load_node(p)
+    old = ("local macOS re-judge, nanoda ON; closure back-filled 2026-10-28 (git: x); "
+           "closure re-bound 2026-10-28 after srcDir fix (git: y); "
+           "closure re-bound 2026-10-28 after srcDir fix (git: y)")
+    save_node(dataclasses.replace(n, rejudge=dataclasses.replace(
+        n.rejudge, closure_sha256="0" * 64, note=old)), p)
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "seed a stale digest")
+    args = ["rejudge-backfill-closure", "HV_x", "--campaign", "demo", "--since", since, "--rebind"]
+    assert _cli(mroot, *args) == 2                                   # no --reason
+    assert "--reason" in capsys.readouterr().err
+    assert load_node(p).rejudge.closure_sha256 == "0" * 64
+    assert _cli(mroot, *args, "--reason", "digest widened (test)") == 0
+    rec = load_node(p).rejudge
+    assert rec.closure_sha256 == closure_digest(camp, load_node(p))
+    clauses = rec.note.split("; ")
+    assert clauses[:2] == ["local macOS re-judge, nanoda ON",
+                           "closure back-filled 2026-10-28 (git: x)"]
+    assert len(clauses) == 3 and clauses[2].startswith("closure re-bound ")
+    assert ": digest widened (test) (git: no change to 2 closure files" in clauses[2]
+    assert "after srcDir fix" not in rec.note
+    # a second identical re-bind does not pile up clauses
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "rebind")
+    assert _cli(mroot, *args, "--reason", "digest widened (test)") == 0
+    assert load_node(p).rejudge.note == rec.note
