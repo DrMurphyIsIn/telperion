@@ -51,6 +51,25 @@ def parse_rejudge_route(text: str) -> str:
     return "comparator"
 
 
+#: The only routes a `[rejudge]` log may claim. Review fix round 1 (2026-10-28), item 4: a
+#: third value must never be silently treated as "comparator" by falling through the branch
+#: below -- it is simply not a route this codebase understands, so the log fails.
+VALID_ROUTES = ("comparator", "nanoda-direct")
+
+
+def is_rejudge_header_line(line: str) -> bool:
+    """True iff *line* (as found, not pre-stripped) is a well-formed REJUDGE-HEADER line.
+    Exposed so `nanoda_direct.verdict_of_log` can require it specifically on line 1 without
+    duplicating `_REJUDGE_HEADER_RE`."""
+    return bool(_REJUDGE_HEADER_RE.match(line.strip()))
+
+
+def is_rejudge_route_line(line: str) -> bool:
+    """True iff *line* is a well-formed REJUDGE-ROUTE line (any token, not just a valid
+    one -- callers that care about `VALID_ROUTES` check the captured token themselves)."""
+    return bool(_REJUDGE_ROUTE_RE.match(line.strip()))
+
+
 def _is_error_line(line: str) -> bool:
     return line.lstrip().lower().startswith(("error", "uncaught exception"))
 
@@ -107,8 +126,15 @@ def rejudge_log_verdict(text: str, part_slugs: Sequence[str]) -> str:
     seven nodes no Comparator bundle can consume) carries no REJUDGE-PART block at all --
     `part_slugs` is ignored, and the verdict comes from `nanoda_direct.verdict_of_log` instead,
     over the log's own `REJUDGE-EXPORT`/`REJUDGE-NANODA` sections.
+
+    Review fix round 1 (2026-10-28), item 4: the route must be one of `VALID_ROUTES`. A log
+    naming anything else fails outright -- it must never fall through to the Comparator
+    per-part rule below just because it isn't literally "nanoda-direct".
     """
-    if parse_rejudge_route(text) == "nanoda-direct":
+    route = parse_rejudge_route(text)
+    if route not in VALID_ROUTES:
+        return "fail"
+    if route == "nanoda-direct":
         from . import nanoda_direct
         return nanoda_direct.verdict_of_log(text)
     want = list(part_slugs)

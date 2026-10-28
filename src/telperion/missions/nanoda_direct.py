@@ -103,27 +103,41 @@ def _has_error_line(text: str) -> bool:
                for l in text.splitlines())
 
 
-def classify(export_rc: int, export_out: str, nanoda_rc: int, nanoda_out: str) -> str:
-    """"pass" iff lean4export exited 0 and exported something, nanoda exited 0, no line in
-    either output starts with "error"/"uncaught exception", and nanoda's own success line
-    (main.rs:34) names a NON-ZERO declaration count.
+#: Review fix round 1 (2026-10-28), item 5: `LEAN_ABORT_ON_PANIC=1` (same as Comparator sets
+#: for its own export) turns a Lean panic during the export into a hard abort instead of a
+#: value that might otherwise still produce SOME export text. Lean's panic report starts the
+#: line with "PANIC" (e.g. "PANIC at ... : unknown constant ..."); any such line fails.
+def _has_panic_line(text: str) -> bool:
+    return any(l.strip().startswith("PANIC") for l in text.splitlines())
 
-    The last check is the zero-declarations case (Review Focus 3): an empty or mistargeted
-    export still makes nanoda print "Checked 0 declarations with no errors" and exit 0 -- that
-    reads like success but asserts nothing, so it is FAIL here, never PASS.
+
+def classify(export_rc: int, export_out: str, nanoda_rc: int, nanoda_out: str) -> str:
+    """"pass" iff lean4export exited 0 and exported something, with no line starting
+    "error"/"uncaught exception"/"PANIC"; nanoda exited 0 with no "error"/"uncaught
+    exception" line; and nanoda's own success line (main.rs:34) names a declaration count --
+    appearing EXACTLY ONCE, and that count is >= 1.
+
+    Review fix round 1 (2026-10-28), item 4: before this, the FIRST matching success line won
+    even when a second, contradictory one followed (e.g. "Checked 5" then "Checked 0") --
+    that shape must fail, not silently read the first number. Item 5: a PANIC line in the
+    export (Lean aborts hard under `LEAN_ABORT_ON_PANIC=1`, e.g. "PANIC ... Constant not
+    found") fails even if lean4export's own exit code were somehow 0.
+
+    The zero-declarations case (Review Focus 3, step 0b): an empty or mistargeted export
+    still makes nanoda print "Checked 0 declarations with no errors" and exit 0 -- that reads
+    like success but asserts nothing, so it is FAIL here, never PASS.
     """
-    if export_rc != 0 or not export_out.strip() or _has_error_line(export_out):
+    if (export_rc != 0 or not export_out.strip() or _has_error_line(export_out)
+            or _has_panic_line(export_out)):
         return "fail"
     if nanoda_rc != 0 or _has_error_line(nanoda_out):
         return "fail"
-    n = None
-    for line in nanoda_out.splitlines():
-        m = _SUCCESS_RE.match(line.strip())
-        if m:
-            n = int(m.group("n"))
-            break
-    if not n:          # None (no success line at all) or 0 (zero declarations)
-        return "fail"
+    matches = [m for m in (_SUCCESS_RE.match(l.strip()) for l in nanoda_out.splitlines())
+              if m is not None]
+    if len(matches) != 1:
+        return "fail"      # zero: no success line at all; two+: ambiguous/contradictory
+    if int(matches[0].group("n")) < 1:
+        return "fail"      # zero declarations checked
     return "pass"
 
 
@@ -131,34 +145,65 @@ def classify(export_rc: int, export_out: str, nanoda_rc: int, nanoda_out: str) -
 #: the nanoda-direct analogue of rejudge.py's `_PART_RE` for a Comparator log.
 _SECTION_RE = re.compile(r"^=+\s*REJUDGE-(?P<which>EXPORT|NANODA)\s+exit=(?P<rc>-?\d+)\s*=+$")
 
+#: The exact line 2 this route's logs carry (`run_direct` writes it verbatim). Review fix
+#: round 1 (2026-10-28), item 4: requiring the LITERAL line, not just "a line matching the
+#: route pattern somewhere", is what makes a decoy `REJUDGE-ROUTE nanoda-direct` line buried
+#: inside the export/nanoda tool output harmless -- it is never reached as "the" route line
+#: unless it is actually on line 2.
+_ROUTE_LINE = "REJUDGE-ROUTE nanoda-direct"
+
 
 def _parse_sections(text: str) -> Optional[Tuple[int, str, int, str]]:
-    sections = {}
-    cur = None
-    body: List[str] = []
-    for line in text.splitlines():
-        m = _SECTION_RE.match(line.strip())
-        if m:
-            if cur is not None:
-                sections[cur[0]] = (cur[1], "\n".join(body))
-            cur = (m.group("which"), int(m.group("rc")))
-            body = []
-        elif cur is not None:
-            body.append(line)
-    if cur is not None:
-        sections[cur[0]] = (cur[1], "\n".join(body))
-    if "EXPORT" not in sections or "NANODA" not in sections:
+    """Strict structure (Review fix round 1, item 4): line 1 a REJUDGE-HEADER, line 2 exactly
+    `REJUDGE-ROUTE nanoda-direct`, then zero or more blank/`REJUDGE-INFO` lines, then EXACTLY
+    one EXPORT section immediately followed by EXACTLY one NANODA section (in that order) and
+    nothing after it. Anything else -- a missing header, a route line that isn't on line 2 (a
+    decoy deeper in the tool output included), a duplicate or out-of-order section, or stray
+    content where only `REJUDGE-INFO`/blank lines belong -- returns None (fail)."""
+    from . import rejudge as _rejudge
+    lines = text.splitlines()
+    if len(lines) < 2:
         return None
-    erc, eout = sections["EXPORT"]
-    nrc, nout = sections["NANODA"]
-    return erc, eout, nrc, nout
+    if not _rejudge.is_rejudge_header_line(lines[0]):
+        return None
+    if lines[1].strip() != _ROUTE_LINE:
+        return None
+    i = 2
+    while i < len(lines) and (not lines[i].strip() or lines[i].strip().startswith("REJUDGE-INFO")):
+        i += 1
+    if i >= len(lines):
+        return None
+    m = _SECTION_RE.match(lines[i].strip())
+    if m is None or m.group("which") != "EXPORT":
+        return None
+    export_rc = int(m.group("rc"))
+    i += 1
+    export_body: List[str] = []
+    while i < len(lines) and _SECTION_RE.match(lines[i].strip()) is None:
+        export_body.append(lines[i])
+        i += 1
+    if i >= len(lines):
+        return None
+    m2 = _SECTION_RE.match(lines[i].strip())
+    if m2.group("which") != "NANODA":
+        return None            # a second EXPORT (or anything but NANODA) right after the first
+    nanoda_rc = int(m2.group("rc"))
+    i += 1
+    nanoda_body: List[str] = []
+    while i < len(lines):
+        if _SECTION_RE.match(lines[i].strip()) is not None:
+            return None        # a THIRD section delimiter -- a duplicate, not allowed
+        nanoda_body.append(lines[i])
+        i += 1
+    return export_rc, "\n".join(export_body), nanoda_rc, "\n".join(nanoda_body)
 
 
 def verdict_of_log(text: str) -> str:
     """"pass"/"fail" of a whole nanoda-direct node log, as `run_direct` writes it: find the
-    `REJUDGE-EXPORT exit=<rc>` and `REJUDGE-NANODA exit=<rc>` sections and `classify` their
-    recorded output. A log missing either section (garbled, truncated, or not actually a
-    nanoda-direct log) is "fail" -- there is nothing a pass could be about."""
+    `REJUDGE-EXPORT exit=<rc>` and `REJUDGE-NANODA exit=<rc>` sections (see `_parse_sections`
+    for the exact structure required) and `classify` their recorded output. A log that does
+    not match that structure -- including one with no header at all -- is "fail": there is
+    nothing a pass could be about."""
     parsed = _parse_sections(text)
     if parsed is None:
         return "fail"
@@ -180,11 +225,15 @@ class Tools:
     out_dir: Path
 
 
-#: `run(cmd, cwd=...) -> (returncode, combined stdout+stderr text)`, injected so tests never
-#: invoke lake, lean4export or nanoda_bin. Production wiring (Task 4, not this task) supplies a
-#: `run` that applies leanlock/ARDA_LEAN_SLOTS around a Lean invocation (`cmd[0] == "lake"`) and
-#: calls nanoda_bin straight.
-RunFn = Callable[..., Tuple[int, str]]
+#: `run(cmd, cwd=...) -> (returncode, stdout, stderr)`, injected so tests never invoke lake,
+#: lean4export or nanoda_bin. Review fix round 1 (2026-10-28), item 5: stdout and stderr come
+#: back SEPARATELY -- `run_direct` writes only stdout to `export.txt` (the file nanoda reads
+#: as `export_file_path`; stderr mixed in would not be valid ndjson), while the node LOG gets
+#: both, so a PANIC on stderr is still visible to a later re-parse. Production wiring (the
+#: queue script, not this module) supplies a `run` that applies leanlock/ARDA_LEAN_SLOTS and
+#: `LEAN_ABORT_ON_PANIC=1` around a Lean invocation (`cmd[0] == "lake"`) and calls nanoda_bin
+#: straight.
+RunFn = Callable[..., Tuple[int, str, str]]
 
 
 def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
@@ -241,11 +290,17 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
     export_path = out / "export.txt"
     cfg_path = out / "nanoda.json"
 
-    export_rc, export_out = run(export_cmd(lean_dir, module, theorem, tools.lean4export),
-                                cwd=lean_dir)
-    export_path.write_text(export_out)
+    export_rc, export_stdout, export_stderr = run(
+        export_cmd(lean_dir, module, theorem, tools.lean4export), cwd=lean_dir)
+    # Review fix round 1 (2026-10-28), item 5: stdout ONLY into the file nanoda will read as
+    # `export_file_path` -- stderr (where a Lean PANIC under LEAN_ABORT_ON_PANIC=1 lands)
+    # must never be mixed into what is supposed to be a pure ndjson export.
+    export_path.write_text(export_stdout)
     cfg_path.write_text(json.dumps(nanoda_config(export_path)))
-    nanoda_rc, nanoda_out = run([str(tools.nanoda), str(cfg_path)], cwd=out)
+    nanoda_rc, nanoda_stdout, nanoda_stderr = run([str(tools.nanoda), str(cfg_path)], cwd=out)
+
+    def _combined(stdout: str, stderr: str) -> str:
+        return stdout if not stderr.strip() else stdout.rstrip("\n") + "\n--- stderr ---\n" + stderr
 
     lines = [
         f"REJUDGE-HEADER node={slug} artifact_sha256={art_sha} closure_sha256={cur_closure}",
@@ -255,9 +310,9 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
         f"lean4export={tools.lean4export}",
         f"REJUDGE-INFO closure_files={len(cur_files)}",
         f"==================== REJUDGE-EXPORT exit={export_rc} ====================",
-        export_out,
+        _combined(export_stdout, export_stderr),
         f"==================== REJUDGE-NANODA exit={nanoda_rc} ====================",
-        nanoda_out,
+        _combined(nanoda_stdout, nanoda_stderr),
     ]
     log_path = out / "rejudge.log"
     log_path.write_text("\n".join(lines) + "\n")

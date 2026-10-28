@@ -542,18 +542,49 @@ def needs_rejudge(node: Node) -> bool:
     return bool(node.heavy_certificates) or judged_lean_kernel_only(node)
 
 
+def second_kernel_claimed(node: Node) -> bool:
+    """A node whose proved status is accompanied by SOME claim about a second kernel: either
+    `needs_rejudge` (heavy, or judged Lean-kernel-only -- a re-judge is demanded) OR a
+    `[rejudge]` record already exists (one was recorded voluntarily, as every nanoda-direct
+    node's is -- none of the 7 is heavy_certificates or carries a `[comparator]` record at
+    all, so `needs_rejudge` alone never sees them).
+
+    Review fix round 1 (2026-10-28), item 2: before this, `rejudge_problem`'s `not
+    needs_rejudge(node)` early return made a FAIL record or a stale-artifact-sha record on a
+    non-heavy, no-`[comparator]` node completely invisible to `rejudge_problem` (and so to
+    `mission verify`, the grant gate, and `render_provenance_report`) -- the record existed on
+    disk, said something was wrong, and nothing downstream ever looked at it.
+    """
+    return bool(needs_rejudge(node)) or node.rejudge is not None
+
+
 def rejudge_problem(campaign_root: Path, node: Node) -> str:
-    """"" unless a node judged without nanoda lacks a passing nanoda re-judge on its current
-    artifact. "Judged without nanoda" = `heavy_certificates = true`, OR a `[comparator]`
-    record whose second kernel was off (see `needs_rejudge`)."""
-    if not needs_rejudge(node):
+    """"" unless a node with a claimed second kernel (see `second_kernel_claimed`) lacks a
+    passing, current, sufficient nanoda re-judge.
+
+    "Claimed" covers three shapes: `heavy_certificates = true`; a `[comparator]` record whose
+    second kernel was off; or simply a `[rejudge]` record being present at all (a node that is
+    neither of the first two, but has one anyway -- every nanoda-direct node, step 0b Task 3).
+    """
+    if not second_kernel_claimed(node):
         return ""
-    why = ("heavy_certificates" if node.heavy_certificates else
-           f"judged Lean-kernel-only (second_kernel = {node.comparator.second_kernel!r}, "
-           "heavy_certificates absent)")
+    if node.heavy_certificates:
+        why = "heavy_certificates"
+    elif judged_lean_kernel_only(node):
+        why = (f"judged Lean-kernel-only (second_kernel = {node.comparator.second_kernel!r}, "
+               "heavy_certificates absent)")
+    else:
+        why = "a [rejudge] record is present"
     r = node.rejudge
     if r is None:
         return f"{why}: no local nanoda re-judge recorded (`mission rejudge-record`)"
+    # Controller ruling 0b-4 (2026-10-28, review fix round 1 item 2): a node `needs_rejudge`
+    # demands a Comparator re-judge specifically -- nanoda-direct has no statement-identity
+    # step, so it cannot discharge the stronger requirement a heavy/Lean-kernel-only node
+    # carries, no matter how cleanly it passes. Checked before the verdict itself: a PASSING
+    # nanoda-direct record on such a node is still insufficient, not merely "stale" or "FAILED".
+    if needs_rejudge(node) and r.route != "comparator":
+        return "heavy node requires a Comparator re-judge; nanoda-direct is not sufficient"
     if r.verdict != "pass":
         return f"local nanoda re-judge on {r.date} FAILED (nanoda {r.nanoda_rev[:8]})"
     if node.proof is None:
@@ -699,8 +730,11 @@ def render_provenance_report(campaign) -> str:
     # heavy node can be proved with NO comparator record yet, e.g. AND_ladder_h11000_kernel
     # on the real registry, and must still be reported on). `lean_kernel_only` is kept as an
     # OR so a legacy record that marks itself Lean-kernel-only without the flag still shows.
+    # Review fix round 1 (2026-10-28), item 2: `second_kernel_claimed` (not `needs_rejudge`
+    # alone) also picks up a node that is neither heavy nor Lean-kernel-only but carries a
+    # `[rejudge]` record anyway -- every nanoda-direct node, none of which trips the first two.
     heavy_rows = [r for r in proved
-                 if r.lean_kernel_only or needs_rejudge(campaign.nodes[r.slug])]
+                 if r.lean_kernel_only or second_kernel_claimed(campaign.nodes[r.slug])]
     for r in heavy_rows:
         node = campaign.nodes[r.slug]
         problem = rejudge_problem(campaign.root, node)
@@ -719,8 +753,17 @@ def render_provenance_report(campaign) -> str:
                              f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]})")
         else:
             suffix = f" -- {problem}" if problem else ""
-            lines.append(f"  {r.slug:<48} {comp} Lean kernel only "
-                         f"(heavy_certificates: nanoda not run){suffix}")
+            # Review fix round 1 (2026-10-28), item 2: a non-heavy, non-Lean-kernel-only node
+            # (every nanoda-direct node) reaching this branch is NOT "heavy_certificates:
+            # nanoda not run" -- that wording is simply false for it, and was the reason a
+            # FAIL/stale record on one of the 7 used to read like an unrelated heavy node's.
+            if node.heavy_certificates:
+                base = "Lean kernel only (heavy_certificates: nanoda not run)"
+            elif judged_lean_kernel_only(node):
+                base = "Lean kernel only (judged Lean-kernel-only; nanoda not run)"
+            else:
+                base = "no passing second-kernel re-judge recorded"
+            lines.append(f"  {r.slug:<48} {comp} {base}{suffix}")
     for r in covered:
         weak = weak_record_reasons(r)
         if weak:

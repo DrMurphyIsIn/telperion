@@ -125,14 +125,17 @@ def _tmp_island_node(tmp_path: Path, *, thm_short: str = "a_thm",
 
 
 def _stub_run(export_out="<export bytes>\n", nanoda_out="Checked 3 declarations with no errors\n",
-              export_rc=0, nanoda_rc=0):
+              export_rc=0, nanoda_rc=0, export_err="", nanoda_err=""):
+    """Review fix round 1 (2026-10-28), item 5: `run` returns (rc, stdout, stderr) -- stdout
+    and stderr separately, so `run_direct` can write stdout-only to `export.txt` while still
+    logging stderr (where a real Lean PANIC under LEAN_ABORT_ON_PANIC=1 would land)."""
     calls = []
 
     def run(cmd, *, cwd):
         calls.append((list(cmd), Path(cwd)))
         if cmd[0] == "lake":
-            return export_rc, export_out
-        return nanoda_rc, nanoda_out
+            return export_rc, export_out, export_err
+        return nanoda_rc, nanoda_out, nanoda_err
     return run, calls
 
 
@@ -245,13 +248,119 @@ def test_malformed_nanoda_direct_log_fails():
     assert rejudge_log_verdict("REJUDGE-ROUTE nanoda-direct\nnoise only\n", []) == "fail"
 
 
+def test_route_must_be_in_valid_set():
+    """Review fix round 1 (2026-10-28), item 4: a third route value must fail outright, not
+    fall through to the Comparator per-part rule just because it is not literally
+    "nanoda-direct"."""
+    log = ("REJUDGE-HEADER node=X artifact_sha256=" + "a" * 64 + "\n"
+          "REJUDGE-ROUTE something-else\n")
+    assert rejudge_log_verdict(log, ["X"]) == "fail"
+    assert rejudge_log_verdict(log, []) == "fail"
+
+
 # ---------------------------------------------------------------------------
-# rejudge_problem: a passing nanoda-direct record satisfies the second-kernel requirement
+# verdict_of_log / _parse_sections hardening (Review fix round 1, item 4): exactly one
+# REJUDGE-HEADER on line 1, exactly one REJUDGE-ROUTE on line 2, exactly one EXPORT section
+# followed by exactly one NANODA section in that order, "Checked N" exactly once with N >= 1.
+# ---------------------------------------------------------------------------
+
+def _good_log(export_body="bytes\n", nanoda_body="Checked 3 declarations with no errors\n",
+             export_rc=0, nanoda_rc=0) -> str:
+    return ("REJUDGE-HEADER node=X artifact_sha256=" + "a" * 64 + "\n"
+           "REJUDGE-ROUTE nanoda-direct\n"
+           f"==================== REJUDGE-EXPORT exit={export_rc} ====================\n"
+           f"{export_body}"
+           f"==================== REJUDGE-NANODA exit={nanoda_rc} ====================\n"
+           f"{nanoda_body}")
+
+
+def test_verdict_of_log_well_formed_passes():
+    assert nanoda_direct.verdict_of_log(_good_log()) == "pass"
+
+
+def test_verdict_of_log_no_header_fails():
+    no_header = _good_log().split("\n", 1)[1]   # drop line 1 entirely
+    assert nanoda_direct.verdict_of_log(no_header) == "fail"
+    assert nanoda_direct.verdict_of_log("") == "fail"
+    assert nanoda_direct.verdict_of_log("just one line, no newline") == "fail"
+
+
+def test_verdict_of_log_two_concatenated_logs_fails():
+    """Two complete, individually-valid logs pasted one after another is NOT a valid single
+    log: there is a second REJUDGE-HEADER/REJUDGE-ROUTE pair sitting where NANODA's body
+    should be taken as ending, and a third+fourth section delimiter follow."""
+    two = _good_log() + _good_log()
+    assert nanoda_direct.verdict_of_log(two) == "fail"
+
+
+def test_verdict_of_log_second_export_section_fails():
+    """A second EXPORT section instead of NANODA right after the first -- not "EXPORT then
+    NANODA in that order"."""
+    log = ("REJUDGE-HEADER node=X artifact_sha256=" + "a" * 64 + "\n"
+          "REJUDGE-ROUTE nanoda-direct\n"
+          "==================== REJUDGE-EXPORT exit=0 ====================\n"
+          "bytes\n"
+          "==================== REJUDGE-EXPORT exit=0 ====================\n"
+          "bytes again\n"
+          "==================== REJUDGE-NANODA exit=0 ====================\n"
+          "Checked 3 declarations with no errors\n")
+    assert nanoda_direct.verdict_of_log(log) == "fail"
+
+
+def test_verdict_of_log_duplicate_nanoda_section_fails():
+    log = _good_log() + "==================== REJUDGE-NANODA exit=0 ====================\n" \
+        "Checked 9 declarations with no errors\n"
+    assert nanoda_direct.verdict_of_log(log) == "fail"
+
+
+def test_classify_checked_five_then_checked_zero_fails():
+    """Two contradictory success lines in the nanoda output: ambiguous, never a pass."""
+    assert nanoda_direct.classify(
+        0, "bytes\n", 0,
+        "Checked 5 declarations with no errors\nChecked 0 declarations with no errors\n"
+    ) == "fail"
+    log = _good_log(nanoda_body="Checked 5 declarations with no errors\n"
+                    "Checked 0 declarations with no errors\n")
+    assert nanoda_direct.verdict_of_log(log) == "fail"
+
+
+def test_verdict_of_log_route_line_inside_tool_output_does_not_confuse_the_parser():
+    """A decoy `REJUDGE-ROUTE nanoda-direct` line buried inside the nanoda body must not make
+    an otherwise-malformed log (here: line 2 is NOT a route line at all -- it is garbage)
+    read as valid."""
+    log = ("REJUDGE-HEADER node=X artifact_sha256=" + "a" * 64 + "\n"
+          "not actually a route line\n"
+          "==================== REJUDGE-EXPORT exit=0 ====================\n"
+          "bytes\n"
+          "==================== REJUDGE-NANODA exit=0 ====================\n"
+          "REJUDGE-ROUTE nanoda-direct\n"
+          "Checked 3 declarations with no errors\n")
+    assert nanoda_direct.verdict_of_log(log) == "fail"
+    assert rejudge_log_verdict(log, []) == "fail"
+
+
+def test_classify_panic_in_export_fails():
+    """Review fix round 1 (2026-10-28), item 5: LEAN_ABORT_ON_PANIC=1 turns a Lean panic
+    during the export into a hard abort; a PANIC line anywhere in the export output fails,
+    independent of the exit code."""
+    assert nanoda_direct.classify(
+        0, "PANIC at foo@Export.lean:12:3: Constant not found\n", 0,
+        "Checked 3 declarations with no errors\n") == "fail"
+    assert nanoda_direct.classify(
+        1, "some bytes\nPANIC at foo@Export.lean:12:3: Constant not found\n", 1, "") == "fail"
+
+
+# ---------------------------------------------------------------------------
+# rejudge_problem / second_kernel_claimed: a passing nanoda-direct record satisfies the
+# second-kernel requirement for a NON-heavy node (every one of the 7 real nodes' shape --
+# heavy_certificates unset, no [comparator] record at all). Review fix round 1 (2026-10-28),
+# item 2.
 # ---------------------------------------------------------------------------
 
 def test_rejudge_problem_accepts_direct_pass(tmp_path):
     from missions_fixtures import minimal_proved_node
-    node = minimal_proved_node(tmp_path, heavy=True)
+    node = minimal_proved_node(tmp_path, heavy=False)
+    assert node.comparator is None
     sha = sha256_file(tmp_path / node.proof.artifact)
     rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
@@ -262,8 +371,10 @@ def test_rejudge_problem_accepts_direct_pass(tmp_path):
 
 
 def test_rejudge_problem_still_flags_a_failing_direct_record(tmp_path):
+    """Before this fix, `rejudge_problem`'s `not needs_rejudge(node)` early return made a FAIL
+    record on a non-heavy, no-[comparator] node (every one of the 7) invisible."""
     from missions_fixtures import minimal_proved_node
-    node = minimal_proved_node(tmp_path, heavy=True)
+    node = minimal_proved_node(tmp_path, heavy=False)
     sha = sha256_file(tmp_path / node.proof.artifact)
     rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=sha, verdict="fail",
@@ -272,13 +383,83 @@ def test_rejudge_problem_still_flags_a_failing_direct_record(tmp_path):
     assert "FAILED" in rejudge_problem(tmp_path, node)
 
 
+def test_rejudge_problem_flags_a_stale_sha_direct_record(tmp_path):
+    """A record bound to an artifact digest the current artifact no longer matches was ALSO
+    invisible before this fix, on a non-heavy node."""
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256="0" * 64, verdict="pass",
+                        log_sha256="c" * 64, route="nanoda-direct")
+    node = dataclasses.replace(node, rejudge=rec)
+    problem = rejudge_problem(tmp_path, node)
+    assert problem != "" and "artifact" in problem
+
+
+def test_rejudge_problem_crashes_fixed_why_text_on_non_heavy_no_comparator(tmp_path):
+    """Regression for the crash the review found: computing `why` used to dereference
+    `node.comparator.second_kernel` unconditionally whenever `heavy_certificates` was False --
+    AttributeError on a node whose `comparator` is None. A FAILing record exercises that path."""
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    assert node.comparator is None
+    rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256="0" * 64, verdict="fail",
+                        log_sha256="c" * 64, route="nanoda-direct")
+    node = dataclasses.replace(node, rejudge=rec)
+    rejudge_problem(tmp_path, node)   # must not raise
+
+
+def test_second_kernel_claimed_false_with_no_record_and_not_heavy(tmp_path):
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    from telperion.missions.provenance import second_kernel_claimed
+    assert second_kernel_claimed(node) is False
+    assert rejudge_problem(tmp_path, node) == ""
+
+
+# ---------------------------------------------------------------------------
+# Controller ruling 0b-4 (2026-10-28, review fix round 1 item 2): a node that `needs_rejudge`
+# (heavy_certificates, or a Lean-kernel-only [comparator] record) is NOT satisfied by a
+# nanoda-direct record, however cleanly it passes -- that route has no statement-identity
+# step, so it cannot discharge the stronger Comparator requirement.
+# ---------------------------------------------------------------------------
+
+def test_ruling_0b4_heavy_node_rejects_nanoda_direct_even_passing(tmp_path):
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=True)
+    sha = sha256_file(tmp_path / node.proof.artifact)
+    rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
+                        log_sha256="c" * 64, closure_sha256=closure_digest(tmp_path, node),
+                        closure_files=len(closure_files(tmp_path, node)), route="nanoda-direct")
+    node = dataclasses.replace(node, rejudge=rec)
+    problem = rejudge_problem(tmp_path, node)
+    assert problem == "heavy node requires a Comparator re-judge; nanoda-direct is not sufficient"
+
+
+def test_ruling_0b4_heavy_node_with_comparator_route_is_fine(tmp_path):
+    """Regression: a heavy node's ORDINARY (route="comparator") passing re-judge is
+    completely unaffected by the ruling."""
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=True)
+    sha = sha256_file(tmp_path / node.proof.artifact)
+    rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
+                        log_sha256="c" * 64, closure_sha256=closure_digest(tmp_path, node),
+                        closure_files=len(closure_files(tmp_path, node)))
+    assert rec.route == "comparator"
+    node = dataclasses.replace(node, rejudge=rec)
+    assert rejudge_problem(tmp_path, node) == ""
+
+
 # ---------------------------------------------------------------------------
 # provenance report: the route label (Review Focus 5)
 # ---------------------------------------------------------------------------
 
 def test_report_labels_route(tmp_path):
     from missions_fixtures import minimal_proved_node
-    node = minimal_proved_node(tmp_path, heavy=True)
+    node = minimal_proved_node(tmp_path, heavy=False)
     sha = sha256_file(tmp_path / node.proof.artifact)
     rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
