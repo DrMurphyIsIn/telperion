@@ -877,15 +877,16 @@ def test_unresolvable_import_raises(tmp_path):
         closure_files(camp, node)
 
 
-def test_library_import_is_excluded_not_an_error(tmp_path):
-    """A known library root (Mathlib, ...) is excluded from the closure WITHOUT being
-    an error -- it is resolved outside this repo, not "missing"."""
+def test_core_root_import_is_excluded_not_an_error(tmp_path):
+    """Controller Ruling 0b-3: a CORE_ROOT import (Init/Lean/Std/Lake) is excluded
+    from the closure WITHOUT being an error and WITHOUT needing any manifest at all --
+    it is the toolchain, never a `lake-manifest.json` dependency."""
     from telperion.missions.provenance import closure_files
     tel = tmp_path / "telperion"
     lean = tel / "examples" / "isl" / "lean"
     lean.mkdir(parents=True)
     (lean / "lakefile.toml").write_text('name = "Isl"\n\n[[lean_lib]]\nname = "A"\n')
-    (lean / "A.lean").write_text("import Mathlib.Order.Basic\ntheorem a : True := trivial\n")
+    (lean / "A.lean").write_text("import Init.Core\ntheorem a : True := trivial\n")
     camp = tel / "missions" / "demo"
     camp.mkdir(parents=True)
     node = Node(
@@ -895,6 +896,71 @@ def test_library_import_is_excluded_not_an_error(tmp_path):
         heavy_certificates=True,
     )
     assert [f.name for f in closure_files(camp, node)] == ["A.lean"]
+
+
+def _write_manifest(pkg_dir: Path, packages: list) -> None:
+    import json
+    (pkg_dir / "lake-manifest.json").write_text(json.dumps(
+        {"version": "1.2.0", "packagesDir": ".lake/packages", "packages": packages}))
+
+
+def test_external_manifest_dependency_pins_its_rev(tmp_path):
+    """Controller Ruling 0b-3: a non-path `lake-manifest.json` dependency is external
+    (never a closure FILE -- its own `Foo.lean` is excluded), but its `rev` is PINNED
+    in the digest: bumping it must change the digest even though no closure .lean file
+    changed."""
+    from telperion.missions.provenance import closure_digest, closure_files
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text('name = "Isl"\n\n[[lean_lib]]\nname = "A"\n')
+    (lean / "A.lean").write_text("import Foo\ntheorem a : True := trivial\n")
+    _write_manifest(lean, [
+        {"type": "git", "name": "Foo", "rev": "abc123", "url": "https://example/Foo"},
+    ])
+    foo_dir = lean / ".lake" / "packages" / "Foo"
+    foo_dir.mkdir(parents=True)
+    (foo_dir / "lakefile.toml").write_text('name = "Foo"\n\n[[lean_lib]]\nname = "Foo"\n')
+    (foo_dir / "Foo.lean").write_text("theorem foo : True := trivial\n")
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True,
+    )
+    assert [f.name for f in closure_files(camp, node)] == ["A.lean"]   # Foo excluded
+    before = closure_digest(camp, node)
+    _write_manifest(lean, [
+        {"type": "git", "name": "Foo", "rev": "def456", "url": "https://example/Foo"},
+    ])
+    after = closure_digest(camp, node)
+    assert before != after
+
+
+def test_import_matching_no_manifest_package_raises(tmp_path):
+    """An import whose root matches neither a local package, a core root, nor any
+    non-path manifest dependency must still raise -- having SOME manifest present
+    (for an UNRELATED dependency) must not make an unrelated import pass through
+    silently."""
+    from telperion.missions.provenance import ClosureError, closure_files
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text('name = "Isl"\n\n[[lean_lib]]\nname = "A"\n')
+    (lean / "A.lean").write_text("import Ghost\ntheorem a : True := trivial\n")
+    _write_manifest(lean, [{"type": "git", "name": "Foo", "rev": "abc123"}])
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True,
+    )
+    with pytest.raises(ClosureError, match="Ghost"):
+        closure_files(camp, node)
 
 
 @pytest.mark.parametrize("slug,filename", [

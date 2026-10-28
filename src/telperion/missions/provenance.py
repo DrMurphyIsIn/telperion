@@ -25,13 +25,14 @@ attempts ledger, and a CLI that will not write a self-audit without being lied t
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .schema import Author, ComparatorRecord, Grant, Node, Readback, SchemaError, load_node, save_node
 from .statements import statement_path
@@ -170,7 +171,8 @@ def sha256_file(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Closure digest (step 0b Task 1, 2026-10-28; fail-closed + srcDir fix round 1, 10-28)
+# Closure digest (step 0b Task 1, 2026-10-28; fail-closed + srcDir fix round 1, 10-28;
+# manifest-driven externals fix round 2, Controller Ruling 0b-3, 10-28)
 #
 # WHY. Before this, a [rejudge] record bound itself to the sha256 of the top-level
 # artifact FILE alone (RejudgeRecord.artifact_sha256). For the ladders the certificates
@@ -179,65 +181,126 @@ def sha256_file(path: Path) -> str:
 # artifact file can still be stale on what the artifact actually proves. The owner's fix:
 # bind the record to a digest over the artifact's WHOLE import closure instead.
 #
-# FIX ROUND 1 (Controller Ruling 0b-2). The first cut resolved a module `M` under a
-# candidate package directory `D` by checking `D/M_as_path.lean` directly -- which
-# ignores `srcDir`. `zzl_core`'s lakefile declares `srcDir = ".."`, so its modules
-# (XiLineZeros, ZetaZeroConfinement, DiffractionCore, TuringBand, ...) actually live in
-# `examples/zeta_zero_localization/lean/`, one directory above `zzl_core/` itself. The
-# first cut found no file there, silently classified each one as "external", and
-# dropped it and everything IT imports (DlvpZetaZeroFree, reached only through
-# zero_free_bridge) -- shrinking the h8000 (201 files) and h11000 (241 files) closures
-# without any error. The fix reuses `coverage.py`'s already-srcDir-aware package model
-# (`_package`/`_workspace`/`_module_file`, tested against every real island lakefile by
-# `test_mini_toml_agrees_with_tomllib_on_every_island_lakefile`) instead of re-deriving
-# srcDir handling here. It also now FAILS CLOSED: an import that resolves to no local
-# file and is not a known library root raises `ClosureError`, rather than being read as
-# "external" by default -- which is precisely how the srcDir bug went unnoticed. The
-# off-island single-file fallback is replaced the same way: it no longer blindly
-# returns `[artifact]` for ANY off-island artifact; it is simply what happens, correctly,
-# when the artifact imports nothing that needs resolving (no lakefile -> no workspace ->
-# every non-library import fails closed). A fixture needing a real multi-file closure
-# needs a real (even if tiny) lakefile.toml, not a wider fallback.
+# FIX ROUND 1 (Controller Ruling 0b-2): srcDir. The first cut resolved a module under a
+# candidate package directory by checking `D/module_path.lean` directly -- which ignores
+# `srcDir`. zzl_core's lakefile declares `srcDir = ".."`, so its modules live one
+# directory ABOVE zzl_core/ itself; the first cut read each one as "external" and
+# dropped it (and everything it imports). Fixed by reusing coverage.py's srcDir-aware
+# package model. It also introduced FAIL CLOSED (a hand-written LIBRARY_ROOTS list).
+#
+# FIX ROUND 2 (Controller Ruling 0b-3): LIBRARY_ROOTS replaced by a manifest-driven
+# rule, because the hand list missed `Zeta23` (rvm_bridge's `[[require]] git = ...`
+# dependency) -- discovered when re-binding found its modules unresolvable under round
+# 1's rule. A module is external iff its root package is a NON-PATH dependency in a
+# relevant `lake-manifest.json`, or it sits under a CORE_ROOT (Init/Lean/Std/Lake). The
+# package's module roots are read from its OWN lakefile under `.lake/packages/<name>
+# [/subDir]` when parseable (a `.toml`, e.g. Zeta23's); when it is not (a `.lean`
+# lakefile, e.g. Mathlib's) or absent, the package's own directory is treated as a bare
+# source root (`Mathlib.lean` sits right there). An import matching neither still fails
+# CLOSED. The digest now also pins every such external package's `name\trev`, so
+# bumping Mathlib or Zeta23 makes a bound re-judge stale too.
 # ---------------------------------------------------------------------------
 
-#: Known Lean/Lake toolchain and Mathlib-adjacent library roots (Controller Ruling 0b-2):
-#: an import whose top-level namespace component is one of these is resolved OUTSIDE this
-#: repo (fetched by `lake`), so it is excluded from the closure WITHOUT being an error.
-LIBRARY_ROOTS = frozenset({
-    "Mathlib", "Init", "Lean", "Std", "Batteries", "Aesop", "Qq", "Plausible",
-    "ProofWidgets", "LeanSearchClient", "ImportGraph", "Cli", "LeanArchitect",
-    "Architect", "checkdecls", "PrimeNumberTheoremAnd",
-})
+#: Lean/Lake toolchain roots that are never a manifest-listed package (Controller
+#: Ruling 0b-3): the prelude, the compiler, and their immediate core libraries.
+CORE_ROOTS = frozenset({"Init", "Lean", "Std", "Lake"})
 
 
 class ClosureError(ProvenanceError):
-    """An import resolves to no local file and is not a known library root (Controller
-    Ruling 0b-2): the closure fails CLOSED instead of silently shrinking."""
+    """An import resolves to no local file, matches no manifest package, and is not a
+    core root (Controller Ruling 0b-3): the closure fails CLOSED instead of silently
+    shrinking."""
 
 
-def _is_library_import(module: str) -> bool:
-    return module.split(".", 1)[0] in LIBRARY_ROOTS
+def _manifest_entries(pkg_dir: Path) -> Tuple[dict, ...]:
+    """The `packages` entries of *pkg_dir*'s `lake-manifest.json`, or `()` when absent
+    or unreadable.
 
-
-def closure_files(campaign_root: Path, node: Node) -> List[Path]:
-    """Every local Lean source file *node*'s artifact imports, directly or
-    transitively, plus the artifact itself -- the import closure a [rejudge] record is
-    now bound to (Task 1).
-
-    The artifact's island (if it is on one, via `judge.island_dir`) plus every
-    `path`-required sibling, transitively, are parsed into a `coverage.py` workspace
-    (`coverage._workspace`), which already honours `srcDir` -- both the package's own
-    and a `[[lean_lib]]`'s override -- exactly as real `lake` would. Each file's own
-    imports (`coverage._imports`) are then resolved against that workspace
-    (`coverage._module_file`). A library import (Mathlib, the toolchain, ...) is
-    skipped; anything else that does not resolve to a local file raises `ClosureError`
-    naming the module and the importing file -- there is no silent fallback.
-
-    Off-island (a unit-test fixture with no Lean project at all), the workspace is
-    whatever `coverage._workspace` finds at the artifact's own directory -- typically
-    nothing (no lakefile.toml there), so the closure is the artifact alone UNLESS it
-    imports something non-library, which then correctly fails closed.
+    Deliberately NOT cached (unlike `coverage._package`/`_workspace`, which assume a
+    stable repo during one process): a test that rewrites a manifest mid-run (e.g.
+    bumping a pinned rev) must see the new content, and the file is small enough that
+    re-reading it is cheap relative to the coverage.py calls already made per module.
     """
+    mf = Path(pkg_dir) / "lake-manifest.json"
+    if not mf.is_file():
+        return ()
+    try:
+        doc = json.loads(mf.read_text())
+    except (OSError, ValueError):
+        return ()
+    return tuple(e for e in (doc.get("packages") or []) if isinstance(e, dict))
+
+
+def _external_package_dir(pkg_dir: Path, entry: dict) -> Path:
+    """Where *entry* (a non-path manifest dependency of the package at *pkg_dir*) lives
+    on disk: `<pkg_dir>/.lake/packages/<name>[/<subDir>]`."""
+    base = Path(pkg_dir) / ".lake" / "packages" / str(entry.get("name") or "")
+    sub = entry.get("subDir")
+    return (base / str(sub)) if sub else base
+
+
+def _resolve_external_entry(ws: tuple, root: str) -> Optional[dict]:
+    """The non-path manifest entry (from any package's `lake-manifest.json` in *ws*)
+    that provides module root *root*, or None.
+
+    Three tiers, cheapest first, matching the brief's "declared lib" fallback:
+      1. *root* matches the entry's own `name` field case-insensitively (Lake's own
+         convention: `lake init Foo` gives package `foo` module root `Foo`; this is
+         what resolves Mathlib/Zeta23 even when `.lake/packages` is not on disk at
+         all -- e.g. a fresh checkout, or a copy that deliberately excludes `.lake`).
+      2. that entry's OWN lakefile, if parseable (a `.toml` under
+         `.lake/packages/<name>[/subDir]`), declares a `[[lean_lib]]` whose roots
+         include *root* -- for a package whose OTHER libs don't share its name
+         (Zeta23 also provides `ChallengeDeps`/`Challenge`/`Solution`).
+      3. *root* exists, as a file or a directory, right under that package's own
+         directory on disk (the "bare source root" convention `coverage.py` already
+         uses for a local package with no declared `[[lean_lib]]`).
+    """
+    from . import coverage
+    seen: set = set()
+    for pkg in ws:
+        for entry in _manifest_entries(pkg.dir):
+            if entry.get("type") == "path":
+                continue
+            name = str(entry.get("name") or "")
+            if not name or (name, str(entry.get("rev") or "")) in seen:
+                continue
+            seen.add((name, str(entry.get("rev") or "")))
+            if root.lower() == name.lower():
+                return entry
+            base = _external_package_dir(pkg.dir, entry)
+            toml = base / "lakefile.toml"
+            if toml.is_file():
+                epkg = coverage._package(base)
+                if epkg is not None and any(
+                        root in lib_roots for lib_roots, _g, _s in epkg.libs.values()):
+                    return entry
+            if (base / (root + ".lean")).is_file() or (base / root).is_dir():
+                return entry
+    return None
+
+
+def _manifest_pins(ws: tuple) -> List[str]:
+    """Sorted, deduplicated `"<name>\\t<rev>"` lines for every non-path dependency
+    named in any package's `lake-manifest.json` in *ws* (Controller Ruling 0b-3): what
+    the closure digest pins so bumping Mathlib or Zeta23 makes a bound record stale."""
+    pins: set = set()
+    for pkg in ws:
+        for entry in _manifest_entries(pkg.dir):
+            if entry.get("type") == "path":
+                continue
+            name = str(entry.get("name") or "")
+            if name:
+                pins.add(f"{name}\t{entry.get('rev') or ''}")
+    return sorted(pins)
+
+
+def _closure_workspace(campaign_root: Path, node: Node) -> Tuple[Path, tuple]:
+    """(artifact, workspace) for *node*: the artifact's resolved path, and the
+    `coverage.py` package workspace (island + every `path`-required sibling,
+    transitively, srcDir and all) its imports resolve against. Off-island, the
+    workspace is whatever `coverage._workspace` finds at the artifact's own directory
+    (typically nothing: no lakefile.toml there)."""
     if node.proof is None:
         raise ProvenanceError("closure_files: node has no proof link")
     campaign_root = Path(campaign_root).resolve()
@@ -255,7 +318,21 @@ def closure_files(campaign_root: Path, node: Node) -> List[Path]:
     except (_rejudge.RejudgeSetupError, judge.JudgeError):
         pass       # no recognised island: resolve only against the artifact's own dir
 
-    ws = coverage._workspace(Path(lean_dir).resolve())
+    return artifact, coverage._workspace(Path(lean_dir).resolve())
+
+
+def _resolve_closure(campaign_root: Path, node: Node) -> Tuple[List[Path], tuple]:
+    """(closure files, workspace) for *node*'s artifact: every local Lean source file
+    it imports, directly or transitively, plus the artifact itself.
+
+    Each file's own imports (`coverage._imports`) are resolved against the workspace
+    (`coverage._module_file`, which already honours `srcDir`). An import that does not
+    resolve locally is external WITHOUT being an error iff it sits under a CORE_ROOT or
+    matches a non-path `lake-manifest.json` dependency (`_resolve_external_entry`);
+    anything else raises `ClosureError` naming the module and the importing file.
+    """
+    artifact, ws = _closure_workspace(campaign_root, node)
+    from . import coverage
 
     resolved: set = set()
     stack = [artifact]
@@ -265,27 +342,55 @@ def closure_files(campaign_root: Path, node: Node) -> List[Path]:
             continue
         resolved.add(f)
         for mod in coverage._imports(f):
-            if _is_library_import(mod):
-                continue
             g = coverage._module_file(ws, mod)
-            if g is None:
-                raise ClosureError(
-                    f"import {mod!r} in {f} resolves to no local file and is not a "
-                    "known library root; the closure cannot be bound")
-            if g not in resolved:
-                stack.append(g)
-    return sorted(resolved)
+            if g is not None:
+                if g not in resolved:
+                    stack.append(g)
+                continue
+            root = mod.split(".", 1)[0]
+            if root in CORE_ROOTS or _resolve_external_entry(ws, root) is not None:
+                continue
+            raise ClosureError(
+                f"import {mod!r} in {f} resolves to no local file, matches no "
+                "manifest package, and is not a core root; the closure cannot be bound")
+    return sorted(resolved), ws
+
+
+def closure_files(campaign_root: Path, node: Node) -> List[Path]:
+    """Every local Lean source file *node*'s artifact imports, directly or
+    transitively, plus the artifact itself -- the import closure a [rejudge] record is
+    bound to (Task 1; manifest-driven externals, Controller Ruling 0b-3)."""
+    files, _ws = _resolve_closure(campaign_root, node)
+    return files
+
+
+def closure_support_files(campaign_root: Path, node: Node) -> List[Path]:
+    """`lakefile.toml` + `lake-manifest.json` of the island (or the artifact's own
+    directory, off-island) and every `path`-required sibling (Controller Ruling 0b-3):
+    the back-fill git rule must also cover these, since a changed `srcDir`, a changed
+    `[[require]] path`, or a changed pinned `rev` could change the closure or its
+    digest without any closure .lean FILE itself changing."""
+    _artifact, ws = _closure_workspace(campaign_root, node)
+    out = []
+    for pkg in ws:
+        for name in ("lakefile.toml", "lake-manifest.json"):
+            f = Path(pkg.dir) / name
+            if f.is_file():
+                out.append(f.resolve())
+    return sorted(set(out))
 
 
 def closure_digest(campaign_root: Path, node: Node) -> str:
     """sha256 binding a [rejudge] record to *node*'s WHOLE import closure (Task 1):
     the concatenation of every closure file's path (relative to the telperion root, so
     the digest is the same wherever the repo is checked out) and its own sha256, in
-    sorted path order. Changes if any closure file's CONTENT changes, or if the SET of
-    closure files changes (an import added or removed)."""
+    sorted path order, followed by every external dependency's `name\\trev`
+    (`_manifest_pins`, Controller Ruling 0b-3). Changes if any closure file's CONTENT
+    changes, if the SET of closure files changes, or if an external dependency's
+    pinned rev changes (bumping Mathlib or Zeta23)."""
     campaign_root = Path(campaign_root).resolve()
     troot = campaign_root.parent.parent
-    files = closure_files(campaign_root, node)
+    files, ws = _resolve_closure(campaign_root, node)
     h = hashlib.sha256()
     for f in files:
         try:
@@ -295,6 +400,10 @@ def closure_digest(campaign_root: Path, node: Node) -> str:
         h.update(str(rel).encode("utf-8"))
         h.update(b"\0")
         h.update(sha256_file(f).encode("utf-8"))
+        h.update(b"\n")
+    for pin in _manifest_pins(ws):
+        h.update(b"PIN\0")
+        h.update(pin.encode("utf-8"))
         h.update(b"\n")
     return h.hexdigest()
 

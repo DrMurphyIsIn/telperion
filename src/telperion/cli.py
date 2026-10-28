@@ -1761,7 +1761,10 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
     import dataclasses as _dc
     import subprocess
 
-    from .missions.provenance import ClosureError, closure_digest, closure_files as _closure_files
+    from .missions.provenance import (
+        ClosureError, closure_digest, closure_files as _closure_files,
+        closure_support_files as _closure_support_files,
+    )
     from .missions.registry import load_campaign
     from .missions.schema import SchemaError, save_node, slug_of
 
@@ -1803,6 +1806,7 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
 
     try:
         files = _closure_files(camp_root, node)
+        support = _closure_support_files(camp_root, node)
     except ClosureError as exc:
         print(f"{slug}: cannot resolve its import closure ({exc}); refusing to write.",
               file=sys.stderr)
@@ -1810,8 +1814,12 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
     if not files:
         print(f"{slug}: its import closure resolved to no files", file=sys.stderr)
         return 2
+    # Controller Ruling 0b-3: the git rule also covers each lakefile.toml and
+    # lake-manifest.json involved (the island's and every path-required sibling's) --
+    # a changed srcDir, require path, or pinned rev could change the closure or its
+    # digest without any closure .lean FILE itself changing.
     rel_files = []
-    for f in files:
+    for f in list(files) + list(support):
         f = Path(f).resolve()
         try:
             rel_files.append(str(f.relative_to(repo_root)))
