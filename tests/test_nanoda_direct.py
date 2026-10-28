@@ -217,6 +217,92 @@ def test_run_direct_zero_declarations_records_fail(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# run_direct pre/post hashing (Review fix round 2, gap 2): the header binds to the digests
+# taken BEFORE the build (the queue script hashes right before `timed_build`); the run is
+# re-hashed afterward, and a mismatch fails the node -- a source edited mid-run must never
+# produce a silent pass bound to a digest that no longer describes what was actually built.
+# ---------------------------------------------------------------------------
+
+def test_run_direct_pre_hash_matches_post_hash_passes(tmp_path):
+    tel, camp, node = _tmp_island_node(tmp_path)
+    artifact = camp / node.proof.artifact
+    pre_sha = sha256_file(artifact)
+    pre_closure = closure_digest(camp, node)
+    run, _ = _stub_run()
+    tools = Tools(telperion_root=tel, lean4export=Path("/tools/lean4export"),
+                  nanoda=Path("/tools/nanoda_bin"), nanoda_rev="f" * 40, out_dir=tmp_path / "rj")
+    log_path = run_direct(camp, node, tools=tools, run=run,
+                          pre_artifact_sha256=pre_sha, pre_closure_sha256=pre_closure)
+    text = log_path.read_text()
+    assert f"artifact_sha256={pre_sha}" in text
+    assert "sources changed" not in text
+    assert rejudge_log_verdict(text, []) == "pass"
+
+
+def test_run_direct_source_changed_during_run_fails(tmp_path):
+    """The artifact is edited (here, as a side effect of the injected export call) AFTER the
+    pre-build hash was taken but DURING the run -- the post-run re-hash must catch it and
+    fail the node, even though export/nanoda both otherwise look like a clean pass."""
+    tel, camp, node = _tmp_island_node(tmp_path)
+    artifact = camp / node.proof.artifact
+    pre_sha = sha256_file(artifact)
+    pre_closure = closure_digest(camp, node)
+
+    def run(cmd, *, cwd):
+        if cmd[0] == "lake":
+            artifact.write_text("theorem a_thm : True := trivial  -- edited mid-run\n")
+            return 0, "<export bytes>\n", ""
+        return 0, "Checked 3 declarations with no errors\n", ""
+
+    tools = Tools(telperion_root=tel, lean4export=Path("/tools/lean4export"),
+                  nanoda=Path("/tools/nanoda_bin"), nanoda_rev="f" * 40, out_dir=tmp_path / "rj")
+    log_path = run_direct(camp, node, tools=tools, run=run,
+                          pre_artifact_sha256=pre_sha, pre_closure_sha256=pre_closure)
+    text = log_path.read_text()
+    assert f"artifact_sha256={pre_sha}" in text   # header still binds to the PRE value
+    assert "sources changed during the run" in text
+    assert rejudge_log_verdict(text, []) == "fail"
+
+
+def test_run_direct_closure_changed_during_run_fails(tmp_path):
+    """Same idea, but the import CLOSURE changes (a sibling the artifact imports is edited),
+    not the artifact file itself."""
+    tel, camp, node = _tmp_island_node(tmp_path)
+    (tel / "examples" / "isl" / "lean" / "B.lean").write_text("-- nothing imports this yet\n")
+    artifact = camp / node.proof.artifact
+    pre_sha = sha256_file(artifact)
+    pre_closure = closure_digest(camp, node)
+
+    def run(cmd, *, cwd):
+        if cmd[0] == "lake":
+            artifact.write_text("import B\ntheorem a_thm : True := trivial\n")
+            return 0, "<export bytes>\n", ""
+        return 0, "Checked 3 declarations with no errors\n", ""
+
+    tools = Tools(telperion_root=tel, lean4export=Path("/tools/lean4export"),
+                  nanoda=Path("/tools/nanoda_bin"), nanoda_rev="f" * 40, out_dir=tmp_path / "rj")
+    log_path = run_direct(camp, node, tools=tools, run=run,
+                          pre_artifact_sha256=pre_sha, pre_closure_sha256=pre_closure)
+    text = log_path.read_text()
+    assert "sources changed during the run" in text
+    assert rejudge_log_verdict(text, []) == "fail"
+
+
+def test_run_direct_no_pre_hash_falls_back_to_call_time_hash(tmp_path):
+    """Omitting pre_artifact_sha256/pre_closure_sha256 (every caller before this fix round)
+    keeps the previous behaviour exactly: hash once, at call time, bind the header to that."""
+    tel, camp, node = _tmp_island_node(tmp_path)
+    artifact = camp / node.proof.artifact
+    run, _ = _stub_run()
+    tools = Tools(telperion_root=tel, lean4export=Path("/tools/lean4export"),
+                  nanoda=Path("/tools/nanoda_bin"), nanoda_rev="f" * 40, out_dir=tmp_path / "rj")
+    log_path = run_direct(camp, node, tools=tools, run=run)
+    text = log_path.read_text()
+    assert f"artifact_sha256={sha256_file(artifact)}" in text
+    assert rejudge_log_verdict(text, []) == "pass"
+
+
+# ---------------------------------------------------------------------------
 # rejudge_log_verdict / parse_rejudge_route: the branch over REJUDGE-ROUTE
 # ---------------------------------------------------------------------------
 
@@ -451,6 +537,27 @@ def test_ruling_0b4_heavy_node_with_comparator_route_is_fine(tmp_path):
     assert rec.route == "comparator"
     node = dataclasses.replace(node, rejudge=rec)
     assert rejudge_problem(tmp_path, node) == ""
+
+
+def test_ruling_0b5_unrecognized_route_rejected(tmp_path):
+    """Controller ruling 0b-5 (2026-10-28, review fix round 2): a record whose `route` is
+    not in `rejudge.VALID_ROUTES` is rejected outright, on a heavy node (needs_rejudge) and
+    on a non-heavy one (second_kernel_claimed only) alike."""
+    from telperion.missions.rejudge import VALID_ROUTES
+    from missions_fixtures import minimal_proved_node
+
+    for heavy in (True, False):
+        node = minimal_proved_node(tmp_path, heavy=heavy)
+        sha = sha256_file(tmp_path / node.proof.artifact)
+        rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="f" * 40,
+                            comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
+                            log_sha256="c" * 64, closure_sha256=closure_digest(tmp_path, node),
+                            closure_files=len(closure_files(tmp_path, node)),
+                            route="some-other-route")
+        assert rec.route not in VALID_ROUTES
+        node = dataclasses.replace(node, rejudge=rec)
+        problem = rejudge_problem(tmp_path, node)
+        assert problem != "" and "not a recognized route" in problem, (heavy, problem)
 
 
 # ---------------------------------------------------------------------------

@@ -236,13 +236,26 @@ class Tools:
 RunFn = Callable[..., Tuple[int, str, str]]
 
 
-def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
+def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
+               pre_artifact_sha256: Optional[str] = None,
+               pre_closure_sha256: Optional[str] = None) -> Path:
     """Export the node's OWN registered theorem and its closure, run nanoda on it, and write
     one node log: the `REJUDGE-HEADER` (artifact sha256 + closure sha256, exactly as
     `rejudge-record` computes them), `REJUDGE-ROUTE nanoda-direct`, informational lines, then
     the raw export and nanoda output under `REJUDGE-EXPORT`/`REJUDGE-NANODA` delimiters.
     Returns the log path. Raises `NanodaDirectError` (writes nothing) when the node's artifact,
     island, theorem or import closure cannot be resolved -- there is no verdict to log yet.
+
+    Review fix round 2 (2026-10-28), gap 2 (soundness): *pre_artifact_sha256*/
+    *pre_closure_sha256* are the digests the CALLER took before `lake build`-ing the artifact
+    module (the queue script hashes before `timed_build`, not after) -- they are what the
+    header binds to. After the whole run (export AND nanoda), the artifact and closure are
+    re-hashed; if either no longer matches, the source changed mid-run, so the `.olean`
+    lean4export read (and everything nanoda then checked) may not be what the pre-build hash
+    promised. That is recorded as a failing line in the NANODA section (so `classify`'s own
+    error-line check fails it, never a silent pass for the wrong source) rather than a
+    separate out-of-band signal. Omitting either falls back to hashing at call time (every
+    existing caller/test that does not pre-hash keeps its previous behaviour).
     """
     from . import judge
     from .provenance import ClosureError, closure_digest, closure_files, sha256_file
@@ -284,6 +297,10 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
     except ClosureError as exc:
         raise NanodaDirectError(f"{slug}: cannot resolve its import closure: {exc}") from exc
     art_sha = sha256_file(artifact)
+    # The digests the header actually binds to: the pre-build ones when the caller took them
+    # (the queue script does, right before `timed_build`), else what was just computed above.
+    header_art_sha = pre_artifact_sha256 or art_sha
+    header_closure = pre_closure_sha256 or cur_closure
 
     out = Path(tools.out_dir) / slug
     out.mkdir(parents=True, exist_ok=True)
@@ -299,11 +316,29 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
     cfg_path.write_text(json.dumps(nanoda_config(export_path)))
     nanoda_rc, nanoda_stdout, nanoda_stderr = run([str(tools.nanoda), str(cfg_path)], cwd=out)
 
+    # Review fix round 2 (2026-10-28), gap 2: re-hash AFTER the whole run and compare against
+    # the pre-build digests the header just bound to. `closure_digest` raising ClosureError
+    # here (e.g. an import removed mid-run) is itself a change, not a setup failure to raise
+    # out of -- there is already a verdict to log by this point.
+    post_art_sha = sha256_file(artifact) if artifact.is_file() else None
+    try:
+        post_closure = closure_digest(campaign_root, node)
+    except ClosureError:
+        post_closure = None
+    sources_changed = post_art_sha != header_art_sha or post_closure != header_closure
+
     def _combined(stdout: str, stderr: str) -> str:
         return stdout if not stderr.strip() else stdout.rstrip("\n") + "\n--- stderr ---\n" + stderr
 
+    nanoda_section = _combined(nanoda_stdout, nanoda_stderr)
+    if sources_changed:
+        nanoda_section = (nanoda_section.rstrip("\n") + "\nerror: sources changed during "
+                          "the run (artifact/closure digest no longer matches the pre-build "
+                          "digest the header is bound to)\n")
+
     lines = [
-        f"REJUDGE-HEADER node={slug} artifact_sha256={art_sha} closure_sha256={cur_closure}",
+        f"REJUDGE-HEADER node={slug} artifact_sha256={header_art_sha} "
+        f"closure_sha256={header_closure}",
         "REJUDGE-ROUTE nanoda-direct",
         f"REJUDGE-INFO artifact={artifact} theorem={theorem} module={module} island={island}",
         f"REJUDGE-INFO nanoda_rev={tools.nanoda_rev} nanoda_bin={tools.nanoda} "
@@ -312,7 +347,7 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn) -> Path:
         f"==================== REJUDGE-EXPORT exit={export_rc} ====================",
         _combined(export_stdout, export_stderr),
         f"==================== REJUDGE-NANODA exit={nanoda_rc} ====================",
-        _combined(nanoda_stdout, nanoda_stderr),
+        nanoda_section,
     ]
     log_path = out / "rejudge.log"
     log_path.write_text("\n".join(lines) + "\n")

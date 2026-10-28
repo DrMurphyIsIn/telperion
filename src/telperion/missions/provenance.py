@@ -578,6 +578,13 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     r = node.rejudge
     if r is None:
         return f"{why}: no local nanoda re-judge recorded (`mission rejudge-record`)"
+    # Controller ruling 0b-5 (2026-10-28, review fix round 2): a record whose `route` is not
+    # one of `rejudge.VALID_ROUTES` names nothing this codebase understands how to check --
+    # reject it outright rather than let it fall through to the Comparator-only ruling below
+    # (which only ever compares against the literal string "comparator").
+    from .rejudge import VALID_ROUTES
+    if r.route not in VALID_ROUTES:
+        return f"re-judge route {r.route!r} is not a recognized route (must be one of {VALID_ROUTES})"
     # Controller ruling 0b-4 (2026-10-28, review fix round 1 item 2): a node `needs_rejudge`
     # demands a Comparator re-judge specifically -- nanoda-direct has no statement-identity
     # step, so it cannot discharge the stronger requirement a heavy/Lean-kernel-only node
