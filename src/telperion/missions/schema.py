@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
@@ -781,15 +782,31 @@ def atomic_write_text(path: Path, text: str) -> None:
     the read-back -- the record that gates `promote_to_open` -- with no error anywhere.
 
     `os.replace` is atomic on POSIX and Windows, so a reader never observes a partial file.
+
+    Final-fix 4: the replacement keeps the replaced file's mode and (best effort) owner, and
+    a NEW file is 0o644. Before, every write left mkstemp's 0o600, so one rewrite by a root
+    session turned a shared node toml into a root-owned, owner-only file.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        st = None
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
+        if st is None:
+            os.chmod(tmp, 0o644)
+        else:
+            os.chmod(tmp, stat.S_IMODE(st.st_mode))
+            try:
+                os.chown(tmp, st.st_uid, st.st_gid)
+            except PermissionError:
+                pass            # not root and not the owner: keep our own uid/gid
         os.replace(tmp, path)
     except BaseException:
         try:
