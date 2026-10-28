@@ -1740,6 +1740,110 @@ def cmd_mission_rejudge_record(args) -> int:
     return 0
 
 
+def cmd_mission_rejudge_backfill_closure(args) -> int:
+    """Back-fill `[rejudge].closure_sha256` for a node whose closure files are
+    git-verified unchanged since the re-judge queue started (step 0b Task 2, 2026-10-28).
+
+    A node's `[rejudge]` record was written before closure binding existed (Task 1), so
+    it carries no `closure_sha256`. Re-judging it needs Lean/Comparator; back-filling
+    does not -- but ONLY when nothing in its import closure could have changed what the
+    re-judge actually checked. The back-fill rule (BOTH must hold for every closure
+    file):
+      - `git log --format=%H <since>..HEAD -- <file>` is empty;
+      - `git status --porcelain -- <file>` is empty (not dirty).
+    Refuses (exit 2, no write) otherwise: that node must be RE-JUDGED, never back-filled.
+    """
+    import dataclasses as _dc
+    import subprocess
+
+    from .missions.provenance import closure_digest, closure_files as _closure_files
+    from .missions.registry import load_campaign
+    from .missions.schema import SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    camp_root = _resolve_campaign(_missions_root(args), slug, getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+    if node.rejudge is None:
+        print(f"{slug}: no [rejudge] record to back-fill (`mission rejudge-record` first)",
+              file=sys.stderr)
+        return 2
+    if node.proof is None:
+        print(f"{slug}: no artifact linked", file=sys.stderr)
+        return 2
+
+    camp_root = Path(camp_root).resolve()
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=str(camp_root),
+                         capture_output=True, text=True)
+    if top.returncode != 0:
+        print(f"{slug}: cannot find the git repo root from {camp_root}: {top.stderr.strip()}",
+              file=sys.stderr)
+        return 2
+    repo_root = Path(top.stdout.strip())
+
+    files = _closure_files(camp_root, node)
+    if not files:
+        print(f"{slug}: its import closure resolved to no files", file=sys.stderr)
+        return 2
+    rel_files = []
+    for f in files:
+        f = Path(f).resolve()
+        try:
+            rel_files.append(str(f.relative_to(repo_root)))
+        except ValueError:
+            print(f"{slug}: closure file {f} is outside the repo {repo_root}; the git "
+                  "back-fill rule cannot be checked for it", file=sys.stderr)
+            return 2
+
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", *rel_files],
+                           cwd=str(repo_root), capture_output=True, text=True)
+    if dirty.returncode != 0:
+        print(f"{slug}: `git status` failed: {dirty.stderr.strip()}", file=sys.stderr)
+        return 2
+    if dirty.stdout.strip():
+        print(f"{slug}: refused -- closure file(s) are dirty (uncommitted changes):\n"
+              f"{dirty.stdout}", file=sys.stderr)
+        return 2
+
+    log = subprocess.run(["git", "log", "--format=%H", f"{args.since}..HEAD", "--", *rel_files],
+                         cwd=str(repo_root), capture_output=True, text=True)
+    if log.returncode != 0:
+        print(f"{slug}: `git log` failed: {log.stderr.strip()}", file=sys.stderr)
+        return 2
+    if log.stdout.strip():
+        commits = log.stdout.strip().splitlines()
+        shown = ", ".join(c[:9] for c in commits[:5])
+        print(f"{slug}: refused -- {len(commits)} commit(s) touched its closure since "
+              f"{args.since}: {shown}{', ...' if len(commits) > 5 else ''}. Re-judge, do "
+              "not back-fill.", file=sys.stderr)
+        return 2
+
+    digest = closure_digest(camp_root, node)
+    extra = (f"closure back-filled 2026-10-28 (git: no change to {len(files)} closure "
+             f"files since {args.since})")
+    note = f"{node.rejudge.note}; {extra}" if node.rejudge.note else extra
+    try:
+        rec = _dc.replace(node.rejudge, closure_sha256=digest, closure_files=len(files),
+                          note=note)
+    except SchemaError as exc:
+        print(f"{slug}: {exc}")
+        return 1
+    save_node(_dc.replace(node, rejudge=rec, updated=node.rejudge.date),
+             camp_root / "nodes" / f"{slug}.toml")
+    print(f"{slug}: closure back-filled ({len(files)} files, sha256 {digest[:16]}..., "
+          f"no change since {args.since})")
+    return 0
+
+
 def cmd_mission_comparator_record(args) -> int:
     """Record a PASSING Comparator run on a proved node (a sidecar, never a status change)."""
     import dataclasses as _dc
@@ -2685,6 +2789,17 @@ def main(argv=None) -> int:
     p.add_argument("--peak-rss-kb", type=int, default=0, dest="peak_rss_kb")
     p.add_argument("--note", default="")
     p.set_defaults(mission_fn=cmd_mission_rejudge_record)
+
+    # rejudge-backfill-closure SLUG --campaign C [--since 23bda8b16]
+    p = msub.add_parser("rejudge-backfill-closure",
+                        help="back-fill [rejudge].closure_sha256 for a node whose closure "
+                             "files are git-verified unchanged since --since; refuses "
+                             "(exit 2) if any closure file is dirty or was touched since")
+    p.add_argument("slug")
+    p.add_argument("--campaign", required=True)
+    p.add_argument("--since", default="23bda8b16",
+                   help="commit the re-judge queue started at (default: 23bda8b16)")
+    p.set_defaults(mission_fn=cmd_mission_rejudge_backfill_closure)
 
     # verify [CAMPAIGN] [--deep-lean]
     p = msub.add_parser("verify", help="run the full invariant battery")

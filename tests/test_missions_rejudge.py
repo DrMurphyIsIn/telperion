@@ -869,3 +869,102 @@ def test_header_closure_mismatch_refused(tmp_path, one_part, capsys):
     err = capsys.readouterr().err
     assert "closure_sha256" in err
     assert load_node(camp / "nodes" / "HV_x.toml").rejudge is None
+
+
+# ---------------------------------------------------------------------------
+# Back-fill (step 0b Task 2, 2026-10-28): closure_sha256 may be written for a node
+# WITHOUT re-judging it, but only when git proves its closure files are unchanged.
+# ---------------------------------------------------------------------------
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+    out = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True)
+    assert out.returncode == 0, (args, out.stdout, out.stderr)
+    return out.stdout.strip()
+
+
+def _backfill_repo(tmp_path: Path):
+    """A tiny git repo at *tmp_path*, with a judge island (`A.lean` imports `B.lean`)
+    and one campaign node ("demo"/"HV_x") carrying a passing [rejudge] record with no
+    closure_sha256 -- exactly the shape of the 7 real heavy nodes before back-fill.
+    Returns (mroot, campaign_root, since, repo)."""
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@t")
+    _git(tmp_path, "config", "user.name", "t")
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text(
+        'name = "Isl"\n\n[[lean_lib]]\nname = "A"\n\n[[lean_lib]]\nname = "B"\n')
+    (lean / "A.lean").write_text("import B\ntheorem a : True := trivial\n")
+    (lean / "B.lean").write_text("theorem b : True := trivial\n")
+    camp = tel / "missions" / "demo"
+    (camp / "nodes").mkdir(parents=True)
+    manifest = MissionManifest(
+        name="Demo.hv", title="Demo Campaign", description="synthetic",
+        goal_node="HV_x", environment_toolchain="leanprover/lean4:v4.32.0",
+        environment_mathlib_rev="v4.32.0", sources=(),
+    )
+    save_manifest(manifest, camp / "mission.toml")
+    art = lean / "A.lean"
+    rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0",
+                        artifact_sha256=hashlib.sha256(art.read_bytes()).hexdigest(),
+                        verdict="pass", log_sha256="c" * 64,
+                        note="local macOS re-judge, nanoda ON")
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True, rejudge=rec,
+    )
+    save_node(node, camp / "nodes" / "HV_x.toml")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "initial")
+    since = _git(tmp_path, "rev-parse", "HEAD")
+    return tel / "missions", camp, since, tmp_path
+
+
+def test_backfill_writes_when_unchanged(tmp_path):
+    from telperion.missions.provenance import closure_digest
+    mroot, camp, since, repo = _backfill_repo(tmp_path)
+    node = load_node(camp / "nodes" / "HV_x.toml")
+    rc = _cli(mroot, "rejudge-backfill-closure", "HV_x", "--campaign", "demo",
+             "--since", since)
+    assert rc == 0
+    n2 = load_node(camp / "nodes" / "HV_x.toml")
+    assert n2.rejudge.closure_sha256 == closure_digest(camp, node)
+    assert n2.rejudge.closure_files == 2            # A.lean + B.lean
+    assert "closure back-filled" in n2.rejudge.note
+    assert f"no change to 2 closure files since {since}" in n2.rejudge.note
+    assert n2.rejudge.note.startswith("local macOS re-judge, nanoda ON; ")
+
+
+def test_backfill_refused_on_change(tmp_path, capsys):
+    """Review Focus 4: a back-fill on a node whose closure changed must be refused and
+    the node re-judged, never back-filled."""
+    mroot, camp, since, repo = _backfill_repo(tmp_path)
+    (repo / "telperion" / "examples" / "isl" / "lean" / "B.lean").write_text(
+        "theorem b : True := trivial  -- edited after the re-judge\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "edit B after the re-judge")
+    rc = _cli(mroot, "rejudge-backfill-closure", "HV_x", "--campaign", "demo",
+             "--since", since)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "re-judge" in err.lower() and "back-fill" in err.lower()
+    assert load_node(camp / "nodes" / "HV_x.toml").rejudge.closure_sha256 == ""
+
+
+def test_backfill_refused_on_dirty_closure_file(tmp_path, capsys):
+    """The other half of the rule: an UNCOMMITTED edit refuses just as a committed one
+    does (`git status --porcelain`, not only `git log`)."""
+    mroot, camp, since, repo = _backfill_repo(tmp_path)
+    (repo / "telperion" / "examples" / "isl" / "lean" / "B.lean").write_text(
+        "theorem b : True := trivial  -- dirty, uncommitted\n")
+    rc = _cli(mroot, "rejudge-backfill-closure", "HV_x", "--campaign", "demo",
+             "--since", since)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "dirty" in err.lower()
+    assert load_node(camp / "nodes" / "HV_x.toml").rejudge.closure_sha256 == ""
