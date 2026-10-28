@@ -1609,7 +1609,8 @@ def cmd_mission_rejudge_record(args) -> int:
     different node, or for an older artifact, could be recorded as THIS node's re-judge.
     Refuses (exit 2, no record written) when that header is missing, names a different
     node, or names an artifact digest that is not the one currently on disk. Also refuses
-    (exit 2, no record) when the node is not `heavy_certificates = true`.
+    (exit 2, no record) when the node is neither `heavy_certificates = true` nor carries a
+    `[comparator]` record whose second kernel was off (`provenance.needs_rejudge`).
 
     Controller ruling 6 (2026-10-27): a node's status may be `proved`, OR `draft`/`open`
     with a proof link whose artifact exists on disk -- pre-grant judging, so a fresh heavy
@@ -1644,9 +1645,14 @@ def cmd_mission_rejudge_record(args) -> int:
     if node is None:
         print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
         return 1
-    if not node.heavy_certificates:
-        print(f"{slug}: heavy_certificates is not set; a re-judge is only meaningful for a "
-              "node hosted CI judges Lean-kernel-only.", file=sys.stderr)
+    from .missions.provenance import needs_rejudge
+    if not needs_rejudge(node):
+        # Final-fix 1: the same predicate `rejudge_problem` uses -- the flag, OR a
+        # `[comparator]` record saying nanoda was off -- so a node verify demands a re-judge
+        # for can always get one recorded.
+        print(f"{slug}: heavy_certificates is not set and its [comparator] record does not say "
+              "nanoda was off; a re-judge is only meaningful for a node hosted CI judges "
+              "Lean-kernel-only.", file=sys.stderr)
         return 2
     if node.proof is None:
         print(f"{slug}: no artifact linked; a re-judge is about an artifact.", file=sys.stderr)

@@ -278,13 +278,43 @@ def required_ci_problem(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+def judged_lean_kernel_only(node: Node) -> bool:
+    """True when the node's `[comparator]` record says the judge ran with nanoda OFF.
+
+    `second_kernel` starting with "none" (e.g. "none: heavy_certificates") is the record's
+    reading; `kernel_mode = "lean-kernel-only"` is the literal token the PASS line printed.
+    Either one means only the Lean kernel replayed the export.
+    """
+    c = node.comparator
+    if c is None:
+        return False
+    return (c.second_kernel.strip().lower().startswith("none")
+            or c.kernel_mode.strip() == "lean-kernel-only")
+
+
+def needs_rejudge(node: Node) -> bool:
+    """A node whose proved status needs a passing local nanoda re-judge.
+
+    Final-fix 1 (whole-branch review, 2026-10-28): driven by the flag OR by the judge record.
+    Before, deleting `heavy_certificates = true` from a node toml made `rejudge_problem`
+    return "" -- a node judged Lean-kernel-only in CI then stayed proved with no nanoda run at
+    all. A `[comparator]` record that says nanoda was off now makes the node heavy too.
+    """
+    return bool(node.heavy_certificates) or judged_lean_kernel_only(node)
+
+
 def rejudge_problem(campaign_root: Path, node: Node) -> str:
-    """"" unless a heavy node lacks a passing nanoda re-judge on its current artifact."""
-    if not node.heavy_certificates:
+    """"" unless a node judged without nanoda lacks a passing nanoda re-judge on its current
+    artifact. "Judged without nanoda" = `heavy_certificates = true`, OR a `[comparator]`
+    record whose second kernel was off (see `needs_rejudge`)."""
+    if not needs_rejudge(node):
         return ""
+    why = ("heavy_certificates" if node.heavy_certificates else
+           f"judged Lean-kernel-only (second_kernel = {node.comparator.second_kernel!r}, "
+           "heavy_certificates absent)")
     r = node.rejudge
     if r is None:
-        return "heavy_certificates: no local nanoda re-judge recorded (`mission rejudge-record`)"
+        return f"{why}: no local nanoda re-judge recorded (`mission rejudge-record`)"
     if r.verdict != "pass":
         return f"local nanoda re-judge on {r.date} FAILED (nanoda {r.nanoda_rev[:8]})"
     if node.proof is None:
@@ -418,7 +448,7 @@ def render_provenance_report(campaign) -> str:
     # on the real registry, and must still be reported on). `lean_kernel_only` is kept as an
     # OR so a legacy record that marks itself Lean-kernel-only without the flag still shows.
     heavy_rows = [r for r in proved
-                 if r.lean_kernel_only or campaign.nodes[r.slug].heavy_certificates]
+                 if r.lean_kernel_only or needs_rejudge(campaign.nodes[r.slug])]
     for r in heavy_rows:
         node = campaign.nodes[r.slug]
         problem = rejudge_problem(campaign.root, node)

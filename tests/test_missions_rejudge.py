@@ -314,7 +314,8 @@ def _verify_copy_without_rejudge(tmp_path, campaign, slug):
     shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
     examples_lean = TELPERION_ROOT / "examples" / "zeta_reflection" / "lean"
     if examples_lean.is_dir():
-        shutil.copytree(examples_lean, troot / "examples" / "zeta_reflection" / "lean")
+        shutil.copytree(examples_lean, troot / "examples" / "zeta_reflection" / "lean",
+                        ignore=shutil.ignore_patterns(".lake"))   # sources only: .lake is ~12 GB
     p = dst / "nodes" / f"{slug}.toml"
     save_node(dataclasses.replace(load_node(p), rejudge=None), p)
     return verify_campaign(dst).errors
@@ -458,3 +459,114 @@ def test_grant_status_refutation_of_heavy_node_not_blocked_by_missing_rejudge(tm
     result = grant_status(campaign, "Demo_hv4", identity="gate@test", session="gate-session")
     assert result.status == "refuted"
     assert load_node(root / "nodes" / "Demo_hv4.toml").status == "refuted"
+
+
+# ---------------------------------------------------------------------------
+# Final-fix 1: deleting `heavy_certificates` must not bypass the re-judge gate. A node whose
+# `[comparator]` record says the judge ran with nanoda OFF (second_kernel = "none: ...") was
+# judged Lean-kernel-only, so it is treated as heavy whether or not the flag is still there.
+# ---------------------------------------------------------------------------
+
+def _lean_only_record(art_sha: str, second_kernel: str = "none: heavy_certificates"):
+    from telperion.missions.schema import ComparatorRecord
+    return ComparatorRecord(run_id="1", date="2026-10-27", artifact_sha256=art_sha,
+                            theorem="t", second_kernel=second_kernel)
+
+
+def test_flagless_lean_only_node_needs_rejudge(tmp_path):
+    from telperion.missions.provenance import rejudge_problem, sha256_file
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    node = dataclasses.replace(node, comparator=_lean_only_record(
+        sha256_file(tmp_path / node.proof.artifact)))
+    assert "Lean-kernel-only" in rejudge_problem(tmp_path, node)
+
+
+def test_flagless_lean_only_node_with_current_pass_is_ok(tmp_path):
+    from telperion.missions.provenance import rejudge_problem, sha256_file
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    sha = sha256_file(tmp_path / node.proof.artifact)
+    rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
+                        log_sha256="c" * 64)
+    node = dataclasses.replace(node, comparator=_lean_only_record(sha), rejudge=rec)
+    assert rejudge_problem(tmp_path, node) == ""
+
+
+def test_non_heavy_nanoda_node_unaffected(tmp_path):
+    from telperion.missions.provenance import rejudge_problem, sha256_file
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    node = dataclasses.replace(node, comparator=_lean_only_record(
+        sha256_file(tmp_path / node.proof.artifact), second_kernel="nanoda"))
+    assert rejudge_problem(tmp_path, node) == ""
+
+
+def _verify_copy(tmp_path, campaign, edit):
+    """Copy a real campaign (laid out as `_verify_copy_without_rejudge` explains), apply
+    `edit(nodes_dir)`, and return verify_campaign's errors on the copy."""
+    import shutil
+    troot = tmp_path / "telperion"
+    dst = troot / "missions" / campaign
+    shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
+    for isl in ("zeta_reflection", "rvm_bridge"):
+        src = TELPERION_ROOT / "examples" / isl / "lean"
+        if src.is_dir():
+            shutil.copytree(src, troot / "examples" / isl / "lean",
+                            ignore=shutil.ignore_patterns(".lake"))   # .lake is 9-12 GB
+    edit(dst / "nodes")
+    return verify_campaign(dst).errors
+
+
+_FLAGLESS = "MM_weil_positivity_prime_free_window"   # proved, per-PR, second_kernel = none
+
+
+def test_verify_rejects_flagless_lean_only_node_without_rejudge(tmp_path):
+    def edit(nd):
+        p = nd / f"{_FLAGLESS}.toml"
+        n = load_node(p)
+        assert n.comparator.second_kernel.startswith("none")
+        save_node(dataclasses.replace(n, heavy_certificates=False, rejudge=None), p)
+    errors = _verify_copy(tmp_path, "mirrormere", edit)
+    assert any(_FLAGLESS in e and "re-judge" in e for e in errors), errors
+
+
+def test_verify_accepts_flagless_lean_only_node_with_current_rejudge(tmp_path):
+    def edit(nd):
+        p = nd / f"{_FLAGLESS}.toml"
+        n = load_node(p)
+        assert n.rejudge is not None and n.rejudge.verdict == "pass"
+        save_node(dataclasses.replace(n, heavy_certificates=False), p)
+    errors = _verify_copy(tmp_path, "mirrormere", edit)
+    assert not any(_FLAGLESS in e and "re-judge" in e for e in errors), errors
+
+
+def test_verify_normal_nanoda_node_needs_no_rejudge(tmp_path):
+    """A proved node judged with nanoda ON (second_kernel = "nanoda", no flag) is unaffected."""
+    picked = []
+
+    def edit(nd):
+        for p in sorted(nd.glob("*.toml")):
+            n = load_node(p)
+            if (n.status == "proved" and not n.heavy_certificates and n.rejudge is None
+                    and n.comparator is not None and n.comparator.second_kernel == "nanoda"):
+                picked.append(p.stem)
+        assert picked, "mirrormere has no proved nanoda-judged node to check"
+    errors = _verify_copy(tmp_path, "mirrormere", edit)
+    assert not any("re-judge" in e for e in errors), errors
+
+
+def test_cli_rejudge_record_accepts_flagless_lean_only_node(tmp_path):
+    """The CLI gate uses the same predicate as rejudge_problem: no flag, but a [comparator]
+    record with second_kernel = "none: ..." -> a re-judge may (and must) be recorded."""
+    mroot = _campaign(tmp_path, heavy=False)
+    p = mroot / "demo" / "nodes" / "Demo_hv.toml"
+    save_node(dataclasses.replace(load_node(p), comparator=_lean_only_record(
+        _artifact_sha256(mroot))), p)
+    log = tmp_path / "pass.log"
+    log.write_text(_header(mroot) + PASS_LOG)
+    rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
+             "--comparator-tag", "v4.32.0")
+    assert rc == 0
+    assert load_node(p).rejudge.verdict == "pass"
