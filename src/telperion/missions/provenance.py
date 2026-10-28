@@ -170,7 +170,7 @@ def sha256_file(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Closure digest (step 0b Task 1, 2026-10-28)
+# Closure digest (step 0b Task 1, 2026-10-28; fail-closed + srcDir fix round 1, 10-28)
 #
 # WHY. Before this, a [rejudge] record bound itself to the sha256 of the top-level
 # artifact FILE alone (RejudgeRecord.artifact_sha256). For the ladders the certificates
@@ -178,57 +178,45 @@ def sha256_file(path: Path) -> str:
 # Hodge1 capstones import a chain of LDL^T blocks), so a re-judge that is current on the
 # artifact file can still be stale on what the artifact actually proves. The owner's fix:
 # bind the record to a digest over the artifact's WHOLE import closure instead.
+#
+# FIX ROUND 1 (Controller Ruling 0b-2). The first cut resolved a module `M` under a
+# candidate package directory `D` by checking `D/M_as_path.lean` directly -- which
+# ignores `srcDir`. `zzl_core`'s lakefile declares `srcDir = ".."`, so its modules
+# (XiLineZeros, ZetaZeroConfinement, DiffractionCore, TuringBand, ...) actually live in
+# `examples/zeta_zero_localization/lean/`, one directory above `zzl_core/` itself. The
+# first cut found no file there, silently classified each one as "external", and
+# dropped it and everything IT imports (DlvpZetaZeroFree, reached only through
+# zero_free_bridge) -- shrinking the h8000 (201 files) and h11000 (241 files) closures
+# without any error. The fix reuses `coverage.py`'s already-srcDir-aware package model
+# (`_package`/`_workspace`/`_module_file`, tested against every real island lakefile by
+# `test_mini_toml_agrees_with_tomllib_on_every_island_lakefile`) instead of re-deriving
+# srcDir handling here. It also now FAILS CLOSED: an import that resolves to no local
+# file and is not a known library root raises `ClosureError`, rather than being read as
+# "external" by default -- which is precisely how the srcDir bug went unnoticed. The
+# off-island single-file fallback is replaced the same way: it no longer blindly
+# returns `[artifact]` for ANY off-island artifact; it is simply what happens, correctly,
+# when the artifact imports nothing that needs resolving (no lakefile -> no workspace ->
+# every non-library import fails closed). A fixture needing a real multi-file closure
+# needs a real (even if tiny) lakefile.toml, not a wider fallback.
 # ---------------------------------------------------------------------------
 
-_REQUIRE_HEADER = "[[require]]"
+#: Known Lean/Lake toolchain and Mathlib-adjacent library roots (Controller Ruling 0b-2):
+#: an import whose top-level namespace component is one of these is resolved OUTSIDE this
+#: repo (fetched by `lake`), so it is excluded from the closure WITHOUT being an error.
+LIBRARY_ROOTS = frozenset({
+    "Mathlib", "Init", "Lean", "Std", "Batteries", "Aesop", "Qq", "Plausible",
+    "ProofWidgets", "LeanSearchClient", "ImportGraph", "Cli", "LeanArchitect",
+    "Architect", "checkdecls", "PrimeNumberTheoremAnd",
+})
 
 
-def _require_paths_of(lakefile: Path) -> List[Path]:
-    """`path = "..."` targets of every `[[require]]` block in *lakefile*, resolved
-    relative to its directory (the same `path`-required siblings `judge.py` builds a
-    workspace from -- e.g. zeta_reflection's `zzl_core`). A `[[require]]` block with a
-    `git = "..."` dependency and no `path` (rvm_bridge's `Zeta23`) is skipped: it is
-    fetched by `lake` from outside this repo, so this repo's git history has nothing to
-    say about it, and the closure-digest back-fill rule (Task 2) could never ask."""
-    lines = Path(lakefile).read_text().splitlines()
-    out: List[Path] = []
-    i = 0
-    while i < len(lines):
-        if lines[i].strip() == _REQUIRE_HEADER:
-            j = i + 1
-            path_val: Optional[str] = None
-            while j < len(lines) and not lines[j].strip().startswith("["):
-                m = re.match(r'^path\s*=\s*"([^"]*)"', lines[j].strip())
-                if m:
-                    path_val = m.group(1)
-                j += 1
-            if path_val:
-                out.append((Path(lakefile).parent / path_val).resolve())
-            i = j
-        else:
-            i += 1
-    return out
+class ClosureError(ProvenanceError):
+    """An import resolves to no local file and is not a known library root (Controller
+    Ruling 0b-2): the closure fails CLOSED instead of silently shrinking."""
 
 
-def _require_path_dirs(lean_dir: Path) -> List[Path]:
-    """Every package directory reachable from *lean_dir* through `path`-required
-    siblings, transitively (zeta_reflection -> zzl_core -> zero_free_bridge is two
-    hops). Does not include *lean_dir* itself."""
-    seen = {Path(lean_dir).resolve()}
-    out: List[Path] = []
-    stack = [Path(lean_dir)]
-    while stack:
-        d = stack.pop()
-        toml = d / "lakefile.toml"
-        if not toml.is_file():
-            continue
-        for req in _require_paths_of(toml):
-            rd = req.resolve()
-            if rd not in seen:
-                seen.add(rd)
-                out.append(req)
-                stack.append(req)
-    return out
+def _is_library_import(module: str) -> bool:
+    return module.split(".", 1)[0] in LIBRARY_ROOTS
 
 
 def closure_files(campaign_root: Path, node: Node) -> List[Path]:
@@ -236,60 +224,57 @@ def closure_files(campaign_root: Path, node: Node) -> List[Path]:
     transitively, plus the artifact itself -- the import closure a [rejudge] record is
     now bound to (Task 1).
 
-    Resolved through the same machinery the judge uses: `judge.island_dir` for the
-    artifact's island, `judge.module_name_of` for its module name, and
-    `judge.import_closure` for the island-local closure. A module `import_closure`
-    cannot resolve inside the island (not a local file there) is retried in every
-    `path`-required sibling package, to a fixed point -- that is how zeta_reflection
-    reaches `zzl_core`, and `zzl_core` in turn reaches `zero_free_bridge`.
+    The artifact's island (if it is on one, via `judge.island_dir`) plus every
+    `path`-required sibling, transitively, are parsed into a `coverage.py` workspace
+    (`coverage._workspace`), which already honours `srcDir` -- both the package's own
+    and a `[[lean_lib]]`'s override -- exactly as real `lake` would. Each file's own
+    imports (`coverage._imports`) are then resolved against that workspace
+    (`coverage._module_file`). A library import (Mathlib, the toolchain, ...) is
+    skipped; anything else that does not resolve to a local file raises `ClosureError`
+    naming the module and the importing file -- there is no silent fallback.
 
-    When the artifact is on no judge island at all (a unit-test fixture with no Lean
-    project under it), the closure degrades to the artifact file alone: there is no
-    island machinery to resolve its imports against, and no sibling package to look in.
+    Off-island (a unit-test fixture with no Lean project at all), the workspace is
+    whatever `coverage._workspace` finds at the artifact's own directory -- typically
+    nothing (no lakefile.toml there), so the closure is the artifact alone UNLESS it
+    imports something non-library, which then correctly fails closed.
     """
     if node.proof is None:
         raise ProvenanceError("closure_files: node has no proof link")
     campaign_root = Path(campaign_root).resolve()
     artifact = (Path(campaign_root) / node.proof.artifact).resolve()
-    from . import judge
+    if not artifact.is_file():
+        raise ProvenanceError(f"closure_files: artifact {artifact} does not exist")
+    from . import coverage, judge
     from . import rejudge as _rejudge
 
+    lean_dir = artifact.parent
     try:
         troot = campaign_root.parent.parent
         island = _rejudge.island_of_artifact(troot, artifact)
         lean_dir = judge.island_dir(troot, island)
-        module = judge.module_name_of(lean_dir, artifact)
     except (_rejudge.RejudgeSetupError, judge.JudgeError):
-        return [artifact] if artifact.is_file() else []
+        pass       # no recognised island: resolve only against the artifact's own dir
 
-    dirs = [lean_dir] + _require_path_dirs(lean_dir)
-    resolved_files: set = set()
-    resolved_mods: set = set()
-    frontier = {module}
-    while frontier:
-        new_frontier: set = set()
-        for m in frontier:
-            if m in resolved_mods:
+    ws = coverage._workspace(Path(lean_dir).resolve())
+
+    resolved: set = set()
+    stack = [artifact]
+    while stack:
+        f = stack.pop()
+        if f in resolved:
+            continue
+        resolved.add(f)
+        for mod in coverage._imports(f):
+            if _is_library_import(mod):
                 continue
-            found_dir = None
-            for d in dirs:
-                if (d / (m.replace(".", "/") + ".lean")).is_file():
-                    found_dir = d
-                    break
-            if found_dir is None:
-                resolved_mods.add(m)          # external (e.g. Mathlib); nothing to open
-                continue
-            for sm in judge.import_closure(found_dir, m):
-                if sm in resolved_mods:
-                    continue
-                f = found_dir / (sm.replace(".", "/") + ".lean")
-                if f.is_file():
-                    resolved_files.add(f.resolve())
-                    resolved_mods.add(sm)
-                else:
-                    new_frontier.add(sm)       # not local to found_dir; try another dir
-        frontier = new_frontier
-    return sorted(resolved_files)
+            g = coverage._module_file(ws, mod)
+            if g is None:
+                raise ClosureError(
+                    f"import {mod!r} in {f} resolves to no local file and is not a "
+                    "known library root; the closure cannot be bound")
+            if g not in resolved:
+                stack.append(g)
+    return sorted(resolved)
 
 
 def closure_digest(campaign_root: Path, node: Node) -> str:
@@ -476,7 +461,10 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     # unproven against the closure; back-fill (Task 2, git-verified unchanged) or re-judge.
     if not r.closure_sha256:
         return "re-judge predates closure binding; back-fill or re-judge"
-    cur_closure = closure_digest(campaign_root, node)
+    try:
+        cur_closure = closure_digest(campaign_root, node)
+    except ClosureError as exc:
+        return f"re-judge closure cannot be resolved: {exc}"
     if cur_closure != r.closure_sha256:
         return (f"re-judge closure digest {r.closure_sha256[:12]}... no longer matches the "
                 f"current import closure (now {cur_closure[:12]}...); back-fill or re-judge")

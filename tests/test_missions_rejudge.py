@@ -811,6 +811,117 @@ def test_digest_covers_path_required_sibling(tmp_path):
     assert before != after
 
 
+# ---------------------------------------------------------------------------
+# Fix round 1 (Controller Ruling 0b-2, 2026-10-28): the first cut resolved a module
+# under a candidate package directory by checking `D/module_path.lean` directly, which
+# ignores `srcDir`. zzl_core declares `srcDir = ".."`, so its modules live one directory
+# ABOVE zzl_core/ itself; the first cut silently read them as "external" and dropped
+# them (and everything they import). Fixed by reusing coverage.py's srcDir-aware
+# package model, and by FAILING CLOSED on any import that still cannot be resolved and
+# is not a known library root.
+# ---------------------------------------------------------------------------
+
+def test_digest_covers_srcdir_sibling(tmp_path):
+    """A sibling package whose lakefile declares `srcDir = ".."` (zzl_core's exact
+    shape): its modules live OUTSIDE the package's own directory, and must still
+    resolve into the closure -- along with that module's own import."""
+    from telperion.missions.provenance import closure_files
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text(
+        'name = "Isl"\n\n[[require]]\nname = "core"\npath = "../../sib/lean/core"\n\n'
+        '[[lean_lib]]\nname = "A"\n')
+    (lean / "A.lean").write_text("import Xi\ntheorem a : True := trivial\n")
+    core = tel / "examples" / "sib" / "lean" / "core"
+    core.mkdir(parents=True)
+    (core / "lakefile.toml").write_text(
+        'name = "core"\nsrcDir = ".."\n\n[[lean_lib]]\nname = "Xi"\n')
+    # srcDir = ".." : Xi.lean lives one directory ABOVE `core/`, not inside it -- the
+    # exact shape of `examples/zeta_zero_localization/lean/zzl_core/lakefile.toml`.
+    sib_root = tel / "examples" / "sib" / "lean"
+    (sib_root / "Xi.lean").write_text("import Yi\ntheorem xi : True := trivial\n")
+    (sib_root / "Yi.lean").write_text("theorem yi : True := trivial\n")
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True,
+    )
+    names = {f.name for f in closure_files(camp, node)}
+    assert "Xi.lean" in names
+    assert "Yi.lean" in names        # Xi's own import, transitively
+
+
+def test_unresolvable_import_raises(tmp_path):
+    """An import that resolves to no local file and is not a known library root must
+    raise ClosureError, not silently vanish from the closure -- this is precisely how
+    the srcDir bug (above) went unnoticed."""
+    from telperion.missions.provenance import ClosureError, closure_files
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text('name = "Isl"\n\n[[lean_lib]]\nname = "A"\n')
+    (lean / "A.lean").write_text("import Ghost\ntheorem a : True := trivial\n")
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True,
+    )
+    with pytest.raises(ClosureError, match="Ghost"):
+        closure_files(camp, node)
+
+
+def test_library_import_is_excluded_not_an_error(tmp_path):
+    """A known library root (Mathlib, ...) is excluded from the closure WITHOUT being
+    an error -- it is resolved outside this repo, not "missing"."""
+    from telperion.missions.provenance import closure_files
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text('name = "Isl"\n\n[[lean_lib]]\nname = "A"\n')
+    (lean / "A.lean").write_text("import Mathlib.Order.Basic\ntheorem a : True := trivial\n")
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True,
+    )
+    assert [f.name for f in closure_files(camp, node)] == ["A.lean"]
+
+
+@pytest.mark.parametrize("slug,filename", [
+    ("AND_ladder_h8000_kernel", "ZetaZeroConfinement.lean"),
+    ("AND_ladder_h8000_kernel", "DlvpZetaZeroFree.lean"),
+    ("AND_ladder_h11000_kernel", "ZetaZeroConfinement.lean"),
+    ("AND_ladder_h11000_kernel", "DlvpZetaZeroFree.lean"),
+    ("AND_g2_reflected_band", "XiLineZeros.lean"),
+])
+def test_real_closures_complete(slug, filename):
+    """Controller Ruling 0b-2: on the REAL registry, the srcDir fix must actually
+    recover the modules the first cut dropped. `ZetaZeroConfinement.lean` and
+    `DlvpZetaZeroFree.lean` are reached from the h8000/h11000 ladders only through
+    zzl_core's `srcDir = ".."` remap (and zzl_core's own require of zero_free_bridge);
+    `XiLineZeros.lean` is reached from AND_g2_reflected_band's artifact through
+    CheckBand.lean the same way."""
+    from telperion.missions.provenance import closure_files
+    from telperion.missions.registry import load_campaign
+    anduril = TELPERION_ROOT / "missions" / "anduril"
+    if not anduril.is_dir():
+        pytest.skip("real repo layout absent")
+    camp = load_campaign(anduril)
+    node = camp.nodes[slug]
+    files = closure_files(anduril, node)
+    assert any(f.name == filename for f in files), (slug, filename, sorted(f.name for f in files))
+
+
 def test_record_without_digest_is_a_problem(tmp_path):
     from telperion.missions.provenance import rejudge_problem, sha256_file
     camp, node = _closure_island(tmp_path)

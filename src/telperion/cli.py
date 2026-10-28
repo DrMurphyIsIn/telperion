@@ -1705,9 +1705,14 @@ def cmd_mission_rejudge_record(args) -> int:
     # (computed by the same function, `provenance.closure_digest`); if so it must match the
     # CURRENT closure, or this is refused exactly like a stale artifact_sha256. If the header
     # predates closure binding (no such field), compute it now and say so in the note.
-    from .missions.provenance import closure_digest, closure_files as _closure_files
-    cur_closure_files = _closure_files(camp_root, node)
-    cur_closure = closure_digest(camp_root, node)
+    from .missions.provenance import ClosureError, closure_digest, closure_files as _closure_files
+    try:
+        cur_closure_files = _closure_files(camp_root, node)
+        cur_closure = closure_digest(camp_root, node)
+    except ClosureError as exc:
+        print(f"{slug}: cannot resolve its import closure ({exc}); refusing to record.",
+              file=sys.stderr)
+        return 2
     header_closure = _rejudge.parse_rejudge_header_closure(text)
     note = args.note
     if header_closure is not None:
@@ -1756,10 +1761,11 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
     import dataclasses as _dc
     import subprocess
 
-    from .missions.provenance import closure_digest, closure_files as _closure_files
+    from .missions.provenance import ClosureError, closure_digest, closure_files as _closure_files
     from .missions.registry import load_campaign
     from .missions.schema import SchemaError, save_node, slug_of
 
+    rebind = bool(getattr(args, "rebind", False))
     slug = slug_of(args.slug)
     camp_root = _resolve_campaign(_missions_root(args), slug, getattr(args, "campaign", None))
     if camp_root is None:
@@ -1777,6 +1783,11 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
         print(f"{slug}: no [rejudge] record to back-fill (`mission rejudge-record` first)",
               file=sys.stderr)
         return 2
+    if node.rejudge.closure_sha256 and not rebind:
+        print(f"{slug}: [rejudge] already has closure_sha256 "
+              f"{node.rejudge.closure_sha256[:12]}...; pass --rebind to replace it.",
+              file=sys.stderr)
+        return 2
     if node.proof is None:
         print(f"{slug}: no artifact linked", file=sys.stderr)
         return 2
@@ -1790,7 +1801,12 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
         return 2
     repo_root = Path(top.stdout.strip())
 
-    files = _closure_files(camp_root, node)
+    try:
+        files = _closure_files(camp_root, node)
+    except ClosureError as exc:
+        print(f"{slug}: cannot resolve its import closure ({exc}); refusing to write.",
+              file=sys.stderr)
+        return 2
     if not files:
         print(f"{slug}: its import closure resolved to no files", file=sys.stderr)
         return 2
@@ -1827,9 +1843,18 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
               "not back-fill.", file=sys.stderr)
         return 2
 
-    digest = closure_digest(camp_root, node)
-    extra = (f"closure back-filled 2026-10-28 (git: no change to {len(files)} closure "
-             f"files since {args.since})")
+    try:
+        digest = closure_digest(camp_root, node)
+    except ClosureError as exc:
+        print(f"{slug}: cannot resolve its import closure ({exc}); refusing to write.",
+              file=sys.stderr)
+        return 2
+    if rebind:
+        extra = (f"closure re-bound 2026-10-28 after srcDir fix (git: no change to "
+                 f"{len(files)} closure files since {args.since})")
+    else:
+        extra = (f"closure back-filled 2026-10-28 (git: no change to {len(files)} closure "
+                 f"files since {args.since})")
     note = f"{node.rejudge.note}; {extra}" if node.rejudge.note else extra
     try:
         rec = _dc.replace(node.rejudge, closure_sha256=digest, closure_files=len(files),
@@ -1839,7 +1864,8 @@ def cmd_mission_rejudge_backfill_closure(args) -> int:
         return 1
     save_node(_dc.replace(node, rejudge=rec, updated=node.rejudge.date),
              camp_root / "nodes" / f"{slug}.toml")
-    print(f"{slug}: closure back-filled ({len(files)} files, sha256 {digest[:16]}..., "
+    verb = "re-bound" if rebind else "back-filled"
+    print(f"{slug}: closure {verb} ({len(files)} files, sha256 {digest[:16]}..., "
           f"no change since {args.since})")
     return 0
 
@@ -2790,7 +2816,7 @@ def main(argv=None) -> int:
     p.add_argument("--note", default="")
     p.set_defaults(mission_fn=cmd_mission_rejudge_record)
 
-    # rejudge-backfill-closure SLUG --campaign C [--since 23bda8b16]
+    # rejudge-backfill-closure SLUG --campaign C [--since 23bda8b16] [--rebind]
     p = msub.add_parser("rejudge-backfill-closure",
                         help="back-fill [rejudge].closure_sha256 for a node whose closure "
                              "files are git-verified unchanged since --since; refuses "
@@ -2799,6 +2825,9 @@ def main(argv=None) -> int:
     p.add_argument("--campaign", required=True)
     p.add_argument("--since", default="23bda8b16",
                    help="commit the re-judge queue started at (default: 23bda8b16)")
+    p.add_argument("--rebind", action="store_true",
+                   help="replace an EXISTING closure_sha256 (refused without this flag); "
+                        "same git rule, applied over the newly computed closure")
     p.set_defaults(mission_fn=cmd_mission_rejudge_backfill_closure)
 
     # verify [CAMPAIGN] [--deep-lean]
