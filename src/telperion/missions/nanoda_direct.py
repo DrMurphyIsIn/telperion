@@ -81,6 +81,11 @@ def nanoda_config(export_path) -> dict:
     `print_success_message` is true because nanoda's own default is false (util.rs:933-934);
     without it `use_config` returns `Ok(None)` on a clean run and `classify` would have nothing
     to read the declaration count from.
+
+    `print_axioms` is false: its default is true (util.rs:938), and with no pretty-print
+    destination configured nanoda appends "Unable to print axioms" (pretty_printer.rs:384) --
+    AFTER `check_all_declars` already accepted the proof (main.rs:27-30), so it is output-only
+    and does not affect trust, but it is not the `_SUCCESS_RE` shape `classify` accepts.
     """
     return {
         "export_file_path": str(export_path),
@@ -89,6 +94,7 @@ def nanoda_config(export_path) -> dict:
         "nat_extension": True,
         "string_extension": True,
         "print_success_message": True,
+        "print_axioms": False,
     }
 
 

@@ -87,6 +87,37 @@ def test_export_cmd_and_nanoda_config_shape():
     assert cfg["unpermitted_axiom_hard_error"] is True
     assert cfg["nat_extension"] is True and cfg["string_extension"] is True
     assert cfg["print_success_message"] is True   # nanoda's own default is False
+    assert cfg["print_axioms"] is False   # nanoda's own default is True (util.rs:938)
+
+
+def test_nanoda_config_disables_print_axioms():
+    """nanoda's `print_axioms` defaults to true (util.rs:938); with no pretty-print
+    destination configured, nanoda appends "Unable to print axioms" (pretty_printer.rs:384)
+    to an otherwise-clean run, AFTER check_all_declars already accepted the proof
+    (main.rs:27-30) -- output-only, but not the `_SUCCESS_RE` shape `classify` accepts.
+    Controller ruling 0b-6: fix the CONFIG, not the parser."""
+    cfg = nanoda_direct.nanoda_config(Path("/tmp/x/export.txt"))
+    assert cfg == {
+        "export_file_path": "/tmp/x/export.txt",
+        "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+        "unpermitted_axiom_hard_error": True,
+        "nat_extension": True,
+        "string_extension": True,
+        "print_success_message": True,
+        "print_axioms": False,
+    }
+
+
+def test_pretty_printer_error_variant_still_fails():
+    """The real nanoda-direct re-judge output that caused the FAIL this task fixes: nanoda
+    accepted the proof (exit 0) but still printed the pretty-printer error because
+    `print_axioms` was left at its (true) default. Controller ruling 0b-6: the config is the
+    fix, and the classifier must NOT be widened to accept this variant line -- this exact
+    line, with exit 0, must still read "fail"."""
+    assert nanoda_direct.classify(
+        0, "<ndjson export bytes>\n", 0,
+        'Checked 28216 declarations with no typechecker errors, 1 pretty printer errors: '
+        '["Unable to print axioms"]\n') == "fail"
 
 
 # ---------------------------------------------------------------------------
