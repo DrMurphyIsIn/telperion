@@ -828,6 +828,37 @@ def test_lake_workspace_tie_break_is_deterministic_by_path(tmp_path):
     assert lake_workspace(camp, node) == ws   # repeated call: same answer
 
 
+def test_lake_workspace_rejects_subdir_with_own_copy_of_module(tmp_path):
+    """Fix 1 (2026-10-28): a subdir lakefile WITHOUT `srcDir = ".."` that declares the
+    SAME module name but keeps its own COPY of the file (fewer libs than the root, so
+    it would otherwise win on size) is not a candidate at all -- its declared module
+    resolves to a DIFFERENT file than the artifact, and accepting it would build and
+    export that copy while `closure_digest` goes on hashing the original. The root (many
+    libs) must still be returned."""
+    camp, node, root_dir, _sub = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "O2", "O3", "O4", "O5", "Target"], sub_libs=None)
+    fake_dir = root_dir / "fake_aux"
+    fake_dir.mkdir()
+    (fake_dir / "lakefile.toml").write_text('name = "fake_aux"\n\n' + _lib_block(["Target"]))
+    (fake_dir / "Target.lean").write_text("theorem target_thm : True := trivial  -- COPY\n")
+    ws = lake_workspace(camp, node)
+    assert ws == root_dir
+    assert ws != fake_dir.resolve()
+
+
+def test_lake_workspace_accepts_subdir_whose_srcdir_points_at_same_file(tmp_path):
+    """Fix 1's same-file check must not merely tolerate the zzl_aux shape by accident:
+    a subdir with `srcDir = ".."` declares the module but resolves it to the IDENTICAL
+    file the root also declares (one file on disk, two lakefiles), so it is still
+    accepted and still wins on size."""
+    camp, node, root_dir, sub_dir = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "O2", "O3", "O4", "O5", "Target"], sub_libs=["Target"])
+    from telperion.missions import coverage
+    sub_pkg = coverage._package(sub_dir)
+    assert coverage._lib_module_file((sub_pkg,), "Target") == (root_dir / "Target.lean").resolve()
+    assert lake_workspace(camp, node) == sub_dir
+
+
 def test_closure_digest_pins_follow_chosen_workspace(tmp_path):
     """Controller Ruling 0b-7: the closure digest's manifest PINS come from
     `lake_workspace`'s own lake-manifest.json, not the island root's -- a dependency
@@ -890,3 +921,29 @@ def test_lake_workspace_real_registry():
         island = island_of_artifact(troot, artifact)
         island_dir = judge.island_dir(troot, island).resolve()
         assert lake_workspace(camp, n) == island_dir
+
+
+# ---------------------------------------------------------------------------
+# closure_support_files follows lake_workspace (Fix 2, 2026-10-28)
+# ---------------------------------------------------------------------------
+
+def test_closure_support_files_follows_lake_workspace(tmp_path):
+    """`closure_support_files` must include the lakefile.toml / lake-manifest.json of
+    the workspace `lake_workspace` actually picks to build and export from (here the
+    smaller subdir), not only the island root's -- the back-fill git rule
+    (`mission rejudge-backfill-closure`) must also watch whatever could move
+    `closure_digest`'s manifest pins under Controller Ruling 0b-7, and the island
+    root's own files (already covered by `_closure_workspace`) must stay covered too."""
+    from telperion.missions.provenance import closure_support_files
+
+    camp, node, root_dir, sub_dir = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "O2", "Target"], sub_libs=["Target"],
+        root_pkgs=[{"type": "git", "name": "RootDep", "rev": "r1"}],
+        sub_pkgs=[{"type": "git", "name": "SubDep", "rev": "s1"}])
+    assert lake_workspace(camp, node) == sub_dir
+
+    support = closure_support_files(camp, node)
+    assert (root_dir / "lakefile.toml").resolve() in support
+    assert (root_dir / "lake-manifest.json").resolve() in support
+    assert (sub_dir / "lakefile.toml").resolve() in support
+    assert (sub_dir / "lake-manifest.json").resolve() in support

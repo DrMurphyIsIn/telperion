@@ -315,7 +315,12 @@ def lake_workspace(campaign_root: Path, node: Node) -> Path:
     among *node*'s island lean dir and that dir's immediate subdirectories, that
     declares a `lean_lib` covering the artifact's own module (`judge.module_name_of`,
     the same module resolution `node_module`/the grant gate use; `coverage.py`'s
-    lakefile model, the same one `closure_digest` already parses manifests with).
+    lakefile model, the same one `closure_digest` already parses manifests with) AND
+    whose declaration resolves that module to the artifact's own file (Fix 1,
+    2026-10-28): a candidate whose `lean_lib` happens to name the same module but
+    points (no `srcDir = ".."`, its own copy of the file) at a DIFFERENT file on disk is
+    rejected, not accepted -- otherwise this would build and export from that copy while
+    `closure_digest` goes on hashing the original artifact.
 
     Deterministic: ties are broken by path (lexicographic on the resolved directory
     string). When NO candidate other than the island lean dir declares the module --
@@ -359,7 +364,14 @@ def lake_workspace(campaign_root: Path, node: Node) -> Path:
         pkg = coverage._package(d)
         if pkg is None:
             continue
-        if coverage._lib_module_file((pkg,), module) is None:
+        got = coverage._lib_module_file((pkg,), module)
+        # Fix 1 (2026-10-28): a candidate is only a candidate if the module it declares
+        # resolves to the SAME file as the artifact. Without this check, a subdir lakefile
+        # with no `srcDir = ".."` that carries its own copy of the module (same name,
+        # different content) would be accepted, built and exported here, while
+        # `closure_digest` goes on hashing the original artifact -- the gate and the
+        # export would be looking at two different files.
+        if got is None or got != artifact:
             continue
         key = (len(pkg.libs), str(d))
         if best is None or key < best[0]:
@@ -438,13 +450,21 @@ def closure_files(campaign_root: Path, node: Node) -> List[Path]:
 
 def closure_support_files(campaign_root: Path, node: Node) -> List[Path]:
     """`lakefile.toml` + `lake-manifest.json` of the island (or the artifact's own
-    directory, off-island) and every `path`-required sibling (Controller Ruling 0b-3):
+    directory, off-island) and every `path`-required sibling (Controller Ruling 0b-3),
+    PLUS the same files for the workspace `lake_workspace` actually picks to build and
+    export from and that workspace's own path-required siblings (Fix 2, 2026-10-28):
     the back-fill git rule must also cover these, since a changed `srcDir`, a changed
     `[[require]] path`, or a changed pinned `rev` could change the closure or its
-    digest without any closure .lean FILE itself changing."""
+    digest without any closure .lean FILE itself changing -- and since Controller
+    Ruling 0b-7, the pins `closure_digest` hashes come from `lake_workspace`'s own
+    workspace, not necessarily the island root's."""
+    from . import coverage
+
     _artifact, ws = _closure_workspace(campaign_root, node)
+    chosen = lake_workspace(campaign_root, node)
+    chosen_ws = coverage._workspace(chosen.resolve())
     out = []
-    for pkg in ws:
+    for pkg in tuple(ws) + chosen_ws:
         for name in ("lakefile.toml", "lake-manifest.json"):
             f = Path(pkg.dir) / name
             if f.is_file():
