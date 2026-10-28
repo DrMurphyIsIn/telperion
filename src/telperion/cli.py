@@ -1622,6 +1622,15 @@ def cmd_mission_rejudge_record(args) -> int:
     node that isn't proved yet). Still refused (exit 2, no record): no proof link, a missing
     artifact, and status `deprecated` or `refuted` -- neither is a node a re-judge is ever
     meaningful for.
+
+    Step 0b Task 3 (2026-10-28): a log carrying `REJUDGE-ROUTE nanoda-direct`
+    (`nanoda_direct.run_direct`'s own route, for the 7 nodes no Comparator bundle can
+    consume) is accepted for ANY proved node, heavy or not -- the `needs_rejudge` gate above
+    is for routes Comparator judges; a nanoda-direct node was never a Comparator candidate to
+    begin with. Its verdict comes from `rejudge_log_verdict`'s own route branch
+    (`nanoda_direct.verdict_of_log`), never from rendering a bundle. The record's `route`
+    field is set from the log, so `render_provenance_report` labels it distinctly from a
+    Comparator re-judge.
     """
     import dataclasses as _dc
     import hashlib as _hashlib
@@ -1648,15 +1657,6 @@ def cmd_mission_rejudge_record(args) -> int:
     if node is None:
         print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
         return 1
-    from .missions.provenance import needs_rejudge
-    if not needs_rejudge(node):
-        # Final-fix 1: the same predicate `rejudge_problem` uses -- the flag, OR a
-        # `[comparator]` record saying nanoda was off -- so a node verify demands a re-judge
-        # for can always get one recorded.
-        print(f"{slug}: heavy_certificates is not set and its [comparator] record does not say "
-              "nanoda was off; a re-judge is only meaningful for a node hosted CI judges "
-              "Lean-kernel-only.", file=sys.stderr)
-        return 2
     if node.proof is None:
         print(f"{slug}: no artifact linked; a re-judge is about an artifact.", file=sys.stderr)
         return 2
@@ -1671,6 +1671,22 @@ def cmd_mission_rejudge_record(args) -> int:
         return 2
     raw = args.log.read_bytes()
     text = raw.decode(errors="replace")
+    # Step 0b Task 3 (2026-10-28): a nanoda-direct log (one of the 7 nodes no Comparator
+    # bundle can consume) is accepted for ANY proved node, heavy or not -- there is no
+    # `[comparator]`-driven "this node is judged Lean-kernel-only" signal to gate on, because
+    # these nodes were never judged by Comparator at all. The needs_rejudge gate below stays
+    # exactly as it was for every other route.
+    route = _rejudge.parse_rejudge_route(text)
+    if route != "nanoda-direct":
+        from .missions.provenance import needs_rejudge
+        if not needs_rejudge(node):
+            # Final-fix 1: the same predicate `rejudge_problem` uses -- the flag, OR a
+            # `[comparator]` record saying nanoda was off -- so a node verify demands a re-judge
+            # for can always get one recorded.
+            print(f"{slug}: heavy_certificates is not set and its [comparator] record does not "
+                  "say nanoda was off; a re-judge is only meaningful for a node hosted CI judges "
+                  "Lean-kernel-only.", file=sys.stderr)
+            return 2
     header = parse_rejudge_header(text)
     if header is None:
         print(f"{slug}: log has no 'REJUDGE-HEADER node=<slug> artifact_sha256=<64-hex>' "
@@ -1688,15 +1704,20 @@ def cmd_mission_rejudge_record(args) -> int:
               f"the artifact on disk is {cur_sha[:12]}...; re-run the re-judge on the "
               "CURRENT artifact.", file=sys.stderr)
         return 2
-    # Final-fix 2: the verdict covers EVERY part of the node. Render its bundle the way the
-    # queue does (nanoda forced on) to learn the parts; a log must hold exactly one passing
-    # REJUDGE-PART block per part. No render, no expected count -> refuse, write nothing.
-    try:
-        parts = _rejudge.expected_part_slugs(camp_root, node, slug)
-    except _rejudge.RejudgeSetupError as exc:
-        print(f"{slug}: cannot render the node's bundle to learn its re-judge parts ({exc}); "
-              "refusing to record a verdict whose part count is unknown.", file=sys.stderr)
-        return 2
+    if route == "nanoda-direct":
+        # No Comparator bundle to render for these nodes; the verdict comes straight from
+        # the log's own REJUDGE-EXPORT/REJUDGE-NANODA sections (nanoda_direct.verdict_of_log).
+        parts: list = []
+    else:
+        # Final-fix 2: the verdict covers EVERY part of the node. Render its bundle the way the
+        # queue does (nanoda forced on) to learn the parts; a log must hold exactly one passing
+        # REJUDGE-PART block per part. No render, no expected count -> refuse, write nothing.
+        try:
+            parts = _rejudge.expected_part_slugs(camp_root, node, slug)
+        except _rejudge.RejudgeSetupError as exc:
+            print(f"{slug}: cannot render the node's bundle to learn its re-judge parts ({exc}); "
+                  "refusing to record a verdict whose part count is unknown.", file=sys.stderr)
+            return 2
     verdict = _rejudge.rejudge_log_verdict(text, parts)
     nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
     rev = nanoda_rev_path.read_text().strip()
@@ -1732,6 +1753,7 @@ def cmd_mission_rejudge_record(args) -> int:
             verdict=verdict, log_sha256=_hashlib.sha256(raw).hexdigest(),
             peak_rss_kb=args.peak_rss_kb, note=note,
             closure_sha256=cur_closure, closure_files=len(cur_closure_files),
+            route=route,
         )
     except SchemaError as exc:
         print(f"{slug}: {exc}")

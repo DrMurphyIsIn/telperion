@@ -35,6 +35,21 @@ _REJUDGE_HEADER_RE = re.compile(
     r"^REJUDGE-HEADER\s+node=(?P<node>\S+)\s+artifact_sha256=(?P<sha>[0-9a-fA-F]{64})"
     r"(?:\s+closure_sha256=(?P<csha>[0-9a-fA-F]{64}))?\s*$")
 
+#: Step 0b Task 3 (2026-10-28): a log may carry `REJUDGE-ROUTE <token>` (written by
+#: `nanoda_direct.run_direct` as `REJUDGE-ROUTE nanoda-direct`), naming how the log was
+#: produced. Its ABSENCE means "comparator" -- every log `rejudge_queue.sh` wrote before this
+#: line existed, and every log it writes now (it never writes this line itself).
+_REJUDGE_ROUTE_RE = re.compile(r"^REJUDGE-ROUTE\s+(?P<route>\S+)\s*$")
+
+
+def parse_rejudge_route(text: str) -> str:
+    """The log's `REJUDGE-ROUTE <token>` line, or "comparator" when none matches."""
+    for line in text.splitlines():
+        m = _REJUDGE_ROUTE_RE.match(line.strip())
+        if m:
+            return m.group("route")
+    return "comparator"
+
 
 def _is_error_line(line: str) -> bool:
     return line.lstrip().lower().startswith(("error", "uncaught exception"))
@@ -87,7 +102,15 @@ def rejudge_log_verdict(text: str, part_slugs: Sequence[str]) -> str:
     in the log (header, any block, or the compositional-glue output after the last part) may
     be an error line. Any line naming REJUDGE-PART that is not a well-formed delimiter fails
     the log. Zero expected parts fails: there is nothing a pass could be about.
+
+    Step 0b Task 3 (2026-10-28): branches on `parse_rejudge_route`. A nanoda-direct log (the
+    seven nodes no Comparator bundle can consume) carries no REJUDGE-PART block at all --
+    `part_slugs` is ignored, and the verdict comes from `nanoda_direct.verdict_of_log` instead,
+    over the log's own `REJUDGE-EXPORT`/`REJUDGE-NANODA` sections.
     """
+    if parse_rejudge_route(text) == "nanoda-direct":
+        from . import nanoda_direct
+        return nanoda_direct.verdict_of_log(text)
     want = list(part_slugs)
     lines = text.splitlines()
     if not want or any(_is_error_line(l) for l in lines):
