@@ -963,16 +963,20 @@ def render_provenance_report(campaign) -> str:
         comp = f"comparator={r.comparator_run}" if r.comparator_run else "comparator=-"
         if not problem and node.rejudge is not None:
             rj = node.rejudge
+            # Controller Ruling 0b-9 (2026-10-28): name the route and whether the durable
+            # `second_kernel_route` marker is set, on every passing second-kernel line.
+            tag = (f" [route={rj.route}, marker="
+                   f"{getattr(node, 'second_kernel_route', '') or 'unset'}]")
             if rj.route == "nanoda-direct":
                 # Step 0b Task 3 (2026-10-28): this route has no Comparator statement-identity
                 # step (no bundle was ever rendered for this node), so it must not read like
                 # the stronger Comparator-checked line below -- see Review Focus 5.
                 lines.append(f"  {r.slug:<48} {comp} Lean kernel + nanoda-direct "
                              f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]}; "
-                             "no Comparator statement check)")
+                             f"no Comparator statement check){tag}")
             else:
                 lines.append(f"  {r.slug:<48} {comp} Lean kernel + nanoda "
-                             f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]})")
+                             f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]}){tag}")
         else:
             suffix = f" -- {problem}" if problem else ""
             # Review fix round 1 (2026-10-28), item 2: a non-heavy, non-Lean-kernel-only node

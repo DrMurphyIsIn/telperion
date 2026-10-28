@@ -1099,15 +1099,23 @@ def test_verify_fails_h11000_style_judge_via_heavy_with_nanoda_direct_record(tmp
     from telperion.missions.schema import load_node
     slug = "AND_ladder_h11000_kernel"
 
-    def edit(nd):
+    def edit(nd, keep_marker):
         p = nd / f"{slug}.toml"
         n = load_node(p)
         assert n.comparator is None and n.judge_via == "heavy"
-        save_node(dataclasses.replace(n, heavy_certificates=False,
-                                      rejudge=dataclasses.replace(n.rejudge, route="nanoda-direct")),
-                  p)
-    errors = _verify_copy(tmp_path, "anduril", ["zeta_reflection"], edit)
+        save_node(dataclasses.replace(
+            n, heavy_certificates=False,
+            second_kernel_route=(n.second_kernel_route if keep_marker else ""),
+            rejudge=dataclasses.replace(n.rejudge, route="nanoda-direct")), p)
+    # marker removed too (the reviewer's pre-marker shape): judge_via alone must catch it
+    errors = _verify_copy(tmp_path / "a", "anduril", ["zeta_reflection"],
+                          lambda nd: edit(nd, keep_marker=False))
     assert any(slug in e and "nanoda-direct is not sufficient" in e for e in errors), errors
+    # marker kept (the committed registry marks h11000 "comparator"): fails on the marker too
+    errors = _verify_copy(tmp_path / "b", "anduril", ["zeta_reflection"],
+                          lambda nd: edit(nd, keep_marker=True))
+    assert any(slug in e and "second_kernel_route=comparator declared but the [rejudge] "
+               "record's route is 'nanoda-direct'" in e for e in errors), errors
 
 
 def test_cli_second_kernel_mark(tmp_path, capsys):
@@ -1339,3 +1347,21 @@ def test_multiline_import_fails_the_closure(tmp_path):
     (root_dir / "Target.lean").write_text("import\n  B\ntheorem target_thm : True := trivial\n")
     with pytest.raises(ClosureError, match="cannot parse import header line"):
         closure_files(camp, node)
+
+
+def test_report_names_route_and_marker(tmp_path):
+    """Ruling 0b-9: every passing second-kernel line names its route and the marker."""
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    rec = _passing_direct_record(tmp_path, node)
+    manifest = MissionManifest(
+        name="Demo.goal", title="t", description="d", goal_node="n",
+        environment_toolchain="leanprover/lean4:v4.32.0", environment_mathlib_rev="v4.32.0",
+        sources=(),
+    )
+    marked = dataclasses.replace(node, rejudge=rec, second_kernel_route="nanoda-direct")
+    out = render_provenance_report(Campaign(root=tmp_path, manifest=manifest, nodes={"n": marked}))
+    assert "[route=nanoda-direct, marker=nanoda-direct]" in out
+    unmarked = dataclasses.replace(node, rejudge=rec)
+    out = render_provenance_report(Campaign(root=tmp_path, manifest=manifest, nodes={"n": unmarked}))
+    assert "[route=nanoda-direct, marker=unset]" in out
