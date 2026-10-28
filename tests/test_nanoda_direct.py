@@ -27,7 +27,8 @@ from telperion.cli import main  # noqa: E402
 from telperion.missions import nanoda_direct  # noqa: E402
 from telperion.missions.nanoda_direct import NanodaDirectError, Tools, run_direct  # noqa: E402
 from telperion.missions.provenance import (  # noqa: E402
-    closure_digest, closure_files, render_provenance_report, rejudge_problem, sha256_file,
+    closure_digest, closure_files, lake_workspace, render_provenance_report, rejudge_problem,
+    sha256_file,
 )
 from telperion.missions.registry import Campaign  # noqa: E402
 from telperion.missions.rejudge import (  # noqa: E402
@@ -735,3 +736,157 @@ def test_cli_nanoda_direct_stale_artifact_refused(tmp_path, capsys):
     assert "CURRENT artifact" in capsys.readouterr().err
     from telperion.missions.schema import load_node
     assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+# ---------------------------------------------------------------------------
+# lake_workspace (Controller Ruling 0b-7): the smallest lakefile directory -- island
+# lean dir or one of its immediate subdirectories -- that declares a `lean_lib`
+# covering the artifact's own module, e.g. zzl_aux (23 libs) under
+# zeta_zero_localization's monolith lakefile.toml (27,090 libs, which cannot even spawn
+# `lake env`). Every test here parses only synthetic lakefile.toml/lake-manifest.json
+# text on disk -- no lake, lean or nanoda is ever invoked.
+# ---------------------------------------------------------------------------
+
+def _lib_block(names):
+    return "".join(f'[[lean_lib]]\nname = "{n}"\n' for n in names)
+
+
+def _manifest_json(pkgs):
+    import json
+    return json.dumps({"version": 7, "packages": list(pkgs)})
+
+
+def _tmp_two_level_island(tmp_path, *, island="isl_ws", root_libs, sub_libs=None,
+                          sub_name="sub_aux", root_pkgs=(), sub_pkgs=()):
+    """A synthetic island at `<tel>/examples/<island>/lean`: the ROOT lakefile declares
+    *root_libs* (which must include "Target" for the fallback-to-root tests to have
+    anything to declare); an optional immediate subdirectory *sub_name* (`srcDir =
+    ".."`, the zzl_aux shape) declares *sub_libs*. Each may carry its own
+    lake-manifest.json. Returns (campaign_root, node, root_dir, sub_dir_or_None)."""
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / island / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text(f'name = "{island}"\n\n' + _lib_block(root_libs))
+    (lean / "Target.lean").write_text("theorem target_thm : True := trivial\n")
+    if root_pkgs:
+        (lean / "lake-manifest.json").write_text(_manifest_json(root_pkgs))
+    sub_dir = None
+    if sub_libs is not None:
+        sub_dir = lean / sub_name
+        sub_dir.mkdir()
+        (sub_dir / "lakefile.toml").write_text(
+            f'name = "{sub_name}"\nsrcDir = ".."\n\n' + _lib_block(sub_libs))
+        if sub_pkgs:
+            (sub_dir / "lake-manifest.json").write_text(_manifest_json(sub_pkgs))
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="Statements.HV_x",
+        proof=Proof(f"../../examples/{island}/lean/Target.lean", "lean_module", "direct"),
+        created="2026-10-28", updated="2026-10-28",
+    )
+    return camp, node, lean.resolve(), (sub_dir.resolve() if sub_dir is not None else None)
+
+
+def test_lake_workspace_picks_smaller_subdir_declaring_module(tmp_path):
+    """The zzl_aux shape: the root lakefile has many libs (here 6); an immediate
+    subdirectory declares the SAME module with far fewer (here 1) -- the subdirectory
+    wins."""
+    camp, node, root_dir, sub_dir = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "O2", "O3", "O4", "O5", "Target"], sub_libs=["Target"])
+    assert lake_workspace(camp, node) == sub_dir
+    assert sub_dir != root_dir
+
+
+def test_lake_workspace_falls_back_to_root_when_no_subdir_declares_module(tmp_path):
+    """A subdirectory exists and has its own lakefile.toml, but declares some OTHER
+    module, not the artifact's own -- it is not a candidate, so the island lean dir
+    (root) is used, exactly the behaviour every other route already relies on."""
+    camp, node, root_dir, sub_dir = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "Target"], sub_libs=["O1"])
+    assert sub_dir is not None   # the subdir exists...
+    ws = lake_workspace(camp, node)
+    assert ws == root_dir        # ...but is not picked: it does not declare Target
+
+
+def test_lake_workspace_tie_break_is_deterministic_by_path(tmp_path):
+    """Two subdirectories declare the module with the SAME lib count: the choice must
+    not depend on filesystem iteration order, so it is broken by path, and is stable
+    across repeated calls."""
+    camp, node, root_dir, _sub = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "O2", "Target"], sub_libs=None)
+    lean = root_dir
+    for name in ("sub_b", "sub_a"):   # created out of alphabetical order on purpose
+        d = lean / name
+        d.mkdir()
+        (d / "lakefile.toml").write_text(f'name = "{name}"\nsrcDir = ".."\n\n'
+                                         + _lib_block(["Target"]))
+    expected = (lean / "sub_a").resolve()
+    ws = lake_workspace(camp, node)
+    assert ws == expected
+    assert lake_workspace(camp, node) == ws   # repeated call: same answer
+
+
+def test_closure_digest_pins_follow_chosen_workspace(tmp_path):
+    """Controller Ruling 0b-7: the closure digest's manifest PINS come from
+    `lake_workspace`'s own lake-manifest.json, not the island root's -- a dependency
+    bump recorded only in the unused root manifest must not move the digest, while one
+    recorded in the chosen workspace's own manifest must."""
+    camp, node, root_dir, sub_dir = _tmp_two_level_island(
+        tmp_path, root_libs=["O1", "Target"], sub_libs=["Target"],
+        root_pkgs=[{"type": "git", "name": "RootDep", "rev": "r1"}],
+        sub_pkgs=[{"type": "git", "name": "SubDep", "rev": "s1"}])
+    assert lake_workspace(camp, node) == sub_dir
+
+    base = closure_digest(camp, node)
+
+    (root_dir / "lake-manifest.json").write_text(_manifest_json(
+        [{"type": "git", "name": "RootDep", "rev": "r2"}]))
+    assert closure_digest(camp, node) == base, (
+        "changing the ROOT's manifest (not the built workspace) must not move the digest")
+
+    (sub_dir / "lake-manifest.json").write_text(_manifest_json(
+        [{"type": "git", "name": "SubDep", "rev": "s2"}]))
+    assert closure_digest(camp, node) != base, (
+        "changing the CHOSEN workspace's own manifest must move the digest")
+
+
+def test_lake_workspace_off_island_returns_artifact_dir(tmp_path):
+    """No `examples/<island>/lean` tree at all (every `minimal_proved_node`-style
+    fixture used across the provenance/rejudge test suites): falls back to the
+    artifact's own directory, exactly like `_closure_workspace`'s existing fallback --
+    so switching `closure_digest`'s pins to `lake_workspace` changes nothing for them."""
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    assert lake_workspace(tmp_path, node) == tmp_path.resolve()
+
+
+def test_lake_workspace_real_registry():
+    """Real-registry check (skipped if the registry files are absent): the 4
+    zeta_zero_localization nodes this task fixes resolve to zzl_aux, the slim
+    sub-workspace CI actually builds from -- while a heavy ladder node and the
+    already-bound quasicrystal node are UNCHANGED from their island lean dir."""
+    camp_mm = TELPERION_ROOT / "missions" / "mirrormere"
+    camp_and = TELPERION_ROOT / "missions" / "anduril"
+    bragg_toml = camp_mm / "nodes" / "MM_bragg_defect_witness.toml"
+    ladder_toml = camp_and / "nodes" / "AND_ladder_h8000_kernel.toml"
+    leakage_toml = camp_mm / "nodes" / "MM_leakage_composite_zero.toml"
+    if not (bragg_toml.is_file() and ladder_toml.is_file() and leakage_toml.is_file()):
+        pytest.skip("real mission registry not present")
+
+    from telperion.missions import judge
+    from telperion.missions.rejudge import island_of_artifact
+    from telperion.missions.schema import load_node
+
+    bragg = load_node(bragg_toml)
+    ws = lake_workspace(camp_mm, bragg)
+    assert ws.name == "zzl_aux"
+
+    for camp, node_path in ((camp_and, ladder_toml), (camp_mm, leakage_toml)):
+        n = load_node(node_path)
+        artifact = (camp / n.proof.artifact).resolve()
+        troot = camp.parent.parent
+        island = island_of_artifact(troot, artifact)
+        island_dir = judge.island_dir(troot, island).resolve()
+        assert lake_workspace(camp, n) == island_dir

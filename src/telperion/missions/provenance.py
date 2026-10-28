@@ -295,6 +295,78 @@ def _manifest_pins(ws: tuple) -> List[str]:
     return sorted(pins)
 
 
+# ---------------------------------------------------------------------------
+# lake_workspace (Controller Ruling 0b-7, 2026-10-28)
+#
+# WHY. `telperion/examples/zeta_zero_localization/lean`'s own lakefile.toml declares
+# 27,090 `[[lean_lib]]` entries. `lake env` there emits ~2.5 MB of environment -- over
+# macOS ARG_MAX (1 MB) -- so every process lake spawns from that directory fails with
+# "could not execute external process", including `lake exe cache get` and even `lake
+# env sh`. CI never builds the monolith directly: it builds the slim sub-workspace
+# `zzl_aux/` (23 libs, `srcDir = ".."`, its own lake-manifest.json/lean-toolchain, and
+# `../zzl_core` + `../../../zero_free_bridge/lean` path-required), which actually
+# declares the same modules and can spawn a process. `lake_workspace` finds that
+# smaller workspace generically, so the nanoda-direct route (and the closure digest's
+# manifest pins) can build/export from it instead of the unusable island root.
+# ---------------------------------------------------------------------------
+
+def lake_workspace(campaign_root: Path, node: Node) -> Path:
+    """The SMALLEST lakefile directory -- measured by fewest `[[lean_lib]]` entries --
+    among *node*'s island lean dir and that dir's immediate subdirectories, that
+    declares a `lean_lib` covering the artifact's own module (`judge.module_name_of`,
+    the same module resolution `node_module`/the grant gate use; `coverage.py`'s
+    lakefile model, the same one `closure_digest` already parses manifests with).
+
+    Deterministic: ties are broken by path (lexicographic on the resolved directory
+    string). When NO candidate other than the island lean dir declares the module --
+    every island without a slimmer sub-workspace -- returns the island lean dir
+    itself, exactly the behaviour every other route already relies on. Off-island (no
+    recognised judge island at all, e.g. a synthetic test fixture with no
+    `examples/<island>/lean` tree), returns the artifact's own directory, matching
+    `_closure_workspace`'s fallback.
+    """
+    from . import coverage, judge
+    from .rejudge import RejudgeSetupError, island_of_artifact
+
+    campaign_root = Path(campaign_root).resolve()
+    if node.proof is None:
+        raise ProvenanceError("lake_workspace: node has no proof link")
+    artifact = (campaign_root / node.proof.artifact).resolve()
+    if not artifact.is_file():
+        raise ProvenanceError(f"lake_workspace: artifact {artifact} does not exist")
+
+    troot = campaign_root.parent.parent
+    lean_dir = artifact.parent
+    try:
+        island = island_of_artifact(troot, artifact)
+        lean_dir = judge.island_dir(troot, island).resolve()
+    except (RejudgeSetupError, judge.JudgeError):
+        return lean_dir       # off-island: no recognised workspace to search at all
+
+    module = judge.module_name_of(lean_dir, artifact)
+
+    candidates = [lean_dir]
+    try:
+        subdirs = sorted(p for p in lean_dir.iterdir() if p.is_dir())
+    except OSError:
+        subdirs = []
+    for d in subdirs:
+        if (d / "lakefile.toml").is_file():
+            candidates.append(d.resolve())
+
+    best: Optional[Tuple[Tuple[int, str], Path]] = None
+    for d in candidates:
+        pkg = coverage._package(d)
+        if pkg is None:
+            continue
+        if coverage._lib_module_file((pkg,), module) is None:
+            continue
+        key = (len(pkg.libs), str(d))
+        if best is None or key < best[0]:
+            best = (key, d)
+    return best[1] if best is not None else lean_dir
+
+
 def _closure_workspace(campaign_root: Path, node: Node) -> Tuple[Path, tuple]:
     """(artifact, workspace) for *node*: the artifact's resolved path, and the
     `coverage.py` package workspace (island + every `path`-required sibling,
@@ -387,10 +459,21 @@ def closure_digest(campaign_root: Path, node: Node) -> str:
     sorted path order, followed by every external dependency's `name\\trev`
     (`_manifest_pins`, Controller Ruling 0b-3). Changes if any closure file's CONTENT
     changes, if the SET of closure files changes, or if an external dependency's
-    pinned rev changes (bumping Mathlib or Zeta23)."""
+    pinned rev changes (bumping Mathlib or Zeta23).
+
+    Controller Ruling 0b-7 (2026-10-28): the FILE set above is unchanged -- still every
+    closure file resolved against the island's own (possibly monolith) workspace. The
+    PINS are not: they come from `lake_workspace`'s own `lake-manifest.json` plus its
+    path-required packages, i.e. the workspace actually built and exported from. For an
+    island with no slimmer sub-workspace (every island this ruling does not touch),
+    `lake_workspace` returns the same lean dir `_resolve_closure` already used, so the
+    pins are unchanged too -- a record time/verify time MUST agree, which they do
+    because both call this same function."""
     campaign_root = Path(campaign_root).resolve()
     troot = campaign_root.parent.parent
-    files, ws = _resolve_closure(campaign_root, node)
+    files, _ws = _resolve_closure(campaign_root, node)
+    from . import coverage
+    pin_ws = coverage._workspace(lake_workspace(campaign_root, node).resolve())
     h = hashlib.sha256()
     for f in files:
         try:
@@ -401,7 +484,7 @@ def closure_digest(campaign_root: Path, node: Node) -> str:
         h.update(b"\0")
         h.update(sha256_file(f).encode("utf-8"))
         h.update(b"\n")
-    for pin in _manifest_pins(ws):
+    for pin in _manifest_pins(pin_ws):
         h.update(b"PIN\0")
         h.update(pin.encode("utf-8"))
         h.update(b"\n")

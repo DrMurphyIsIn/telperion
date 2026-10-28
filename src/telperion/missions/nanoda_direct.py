@@ -264,7 +264,10 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
     existing caller/test that does not pre-hash keeps its previous behaviour).
     """
     from . import judge
-    from .provenance import ClosureError, closure_digest, closure_files, sha256_file
+    from .provenance import (
+        ClosureError, ProvenanceError, closure_digest, closure_files, lake_workspace,
+        sha256_file,
+    )
     from .rejudge import RejudgeSetupError, island_of_artifact
     from .schema import slug_of
     from .statements import statement_path
@@ -291,6 +294,22 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
         raise NanodaDirectError(f"{slug}: {exc}") from exc
     module = judge.module_name_of(lean_dir, artifact)
 
+    # Controller Ruling 0b-7 (2026-10-28): `lean_dir` (the island root) is only used to
+    # derive the MODULE name above -- the actual `lake`/`lean4export` invocation runs
+    # from `lake_workspace`'s smaller directory when one declares the module (e.g.
+    # zzl_aux under zeta_zero_localization, 23 libs vs. the island's 27,090; `lake env`
+    # at the island root emits enough environment to exceed macOS ARG_MAX, so every
+    # process lake spawns there fails outright). For every island without such a
+    # sub-workspace, `lake_workspace` returns `lean_dir` unchanged.
+    try:
+        workspace = lake_workspace(campaign_root, node)
+    except ProvenanceError as exc:
+        raise NanodaDirectError(f"{slug}: cannot resolve its lake workspace: {exc}") from exc
+    try:
+        workspace_rel = workspace.relative_to(telperion_root)
+    except ValueError:
+        workspace_rel = workspace
+
     ga = judge._guard_anchors()
     try:
         theorem = ga.resolve_theorem(artifact.read_text(), stmt.read_text())
@@ -314,7 +333,7 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
     cfg_path = out / "nanoda.json"
 
     export_rc, export_stdout, export_stderr = run(
-        export_cmd(lean_dir, module, theorem, tools.lean4export), cwd=lean_dir)
+        export_cmd(workspace, module, theorem, tools.lean4export), cwd=workspace)
     # Review fix round 1 (2026-10-28), item 5: stdout ONLY into the file nanoda will read as
     # `export_file_path` -- stderr (where a Lean PANIC under LEAN_ABORT_ON_PANIC=1 lands)
     # must never be mixed into what is supposed to be a pure ndjson export.
@@ -347,6 +366,7 @@ def run_direct(campaign_root, node, *, tools: Tools, run: RunFn,
         f"closure_sha256={header_closure}",
         "REJUDGE-ROUTE nanoda-direct",
         f"REJUDGE-INFO artifact={artifact} theorem={theorem} module={module} island={island}",
+        f"REJUDGE-INFO workspace={workspace_rel}",
         f"REJUDGE-INFO nanoda_rev={tools.nanoda_rev} nanoda_bin={tools.nanoda} "
         f"lean4export={tools.lean4export}",
         f"REJUDGE-INFO closure_files={len(cur_files)}",
