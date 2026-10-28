@@ -25,8 +25,15 @@ REQUIRED = ("Lean default kernel accepts the solution",
 #: ONE artifact digest, or a passing log from a different node (or an older artifact) could
 #: be recorded against the wrong `[rejudge]`. The re-judge runner writes this line itself,
 #: before Comparator starts; `mission rejudge-record` refuses a log without it.
+#:
+#: Step 0b Task 1 (2026-10-28): the header may ALSO carry `closure_sha256=<64-hex>`, written
+#: by `rejudge_queue.sh` with the same function `mission rejudge-record` uses
+#: (`provenance.closure_digest`). It is optional here so a pre-Task-1 header still matches;
+#: `parse_rejudge_header` ignores it (unchanged 2-tuple), and `parse_rejudge_header_closure`
+#: reads it separately.
 _REJUDGE_HEADER_RE = re.compile(
-    r"^REJUDGE-HEADER\s+node=(?P<node>\S+)\s+artifact_sha256=(?P<sha>[0-9a-fA-F]{64})\s*$")
+    r"^REJUDGE-HEADER\s+node=(?P<node>\S+)\s+artifact_sha256=(?P<sha>[0-9a-fA-F]{64})"
+    r"(?:\s+closure_sha256=(?P<csha>[0-9a-fA-F]{64}))?\s*$")
 
 
 def _is_error_line(line: str) -> bool:
@@ -172,4 +179,15 @@ def parse_rejudge_header(text: str) -> Optional[Tuple[str, str]]:
         m = _REJUDGE_HEADER_RE.match(line.strip())
         if m:
             return m.group("node"), m.group("sha").lower()
+    return None
+
+
+def parse_rejudge_header_closure(text: str) -> Optional[str]:
+    """The `REJUDGE-HEADER` line's `closure_sha256=<64-hex>` field, lower-cased, or None
+    when the (matching) header line carries no such field -- a log written before step 0b
+    Task 1 bound the header to a closure digest."""
+    for line in text.splitlines():
+        m = _REJUDGE_HEADER_RE.match(line.strip())
+        if m and m.group("csha"):
+            return m.group("csha").lower()
     return None

@@ -169,6 +169,151 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Closure digest (step 0b Task 1, 2026-10-28)
+#
+# WHY. Before this, a [rejudge] record bound itself to the sha256 of the top-level
+# artifact FILE alone (RejudgeRecord.artifact_sha256). For the ladders the certificates
+# live in IMPORTED modules (Arb4_h8000 imports every segment's edge certificates; the
+# Hodge1 capstones import a chain of LDL^T blocks), so a re-judge that is current on the
+# artifact file can still be stale on what the artifact actually proves. The owner's fix:
+# bind the record to a digest over the artifact's WHOLE import closure instead.
+# ---------------------------------------------------------------------------
+
+_REQUIRE_HEADER = "[[require]]"
+
+
+def _require_paths_of(lakefile: Path) -> List[Path]:
+    """`path = "..."` targets of every `[[require]]` block in *lakefile*, resolved
+    relative to its directory (the same `path`-required siblings `judge.py` builds a
+    workspace from -- e.g. zeta_reflection's `zzl_core`). A `[[require]]` block with a
+    `git = "..."` dependency and no `path` (rvm_bridge's `Zeta23`) is skipped: it is
+    fetched by `lake` from outside this repo, so this repo's git history has nothing to
+    say about it, and the closure-digest back-fill rule (Task 2) could never ask."""
+    lines = Path(lakefile).read_text().splitlines()
+    out: List[Path] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == _REQUIRE_HEADER:
+            j = i + 1
+            path_val: Optional[str] = None
+            while j < len(lines) and not lines[j].strip().startswith("["):
+                m = re.match(r'^path\s*=\s*"([^"]*)"', lines[j].strip())
+                if m:
+                    path_val = m.group(1)
+                j += 1
+            if path_val:
+                out.append((Path(lakefile).parent / path_val).resolve())
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def _require_path_dirs(lean_dir: Path) -> List[Path]:
+    """Every package directory reachable from *lean_dir* through `path`-required
+    siblings, transitively (zeta_reflection -> zzl_core -> zero_free_bridge is two
+    hops). Does not include *lean_dir* itself."""
+    seen = {Path(lean_dir).resolve()}
+    out: List[Path] = []
+    stack = [Path(lean_dir)]
+    while stack:
+        d = stack.pop()
+        toml = d / "lakefile.toml"
+        if not toml.is_file():
+            continue
+        for req in _require_paths_of(toml):
+            rd = req.resolve()
+            if rd not in seen:
+                seen.add(rd)
+                out.append(req)
+                stack.append(req)
+    return out
+
+
+def closure_files(campaign_root: Path, node: Node) -> List[Path]:
+    """Every local Lean source file *node*'s artifact imports, directly or
+    transitively, plus the artifact itself -- the import closure a [rejudge] record is
+    now bound to (Task 1).
+
+    Resolved through the same machinery the judge uses: `judge.island_dir` for the
+    artifact's island, `judge.module_name_of` for its module name, and
+    `judge.import_closure` for the island-local closure. A module `import_closure`
+    cannot resolve inside the island (not a local file there) is retried in every
+    `path`-required sibling package, to a fixed point -- that is how zeta_reflection
+    reaches `zzl_core`, and `zzl_core` in turn reaches `zero_free_bridge`.
+
+    When the artifact is on no judge island at all (a unit-test fixture with no Lean
+    project under it), the closure degrades to the artifact file alone: there is no
+    island machinery to resolve its imports against, and no sibling package to look in.
+    """
+    if node.proof is None:
+        raise ProvenanceError("closure_files: node has no proof link")
+    campaign_root = Path(campaign_root).resolve()
+    artifact = (Path(campaign_root) / node.proof.artifact).resolve()
+    from . import judge
+    from . import rejudge as _rejudge
+
+    try:
+        troot = campaign_root.parent.parent
+        island = _rejudge.island_of_artifact(troot, artifact)
+        lean_dir = judge.island_dir(troot, island)
+        module = judge.module_name_of(lean_dir, artifact)
+    except (_rejudge.RejudgeSetupError, judge.JudgeError):
+        return [artifact] if artifact.is_file() else []
+
+    dirs = [lean_dir] + _require_path_dirs(lean_dir)
+    resolved_files: set = set()
+    resolved_mods: set = set()
+    frontier = {module}
+    while frontier:
+        new_frontier: set = set()
+        for m in frontier:
+            if m in resolved_mods:
+                continue
+            found_dir = None
+            for d in dirs:
+                if (d / (m.replace(".", "/") + ".lean")).is_file():
+                    found_dir = d
+                    break
+            if found_dir is None:
+                resolved_mods.add(m)          # external (e.g. Mathlib); nothing to open
+                continue
+            for sm in judge.import_closure(found_dir, m):
+                if sm in resolved_mods:
+                    continue
+                f = found_dir / (sm.replace(".", "/") + ".lean")
+                if f.is_file():
+                    resolved_files.add(f.resolve())
+                    resolved_mods.add(sm)
+                else:
+                    new_frontier.add(sm)       # not local to found_dir; try another dir
+        frontier = new_frontier
+    return sorted(resolved_files)
+
+
+def closure_digest(campaign_root: Path, node: Node) -> str:
+    """sha256 binding a [rejudge] record to *node*'s WHOLE import closure (Task 1):
+    the concatenation of every closure file's path (relative to the telperion root, so
+    the digest is the same wherever the repo is checked out) and its own sha256, in
+    sorted path order. Changes if any closure file's CONTENT changes, or if the SET of
+    closure files changes (an import added or removed)."""
+    campaign_root = Path(campaign_root).resolve()
+    troot = campaign_root.parent.parent
+    files = closure_files(campaign_root, node)
+    h = hashlib.sha256()
+    for f in files:
+        try:
+            rel = f.relative_to(troot)
+        except ValueError:
+            rel = f
+        h.update(str(rel).encode("utf-8"))
+        h.update(b"\0")
+        h.update(sha256_file(f).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 def build_grant(campaign_root: Path, node: Node, *, identity: str, session: str,
                 today: Optional[str] = None) -> Grant:
     """The [grant] block for *node*: digests of the artifact and statement files as they are
@@ -325,6 +470,16 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     if sha256_file(art) != r.artifact_sha256:
         return (f"re-judge of {r.date} was on artifact sha256 {r.artifact_sha256[:12]}, "
                 "which is no longer the artifact")
+    # Task 1 (2026-10-28): a record must also be bound to the artifact's WHOLE import
+    # closure, not only the top-level file -- a ladder capstone's certificates live in
+    # imported modules. A record written before this field existed is not WRONG, just
+    # unproven against the closure; back-fill (Task 2, git-verified unchanged) or re-judge.
+    if not r.closure_sha256:
+        return "re-judge predates closure binding; back-fill or re-judge"
+    cur_closure = closure_digest(campaign_root, node)
+    if cur_closure != r.closure_sha256:
+        return (f"re-judge closure digest {r.closure_sha256[:12]}... no longer matches the "
+                f"current import closure (now {cur_closure[:12]}...); back-fill or re-judge")
     return ""
 
 

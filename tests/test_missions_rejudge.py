@@ -498,13 +498,19 @@ def test_flagless_lean_only_node_needs_rejudge(tmp_path):
 
 
 def test_flagless_lean_only_node_with_current_pass_is_ok(tmp_path):
-    from telperion.missions.provenance import rejudge_problem, sha256_file
+    from telperion.missions.provenance import (
+        closure_digest, closure_files, rejudge_problem, sha256_file,
+    )
     from missions_fixtures import minimal_proved_node
     node = minimal_proved_node(tmp_path, heavy=False)
     sha = sha256_file(tmp_path / node.proof.artifact)
+    # Step 0b Task 1 (2026-10-28): "current" now also means closure-bound. This fixture's
+    # artifact is on no judge island, so its closure is just the artifact file itself.
     rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=sha, verdict="pass",
-                        log_sha256="c" * 64)
+                        log_sha256="c" * 64,
+                        closure_sha256=closure_digest(tmp_path, node),
+                        closure_files=len(closure_files(tmp_path, node)))
     node = dataclasses.replace(node, comparator=_lean_only_record(sha), rejudge=rec)
     assert rejudge_problem(tmp_path, node) == ""
 
@@ -731,3 +737,135 @@ def test_real_rejudge_logs_still_pass(camp, slug):
     slugs = expected_part_slugs(croot, node, slug)
     assert len(slugs) == (9 if slug == "AND_ladder_h8000_kernel" else 1)
     assert rejudge_log_verdict(raw.decode(errors="replace"), slugs) == "pass"
+
+
+# ---------------------------------------------------------------------------
+# Closure digest (step 0b Task 1, 2026-10-28): a [rejudge] record now binds to the
+# artifact's WHOLE import closure, not only the top-level file -- a ladder capstone's
+# certificates live in imported modules.
+# ---------------------------------------------------------------------------
+
+def _closure_island(tmp_path: Path, *, sibling: bool = False):
+    """A minimal real judge island under `<tmp_path>/telperion/examples/isl/lean`, whose
+    artifact `A.lean` imports `B.lean` in the SAME island. With `sibling=True`, `A.lean`
+    instead imports `Xi`, declared only in a `path`-required sibling package under
+    `examples/sib/lean/core` -- the zeta_reflection -> zzl_core shape (Review Focus 1).
+    Returns (campaign_root, node); campaign_root need not exist on disk for
+    `closure_files`/`closure_digest`, which only resolve paths.
+    """
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl" / "lean"
+    lean.mkdir(parents=True)
+    if sibling:
+        core = tel / "examples" / "sib" / "lean" / "core"
+        core.mkdir(parents=True)
+        (core / "lakefile.toml").write_text('name = "core"\n')
+        (core / "Xi.lean").write_text("theorem xi : True := trivial\n")
+        (lean / "lakefile.toml").write_text(
+            'name = "Isl"\n\n[[require]]\nname = "core"\npath = "../../sib/lean/core"\n\n'
+            '[[lean_lib]]\nname = "A"\n')
+        (lean / "A.lean").write_text("import Xi\ntheorem a : True := trivial\n")
+    else:
+        (lean / "lakefile.toml").write_text(
+            'name = "Isl"\n\n[[lean_lib]]\nname = "A"\n\n[[lean_lib]]\nname = "B"\n')
+        (lean / "A.lean").write_text("import B\ntheorem a : True := trivial\n")
+        (lean / "B.lean").write_text("theorem b : True := trivial\n")
+    camp = tel / "missions" / "demo"
+    camp.mkdir(parents=True)          # so "camp / '../../examples/...'" traverses on disk
+    node = Node(
+        name="HV.x", title="t", kind="lemma", status="proved", depends_on=(),
+        statement_module="S",
+        proof=Proof("../../examples/isl/lean/A.lean", "lean_module", "direct"),
+        heavy_certificates=True,
+    )
+    return camp, node
+
+
+def test_digest_changes_when_imported_module_changes(tmp_path):
+    from telperion.missions.provenance import closure_digest
+    camp, node = _closure_island(tmp_path)
+    before = closure_digest(camp, node)
+    (tmp_path / "telperion" / "examples" / "isl" / "lean" / "B.lean").write_text(
+        "theorem b : True := trivial  -- changed\n")
+    after = closure_digest(camp, node)
+    assert before != after            # A itself is untouched; its IMPORT changed
+
+
+def test_digest_stable(tmp_path):
+    from telperion.missions.provenance import closure_digest
+    camp, node = _closure_island(tmp_path)
+    assert closure_digest(camp, node) == closure_digest(camp, node)
+
+
+def test_digest_covers_path_required_sibling(tmp_path):
+    """Review Focus 1: a closure file outside the island. The digest must cover a
+    required-package file the artifact imports, not only the island's own directory."""
+    from telperion.missions.provenance import closure_digest, closure_files
+    camp, node = _closure_island(tmp_path, sibling=True)
+    files = closure_files(camp, node)
+    xi = (tmp_path / "telperion" / "examples" / "sib" / "lean" / "core" / "Xi.lean").resolve()
+    assert xi in files
+    before = closure_digest(camp, node)
+    xi.write_text("theorem xi : True := trivial  -- changed\n")
+    after = closure_digest(camp, node)
+    assert before != after
+
+
+def test_record_without_digest_is_a_problem(tmp_path):
+    from telperion.missions.provenance import rejudge_problem, sha256_file
+    camp, node = _closure_island(tmp_path)
+    art = camp / node.proof.artifact
+    rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=sha256_file(art),
+                        verdict="pass", log_sha256="c" * 64)        # no closure_sha256
+    node = dataclasses.replace(node, rejudge=rec)
+    problem = rejudge_problem(camp, node)
+    assert "closure" in problem and "back-fill" in problem
+
+
+def test_stale_closure_fails_verify(tmp_path):
+    """The exact check `verify_campaign` makes for a proved heavy node (`verify.py`
+    calls `rejudge_problem` directly): a [rejudge] record whose closure digest no longer
+    matches the CURRENT import closure is a problem, even though the artifact file
+    itself -- and its own sha256 -- is unchanged (Review Focus 4's mirror: a change the
+    back-fill rule must catch, caught here at verify time instead of back-fill time)."""
+    from telperion.missions.provenance import closure_digest, rejudge_problem, sha256_file
+    camp, node = _closure_island(tmp_path)
+    art = camp / node.proof.artifact
+    rec = RejudgeRecord(date="2026-10-28", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=sha256_file(art),
+                        verdict="pass", log_sha256="c" * 64,
+                        closure_sha256=closure_digest(camp, node), closure_files=2)
+    node = dataclasses.replace(node, rejudge=rec)
+    assert rejudge_problem(camp, node) == ""          # current as recorded
+    (tmp_path / "telperion" / "examples" / "isl" / "lean" / "B.lean").write_text(
+        "theorem b : True := trivial  -- changed after the re-judge\n")
+    problem = rejudge_problem(camp, node)             # A.lean itself is still untouched
+    assert "closure" in problem and "back-fill" in problem
+
+
+def test_header_closure_mismatch_refused(tmp_path, one_part, capsys):
+    """`mission rejudge-record` refuses (exit 2, no write) when the log's
+    REJUDGE-HEADER names a closure_sha256 that does not match the artifact's CURRENT
+    import closure -- the same rule as a stale artifact_sha256."""
+    camp, node = _closure_island(tmp_path)
+    mroot = camp.parent
+    (camp / "nodes").mkdir(parents=True)
+    manifest = MissionManifest(
+        name="Demo.hv", title="Demo Campaign", description="synthetic",
+        goal_node="HV_x", environment_toolchain="leanprover/lean4:v4.32.0",
+        environment_mathlib_rev="v4.32.0", sources=(),
+    )
+    save_manifest(manifest, camp / "mission.toml")
+    save_node(node, camp / "nodes" / "HV_x.toml")
+    art = camp / node.proof.artifact
+    sha = hashlib.sha256(art.read_bytes()).hexdigest()
+    log = tmp_path / "pass.log"
+    log.write_text(f"REJUDGE-HEADER node=HV_x artifact_sha256={sha} closure_sha256={'0' * 64}\n"
+                  + _one_part("HV_x", PASS_LOG))
+    rc = _cli(mroot, "rejudge-record", "HV_x", "--campaign", "demo", "--log", str(log),
+             "--comparator-tag", "v4.32.0")
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "closure_sha256" in err
+    assert load_node(camp / "nodes" / "HV_x.toml").rejudge is None

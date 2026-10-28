@@ -1700,12 +1700,33 @@ def cmd_mission_rejudge_record(args) -> int:
     verdict = _rejudge.rejudge_log_verdict(text, parts)
     nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
     rev = nanoda_rev_path.read_text().strip()
+    # Step 0b Task 1 (2026-10-28): bind the record to the artifact's WHOLE import closure,
+    # not only the top-level file. The queue's header may already carry `closure_sha256=`
+    # (computed by the same function, `provenance.closure_digest`); if so it must match the
+    # CURRENT closure, or this is refused exactly like a stale artifact_sha256. If the header
+    # predates closure binding (no such field), compute it now and say so in the note.
+    from .missions.provenance import closure_digest, closure_files as _closure_files
+    cur_closure_files = _closure_files(camp_root, node)
+    cur_closure = closure_digest(camp_root, node)
+    header_closure = _rejudge.parse_rejudge_header_closure(text)
+    note = args.note
+    if header_closure is not None:
+        if header_closure != cur_closure:
+            print(f"{slug}: log's REJUDGE-HEADER names closure_sha256 "
+                  f"{header_closure[:12]}..., but the current import closure digests to "
+                  f"{cur_closure[:12]}...; re-run the re-judge on the CURRENT closure.",
+                  file=sys.stderr)
+            return 2
+    else:
+        extra = "closure_sha256 computed at record time (log predates closure binding)"
+        note = f"{note}; {extra}" if note else extra
     try:
         rec = RejudgeRecord(
             date=_date.today().isoformat(), machine=_platform.node(), nanoda_rev=rev,
             comparator_tag=args.comparator_tag, artifact_sha256=cur_sha,
             verdict=verdict, log_sha256=_hashlib.sha256(raw).hexdigest(),
-            peak_rss_kb=args.peak_rss_kb, note=args.note,
+            peak_rss_kb=args.peak_rss_kb, note=note,
+            closure_sha256=cur_closure, closure_files=len(cur_closure_files),
         )
     except SchemaError as exc:
         print(f"{slug}: {exc}")

@@ -110,6 +110,15 @@ def _open_with_proof(croot: Path, slug: str, statement: str, artifact_text: str,
     return node
 
 
+def _closure_fields(croot: Path, node: Node) -> dict:
+    """Step 0b Task 1 (2026-10-28): a [rejudge] record now also binds to the artifact's
+    whole import closure. These fixtures' artifacts are on no judge island, so the
+    closure is just the artifact file itself -- computed for real, not faked, so these
+    records are genuinely current under the new rule."""
+    return dict(closure_sha256=prov.closure_digest(croot, node),
+               closure_files=len(prov.closure_files(croot, node)))
+
+
 # ---------------------------------------------------------------------------
 # add: authorship
 # ---------------------------------------------------------------------------
@@ -450,7 +459,7 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
     art_sha = prov.sha256_file(croot / "proof" / "HV_one.lean")
     rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=art_sha,
-                        verdict="pass", log_sha256="c" * 64)
+                        verdict="pass", log_sha256="c" * 64, **_closure_fields(croot, node))
     save_node(dataclasses.replace(node, heavy_certificates=True, rejudge=rec),
              croot / "nodes" / "HV_one.toml")
     assert "heavy_certificates = true" in (croot / "nodes" / "HV_one.toml").read_text()
@@ -490,7 +499,7 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
     rec2 = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
                          comparator_tag="v4.32.0",
                          artifact_sha256=prov.sha256_file(croot / "proof" / "HV_one.lean"),
-                         verdict="pass", log_sha256="d" * 64)
+                         verdict="pass", log_sha256="d" * 64, **_closure_fields(croot, n2))
     save_node(dataclasses.replace(n2, rejudge=rec2), croot / "nodes" / "HV_one.toml")
     assert verify_campaign(croot).ok
 
@@ -510,7 +519,7 @@ def test_provenance_report_heavy_node_without_comparator_reads_lean_kernel_only(
     art_sha = prov.sha256_file(croot / "proof" / "HV_two.lean")
     rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=art_sha,
-                        verdict="pass", log_sha256="c" * 64)
+                        verdict="pass", log_sha256="c" * 64, **_closure_fields(croot, node))
     save_node(dataclasses.replace(node, heavy_certificates=True, rejudge=rec),
              croot / "nodes" / "HV_two.toml")
     grant_status(load_campaign(croot), "HV_two", **GATE)
@@ -533,7 +542,7 @@ def test_provenance_report_heavy_node_with_passing_rejudge_reads_lean_kernel_plu
     art = croot / "proof" / "HV_three.lean"
     rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=prov.sha256_file(art),
-                        verdict="pass", log_sha256="c" * 64)
+                        verdict="pass", log_sha256="c" * 64, **_closure_fields(croot, node))
     # Task 5 (2026-10-27): grant_status now requires the passing re-judge to already be on
     # record, so attach it before granting rather than after.
     save_node(dataclasses.replace(node, heavy_certificates=True, rejudge=rec),

@@ -394,6 +394,20 @@ class RejudgeRecord:
     log_sha256: str
     peak_rss_kb: int = 0
     note: str = ""
+    #: sha256 over the artifact's whole import closure (step 0b Task 1, 2026-10-28) --
+    #: `provenance.closure_digest`. "" on a record written before this field existed
+    #: (`rejudge_problem` then reports it as unproven against the closure until it is
+    #: back-filled, Task 2, or re-judged).
+    closure_sha256: str = ""
+    #: How many files `closure_sha256` covers (`len(provenance.closure_files(...))`),
+    #: carried alongside the digest so a reader does not have to recompute it to see the
+    #: closure's size.
+    closure_files: int = 0
+    #: How this record was produced. "comparator" (default) = a Comparator run (nanoda
+    #: ON), as every record before this field existed. A later route (e.g.
+    #: "nanoda-direct", step 0b Task 3) is reported differently by
+    #: `render_provenance_report` -- never read as a Comparator run.
+    route: str = "comparator"
 
     def __post_init__(self):
         for f in ("date", "machine", "nanoda_rev", "comparator_tag", "artifact_sha256", "log_sha256"):
@@ -401,6 +415,8 @@ class RejudgeRecord:
                 raise SchemaError(f"rejudge.{f} must be non-empty")
         if self.verdict not in ("pass", "fail"):
             raise SchemaError(f"rejudge.verdict must be 'pass' or 'fail', not {self.verdict!r}")
+        if not str(self.route).strip():
+            raise SchemaError("rejudge.route must be non-empty")
 
 
 @dataclass(frozen=True)
@@ -654,6 +670,12 @@ def _node_to_doc(node: Node) -> dict:
         doc["rejudge"] = {k: getattr(r, k) for k in (
             "date", "machine", "nanoda_rev", "comparator_tag", "artifact_sha256", "verdict",
             "log_sha256", "peak_rss_kb")}
+        if r.closure_sha256:
+            doc["rejudge"]["closure_sha256"] = r.closure_sha256
+        if r.closure_files:
+            doc["rejudge"]["closure_files"] = r.closure_files
+        if r.route != "comparator":
+            doc["rejudge"]["route"] = r.route
         if r.note:
             doc["rejudge"]["note"] = r.note
     return doc
@@ -724,7 +746,10 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 date=r["date"], machine=r["machine"], nanoda_rev=r["nanoda_rev"],
                 comparator_tag=r["comparator_tag"], artifact_sha256=r["artifact_sha256"],
                 verdict=r["verdict"], log_sha256=r["log_sha256"],
-                peak_rss_kb=int(r.get("peak_rss_kb", 0)), note=r.get("note", ""))
+                peak_rss_kb=int(r.get("peak_rss_kb", 0)), note=r.get("note", ""),
+                closure_sha256=r.get("closure_sha256", ""),
+                closure_files=int(r.get("closure_files", 0)),
+                route=r.get("route", "comparator"))
         compose = None
         if "compose" in doc:
             c = doc["compose"]
