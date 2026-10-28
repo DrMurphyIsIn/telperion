@@ -132,6 +132,20 @@ def _cli(mroot: Path, *args: str) -> int:
     return main(["mission", "--missions-root", str(mroot), *args])
 
 
+#: A one-part node log body, as rejudge_queue.sh writes it (see _part below).
+def _one_part(slug: str, body: str) -> str:
+    return (f"==================== REJUDGE-PART 1/1 {slug} (comparator exit 0, peak 1 kB) "
+            "====================\n" + body)
+
+
+@pytest.fixture
+def one_part(monkeypatch):
+    """The synthetic campaigns below have no island, so their bundle cannot be rendered;
+    stand in a one-part render (the real render is exercised by the tests further down)."""
+    import telperion.missions.rejudge as rj
+    monkeypatch.setattr(rj, "expected_part_slugs", lambda camp, node, slug: [slug])
+
+
 def _campaign(tmp_path: Path, *, heavy: bool = True, status: str = "proved",
              deprecated_reason: str = "") -> Path:
     """A minimal campaign with one node (status *status*) and its artifact on disk."""
@@ -168,10 +182,10 @@ def _header(mroot: Path, *, node: str = "Demo_hv", sha: str = None) -> str:
     return f"REJUDGE-HEADER node={node} artifact_sha256={sha}\n"
 
 
-def test_cli_rejudge_record_pass_writes_record_exit0(tmp_path):
+def test_cli_rejudge_record_pass_writes_record_exit0(tmp_path, one_part):
     mroot = _campaign(tmp_path)
     log = tmp_path / "pass.log"
-    log.write_text(_header(mroot) + PASS_LOG)
+    log.write_text(_header(mroot) + _one_part("Demo_hv", PASS_LOG))
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
     assert rc == 0
@@ -184,11 +198,11 @@ def test_cli_rejudge_record_pass_writes_record_exit0(tmp_path):
     assert 'verdict = "pass"' in (mroot / "demo" / "nodes" / "Demo_hv.toml").read_text()
 
 
-def test_cli_rejudge_record_fail_exit1_reports_to_owner(tmp_path, capsys):
+def test_cli_rejudge_record_fail_exit1_reports_to_owner(tmp_path, one_part, capsys):
     mroot = _campaign(tmp_path)
     log = tmp_path / "fail.log"
-    log.write_text(_header(mroot) + "Lean default kernel accepts the solution\n"
-                   "Your solution is okay!\n")
+    log.write_text(_header(mroot) + _one_part("Demo_hv", "Lean default kernel accepts the solution\n"
+                   "Your solution is okay!\n"))
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
     assert rc == 1
@@ -199,13 +213,13 @@ def test_cli_rejudge_record_fail_exit1_reports_to_owner(tmp_path, capsys):
     assert node.rejudge.verdict == "fail"
 
 
-def test_cli_log_sha256_is_over_raw_bytes_not_decoded_text(tmp_path):
+def test_cli_log_sha256_is_over_raw_bytes_not_decoded_text(tmp_path, one_part):
     mroot = _campaign(tmp_path)
     log = tmp_path / "pass.log"
     # A byte that is not valid UTF-8; read_text(errors="replace") would turn it into the
     # replacement character U+FFFD before hashing, giving a DIFFERENT digest than hashing
     # the raw bytes straight off disk. log_sha256 must be the latter.
-    raw = (_header(mroot) + PASS_LOG).encode() + b"\xff\n"
+    raw = (_header(mroot) + _one_part("Demo_hv", PASS_LOG)).encode() + b"\xff\n"
     log.write_bytes(raw)
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
@@ -252,7 +266,7 @@ def test_cli_stale_sha_header_exit2_no_record(tmp_path, capsys):
 def test_cli_non_heavy_node_exit2_no_record(tmp_path, capsys):
     mroot = _campaign(tmp_path, heavy=False)
     log = tmp_path / "pass.log"
-    log.write_text(_header(mroot) + PASS_LOG)
+    log.write_text(_header(mroot) + _one_part("Demo_hv", PASS_LOG))
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
     assert rc == 2
@@ -260,13 +274,13 @@ def test_cli_non_heavy_node_exit2_no_record(tmp_path, capsys):
     assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
 
 
-def test_cli_non_proved_node_exit2_no_record(tmp_path, capsys):
+def test_cli_non_proved_node_exit2_no_record(tmp_path, one_part, capsys):
     """Controller ruling 6 (2026-10-27): a draft heavy node WITH its artifact on disk is
     pre-grant judging -- it now records. A deprecated one is still refused regardless of its
     artifact: a deprecated node is never a candidate for `mission grant`."""
     mroot = _campaign(tmp_path / "draft", status="draft")
     log = tmp_path / "draft-pass.log"
-    log.write_text(_header(mroot) + PASS_LOG)
+    log.write_text(_header(mroot) + _one_part("Demo_hv", PASS_LOG))
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
     assert rc == 0
@@ -277,7 +291,7 @@ def test_cli_non_proved_node_exit2_no_record(tmp_path, capsys):
     mroot2 = _campaign(tmp_path / "dep", status="deprecated",
                        deprecated_reason="superseded by a later node")
     log2 = tmp_path / "dep-pass.log"
-    log2.write_text(_header(mroot2) + PASS_LOG)
+    log2.write_text(_header(mroot2) + _one_part("Demo_hv", PASS_LOG))
     rc2 = _cli(mroot2, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log2),
               "--comparator-tag", "v4.32.0")
     assert rc2 == 2
@@ -364,7 +378,7 @@ def test_grant_status_refuses_heavy_node_without_rejudge(tmp_path):
     assert load_node(root / "nodes" / "Demo_hv3.toml").status == "open"
 
 
-def test_rejudge_record_then_grant_status_closes_the_loop(tmp_path):
+def test_rejudge_record_then_grant_status_closes_the_loop(tmp_path, one_part):
     """Controller ruling 6 (2026-10-27): with `rejudge-record` accepting a pre-grant `open`
     heavy node (its proof linked, its artifact on disk), the full sequence --
     `rejudge-record` on a fresh heavy node, then `grant_status` -- succeeds end to end. Before
@@ -402,7 +416,8 @@ def test_rejudge_record_then_grant_status_closes_the_loop(tmp_path):
     assert load_node(croot / "nodes" / "Loop_hv.toml").rejudge is None
     log = tmp_path / "pass.log"
     art_sha = hashlib.sha256(art.read_bytes()).hexdigest()
-    log.write_text(f"REJUDGE-HEADER node=Loop_hv artifact_sha256={art_sha}\n" + PASS_LOG)
+    log.write_text(f"REJUDGE-HEADER node=Loop_hv artifact_sha256={art_sha}\n"
+                   + _one_part("Loop_hv", PASS_LOG))
     rc = _cli(mroot, "rejudge-record", "Loop_hv", "--campaign", "loop", "--log", str(log),
              "--comparator-tag", "v4.32.0")
     assert rc == 0
@@ -557,7 +572,7 @@ def test_verify_normal_nanoda_node_needs_no_rejudge(tmp_path):
     assert not any("re-judge" in e for e in errors), errors
 
 
-def test_cli_rejudge_record_accepts_flagless_lean_only_node(tmp_path):
+def test_cli_rejudge_record_accepts_flagless_lean_only_node(tmp_path, one_part):
     """The CLI gate uses the same predicate as rejudge_problem: no flag, but a [comparator]
     record with second_kernel = "none: ..." -> a re-judge may (and must) be recorded."""
     mroot = _campaign(tmp_path, heavy=False)
@@ -565,8 +580,154 @@ def test_cli_rejudge_record_accepts_flagless_lean_only_node(tmp_path):
     save_node(dataclasses.replace(load_node(p), comparator=_lean_only_record(
         _artifact_sha256(mroot))), p)
     log = tmp_path / "pass.log"
-    log.write_text(_header(mroot) + PASS_LOG)
+    log.write_text(_header(mroot) + _one_part("Demo_hv", PASS_LOG))
     rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
              "--comparator-tag", "v4.32.0")
     assert rc == 0
     assert load_node(p).rejudge.verdict == "pass"
+
+
+# ---------------------------------------------------------------------------
+# Final-fix 2: the verdict must cover EVERY part of the node, and accept lines must be whole
+# lines. rejudge_queue.sh writes one block per Comparator part, each opened by
+#   ==================== REJUDGE-PART i/n <part-slug> (comparator exit rc, peak K kB) ====================
+# and `rejudge-record` renders the node's bundle (nanoda forced on) to learn n and the slugs.
+# ---------------------------------------------------------------------------
+
+def _part(i: int, n: int, slug: str, body: str, rc: int = 0) -> str:
+    return (f"==================== REJUDGE-PART {i}/{n} {slug} (comparator exit {rc}, "
+            f"peak 123 kB) ====================\n" + body)
+
+
+def _parts_log(slugs, bodies=None, header: str = "") -> str:
+    bodies = bodies or [PASS_LOG] * len(slugs)
+    return header + "".join(_part(i, len(slugs), s, b) for i, (s, b) in
+                            enumerate(zip(slugs, bodies), 1))
+
+
+H8000 = ["AND_ladder_h8000_kernel__compose"] + [
+    f"AND_ladder_h8000_kernel__seg_h{h}" for h in range(1000, 9000, 1000)]
+
+
+def test_partial_multipart_log_fails():
+    """Part 1 passed; part 2 was killed. Every accept line still appears once in the log."""
+    from telperion.missions.rejudge import rejudge_log_verdict
+    killed = "Building MissionChallenges.X__seg\nRunning nanoda kernel on solution\nKilled: 9\n"
+    log = _parts_log(["X__a", "X__b"], [PASS_LOG, killed])
+    assert parse_comparator_log(log) == "pass"          # the old whole-log rule was fooled
+    assert rejudge_log_verdict(log, ["X__a", "X__b"]) == "fail"
+
+
+def test_accept_strings_on_one_line_fail():
+    one = ("Lean default kernel accepts the solution Nanoda kernel accepts the solution "
+           "Your solution is okay!\n")
+    from telperion.missions.rejudge import rejudge_log_verdict
+    assert parse_comparator_log(one) == "fail"
+    assert rejudge_log_verdict(_parts_log(["X"], [one]), ["X"]) == "fail"
+
+
+def test_accept_line_must_be_whole_line():
+    from telperion.missions.rejudge import rejudge_log_verdict
+    body = PASS_LOG.replace("Your solution is okay!", "Your solution is okay! (not really)")
+    assert parse_comparator_log(body) == "fail"
+    assert rejudge_log_verdict(_parts_log(["X"], [body]), ["X"]) == "fail"
+    # leading/trailing whitespace is stripped before the comparison
+    assert parse_comparator_log("  " + PASS_LOG.replace("\n", "  \n")) == "pass"
+
+
+def test_correct_one_part_log_passes():
+    from telperion.missions.rejudge import rejudge_log_verdict
+    assert rejudge_log_verdict(_parts_log(["X"]), ["X"]) == "pass"
+
+
+def test_correct_nine_part_log_passes():
+    from telperion.missions.rejudge import rejudge_log_verdict
+    assert rejudge_log_verdict(_parts_log(H8000), H8000) == "pass"
+
+
+def test_wrong_part_count_or_shape_fails():
+    from telperion.missions.rejudge import rejudge_log_verdict
+    assert rejudge_log_verdict(_parts_log(H8000[:8]), H8000) == "fail"     # 8 of 9 parts
+    assert rejudge_log_verdict(PASS_LOG, ["X"]) == "fail"                  # no delimiter at all
+    assert rejudge_log_verdict(_parts_log(["X", "X"]), ["X"]) == "fail"    # extra part
+    assert rejudge_log_verdict(_parts_log(["Y"]), ["X"]) == "fail"         # wrong part slug
+    swapped = _parts_log([H8000[1], H8000[0]] + H8000[2:])
+    assert rejudge_log_verdict(swapped, H8000) == "fail"                   # wrong order
+    nonzero = _part(1, 1, "X", PASS_LOG, rc=137)
+    assert rejudge_log_verdict(nonzero, ["X"]) == "fail"                   # comparator exit != 0
+    garbled = PASS_LOG + "==== REJUDGE-PART 1/1 X ====\n" + PASS_LOG
+    assert rejudge_log_verdict(garbled, ["X"]) == "fail"                   # malformed delimiter
+    errline = _parts_log(["X"]) + "error: rejudge_queue: compose verify did not pass (exit 1)\n"
+    assert rejudge_log_verdict(errline, ["X"]) == "fail"                   # error line anywhere
+    assert rejudge_log_verdict(_parts_log(["X"]), []) == "fail"            # zero expected parts
+
+
+def test_expected_part_slugs_renders_real_h8000_as_nine_parts():
+    from telperion.missions.rejudge import expected_part_slugs
+    camp = TELPERION_ROOT / "missions" / "anduril"
+    n = load_node(camp / "nodes" / "AND_ladder_h8000_kernel.toml")
+    assert expected_part_slugs(camp, n, "AND_ladder_h8000_kernel") == H8000
+
+
+def test_expected_part_slugs_missing_island_raises(tmp_path):
+    from telperion.missions.rejudge import RejudgeSetupError, expected_part_slugs
+    mroot = _campaign(tmp_path)
+    camp = mroot / "demo"
+    with pytest.raises(RejudgeSetupError):
+        expected_part_slugs(camp, load_node(camp / "nodes" / "Demo_hv.toml"), "Demo_hv")
+
+
+def test_cli_bundle_render_failure_exit2_no_record(tmp_path, capsys):
+    """(d): the synthetic campaign's artifact is on no island, so the bundle cannot be
+    rendered and the expected part count is unknown -> refuse, write nothing."""
+    mroot = _campaign(tmp_path)
+    log = tmp_path / "pass.log"
+    log.write_text(_header(mroot) + _part(1, 1, "Demo_hv", PASS_LOG))
+    rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
+             "--comparator-tag", "v4.32.0")
+    assert rc == 2
+    assert "cannot render" in capsys.readouterr().err
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge is None
+
+
+def test_cli_partial_multipart_log_records_fail(tmp_path, monkeypatch, capsys):
+    import telperion.missions.rejudge as rj
+    monkeypatch.setattr(rj, "expected_part_slugs", lambda *a, **k: ["Demo_hv__a", "Demo_hv__b"])
+    mroot = _campaign(tmp_path)
+    log = tmp_path / "partial.log"
+    log.write_text(_parts_log(["Demo_hv__a", "Demo_hv__b"], [PASS_LOG, "Killed: 9\n"],
+                              header=_header(mroot)))
+    rc = _cli(mroot, "rejudge-record", "Demo_hv", "--campaign", "demo", "--log", str(log),
+             "--comparator-tag", "v4.32.0")
+    assert rc == 1
+    assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge.verdict == "fail"
+
+
+REAL_REJUDGE = Path.home() / "telperion-tools" / "rejudge"
+if not REAL_REJUDGE.is_dir():                     # tests run as root; the logs are the owner's
+    REAL_REJUDGE = Path("/Users/peterwmurphy/telperion-tools/rejudge")
+REAL_NODES = [("mirrormere", "MM_weil_positivity_prime_free_window"),
+              ("mirrormere", "MM_weil_positivity_window_two_fifths"),
+              ("mirrormere", "MM_hodge1_window5493"),
+              ("mirrormere", "MM_hodge1_rh_reduction"),
+              ("mirrormere", "MM_hodge1_window45"),
+              ("anduril", "AND_ladder_h8000_kernel"),
+              ("anduril", "AND_ladder_h11000_kernel")]
+
+
+@pytest.mark.parametrize("camp,slug", REAL_NODES)
+def test_real_rejudge_logs_still_pass(camp, slug):
+    """Regression: the 7 logs behind the committed [rejudge] records still read as PASS
+    under the per-part rule, against the part count their bundles render today, and their
+    bytes are the ones each record's log_sha256 names."""
+    from telperion.missions.rejudge import expected_part_slugs, rejudge_log_verdict
+    log = REAL_REJUDGE / slug / "rejudge.log"
+    if not log.is_file():
+        pytest.skip(f"{log} absent")
+    croot = TELPERION_ROOT / "missions" / camp
+    node = load_node(croot / "nodes" / f"{slug}.toml")
+    raw = log.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == node.rejudge.log_sha256
+    slugs = expected_part_slugs(croot, node, slug)
+    assert len(slugs) == (9 if slug == "AND_ladder_h8000_kernel" else 1)
+    assert rejudge_log_verdict(raw.decode(errors="replace"), slugs) == "pass"

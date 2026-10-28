@@ -1601,7 +1601,9 @@ def cmd_mission_rejudge_record(args) -> int:
     runner under nanoda). The owner's rule: such a node stays proved only with a passing
     LOCAL re-judge -- Comparator, nanoda ON -- on its CURRENT artifact, run on a large
     machine at the pinned telperion/NANODA_REV. The verdict comes from the log text
-    (`parse_comparator_log`), never from a flag: there is no `--pass`/`--fail` option.
+    (`rejudge_log_verdict`: one passing REJUDGE-PART block per part the node's bundle renders,
+    nanoda forced on), never from a flag: there is no `--pass`/`--fail` option. Refuses (exit 2,
+    no record) when that bundle cannot be rendered.
 
     Owner ruling (fix round 1, 2026-10-27): a log must bind itself to ONE node and ONE
     artifact digest via a `REJUDGE-HEADER node=<slug> artifact_sha256=<64-hex>` line the
@@ -1628,7 +1630,8 @@ def cmd_mission_rejudge_record(args) -> int:
 
     from .missions.provenance import sha256_file
     from .missions.registry import load_campaign
-    from .missions.rejudge import parse_comparator_log, parse_rejudge_header
+    from .missions import rejudge as _rejudge
+    from .missions.rejudge import parse_rejudge_header
     from .missions.schema import RejudgeRecord, SchemaError, save_node, slug_of
 
     slug = slug_of(args.slug)
@@ -1685,7 +1688,16 @@ def cmd_mission_rejudge_record(args) -> int:
               f"the artifact on disk is {cur_sha[:12]}...; re-run the re-judge on the "
               "CURRENT artifact.", file=sys.stderr)
         return 2
-    verdict = parse_comparator_log(text)
+    # Final-fix 2: the verdict covers EVERY part of the node. Render its bundle the way the
+    # queue does (nanoda forced on) to learn the parts; a log must hold exactly one passing
+    # REJUDGE-PART block per part. No render, no expected count -> refuse, write nothing.
+    try:
+        parts = _rejudge.expected_part_slugs(camp_root, node, slug)
+    except _rejudge.RejudgeSetupError as exc:
+        print(f"{slug}: cannot render the node's bundle to learn its re-judge parts ({exc}); "
+              "refusing to record a verdict whose part count is unknown.", file=sys.stderr)
+        return 2
+    verdict = _rejudge.rejudge_log_verdict(text, parts)
     nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
     rev = nanoda_rev_path.read_text().strip()
     try:
