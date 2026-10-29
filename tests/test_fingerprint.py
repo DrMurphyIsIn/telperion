@@ -146,13 +146,20 @@ def test_spoof_check_ignores_lake_packages(tmp_path):
     assert "library root" not in str(exc.value) and "symlink" not in str(exc.value)
 
 
-def _fake_lean(monkeypatch, body_for):
-    """Replace run_lean: --print-libdir answers a fixed dir; the script run answers body_for(nonce)."""
+def _fake_lean(monkeypatch, body_for, calls=None):
+    """Replace run_lean: --print-libdir answers a fixed dir; a body compile writes its -o olean; the script run answers
+    body_for(nonce)."""
     from telperion.checks import fingerprint as fp_
 
     def fake(cmd, cwd, timeout, input=None):
+        if calls is not None:
+            calls.append((list(cmd), input))
         if "--print-libdir" in cmd:
             return 0, "/opt/lean/lib/lean\n"
+        if "-o" in cmd:
+            out = Path(cwd, cmd[cmd.index("-o") + 1])
+            out.write_bytes(b"olean")
+            return 0, ""
         nonce = re.search(r'tpNonce : String := "([0-9a-f]{32})"', input).group(1)
         return 0, body_for(nonce)
     monkeypatch.setattr(fp_, "run_lean", fake)
@@ -162,25 +169,104 @@ def _fake_lean(monkeypatch, body_for):
 def test_escaped_target_key_is_found(monkeypatch, tmp_path):
     # Lean prints `«my thm»`; the caller passes `my thm`
     fp_ = _fake_lean(monkeypatch, lambda n: f'FP-BEGIN {n} «my thm»\n(c _."True" [])\nFP-END {n} «my thm»\nFP-DONE {n}\n')
-    assert len(fp_.run_fingerprint(tmp_path, ["Mathlib"], ["my thm"], wrapper=[])["my thm"]) == 64
+    assert len(fp_.run_fingerprint(tmp_path, ["Mathlib"], ["my thm"], wrapper=[], trusted_env=tmp_path)["my thm"]) == 64
 
 
 def test_nonce_is_fresh_per_run(monkeypatch, tmp_path):
     seen = []
     fp_ = _fake_lean(monkeypatch, lambda n: seen.append(n) or f"FP-BEGIN {n} t\nX\nFP-END {n} t\nFP-DONE {n}\n")
-    fp_.run_fingerprint(tmp_path, ["Mathlib"], ["t"], wrapper=[])
-    fp_.run_fingerprint(tmp_path, ["Mathlib"], ["t"], wrapper=[])
+    fp_.run_fingerprint(tmp_path, ["Mathlib"], ["t"], wrapper=[], trusted_env=tmp_path)
+    fp_.run_fingerprint(tmp_path, ["Mathlib"], ["t"], wrapper=[], trusted_env=tmp_path)
     assert len(seen) == 2 and seen[0] != seen[1] and all(re.fullmatch(r"[0-9a-f]{32}", n) for n in seen)
 
 
-def test_trusted_prefixes_from_manifest(tmp_path):
+ECHO_LIBDIR = ["sh", "-c", "echo /opt/lean/lib/lean", "--"]
+
+
+def _env(root: Path, packages) -> Path:
     import json
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "lake-manifest.json").write_text(json.dumps({"packagesDir": ".lake/packages", "packages": packages}),
+                                             encoding="utf-8")
+    for pkg in packages:
+        if isinstance(pkg, dict) and isinstance(pkg.get("name"), str) and "/" not in pkg["name"]:
+            (root / ".lake/packages" / pkg["name"]).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def test_trusted_prefixes_from_pinned_env(tmp_path):
     from telperion.checks.fingerprint import _trusted_prefixes
-    (tmp_path / ".lake/packages/mathlib").mkdir(parents=True)
-    (tmp_path / "lake-manifest.json").write_text(json.dumps(
-        {"packagesDir": ".lake/packages", "packages": [{"name": "mathlib", "type": "git"}]}), encoding="utf-8")
-    got = _trusted_prefixes(tmp_path, ["sh", "-c", "echo /opt/lean/lib/lean", "--"], timeout=10)
-    assert got == [os.path.realpath("/opt/lean/lib/lean"), os.path.realpath(tmp_path / ".lake/packages/mathlib")]
+    env = _env(tmp_path / "env", [{"name": "mathlib", "type": "git"}])
+    assert _trusted_prefixes(env, ECHO_LIBDIR, timeout=10) == [
+        os.path.realpath("/opt/lean/lib/lean"), os.path.realpath(env / ".lake/packages/mathlib")]
+
+
+def test_manifest_dir_field_never_widens_trust(tmp_path):
+    # I-B: `"dir": "."` or an absolute dir would have trusted the env root (its own build) or anything at all
+    from telperion.checks.fingerprint import _trusted_prefixes
+    env = _env(tmp_path / "env", [{"name": "mathlib", "dir": "."}, {"name": "evil", "dir": "/"}])
+    got = _trusted_prefixes(env, ECHO_LIBDIR, timeout=10)
+    assert os.path.realpath(env) not in got and "/" not in got
+    assert got == [os.path.realpath("/opt/lean/lib/lean"), os.path.realpath(env / ".lake/packages/evil"),
+                   os.path.realpath(env / ".lake/packages/mathlib")]
+
+
+@pytest.mark.parametrize("manifest", ['{"packages": "x"}', '{"packages": [{"nam": 1}]}', "[1]", "{not json",
+                                      '{"packages": [{"name": "../x"}]}', '{"packages": [{"name": 3}]}',
+                                      '{"packagesDir": 7, "packages": []}'])
+def test_malformed_manifest_is_value_error(tmp_path, manifest):
+    from telperion.checks.fingerprint import _trusted_prefixes
+    (tmp_path / "lake-manifest.json").write_text(manifest, encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest"):
+        _trusted_prefixes(tmp_path, ECHO_LIBDIR, timeout=10)
+
+
+def test_non_env_project_packages_untrusted(tmp_path):
+    from telperion.checks.fingerprint import _trusted_prefixes
+    env = _env(tmp_path / "env", [{"name": "mathlib"}])
+    proj = _env(tmp_path / "proj", [{"name": "mathlib"}])
+    evil = proj / ".lake/packages/mathlib/Mathlib/Evil.olean"
+    evil.parent.mkdir(parents=True)
+    evil.write_bytes(b"x")
+    trusted = _trusted_prefixes(env, ECHO_LIBDIR, timeout=10)
+    assert not any(os.path.realpath(evil).startswith(pre + "/") for pre in trusted)
+
+
+def test_trusted_env_required(tmp_path, monkeypatch):
+    from telperion.checks.fingerprint import run_fingerprint
+    monkeypatch.delenv("TELPERION_LEAN_ENV", raising=False)
+    with pytest.raises(ValueError, match="trusted env"):
+        run_fingerprint(tmp_path, ["Mathlib"], ["t"], wrapper=[])
+
+
+def test_trusted_env_defaults_to_lean_env_var(tmp_path, monkeypatch):
+    calls = []
+    fp_ = _fake_lean(monkeypatch, lambda n: f"FP-BEGIN {n} t\nX\nFP-END {n} t\nFP-DONE {n}\n", calls)
+    env = tmp_path / "env"
+    env.mkdir()
+    monkeypatch.setenv("TELPERION_LEAN_ENV", str(env))
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    fp_.run_fingerprint(proj, ["Mathlib"], ["t"], wrapper=[])
+    libdir_calls = [c for c, _ in calls if "--print-libdir" in c]
+    assert len(libdir_calls) == 1
+
+
+def test_body_module_is_random_and_dir_per_run(monkeypatch, tmp_path):
+    calls = []
+    fp_ = _fake_lean(monkeypatch, lambda n: f"FP-BEGIN {n} t\nX\nFP-END {n} t\nFP-DONE {n}\n", calls)
+    (tmp_path / ".telperion_fingerprint").mkdir()            # a stale fixed-name dir no longer wedges a run
+    for _ in range(2):
+        fp_.run_fingerprint_on_text(tmp_path, "theorem t : True := trivial\n", "t", wrapper=[], trusted_env=tmp_path)
+    compiles = [c for c, _ in calls if "-o" in c]
+    mods = [re.search(r"(TelperionFpBody_[0-9a-f]{16})\.olean$", c[c.index("-o") + 1]).group(1) for c in compiles]
+    assert len(mods) == 2 and mods[0] != mods[1]
+    scripts = [inp for c, inp in calls if inp is not None]
+    for mod, script in zip(mods, scripts):
+        assert f"`{mod}" in script
+        assert re.search(rf'tpBodyOlean : String := ".*/\.telperion_fingerprint_[0-9a-f]{{16}}/build/{mod}\.olean"', script)
+        assert "searchPathRef.modify (tpSearch.map System.FilePath.mk ++ ·)" in script    # prepended
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".telperion_fingerprint"]    # per-run dirs removed
 
 
 # Fix round 2 (I2): the process-group runner.
@@ -203,6 +289,18 @@ def test_run_lean_timeout_kills_grandchild(tmp_path):
             return
         time.sleep(0.1)
     pytest.fail(f"grandchild {pid} outlived the timeout")
+
+
+@pytest.mark.parametrize("redirect", [" >/dev/null 2>&1", ""])      # "" : the daemon also holds the pipes
+def test_run_lean_reaps_daemon_after_normal_exit(tmp_path, redirect):
+    # I-A: a body compile that leaves `sleep 3; touch MARKER` behind and exits 0 must not get to touch MARKER
+    from telperion.checks.lean_run import run_lean
+    marker = tmp_path / "MARKER"
+    start = time.monotonic()
+    rc, _ = run_lean(["sh", "-c", f"(sleep 3; touch {marker}){redirect} & exit 0"], tmp_path, 30)
+    assert rc == 0 and time.monotonic() - start < 2.5
+    time.sleep(4)
+    assert not marker.exists()
 
 
 # Fix round 1 Lean controls. MUST-FAIL: non-def local constants are refused, never hashed by name.
@@ -311,6 +409,15 @@ def test_untrusted_library_module_refused():                 # MUST-FAIL control
 
 
 @lean
+def test_body_olean_identity_checked():                      # MUST-FAIL control (I-C)
+    # the Lean side must refuse when the body module resolves anywhere but this run's build path
+    from telperion.checks.fingerprint import _fingerprint
+    with pytest.raises(ValueError, match="body-olean-mismatch"):
+        _fingerprint(Path(LEAN_ENV), [], ["t"], None, 600, body="import Mathlib\ntheorem t : True := trivial\n",
+                     expect_body_olean="/nonexistent/elsewhere.olean")
+
+
+@lean
 def test_serializer_injectivity_cases():                     # serializer unit cases (Lean only, no Mathlib)
     from telperion.checks.fingerprint import HELPERS, ROOTS_DEF
     from telperion.checks.lean_run import run_lean
@@ -339,3 +446,40 @@ def nat : Expr := .const ``Nat []
     assert eq == {"binderInfo": False, "instImplicit": False, "letE nonDep": False, "quote in name": False,
                   "» in name": False, "str lit": False, "binder name ignored": True}, out
     assert "TOSTRING-COLLIDES true" in out          # why tpSerName does not use Name.toString
+
+
+# CLI (restored: the round-2 rewrite of this file dropped it), with --trusted-env (I-B).
+def test_cli_prints_hashes_and_exits_2_on_missing(monkeypatch, capsys):
+    from telperion import cli
+    from telperion.checks import fingerprint as fp_
+    seen = {}
+
+    def ok(project, imports, targets, wrapper=None, timeout=0, trusted_env=None):
+        seen["trusted_env"] = trusted_env
+        return {t: "a" * 64 for t in targets}
+    monkeypatch.setattr(fp_, "run_fingerprint", ok)
+    assert cli.main(["fingerprint", "--project", ".", "--import", "Mathlib", "--target", "foo", "--target", "bar",
+                     "--trusted-env", "/pinned/env"]) == 0
+    assert capsys.readouterr().out == f"foo {'a' * 64}\nbar {'a' * 64}\n" and seen["trusted_env"] == Path("/pinned/env")
+
+    def missing(project, imports, targets, wrapper=None, timeout=0, trusted_env=None):
+        raise ValueError("target not found: baz")
+    monkeypatch.setattr(fp_, "run_fingerprint", missing)
+    assert cli.main(["fingerprint", "--project", ".", "--import", "Mathlib", "--target", "baz",
+                     "--trusted-env", "/pinned/env"]) == 2
+    assert "baz" in capsys.readouterr().out
+
+
+def test_cli_without_trusted_env_exits_2(monkeypatch, capsys, tmp_path):
+    from telperion import cli
+    monkeypatch.delenv("TELPERION_LEAN_ENV", raising=False)
+    assert cli.main(["fingerprint", "--project", str(tmp_path), "--import", "Mathlib", "--target", "t"]) == 2
+    assert "trusted env" in capsys.readouterr().out
+
+
+def test_cli_help_says_not_a_sandbox(capsys):
+    from telperion import cli
+    with pytest.raises(SystemExit):
+        cli.main(["fingerprint", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--trusted-env" in out and "NOT a sandbox" in out

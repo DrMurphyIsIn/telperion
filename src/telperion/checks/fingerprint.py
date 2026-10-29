@@ -19,28 +19,38 @@ WHAT IS REFUSED (fail closed, ``FP-REFUSED``, a ValueError).
   * An unfolded statement of more than ``2^22`` nodes (``too-large``), counted DAG-linearly before serializing, so a
     chain of doubling definitions is refused in seconds instead of serialized exponentially.
   * A library-root module (``Mathlib.*``, ``Init.*``, ...) whose ``.olean``, resolved in Lean through the search path
-    and ``realPath``, is not under a trusted prefix: the running toolchain's lib dir (``lean --print-libdir``) or a
-    package directory pinned in ``lake-manifest.json``. As a cheap pre-check, the project (outside ``.lake`` and
-    ``.git``) must contain no symlink and no directory or ``.lean`` file named after a library root.
+    and ``realPath``, is not under a trusted prefix. Trust comes from a PINNED env (``trusted_env``, default
+    ``$TELPERION_LEAN_ENV``), never from the project under test: its toolchain lib dir (``lean --print-libdir``) and
+    ``<env>/.lake/packages/<name>`` for each package its ``lake-manifest.json`` names (a manifest ``dir`` field is
+    ignored, so it cannot widen trust). When the project is not the env, the project's own packages are untrusted. As
+    a cheap pre-check, the project (outside ``.lake`` and ``.git``) must contain no symlink and no directory or
+    ``.lean`` file named after a library root.
+  * A body module that does not resolve, in Lean, to exactly this run's build path (a shadowing olean).
 
-SEPARATION AND NONCE. ``run_fingerprint_on_text`` compiles the submitted text as its OWN module first
-(``lean -R <dir> -o <dir>/build/TelperionFpBody.olean``), so its ``#eval``, ``#exit`` and ``IO.Process.exit`` run at
-that compile and never in the fingerprint run. The fingerprint script then imports nothing but ``Lean`` in its
+SEPARATION AND NONCE. ``run_fingerprint_on_text`` compiles the submitted text as its OWN module first, under a random
+per-run name in a per-run dir (``lean -R <dir> -o <dir>/build/TelperionFpBody_<id>.olean``, ``<dir>`` =
+``.telperion_fingerprint_<id>``), so its ``#eval``, ``#exit`` and ``IO.Process.exit`` run at that compile and never
+in the fingerprint run, it cannot branch on a predictable module name, and a killed run cannot wedge the next. Every
+Lean call reaps its whole process group when it returns (``lean_run``). The build dir is PREPENDED to the search
+path, and the body's olean must ``realPath`` to the expected per-run file. The fingerprint script then imports nothing but ``Lean`` in its
 header, and loads the body (or the project modules) with ``importModules (loadExts := false)`` inside its ``#eval``,
 so imported ``initialize`` blocks do not run either. A fresh 128-bit nonce is generated AFTER the body compile, sent
 only on the script's stdin (never written to disk), and carried by every marker; Python requires exactly one
 nonce'd result per target and a final ``FP-DONE <nonce>``, and refuses duplicates and foreign markers.
 
-TRUST BOUNDARY. The fingerprint is NOT a sandbox and NOT a defence against a malicious Lean environment. Compiling a
-submitted text executes its code with the caller's permissions: it can rewrite files the caller can write, including
-the trusted package oleans, or leave a daemon behind. Run untrusted text inside a sandbox (Comparator / landrun), and
-check closures with closure_audit.
+TRUST BOUNDARY: THIS IS NOT A SANDBOX. ``run_fingerprint_on_text``, like any build of untrusted Lean, RUNS that code
+with the caller's permissions: it can read and rewrite any file the caller can (the trusted env's oleans included),
+open network connections, or ``setsid`` a daemon that the group reaping cannot see. Untrusted text must only be
+fingerprinted inside a sandbox (e.g. Comparator's Linux sandbox in CI). Nor is the fingerprint a defence against a
+malicious pinned env; closure_audit checks closures. Binding the fingerprint and the replay to one olean (its sha256)
+is deferred to the replay integration.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -205,9 +215,17 @@ _MAIN = """
 def tpNonce : String := "__NONCE__"
 def tpTrusted : List String := __TRUSTED__
 def tpSearch : List String := __SEARCH__
+def tpBody : Option Name := __BODY__
+def tpBodyOlean : String := __BODY_OLEAN__
 
 def tpMain : IO Unit := do
-  searchPathRef.modify (· ++ tpSearch.map System.FilePath.mk)
+  searchPathRef.modify (tpSearch.map System.FilePath.mk ++ ·)
+  if let some b := tpBody then
+    let real := (← IO.FS.realPath (← findOLean b)).toString
+    unless real == tpBodyOlean do
+      IO.println s!"FP-REFUSED {tpNonce} * body-olean-mismatch {b} resolves to {real}, expected {tpBodyOlean}"
+      IO.println s!"FP-DONE {tpNonce}"
+      return
   let env ← importModules (__IMPORTS__ : Array Import) {} (loadExts := false)
   for m in env.header.moduleNames do
     if tpRoots.any (·.isPrefixOf m) then
@@ -239,17 +257,20 @@ def _strings(strings) -> str:
 
 def render_fingerprint_script(imports: list[str], targets: list[str],
                               library_roots: tuple[str, ...] = LIBRARY_ROOTS, *, nonce: str | None = None,
-                              trusted: list[str] = (), search: list[str] = ()) -> str:
+                              trusted: list[str] = (), search: list[str] = (), body_module: str | None = None,
+                              body_olean: str = "") -> str:
     """The Lean script (fed on stdin) that loads ``imports`` programmatically and prints, per target, one nonce'd
     ``FP-BEGIN``/``FP-END`` block, ``FP-REFUSED`` or ``FP-MISSING``, then ``FP-DONE <nonce>``.
 
-    ``trusted`` are the real-path prefixes a library-root module's olean must lie under; ``search`` is appended to
-    the search path (the body's build dir)."""
+    ``trusted`` are the real-path prefixes a library-root module's olean must lie under; ``search`` is prepended to
+    the search path (the body's build dir); ``body_module`` must resolve to exactly the real path ``body_olean``."""
     imps = "#[" + ", ".join(f"{{ module := {lean_name_literal(m)} }}" for m in imports) + "]"
     return ("import Lean\nopen Lean Meta\n\n" + ROOTS_DEF.replace("__ROOTS__", _names(library_roots)) + HELPERS
             + _MAIN.replace("__NONCE__", nonce or secrets.token_hex(16))
             .replace("__TRUSTED__", _strings(trusted))
             .replace("__SEARCH__", _strings(search))
+            .replace("__BODY_OLEAN__", lean_string_literal(body_olean))
+            .replace("__BODY__", f"some {lean_name_literal(body_module)}" if body_module else "none")
             .replace("__IMPORTS__", imps)
             .replace("__TARGETS__", _names(targets)))
 
@@ -312,61 +333,103 @@ def _precheck(project: Path, library_roots: tuple[str, ...]) -> None:
                              "would be trusted as library and never unfolded")
 
 
-def _trusted_prefixes(project: Path, prefix: list[str], timeout: int) -> list[str]:
-    """Real paths of the toolchain lib dir (``lake env lean --print-libdir``) and of each package pinned in the
-    project's ``lake-manifest.json``."""
+_PACKAGE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+
+
+def _manifest_packages(env: Path) -> list[str]:
+    """Package names pinned in ``<env>/lake-manifest.json`` (none if it is absent); ValueError if it is malformed."""
+    path = env / "lake-manifest.json"
+    if not path.is_file():
+        return []
     try:
-        rc, out = run_lean([*prefix, "lake", "env", "lean", "--print-libdir"], project, timeout)
+        m = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"malformed manifest {path}: {exc}") from None
+    if not isinstance(m, dict) or not isinstance(m.get("packages", []), list) \
+            or not isinstance(m.get("packagesDir", ""), str):
+        raise ValueError(f"malformed manifest {path}: expected an object with a `packages` list")
+    names = []
+    for pkg in m.get("packages", []):
+        name = pkg.get("name") if isinstance(pkg, dict) else None
+        if not isinstance(name, str) or not _PACKAGE_NAME.fullmatch(name) or name in (".", ".."):
+            raise ValueError(f"malformed manifest {path}: bad package entry {pkg!r}")
+        names.append(name)
+    return sorted(names)
+
+
+def _trusted_prefixes(trusted_env: Path, prefix: list[str], timeout: int) -> list[str]:
+    """Real paths of the PINNED env's toolchain lib dir (``lake env lean --print-libdir`` run there) and of
+    ``<env>/.lake/packages/<name>`` for each package its manifest names. Never the project's own packages, and a
+    manifest ``dir`` field is ignored, so ``"dir": "."`` or an absolute dir cannot widen trust."""
+    trusted_env = Path(trusted_env)
+    names = _manifest_packages(trusted_env)
+    try:
+        rc, out = run_lean([*prefix, "lake", "env", "lean", "--print-libdir"], trusted_env, timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError(f"cannot read the toolchain lib dir: {exc}") from None
     if rc != 0 or not out.strip():
         raise ValueError(f"cannot read the toolchain lib dir (exit {rc}): {out[-2000:]}")
     trusted = [os.path.realpath(out.strip().splitlines()[-1])]
-    manifest = project / "lake-manifest.json"
-    if manifest.is_file():
-        m = json.loads(manifest.read_text(encoding="utf-8"))
-        pdir = project / m.get("packagesDir", ".lake/packages")
-        for pkg in m.get("packages", []):
-            trusted.append(os.path.realpath(project / pkg["dir"] if pkg.get("dir") else pdir / pkg["name"]))
+    for name in names:
+        d = trusted_env / ".lake" / "packages" / name
+        if d.is_dir():
+            trusted.append(os.path.realpath(d))
     return trusted
 
 
-def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper: list[str] | None, timeout: int,
-                 body: str | None = None, trusted: list[str] | None = None) -> dict[str, str]:
-    """Compile ``body`` (if given) as its own module in ``<project>/.telperion_fingerprint/``, then run the script on
-    stdin with a fresh nonce, parse, and delete the dir. ``trusted`` overrides the trusted prefixes (tests only).
+def _resolve_trusted_env(trusted_env: Path | None) -> Path:
+    env = trusted_env if trusted_env is not None else os.environ.get("TELPERION_LEAN_ENV")
+    if not env:
+        raise ValueError("no trusted env: pass --trusted-env (trusted_env=) or set TELPERION_LEAN_ENV to the pinned "
+                         "Lean env whose toolchain and packages are trusted")
+    return Path(env)
 
-    The directory must not already exist (a concurrent or stale run). A nonzero exit is an error even if the markers
-    were printed: the declarations may not have elaborated as written."""
+
+def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper: list[str] | None, timeout: int,
+                 body: str | None = None, trusted: list[str] | None = None, trusted_env: Path | None = None,
+                 expect_body_olean: str | None = None) -> dict[str, str]:
+    """Compile ``body`` (if given) as a randomly named module in a per-run ``<project>/.telperion_fingerprint_<id>/``,
+    then run the script on stdin with a fresh nonce, parse, and delete the dir. ``trusted`` and
+    ``expect_body_olean`` override the trusted prefixes and the expected body olean (tests only).
+
+    A nonzero exit is an error even if the markers were printed: the declarations may not have elaborated as
+    written."""
     project = Path(project)
     _precheck(project, LIBRARY_ROOTS)
+    if trusted is None:
+        trusted_env = _resolve_trusted_env(trusted_env)
     prefix = default_wrapper() if wrapper is None else list(wrapper)
-    fdir = project / FINGERPRINT_DIR
+    run_id = secrets.token_hex(8)
+    fdir = project / f"{FINGERPRINT_DIR}_{run_id}"
+    module = f"{BODY_MODULE}_{run_id}"
     search: list[str] = []
+    body_olean = ""
     if body is not None:
         try:
             fdir.mkdir()
-        except FileExistsError:
-            raise ValueError(f"fingerprint dir {fdir} already exists; remove it if no other run is going") from None
+        except OSError as exc:
+            raise ValueError(f"cannot create the fingerprint dir {fdir}: {exc}") from None
     try:
         if body is not None:
             (fdir / "build").mkdir()
-            src = fdir / f"{BODY_MODULE}.lean"
+            src = fdir / f"{module}.lean"
             src.write_text(body, encoding="utf-8")
-            olean = fdir / "build" / f"{BODY_MODULE}.olean"
+            olean = fdir / "build" / f"{module}.olean"
             try:
-                rc, out = run_lean([*prefix, "lake", "env", "lean", "-R", FINGERPRINT_DIR, "-o",
+                rc, out = run_lean([*prefix, "lake", "env", "lean", "-R", fdir.name, "-o",
                                     str(olean.relative_to(project)), str(src.relative_to(project))], project, timeout)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ValueError(f"body compile did not finish: {exc}") from None
             if rc != 0 or not olean.is_file():
                 raise ValueError(f"body did not compile (exit {rc}{'' if olean.is_file() else ', no olean written'}):"
                                  f"\n{out[-4000:]}")
-            imports, search = [BODY_MODULE], [str((fdir / "build").resolve())]
+            imports, search = [module], [os.path.realpath(fdir / "build")]
+            body_olean = expect_body_olean or os.path.realpath(olean)
         if trusted is None:
-            trusted = _trusted_prefixes(project, prefix, timeout)
+            trusted = _trusted_prefixes(trusted_env, prefix, timeout)
         nonce = secrets.token_hex(16)                           # only now: the body compile cannot have seen it
-        script = render_fingerprint_script(imports, targets, nonce=nonce, trusted=trusted, search=search)
+        script = render_fingerprint_script(imports, targets, nonce=nonce, trusted=trusted, search=search,
+                                           body_module=module if body is not None else None, body_olean=body_olean)
         try:
             rc, output = run_lean([*prefix, "lake", "env", "lean", "--stdin"], project, timeout, input=script)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -393,12 +456,15 @@ def _escaped(target: str) -> str:
 
 
 def run_fingerprint(project: Path, imports: list[str], targets: list[str], wrapper: list[str] | None = None,
-                    timeout: int = 1800) -> dict[str, str]:
-    """Fingerprint ``targets`` after loading ``imports`` (built modules) in the Lake project ``project``."""
-    return _fingerprint(project, imports, targets, wrapper, timeout)
+                    timeout: int = 1800, trusted_env: Path | None = None) -> dict[str, str]:
+    """Fingerprint ``targets`` after loading ``imports`` (built modules) in the Lake project ``project``, trusting
+    only the pinned ``trusted_env`` (default ``$TELPERION_LEAN_ENV``)."""
+    return _fingerprint(project, imports, targets, wrapper, timeout, trusted_env=trusted_env)
 
 
 def run_fingerprint_on_text(project: Path, text: str, target: str, wrapper: list[str] | None = None,
-                            timeout: int = 1800) -> str:
-    """Fingerprint ``target`` as declared in the Lean source ``text``, compiled as its own module in ``project``."""
-    return _fingerprint(project, [], [target], wrapper, timeout, body=text)[target]
+                            timeout: int = 1800, trusted_env: Path | None = None) -> str:
+    """Fingerprint ``target`` as declared in the Lean source ``text``, compiled as its own module in ``project``.
+
+    NOT A SANDBOX: compiling ``text`` runs its code with the caller's permissions (see the module docstring)."""
+    return _fingerprint(project, [], [target], wrapper, timeout, body=text, trusted_env=trusted_env)[target]

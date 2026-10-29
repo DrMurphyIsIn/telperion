@@ -2569,7 +2569,8 @@ def cmd_probe_negation(args) -> int:
 def cmd_fingerprint(args) -> int:
     """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target.
 
-    Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a Lean error, an elided statement)."""
+    Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
+    env). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project's own packages."""
     import shlex
 
     from .checks import fingerprint
@@ -2577,7 +2578,8 @@ def cmd_fingerprint(args) -> int:
     try:
         fps = fingerprint.run_fingerprint(Path(args.project), args.imports, args.targets,
                                           wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
-                                          timeout=args.timeout)
+                                          timeout=args.timeout,
+                                          trusted_env=Path(args.trusted_env) if args.trusted_env else None)
     except ValueError as exc:
         print(f"fingerprint: {exc}")
         return 2
@@ -3181,7 +3183,10 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("fingerprint",
                        help="sha256 of each theorem's statement, delta-unfolded past the library roots, "
-                            "binder-name-insensitive")
+                            "binder-name-insensitive",
+                       description="Statement fingerprint. NOT a sandbox: building untrusted Lean (the imported "
+                                   "modules, a submitted text) runs that code with your permissions, so fingerprint "
+                                   "untrusted input only inside a sandbox (e.g. Comparator's Linux sandbox in CI).")
     p.add_argument("--project", required=True, help="a built Lake project in which the imports resolve")
     p.add_argument("--import", dest="imports", action="append", required=True, metavar="MODULE",
                    help="module to import (repeatable)")
@@ -3191,6 +3196,10 @@ def main(argv=None) -> int:
                    help="command prefix before `lake env lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
     p.add_argument("--timeout", type=int, default=1800, help="seconds for the Lean run")
+    p.add_argument("--trusted-env", default=None, metavar="DIR",
+                   help="the pinned Lean env whose toolchain and .lake/packages are trusted as library (default: "
+                        "$TELPERION_LEAN_ENV; exit 2 if neither is set). --project's own packages are trusted only "
+                        "when it IS this env")
     p.set_defaults(fn=cmd_fingerprint)
 
     args = ap.parse_args(argv)
