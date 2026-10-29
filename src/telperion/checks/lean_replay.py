@@ -18,7 +18,10 @@ the copies. The result's ``olean_sha256`` (the digest of the sorted ``olean_clos
 sha256]) binds the check to every untrusted byte it replayed. A same-user writer can still reach the copies while the
 run lasts; only a sandbox closes that. The submission's own dirs (``<project>/.lake/build/lib/lean`` and any
 ``untrusted_paths``) must lie under no trusted prefix. Lean runs with ``--memory`` (default 8192 MB), its own
-best-effort allocation bound until there is a sandbox. No ``lake`` runs, and the script and the process's cwd are in a private 0700 temp dir.
+best-effort allocation bound until there is a sandbox. Exceeding it inside a callback's own budget is that callback's
+business (the negation probe reports it as a probe failure, PROBE_ONLY with a note, never a verdict); exceeding it in
+the list run or the replay itself gives a broken or refused replay, which every check reads as ERROR. No ``lake``
+runs, and the script and the process's cwd are in a private 0700 temp dir.
 
 HOW (the Comparator / lean4checker approach). The generated script imports TRUSTED modules only and runs as the pinned
 ``lean`` with a LEAN_PATH of trusted entries only, so no ``import`` can reach an untrusted ``.olean``. Inside one
@@ -42,9 +45,9 @@ HOW (the Comparator / lean4checker approach). The generated script imports TRUST
    ``src/lean/Lean/Replay.lean:74-190``), ported into the script so that it adds to the ELABORATOR's environment through
    ``Lean.Environment.addDeclCore`` (``Lean/Environment.lean:699``, ``doCheck := true``). Every declaration goes to the
    kernel, and constructors and recursors are compared with the ones the kernel generates. (The upstream function
-   returns a ``Kernel.Environment``, and the only way back, ``Environment.ofKernelEnv`` at ``Lean/Environment.lean:643``,
-   drops the import's realization context: ``omega`` then fails with ``Environment.realizeConst: realizedImportedConsts
-   is empty``.)
+   returns a ``Kernel.Environment``, and the only way back, ``Environment.ofKernelEnv`` at
+   ``Lean/Environment.lean:643``, drops the import's realization context: ``omega`` then fails with
+   ``Environment.realizeConst: realizedImportedConsts is empty``.)
    - Afterwards every replayed constant must be found exactly as its ``.olean`` gives it (types and values compared
      with ``Expr.equal``). The one exception is upstream's skip: a theorem identical in name, type, universe parameters
      and ``all`` to one already present keeps the present one.
@@ -95,7 +98,8 @@ from .lean_run import run_lean
 
 STATUSES = ("OK", "FAILED", "ERROR")
 MANIFEST_VERSION = 1
-# The files Lean loads from a trusted prefix: module data, IR (run by the interpreter for initializers), shared libraries.
+# The files Lean loads from a trusted prefix: module data, IR (run by the interpreter for initializers), shared
+# libraries.
 TRUSTED_SUFFIXES = (".olean", ".olean.server", ".olean.private", ".ir", ".ir.sig", ".dylib", ".so")
 
 _MODULE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*")
@@ -264,7 +268,8 @@ namespace TelperionReplay
 
 def tag : String := __TAG__
 def targetModules : List Name := __TARGETS__
-/-- The realpath Python resolved and hashed for each target module ("" when it found none). -/
+/-- The realpath each target module must resolve to: in the list run, the submission's .olean Python resolved; in the
+replay run, its private COPY, which Python hashed ("" when there is none). -/
 def expectOleans : List (Name × String) := __EXPECT__
 def allowAxioms : Bool := __ALLOW_AXIOMS__
 def allowSorry : Bool := __ALLOW_SORRY__
@@ -607,9 +612,10 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
     must resolve to (anything else, or no entry, is ``olean-mismatch``). `allow_axioms` lets the untrusted closure
     declare axioms (listed as ``declared=[...]``) and `allow_sorry` lets the targets use ``sorryAx``; both are refused
     otherwise. `list_only` renders the LIST run: walk the closure, print a ``CLOSURE <module>\\t<file>`` line per
-    file it would read and ``REPLAY LISTED n``, replay nothing. `search_path` is the full olean search path, in order, that the closure is resolved over. It is DATA here and is
-    never this process's LEAN_PATH. The callback runs with a fresh budget of `heartbeats` (thousands, as the
-    ``maxHeartbeats`` option), and an exception it raises, a runtime one included, is reported as ``CALLBACK FAILED``."""
+    file it would read and ``REPLAY LISTED n``, replay nothing. `search_path` is the full olean search path, in
+    order, that the closure is resolved over. It is DATA here and is never this process's LEAN_PATH. The callback
+    runs with a fresh budget of `heartbeats` (thousands, as the ``maxHeartbeats`` option), and an exception it raises,
+    a runtime one included, is reported as ``CALLBACK FAILED``."""
     if not re.fullmatch(r"[A-Za-z0-9]+", nonce):
         raise ValueError(f"nonce must be alphanumeric: {nonce!r}")
     imports = "\n".join(f"import {_module(m)}" for m in trusted_imports)
@@ -702,7 +708,8 @@ def default_wrapper() -> list[str]:
 
 
 def submission_paths(project=None, untrusted_paths=()) -> list[str]:
-    """The submission's olean dirs (realpaths): `<project>/.lake/build/lib/lean`, if it exists, then `untrusted_paths`."""
+    """The submission's olean dirs (realpaths): `<project>/.lake/build/lib/lean`, if it exists, then
+    `untrusted_paths`."""
     out = []
     if project is not None:
         own = Path(project) / ".lake" / "build" / "lib" / "lean"
@@ -855,22 +862,25 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
         # 2. copy every listed file into the private run dir, keeping its path below its submission dir
         copies: dict[str, tuple[str, str]] = {}            # copy realpath -> (module, part)
         main_copy: dict[str, str] = {}
-        for mod, f in closure:
-            base = next((u for u in untrusted if under_prefix(f, [u])), None)
-            if base is None:
-                return ReplayResult("ERROR", f"listed file {f} is in no submission dir", [], "")
-            dst = copies_dir / os.path.relpath(f, base)
-            if dst.exists():
-                return ReplayResult("ERROR", f"two listed files map to the copy {dst}", [], "")
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(f, dst)
-            copies[str(dst)] = (mod, _part(str(dst)))
-            if _part(str(dst)) == "olean":
-                main_copy[mod] = str(dst)
+        try:
+            for mod, f in closure:
+                base = next((u for u in untrusted if under_prefix(f, [u])), None)
+                if base is None:
+                    return ReplayResult("ERROR", f"listed file {f} is in no submission dir", [], "")
+                dst = copies_dir / os.path.relpath(f, base)
+                if dst.exists():
+                    return ReplayResult("ERROR", f"two listed files map to the copy {dst}", [], "")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(f, dst)
+                copies[str(dst)] = (mod, _part(str(dst)))
+                if _part(str(dst)) == "olean":
+                    main_copy[mod] = str(dst)
+            entries = sorted((mod, part, _sha256(c)) for c, (mod, part) in copies.items())
+        except OSError as exc:      # e.g. a listed file vanished or changed type between the list run and the copy
+            return ReplayResult("ERROR", f"cannot copy or hash a listed untrusted file into the run dir: {exc}", [], "")
         missing = [m for m in targets if m not in main_copy]
         if missing:
             return ReplayResult("ERROR", f"the list run did not list the target olean of {missing}", [], "")
-        entries = sorted((mod, part, _sha256(c)) for c, (mod, part) in copies.items())
         # 3. replay from the copies only
         search = [*pinned.entries, pinned.libdir, str(copies_dir)]
         expect = dict(expect_oleans) if expect_oleans is not None else {m: main_copy.get(m, "") for m in targets}

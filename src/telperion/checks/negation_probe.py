@@ -53,7 +53,10 @@ counterexample value). Everything else is PROBE_ONLY: the battery failing to der
 find a counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an
 unbuilt module, an unknown constant, a witness that does not elaborate, a refused replay), so no verdict could be read.
 A maxHeartbeats timeout in any probe is not an ERROR: that probe is inconclusive, and the verdict falls through to
-PROBE_ONLY with a note. An axiom declared anywhere in the module's untrusted closure is refused by the replay (Ruling
+PROBE_ONLY with a note. Exceeding Lean's ``--memory`` bound (lean_replay, default 8192 MB) inside a probe is caught by
+that probe's budget like any other exception that escapes it: ``FALSE FAILED`` or ``NEGATION UNAVAILABLE`` (PROBE_ONLY
+with a note), or ``WITNESS FAILED`` (ERROR), never VACUOUS, REFUTED or WITNESSED; exceeding it in the replay itself is
+ERROR. An axiom declared anywhere in the module's untrusted closure is refused by the replay (Ruling
 10: no untrusted axiom ever enters an environment that tactics run in), which is ERROR naming the axiom.
 
 KNOWN LIMITATION. A `private` theorem's constant has a mangled name and is not found by its source name (ERROR).

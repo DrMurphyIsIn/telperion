@@ -206,6 +206,22 @@ def test_run_replay_reads_only_private_copies_and_binds_the_closure(tmp_path, mo
     assert r.status == "ERROR" and "beyond the copies" in r.detail, r.detail
 
 
+def test_listed_file_vanishing_before_the_copy_is_error(tmp_path, monkeypatch):
+    from telperion.checks import lean_replay
+    from lean_env import fake_replay_output
+    env, elan = _fake_env(tmp_path)
+    m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
+    sub = _submission(tmp_path)
+
+    def fake(cmd, cwd, timeout, input=None, env=None):
+        out = fake_replay_output(Path(cmd[-1]).read_text(encoding="utf-8"))
+        (sub / "Foo.olean").unlink()                      # listed, then gone before the copy
+        return 0, out
+    monkeypatch.setattr(lean_replay, "run_lean", fake)
+    r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan, wrapper=[])
+    assert r.status == "ERROR" and "cannot copy or hash a listed untrusted file" in r.detail, r
+
+
 def test_memory_flag_plumbing(tmp_path):
     env, elan = _fake_env(tmp_path)
     m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
