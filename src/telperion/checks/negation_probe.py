@@ -23,7 +23,8 @@ One replay run executes three probes in the callback, each with its own budget o
   constructor of that value (whose type carries a proof of ``¬ p``), never a scan of printed text: nothing a module
   or a message prints can produce it. No ``Testable`` instance is PROBE_ONLY with a note. A statement that cannot be
   evaluated on the replayed environment (its decidability needs compiled code for a replayed definition, which replay
-  never provides) is PROBE_ONLY with a note too.
+  never provides) is PROBE_ONLY with a note too. plausible's seed is fixed (``PLAUSIBLE_SEED``, named in a REFUTED's
+  detail), so a REFUTED is reproducible.
 * ``witness``  -- only with a caller-supplied term: the ∃-closure of the FULL non-reducing ∀-telescope of the type
   (every ∀/→ binder, the conclusion's arrows included; ``¬`` and ``≠`` stay closed, as they are not ∀-binders) is
   built as an Expr, the witness is parsed and elaborated against it, kernel-checked and axiom-audited the same way.
@@ -43,8 +44,9 @@ with NAMED binders (`: ∀ (m : ℕ) (h : m < 0), False`) is read as premises.
 
 PROTOCOL. The callback prints, through the replay's nonce'd lines, ``PREMISES n``, exactly one ``FALSE``, one
 ``NEGATION`` and (with a witness) one ``WITNESS`` result line; the replay protocol around them (one REPLAY line, one
-final DONE, all under a 128-bit per-run tag) is checked by ``lean_replay``. Anything else is ERROR. Since no untrusted
-code runs in the process, nothing else can print under the tag.
+final DONE, all under a 128-bit per-run tag) is checked by ``lean_replay``. Anything else is ERROR. No untrusted code
+with effects runs in the process (the negation probe evaluates the statement only through compiled TRUSTED code, and
+a pure term has no IO bridge; see lean_replay), so nothing else can print under the tag.
 
 ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a kernel-checked proof of ``False``, a
 counterexample value). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to
@@ -70,6 +72,7 @@ VERDICTS = ("VACUOUS", "REFUTED", "PROBE_ONLY", "WITNESSED", "ERROR")
 
 FALSE_TACTIC = "first | (exfalso; omega) | linarith | (simp_all; done) | (norm_num at *; done) | aesop"
 NUM_INST = 200
+PLAUSIBLE_SEED = 271828          # fixed, so a REFUTED is reproducible
 HEARTBEATS = 200000
 TACTIC_IMPORTS = ("Mathlib",)
 
@@ -85,12 +88,14 @@ STATUSES = {
 class ProbeResult:
     verdict: str
     detail: str
-    olean_sha256: str | None = None   # the replayed target module's olean parts (lean_replay.olean_sha256)
+    olean_sha256: str | None = None   # lean_replay.closure_digest of the whole replayed untrusted closure
+    olean_closure: list | None = None  # its sorted [module, part, sha256] list
 
     def to_json(self) -> dict:
         out = {"verdict": self.verdict, "detail": self.detail}
         if self.olean_sha256 is not None:
             out["olean_sha256"] = self.olean_sha256
+            out["olean_closure"] = self.olean_closure
         return out
 
 
@@ -198,7 +203,8 @@ def render_callback(theorem: str, witness: str | None) -> str:
         f"    match inst? with\n"
         f'    | none => {line} "NEGATION NO_TESTABLE"\n'
         f"    | some inst =>\n"
-        f"      let cfg : Plausible.Configuration := {{ numInst := {NUM_INST}, quiet := true }}\n"
+        f"      let cfg : Plausible.Configuration := {{ numInst := {NUM_INST}, quiet := true,\n"
+        f"                                               randomSeed := some {PLAUSIBLE_SEED} }}\n"
         f"      let e ← mkAppOptM ``TelperionProbe.runCheck #[tgt', inst, toExpr cfg]\n"
         f"      let act ← unsafe evalExpr (IO TelperionProbe.Outcome)\n"
         f"        (mkApp (mkConst ``IO) (mkConst ``TelperionProbe.Outcome)) e\n"
@@ -256,7 +262,7 @@ def _results(lines: list[str], kind: str) -> list[tuple[str, str]]:
     return out
 
 
-def classify(lines: list[str], witness: bool = False, tag: str = "TP") -> ProbeResult:
+def classify(lines: list[str], witness: bool = False) -> ProbeResult:
     """The verdict from the callback's lines (tag already stripped): ERROR, then VACUOUS, REFUTED, WITNESSED,
     PROBE_ONLY. A probe with a TIMEOUT line is inconclusive and its other lines are not read; otherwise it must have
     exactly one result line with a known status."""
@@ -272,9 +278,9 @@ def classify(lines: list[str], witness: bool = False, tag: str = "TP") -> ProbeR
             got[kind] = None
             continue
         if not res:
-            return ProbeResult("ERROR", f"{kind.lower()} probe printed no {tag}-{kind} result line")
+            return ProbeResult("ERROR", f"{kind.lower()} probe printed no {kind} result line")
         if len(res) > 1:
-            return ProbeResult("ERROR", f"{kind.lower()} probe printed {len(res)} {tag}-{kind} result lines; "
+            return ProbeResult("ERROR", f"{kind.lower()} probe printed {len(res)} {kind} result lines; "
                                         "refusing a duplicated protocol")
         if res[0][0] not in STATUSES[kind]:
             return ProbeResult("ERROR", f"{kind.lower()} probe printed an unknown status {res[0][0]!r}")
@@ -294,7 +300,7 @@ def classify(lines: list[str], witness: bool = False, tag: str = "TP") -> ProbeR
         notes.append(f"probe 'false' left goals, metavariables or sorry ({line[1]}); not counted")
     neg = got["NEGATION"]
     if neg and neg[0] == "FAILURE":
-        return ProbeResult("REFUTED", f"plausible found a counterexample: {neg[1]}")
+        return ProbeResult("REFUTED", f"plausible found a counterexample (seed {PLAUSIBLE_SEED}): {neg[1]}")
     wline = got.get("WITNESS")
     if wline and wline[0] == "PROVED":
         bad = _axiom_problem("witness", wline[1])
@@ -326,12 +332,13 @@ def classify_replay(r: ReplayResult, spec: ProbeSpec) -> ProbeResult:
     if r.status != "OK":
         return ProbeResult("ERROR", f"probe did not run: {r.detail[:1500]}")
     res = classify(r.lines, spec.witness is not None)
-    res.olean_sha256 = r.olean_sha256.get(spec.module)
+    res.olean_sha256, res.olean_closure = r.olean_sha256, r.olean_closure
     return res
 
 
 def run_probe(spec: ProbeSpec, project: Path | None = None, wrapper: list[str] | None = None, timeout: int = 1800, *,
-              untrusted_paths=(), trusted_env=None, manifest=None, elan_home=None) -> ProbeResult:
+              untrusted_paths=(), trusted_env=None, manifest=None, elan_home=None,
+              memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB) -> ProbeResult:
     """Replay `spec.module` (built in `project`'s ``.lake/build/lib/lean`` or in one of `untrusted_paths`) into the
     pinned `trusted_env` (default ``$TELPERION_LEAN_ENV``, checked against its trusted `manifest`) and run the probes
     as a callback; see the module docstring."""
@@ -341,7 +348,8 @@ def run_probe(spec: ProbeSpec, project: Path | None = None, wrapper: list[str] |
         return ProbeResult("ERROR", str(exc))
     r = lean_replay.run_replay(spec.module, callback, project=project, untrusted_paths=untrusted_paths,
                                trusted_imports=spec.imports, trusted_env=trusted_env, manifest=manifest,
-                               elan_home=elan_home, wrapper=wrapper, timeout=timeout, allow_sorry=True)
+                               elan_home=elan_home, wrapper=wrapper, timeout=timeout, allow_sorry=True,
+                               memory_mb=memory_mb)
     return classify_replay(r, spec)
 
 

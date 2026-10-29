@@ -174,6 +174,8 @@ def _fake_lean(monkeypatch, body_for, calls=None):
     from telperion.checks import fingerprint as fp_
     from telperion.checks import lean_replay
 
+    from lean_env import fake_replay_output
+
     def fake(cmd, cwd, timeout, input=None, env=None):
         if "-o" in cmd:
             if calls is not None:
@@ -182,12 +184,12 @@ def _fake_lean(monkeypatch, body_for, calls=None):
             out.write_bytes(b"olean")
             return 0, ""
         script = Path(cmd[-1]).read_text(encoding="utf-8")
+        if "def listOnly : Bool := true" in script:           # R2: the list run names the closure's files
+            return 0, fake_replay_output(script)
         if calls is not None:
             calls.append((list(cmd), script))
         nonce = re.search(r'tpNonce : String := "([0-9a-f]{32})"', script).group(1)
-        tag = re.search(r'def tag : String := "(TR[0-9a-f]+)"', script).group(1)
-        return 0, (f"{tag}-REPLAY OK modules=[] constants=0 declared=[] axioms=[]\n" + body_for(nonce)
-                   + f"{tag}-DONE\n")
+        return 0, fake_replay_output(script, body_for(nonce))
     monkeypatch.setattr(fp_, "run_lean", fake)
     monkeypatch.setattr(lean_replay, "run_lean", fake)
     return fp_
@@ -237,15 +239,16 @@ def test_manifest_dir_field_never_widens_trust(tmp_path):
 @pytest.mark.parametrize("manifest", ['{"packages": "x"}', '{"packages": [{"nam": 1}]}', "[1]", "{not json",
                                       '{"packages": [{"name": "../x"}]}', '{"packages": [{"name": 3}]}',
                                       '{"packagesDir": 7, "packages": []}'])
-def test_malformed_manifest_is_value_error(tmp_path, manifest):
+def test_malformed_manifest_is_value_error(tmp_path, manifest, monkeypatch):
     # phase 2: a malformed lake-manifest.json cannot change what is trusted (it is never parsed for trust); it only
     # changes the default trusted-manifest path, so a manifest built for other pins never matches
     from telperion.checks.lean_replay import default_manifest_path, pinned_env
+    monkeypatch.delenv("TELPERION_TRUSTED_MANIFEST", raising=False)     # R2-M5: else the path check is vacuous
     env = _env(tmp_path / "t", [{"name": "mathlib"}])
     before = (pinned_env(env, tmp_path / "t" / "elan").prefixes, default_manifest_path(env))
     (env / "lake-manifest.json").write_text(manifest, encoding="utf-8")
     assert pinned_env(env, tmp_path / "t" / "elan").prefixes == before[0]
-    assert default_manifest_path(env) != before[1] or os.environ.get("TELPERION_TRUSTED_MANIFEST")
+    assert default_manifest_path(env) != before[1]
 
 
 def test_non_env_project_packages_untrusted(tmp_path):
@@ -291,8 +294,9 @@ def test_body_module_is_random_and_dir_per_run(monkeypatch, tmp_path, fake_env):
     scripts = [inp for c, inp in calls if inp is not None]
     for mod, script in zip(mods, scripts):
         assert f"`{mod}" in script
-        # phase 2: the body olean is compiled in a private temp dir and REPLAYED; the script pins its exact path
-        assert re.search(rf'\(`{mod}, ".*/telperion_fp_[^/"]+/build/{mod}\.olean"\)', script)
+        # phase 2/R2: the body olean is compiled in a private temp dir, COPIED into the replay's run dir and
+        # replayed from the copy; the script pins the copy's exact path
+        assert re.search(rf'\(`{mod}, ".*/telperion_replay_[^/"]+/olean/{mod}\.olean"\)', script)
     assert sorted(p.name for p in tmp_path.iterdir()) == [".telperion_fingerprint"]    # nothing left in the project
 
 
@@ -519,10 +523,11 @@ def test_cli_json_includes_olean_sha256(monkeypatch, capsys):
     from telperion.checks import fingerprint as fp_
 
     def ok(project, imports, targets, wrapper=None, timeout=0, **kw):
-        return fp_.Fingerprints({t: "a" * 64 for t in targets}, {"M": "b" * 64})
+        return fp_.Fingerprints({t: "a" * 64 for t in targets}, "b" * 64, [["M", "olean", "c" * 64]])
     monkeypatch.setattr(fp_, "run_fingerprint", ok)
     assert cli.main(["fingerprint", "--project", ".", "--import", "M", "--target", "foo", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"fingerprints": {"foo": "a" * 64}, "olean_sha256": {"M": "b" * 64}}
+    assert json.loads(capsys.readouterr().out) == {"fingerprints": {"foo": "a" * 64}, "olean_sha256": "b" * 64,
+                                                   "olean_closure": [["M", "olean", "c" * 64]]}
 
 
 def test_cli_trusted_manifest_build_verify(tmp_path, monkeypatch, capsys):
@@ -531,6 +536,9 @@ def test_cli_trusted_manifest_build_verify(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ELAN_HOME", str(elan))
     out = tmp_path / "m.json"
     assert cli.main(["trusted-manifest", "build", "--env", str(env), "--out", str(out)]) == 0 and out.is_file()
+    assert cli.main(["trusted-manifest", "build", "--env", str(env), "--out", str(out)]) == 2       # R2-M4
+    assert "already exists" in capsys.readouterr().out
+    assert cli.main(["trusted-manifest", "build", "--env", str(env), "--out", str(out), "--force"]) == 0
     assert cli.main(["trusted-manifest", "verify", "--env", str(env), "--out", str(out)]) == 0
     (env / ".lake/packages/mathlib/.lake/build/lib/lean/Mathlib/Evil.olean").write_bytes(b"planted")
     assert cli.main(["trusted-manifest", "verify", "--env", str(env), "--out", str(out)]) == 2
@@ -577,7 +585,8 @@ theorem TpEvil.t : ∀ n : ℕ, n < 3 → n < 10 := fun n h => Nat.lt_trans h (b
 @lean
 def test_evil_module_gives_the_true_hash(tmp_path):                  # MUST-FAIL control (phase 2)
     from telperion.checks.fingerprint import run_fingerprint
-    from telperion.checks.lean_replay import default_wrapper, olean_sha256
+    import hashlib
+    from telperion.checks.lean_replay import closure_digest, default_wrapper
     true_hash = _fp("import Mathlib\ntheorem t : ∀ n : ℕ, n < 3 → n < 10 := by omega\n", "t")
     try:
         got = _fp(EVIL, "TpEvil.t")
@@ -595,7 +604,8 @@ def test_evil_module_gives_the_true_hash(tmp_path):                  # MUST-FAIL
         assert p.returncode == 0, p.stdout + p.stderr
         fps = run_fingerprint(Path(LEAN_ENV), ["TpEvilFp"], ["TpEvil.t"], untrusted_paths=[lib])
         assert fps["TpEvil.t"] == true_hash
-        assert fps.olean_sha256 == {"TpEvilFp": olean_sha256(lib / "TpEvilFp.olean")}
+        closure = [["TpEvilFp", "olean", hashlib.sha256((lib / "TpEvilFp.olean").read_bytes()).hexdigest()]]
+        assert fps.olean_closure == closure and fps.olean_sha256 == closure_digest(closure)
     finally:
         import shutil
         shutil.rmtree(lib, ignore_errors=True)

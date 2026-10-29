@@ -2546,6 +2546,8 @@ def _trust_kwargs(args) -> dict:
         kw["manifest"] = Path(args.trusted_manifest)
     if getattr(args, "olean_dirs", None):
         kw["untrusted_paths"] = [Path(d) for d in args.olean_dirs]
+    if getattr(args, "memory_mb", None) is not None:
+        kw["memory_mb"] = args.memory_mb or None
     return kw
 
 
@@ -2555,7 +2557,7 @@ def cmd_probe_negation(args) -> int:
 
     Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including an unbuilt module, no trusted env or
     manifest, or any unexpected failure). With --json, stdout is exactly {"verdict": ..., "detail": ...,
-    "olean_sha256": ...} (the last when the module was replayed)."""
+    "olean_sha256": ..., "olean_closure": [...]} (the last two when the module was replayed)."""
     import json as _json
     import shlex
 
@@ -2582,7 +2584,7 @@ def cmd_probe_negation(args) -> int:
 
 def cmd_fingerprint(args) -> int:
     """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target, or with
-    --json {"fingerprints": {...}, "olean_sha256": {module: sha256}}. The modules are KERNEL-REPLAYED into the pinned
+    --json {"fingerprints": {...}, "olean_sha256": <closure digest>, "olean_closure": [[module, part, sha256], ...]}. The modules are KERNEL-REPLAYED into the pinned
     trusted env, never imported.
 
     Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
@@ -2604,7 +2606,8 @@ def cmd_fingerprint(args) -> int:
         return 2
     if args.json:
         print(_json.dumps({"fingerprints": {t: fps[t] for t in args.targets},
-                           "olean_sha256": dict(getattr(fps, "olean_sha256", {}))}))
+                           "olean_sha256": getattr(fps, "olean_sha256", None),
+                           "olean_closure": getattr(fps, "olean_closure", [])}))
         return 0
     for t in args.targets:
         print(f"{t} {fps[t]}")
@@ -2618,7 +2621,7 @@ def cmd_trusted_manifest(args) -> int:
 
     try:
         if args.trusted_manifest_cmd == "build":
-            path = lean_replay.build_trusted_manifest(args.env, args.out)
+            path = lean_replay.build_trusted_manifest(args.env, args.out, force=args.force)
             print(f"trusted manifest written: {path}")
         else:
             pinned = lean_replay.pinned_env(args.env)
@@ -3231,7 +3234,11 @@ def main(argv=None) -> int:
     p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
                    help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
                         "(repeatable)")
-    p.add_argument("--json", action="store_true", help='print {"verdict": ..., "detail": ..., "olean_sha256": ...} only')
+    p.add_argument("--memory-mb", type=int, default=None, metavar="MB",
+                   help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
+                        "sandbox")
+    p.add_argument("--json", action="store_true",
+                   help='print {"verdict": ..., "detail": ..., "olean_sha256": ..., "olean_closure": ...} only')
     p.set_defaults(fn=cmd_probe_negation)
 
     p = sub.add_parser("fingerprint",
@@ -3259,8 +3266,12 @@ def main(argv=None) -> int:
     p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
                    help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
                         "(repeatable)")
+    p.add_argument("--memory-mb", type=int, default=None, metavar="MB",
+                   help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
+                        "sandbox")
     p.add_argument("--json", action="store_true",
-                   help='print {"fingerprints": {...}, "olean_sha256": {...}} (or {"error": ...}) only')
+                   help='print {"fingerprints": {...}, "olean_sha256": ..., "olean_closure": [...]} (or {"error": ...})'
+                        ' only')
     p.set_defaults(fn=cmd_fingerprint)
 
     p = sub.add_parser("trusted-manifest",
@@ -3272,6 +3283,8 @@ def main(argv=None) -> int:
         q.add_argument("--env", required=True, metavar="DIR", help="the pinned Lean env")
         q.add_argument("--out", default=None, metavar="FILE",
                        help="the manifest path (default: ~/telperion-tools/trusted-manifests/<hash>.json)")
+        if name == "build":
+            q.add_argument("--force", action="store_true", help="overwrite an existing manifest")
         q.set_defaults(fn=cmd_trusted_manifest)
 
     args = ap.parse_args(argv)

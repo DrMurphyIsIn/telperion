@@ -95,7 +95,7 @@ def test_coded_error_header_is_parsed():
 
 def test_missing_protocol_line_is_error():
     r = classify(["PREMISES 1"] + UNABLE)
-    assert r.verdict == "ERROR" and "no TP-FALSE result line" in r.detail
+    assert r.verdict == "ERROR" and "no FALSE result line" in r.detail      # R2-M6: no per-probe tag any more
 
 
 def test_protocol_tag_done_and_duplicates():
@@ -125,7 +125,7 @@ def test_run_probe_nonce_is_128_bit(tmp_path):
     (sub / "Foo.olean").write_bytes(b"foo")
     # the wrapper prints the replay script instead of running Lean: no protocol line, so ERROR
     seen = tmp_path / "seen.txt"
-    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", f'cat "$4" >> {seen}', "sh"],
+    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", f'for a; do s=$a; done; cat "$s" >> {seen}', "sh"],
                   untrusted_paths=[sub], trusted_env=env, manifest=manifest, elan_home=elan)
     assert r.verdict == "ERROR", r.detail
     m = re.search(r'def tag : String := "(TR[0-9a-f]+)"', seen.read_text())
@@ -278,10 +278,12 @@ def test_unavailable_negation_is_a_probe_only_note_and_untrusted_axioms_are_erro
 
 
 def test_replay_result_binds_the_olean():
+    closure = [["M", "olean", "cd" * 32]]
     ok = ReplayResult("OK", "modules=[M] constants=1 declared=[] axioms=[]", OK[:2] + GAVE_UP,
-                      olean_sha256={"M": "ab" * 32})
+                      olean_sha256="ab" * 32, olean_closure=closure)
     r = classify_replay(ok, ProbeSpec("M", "t"))
-    assert r.verdict == "VACUOUS" and r.olean_sha256 == "ab" * 32 and r.to_json()["olean_sha256"] == "ab" * 32
+    assert r.verdict == "VACUOUS" and r.olean_sha256 == "ab" * 32
+    assert r.to_json()["olean_sha256"] == "ab" * 32 and r.to_json()["olean_closure"] == closure
     r = classify_replay(ReplayResult("FAILED", "(kernel) declaration type mismatch"), ProbeSpec("M", "t"))
     assert r.verdict == "ERROR" and "replay refused" in r.detail and "olean_sha256" not in r.to_json()
 

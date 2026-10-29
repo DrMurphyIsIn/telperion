@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -11,11 +12,14 @@ from pathlib import Path
 import pytest
 
 from telperion.checks import lean_replay
-from telperion.checks.lean_replay import (build_trusted_manifest, default_manifest_path, olean_sha256, parse_axioms,
+from telperion.checks.lean_replay import (build_trusted_manifest, closure_digest, default_manifest_path, parse_axioms,
                                           parse_declared, parse_replay_output, pinned_env, render_replay_script,
                                           resolve_olean, run_replay, split_search_path, under_prefix,
                                           verify_trusted_manifest)
 from telperion.checks.lean_run import run_lean
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # shared lean_env helpers
 
 NONCE = "TR" + "ab" * 16
 CB = "def TelperionReplay.callback : Lean.Elab.Term.TermElabM Unit := TelperionReplay.line \"CB hi\"\n"
@@ -131,14 +135,18 @@ def test_manifest_detects_changed_added_and_removed_trusted_files(tmp_path):
         verify_trusted_manifest(p, tmp_path / "absent.json")
 
 
-def _fake_lean(log: Path, body: str) -> list[str]:
-    """A wrapper standing in for Lean: $2 is LEAN_PATH=..., $3 the binary, $4 the script. It logs $2, $3, the cwd and
-    the cwd's mode, then runs `body` with $t set to the script's nonce."""
-    return ["sh", "-c", f'echo "$2|$3|$(pwd)|$(stat -f %Lp .)" >> {log}; '
-            't=$(sed -n \'s/^def tag : String := "\\(.*\\)"$/\\1/p\' "$4"); ' + body, "sh"]
+FAKE_LEAN = Path(__file__).resolve().parent / "fake_lean_cli.py"
 
 
-OK_BODY = 'printf "%s-REPLAY OK m axioms=[propext]\\n%s-CB x\\n%s-DONE\\n" $t $t $t'
+def _fake_lean(log: Path, mode: str = "ok") -> list[str]:
+    """A wrapper standing in for Lean (tests/fake_lean_cli.py): it logs each call and answers the list and replay
+    runs as lean_env.fake_replay_output does for `mode`."""
+    import sys
+    return [sys.executable, str(FAKE_LEAN), str(log), mode]
+
+
+def _calls(log: Path) -> list[list[str]]:
+    return [ln.split("|") for ln in log.read_text().splitlines()]
 
 
 def _submission(tmp_path: Path) -> Path:
@@ -155,27 +163,71 @@ def test_run_replay_uses_only_pinned_anchors_and_a_private_cwd(tmp_path):
     sub = _submission(tmp_path)
     log = tmp_path / "log"
     r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
-                   wrapper=_fake_lean(log, OK_BODY))
+                   wrapper=_fake_lean(log))
     assert (r.status, r.lines, r.axioms) == ("OK", ["CB x"], ["propext"]), r
-    assert r.olean_sha256 == {"Foo": olean_sha256(sub / "Foo.olean")}
-    lean_path, binary, cwd, mode = log.read_text().strip().split("|")
-    assert lean_path == "LEAN_PATH=" + os.pathsep.join(p.entries) and binary == p.lean
-    assert mode == "700" and not under_prefix(cwd, [tmp_path]) and not os.path.exists(cwd)
+    import hashlib
+    closure = [["Foo", "olean", hashlib.sha256(b"foo").hexdigest()]]
+    assert r.olean_closure == closure and r.olean_sha256 == closure_digest(closure)
+    calls = _calls(log)
+    assert [c[5] for c in calls] == ["list", "replay"]                 # a list run, then the replay run
+    for lean_path, binary, cwd, mode, mem, _kind in calls:
+        assert lean_path == "LEAN_PATH=" + os.pathsep.join(p.entries) and binary == p.lean
+        assert mode == "700" and not under_prefix(cwd, [tmp_path]) and not os.path.exists(cwd)
+        assert mem == "--memory=8192"
+
+
+def test_run_replay_reads_only_private_copies_and_binds_the_closure(tmp_path, monkeypatch):
+    from telperion.checks import lean_replay
+    from lean_env import fake_replay_output
+    env, elan = _fake_env(tmp_path)
+    m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
+    sub = _submission(tmp_path)
+    seen = {}
+
+    def fake(cmd, cwd, timeout, input=None, env=None, read=None):
+        script = Path(cmd[-1]).read_text(encoding="utf-8")
+        out = fake_replay_output(script, "<TAG>-CB x\n")
+        if "def listOnly : Bool := true" not in script:
+            seen["search"] = re.search(r"def searchPath .* := \((\[.*\]) : List String\)", script).group(1)
+            seen["expect"] = re.search(r"def expectOleans .* := (\[.*\])", script).group(1)
+            if read is not None:                             # report a file beyond the copies
+                tag = re.search(r'def tag : String := "(TR[0-9a-f]+)"', script).group(1)
+                out = f"{tag}-READ {read}\n" + out
+        return 0, out
+    monkeypatch.setattr(lean_replay, "run_lean", fake)
+    r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan, wrapper=[])
+    assert r.status == "OK", r
+    # the replay searched the copies dir, not the submission dir, and expected the copy
+    assert str(sub) not in seen["search"] and "/telperion_replay_" in seen["search"]
+    assert re.fullmatch(r'\[\(`Foo, ".*/telperion_replay_[^/"]+/olean/Foo\.olean"\)\]', seen["expect"])
+    # a READ outside the copies is an ERROR
+    monkeypatch.setattr(lean_replay, "run_lean", lambda *a, **k: fake(*a, **k, read=str(sub / "Foo.olean")))
+    r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan, wrapper=[])
+    assert r.status == "ERROR" and "beyond the copies" in r.detail, r.detail
+
+
+def test_memory_flag_plumbing(tmp_path):
+    env, elan = _fake_env(tmp_path)
+    m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
+    sub = _submission(tmp_path)
+    for mem, flag in ((2048, "--memory=2048"), (None, "")):
+        log = tmp_path / f"log{mem}"
+        r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
+                       wrapper=_fake_lean(log), memory_mb=mem)
+        assert r.status == "OK" and [c[4] for c in _calls(log)] == [flag, flag], r
 
 
 def test_run_replay_reruns_once_with_needed_trusted_modules(tmp_path):
     env, elan = _fake_env(tmp_path)
     m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
     log = tmp_path / "log"
-    body = (f'if grep -q "^import Foo.Bar$" "$4"; then {OK_BODY}; '
-            'else printf "%s-REPLAY NEEDS Foo.Bar\\n%s-DONE\\n" $t $t; fi')
     sub = _submission(tmp_path)
     r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
-                   wrapper=_fake_lean(log, body))
+                   wrapper=_fake_lean(log, "needs"))
     assert (r.status, r.lines) == ("OK", ["CB x"]), r
-    assert len(log.read_text().splitlines()) == 2
-    always = 'printf "%s-REPLAY NEEDS Foo.Bar\\n%s-DONE\\n" $t $t'
-    r = run_replay("Foo", CB, trusted_env=env, manifest=m, elan_home=elan, wrapper=_fake_lean(log, always))
+    assert [c[5] for c in _calls(log)] == ["list", "replay", "replay"]
+    r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
+                   wrapper=_fake_lean(log, "always-needs"))
     assert r.status == "ERROR" and "after importing them" in r.detail
 
 
@@ -183,7 +235,7 @@ def test_run_replay_refuses_before_running_lean(tmp_path):
     env, elan = _fake_env(tmp_path)
     m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
     log = tmp_path / "log"
-    ran = _fake_lean(log, OK_BODY)
+    ran = _fake_lean(log)
     ml = env / ".lake" / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean"
     cases = {
         "lies under a trusted prefix": dict(untrusted_paths=[ml / "Mathlib"]),
@@ -196,7 +248,7 @@ def test_run_replay_refuses_before_running_lean(tmp_path):
         assert r.status == "ERROR" and why.strip() in r.detail, (why, r.detail)
     # the env as the project adds no submission dir (its own build dir is trusted): nothing to replay Foo from
     r = run_replay("Foo", CB, project=env, trusted_env=env, manifest=m, elan_home=elan, wrapper=ran)
-    assert r.status == "ERROR" and "not resolved" in r.detail and log.exists(), r.detail
+    assert r.status == "ERROR" and "did not list the target olean" in r.detail and log.exists(), r.detail
     log.unlink()
     (ml / "Mathlib" / "Basic.olean").write_bytes(b"tampered")
     r = run_replay("Foo", CB, trusted_env=env, manifest=m, elan_home=elan, wrapper=ran)
@@ -207,9 +259,18 @@ def test_run_replay_refuses_before_running_lean(tmp_path):
 def test_run_replay_timeout_is_error(tmp_path):
     env, elan = _fake_env(tmp_path)
     m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
-    r = run_replay("Foo", CB, trusted_env=env, manifest=m, elan_home=elan, wrapper=["sh", "-c", "sleep 60", "sh"],
-                   timeout=1)
+    sub = _submission(tmp_path)
+    r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
+                   wrapper=_fake_lean(tmp_path / "log", "sleep"), timeout=1)
     assert r.status == "ERROR" and "did not finish" in r.detail
+
+
+def test_build_trusted_manifest_refuses_to_overwrite_without_force(tmp_path):
+    env, elan = _fake_env(tmp_path)
+    m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
+    with pytest.raises(ValueError, match="already exists"):
+        build_trusted_manifest(env, m, elan)
+    assert build_trusted_manifest(env, m, elan, force=True) == m
 
 
 def test_run_reaps_the_process_group_after_a_normal_exit(tmp_path):
@@ -250,7 +311,7 @@ def test_render_targets_expectations_and_flags(tmp_path):
     assert "def allowAxioms : Bool := true" in src and "def allowSorry : Bool := true" in src
 
 
-def test_resolve_olean_and_olean_sha256_follow_import_resolution(tmp_path):
+def test_resolve_olean_follows_import_resolution_and_the_closure_digest_is_canonical(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     (a / "Mathlib").mkdir(parents=True)
     (b / "Mathlib").mkdir(parents=True)
@@ -261,12 +322,9 @@ def test_resolve_olean_and_olean_sha256_follow_import_resolution(tmp_path):
     assert resolve_olean([str(b), str(a)], "Mathlib.Evil") == os.path.realpath(b / "Mathlib" / "Evil.olean")
     assert resolve_olean([str(a), str(b)], "Solo") == os.path.realpath(b / "Solo.olean")
     assert resolve_olean([str(a)], "Nope") is None
-    import hashlib
-    f = b / "Solo.olean"
-    assert olean_sha256(f) == hashlib.sha256(b"s").hexdigest()
-    (b / "Solo.olean.server").write_bytes(b"v")
-    (b / "Solo.olean.private").write_bytes(b"p")
-    assert olean_sha256(f) == hashlib.sha256(b"svp").hexdigest()
+    x, y = ["M", "olean", "1" * 64], ["N", "olean.private", "2" * 64]
+    assert closure_digest([x, y]) == closure_digest([y, x]) != closure_digest([x])
+    assert closure_digest([x]) != closure_digest([["M", "olean", "3" * 64]])
 
 
 def test_default_manifest_path_is_outside_the_env_and_tracks_its_pins(tmp_path, monkeypatch):
@@ -494,10 +552,15 @@ def _build(lib: Path, module: str, body: str) -> None:
     src.write_text(body, encoding="utf-8")
     out = (lib / rel).with_suffix(".olean")
     out.parent.mkdir(parents=True, exist_ok=True)
-    p = subprocess.run([*_wrapper(), "lake", "env", "lean", "-R", str(lib / "src"), "-o", str(out), str(src)],
+    p = subprocess.run([*_wrapper(lib), "lake", "env", "lean", "-R", str(lib / "src"), "-o", str(out), str(src)],
                        cwd=LEAN_ENV, capture_output=True, text=True, timeout=3600)
     shutil.rmtree(lib / "src")
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+def _sha(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _import_normally(lib: Path, body: str) -> str:
@@ -520,7 +583,8 @@ def test_a_replayed_types_are_identical_to_imported_ones(lib, manifest):
     r = _replay(lib, manifest, "TpHonest", TYPE_CB)
     assert r.status == "OK" and "modules=[TpHonest]" in r.detail, (r.status, r.detail, r.output[-3000:])
     assert r.axioms is not None and set(r.axioms) <= CLEAN, r.axioms
-    assert r.olean_sha256 == {"TpHonest": olean_sha256(lib / "TpHonest.olean")}
+    closure = [["TpHonest", "olean", _sha(lib / "TpHonest.olean")]]
+    assert r.olean_closure == closure and r.olean_sha256 == closure_digest(closure)
     replayed = [ln for ln in r.lines if ln.startswith("TYPE ")]
     assert len(replayed) == 4
     # The same types through a normal import. `repr` of an Expr is its whole tree (binder names and infos, levels,
@@ -639,4 +703,24 @@ def test_l_target_olean_binding_and_several_targets(lib, manifest):
     assert r.status == "FAILED" and "olean-mismatch TpTiny" in r.detail, (r.status, r.detail)
     r = _replay(lib, manifest, ["TpTiny", "TpSorry"], FOUND_CB, trusted_imports=("Lean",), allow_sorry=True)
     assert r.status == "OK" and "modules=[TpTiny, TpSorry]" in r.detail, (r.status, r.detail)
-    assert r.olean_sha256 == {m: olean_sha256(lib / f"{m}.olean") for m in ("TpTiny", "TpSorry")}
+    closure = sorted([m, "olean", _sha(lib / f"{m}.olean")] for m in ("TpTiny", "TpSorry"))
+    assert r.olean_closure == closure and r.olean_sha256 == closure_digest(closure)
+
+
+@lean
+def test_m_changing_an_untrusted_dependency_changes_the_binding(lib, manifest):
+    # R2-I2: M imports the untrusted N; rebuilding N with a different statement must change olean_sha256 although
+    # M's own olean is unchanged
+    _build(lib, "TpN", "theorem TpN.a : 1 = 1 := rfl\n")
+    _build(lib, "TpM", "import TpN\ntheorem TpM.t : True := trivial\n")
+    r1 = _replay(lib, manifest, "TpM", FOUND_CB, trusted_imports=("Lean",))
+    assert r1.status == "OK" and "TpN" in r1.detail, (r1.status, r1.detail)
+    assert sorted(e[0] for e in r1.olean_closure) == ["TpM", "TpN"]
+    m_before = _sha(lib / "TpM.olean")
+    _build(lib, "TpN", "theorem TpN.a : 2 = 2 := rfl\n")
+    assert _sha(lib / "TpM.olean") == m_before
+    r2 = _replay(lib, manifest, "TpM", FOUND_CB, trusted_imports=("Lean",))
+    assert r2.status == "OK", (r2.status, r2.detail)
+    assert r2.olean_sha256 != r1.olean_sha256
+    m1 = [e for e in r1.olean_closure if e[0] == "TpM"]
+    assert m1 == [e for e in r2.olean_closure if e[0] == "TpM"] and m1[0][2] == m_before

@@ -11,10 +11,14 @@ from the project under test: the absolute ``lean`` binary of the toolchain its `
 toolchain's ``lib/lean``, and the realpaths of ``<env>/.lake/packages/*/.lake/build/lib/lean`` and
 ``<env>/.lake/build/lib/lean``. A sha256 manifest of every file Lean loads from there (``.olean*``, ``.ir*``, shared
 libraries, and the binary; ``build_trusted_manifest``, stored by default OUTSIDE the env, see ``default_manifest_path``)
-is verified before each run, and any change, addition or removal refuses the run. Each target's .olean is resolved and
-hashed in Python before the run, Lean must resolve it to that same file, and it must hash the same afterwards: the
-result's ``olean_sha256`` binds the check to the bytes it replayed. The submission's own dirs (``<project>/.lake/build/lib/lean`` and any ``untrusted_paths``) must lie
-under no trusted prefix. No ``lake`` runs, and the script and the process's cwd are in a private 0700 temp dir.
+is verified before each run, and any change, addition or removal refuses the run. A list run first names every
+untrusted file the replay will read (the whole untrusted closure, all parts); those files are COPIED into the private
+run dir and hashed there, and the replay reads ONLY the copies and reports each file it read, which must be exactly
+the copies. The result's ``olean_sha256`` (the digest of the sorted ``olean_closure`` list of [module, part,
+sha256]) binds the check to every untrusted byte it replayed. A same-user writer can still reach the copies while the
+run lasts; only a sandbox closes that. The submission's own dirs (``<project>/.lake/build/lib/lean`` and any
+``untrusted_paths``) must lie under no trusted prefix. Lean runs with ``--memory`` (default 8192 MB), its own
+best-effort allocation bound until there is a sandbox. No ``lake`` runs, and the script and the process's cwd are in a private 0700 temp dir.
 
 HOW (the Comparator / lean4checker approach). The generated script imports TRUSTED modules only and runs as the pinned
 ``lean`` with a LEAN_PATH of trusted entries only, so no ``import`` can reach an untrusted ``.olean``. Inside one
@@ -58,8 +62,13 @@ and anything that uses one then fails to replay. The callback itself is elaborat
 trusted environment only, so it cannot name an untrusted constant except as a ``Name`` literal.
 
 PROTOCOL. Every line the script prints starts with ``<nonce>-``, a 128-bit per-run tag, and messages are flattened to
-one line. There is exactly one ``REPLAY OK|FAILED|NEEDS`` line, then the callback's lines, then exactly one final
-``DONE``. Anything else is ERROR. Since no untrusted code runs, the tag is meaningful. Callers must still derive results
+one line. Only ``READ <file>`` (or, in a list run, ``CLOSURE``) lines come before exactly one ``REPLAY
+OK|FAILED|NEEDS|LISTED`` line, then the callback's lines, then exactly one final ``DONE``. Anything else is ERROR.
+No untrusted code WITH EFFECTS runs in the process: replay loads no initializer, elaborator or attribute, and a
+callback may evaluate statement terms (plausible's decidability checks) only through compiled TRUSTED code, since a
+replayed definition has no IR (it is refused, ``UNAVAILABLE``), and a pure kernel-checked term has no IO bridge
+(``IO`` actions exist only as opaque/extern constants of the trusted Init/System/IO.lean, which a safe term cannot
+run). So the tag is meaningful. Callers must still derive results
 from values their callback computed, never from logged text.
 
 REQUIRED FOR UNTRUSTED SUBMISSIONS: A SANDBOX (the owner's decision, not provided here). The ``.olean`` reader trusts
@@ -101,7 +110,8 @@ class ReplayResult:
     output: str = ""
     axioms: list[str] | None = None    # OK only: the axioms of the target modules' constants
     declared: list[str] = field(default_factory=list)          # OK only: axioms the untrusted closure declares
-    olean_sha256: dict[str, str] = field(default_factory=dict)  # OK only: per target module, see olean_sha256()
+    olean_sha256: str | None = None    # OK only: closure_digest of the replayed untrusted closure
+    olean_closure: list[list[str]] = field(default_factory=list)  # OK only: its [module, part, sha256] list
 
 
 @dataclass(frozen=True)
@@ -202,12 +212,14 @@ def _hash_all(files: list[str]) -> dict[str, str]:
         return dict(zip(files, pool.map(_sha256, files)))
 
 
-def build_trusted_manifest(trusted_env=None, path=None, elan_home=None) -> Path:
+def build_trusted_manifest(trusted_env=None, path=None, elan_home=None, force: bool = False) -> Path:
     """Write the sha256 manifest of the pinned env's trusted files to `path` (default `default_manifest_path`) and
     return its path. Run it once, by the owner, on the env as pinned. The manifest must be stored where no submission
     build can write, like the trusted files themselves."""
     pinned = pinned_env(trusted_env, elan_home)
     out = Path(path) if path is not None else default_manifest_path(pinned.root)
+    if out.exists() and not force:
+        raise ValueError(f"trusted manifest {out} already exists; refusing to overwrite it without force (--force)")
     out.parent.mkdir(parents=True, exist_ok=True)
     data = {"version": MANIFEST_VERSION, "toolchain": pinned.toolchain, "lean": pinned.lean,
             "prefixes": list(pinned.prefixes), "files": _hash_all(_trusted_files(pinned))}
@@ -256,6 +268,8 @@ def targetModules : List Name := __TARGETS__
 def expectOleans : List (Name × String) := __EXPECT__
 def allowAxioms : Bool := __ALLOW_AXIOMS__
 def allowSorry : Bool := __ALLOW_SORRY__
+/-- List mode: only walk the untrusted closure and print the files it would read (`CLOSURE`); no replay. -/
+def listOnly : Bool := __LIST_ONLY__
 def trustedPrefixes : List String := __PREFIXES__
 def searchPath : List System.FilePath := (__SEARCH__ : List String).map System.FilePath.mk
 
@@ -326,6 +340,7 @@ structure Closure where
   target : Array Name := #[]                        -- the target modules' own constants
   declared : Array Name := #[]                      -- axioms declared in the untrusted closure (allowAxioms only)
   needs : Array Name := #[]                         -- trusted modules this process did not import
+  files : Array (Name × System.FilePath) := #[]     -- every untrusted file read, with its module
 
 /-- The target's import closure: trusted modules stop the walk, untrusted ones are read as data. -/
 def collect (env : Environment) : ExceptT String IO Closure := do
@@ -347,6 +362,8 @@ def collect (env : Environment) : ExceptT String IO Closure := do
     if ← isTrustedFile f then
       if targetModules.contains m then
         throw s!"target module {m} resolves to the trusted .olean {f}; refusing"
+      if listOnly then
+        continue
       if (env.getModuleIdx? m).isNone then
         out := { out with needs := out.needs.push m }
       else
@@ -356,9 +373,14 @@ def collect (env : Environment) : ExceptT String IO Closure := do
       continue
     if (env.getModuleIdx? m).isSome then
       throw s!"untrusted .olean {f} has the name of the trusted module {m}"
-    let data ← match checkParts f (← readParts f) with
+    let parts ← readParts f
+    let data ← match checkParts f parts with
       | .ok d => pure d
       | .error e => throw e
+    let names := if parts.size == 1 then #[f]
+      else #[f, OLeanLevel.server.adjustFileName f, OLeanLevel.private.adjustFileName f]
+    for g in names do
+      out := { out with files := out.files.push (m, ← IO.FS.realPath g) }
     for i in data.imports do
       todo := todo.push i.module
     for c in data.constants do
@@ -531,34 +553,41 @@ set_option maxHeartbeats 0 in
     | .error e => TelperionReplay.line s!"REPLAY FAILED reading the closure: {e}"
     | .ok (.error e) => TelperionReplay.line s!"REPLAY FAILED {e}"
     | .ok (.ok c) =>
-      if !c.needs.isEmpty then
-        TelperionReplay.line s!"REPLAY NEEDS {" ".intercalate (c.needs.toList.map toString)}"
+      if TelperionReplay.listOnly then
+        for (m, f) in c.files do
+          TelperionReplay.line s!"CLOSURE {m}\t{f}"
+        TelperionReplay.line s!"REPLAY LISTED {c.files.size}"
       else
-        match ← (TelperionReplay.Replay.replay c.consts env).toBaseIO with
-        | .error e => TelperionReplay.line s!"REPLAY FAILED {e}"
-        | .ok env' =>
-          if let .error e := TelperionReplay.fidelity env env' c.consts then
-            TelperionReplay.line s!"REPLAY FAILED fidelity: {e}"
-          else
-            setEnv env'
-            let mut axs : Array Name := #[]
-            for n in c.target do
-              if env'.contains n then
-                for a in ← collectAxioms n do
-                  unless axs.contains a do axs := axs.push a
-            let axList := (axs.map toString).qsort (· < ·)
-            let declared := (c.declared.map toString).qsort (· < ·)
-            if axs.contains ``sorryAx && !TelperionReplay.allowSorry then
-              TelperionReplay.line s!"REPLAY FAILED the target module uses sorryAx (axioms={axList.toList})"
+        for (_, f) in c.files do
+          TelperionReplay.line s!"READ {f}"
+        if !c.needs.isEmpty then
+          TelperionReplay.line s!"REPLAY NEEDS {" ".intercalate (c.needs.toList.map toString)}"
+        else
+          match ← (TelperionReplay.Replay.replay c.consts env).toBaseIO with
+          | .error e => TelperionReplay.line s!"REPLAY FAILED {e}"
+          | .ok env' =>
+            if let .error e := TelperionReplay.fidelity env env' c.consts then
+              TelperionReplay.line s!"REPLAY FAILED fidelity: {e}"
             else
-              TelperionReplay.line (s!"REPLAY OK modules={c.modules.toList} constants={c.consts.size} " ++
-                s!"declared={declared.toList} axioms={axList.toList}")
-              -- A fresh heartbeat budget (replay's allocations must not use it up); a runtime exception (heartbeats,
-              -- deep recursion) is caught too, so that DONE is still printed.
-              withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := __HEARTBEATS__ * 1000 }) do
-                withCurrHeartbeats do
-                  tryCatchRuntimeEx TelperionReplay.callback fun ex => do
-                    TelperionReplay.line s!"CALLBACK FAILED {← ex.toMessageData.toString}"
+              setEnv env'
+              let mut axs : Array Name := #[]
+              for n in c.target do
+                if env'.contains n then
+                  for a in ← collectAxioms n do
+                    unless axs.contains a do axs := axs.push a
+              let axList := (axs.map toString).qsort (· < ·)
+              let declared := (c.declared.map toString).qsort (· < ·)
+              if axs.contains ``sorryAx && !TelperionReplay.allowSorry then
+                TelperionReplay.line s!"REPLAY FAILED the target module uses sorryAx (axioms={axList.toList})"
+              else
+                TelperionReplay.line (s!"REPLAY OK modules={c.modules.toList} constants={c.consts.size} " ++
+                  s!"declared={declared.toList} axioms={axList.toList}")
+                -- A fresh heartbeat budget (replay's allocations must not use it up); a runtime exception (heartbeats,
+                -- deep recursion) is caught too, so that DONE is still printed.
+                withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := __HEARTBEATS__ * 1000 }) do
+                  withCurrHeartbeats do
+                    tryCatchRuntimeEx TelperionReplay.callback fun ex => do
+                      TelperionReplay.line s!"CALLBACK FAILED {← ex.toMessageData.toString}"
   TelperionReplay.line "DONE"
 """
 
@@ -569,7 +598,7 @@ def _targets(target_module) -> list[str]:
 
 def render_replay_script(trusted_imports, target_module, trusted_prefixes, callback_src: str, nonce: str,
                          search_path=(), heartbeats: int = 200000, *, expect_oleans=None, allow_axioms: bool = False,
-                         allow_sorry: bool = False) -> str:
+                         allow_sorry: bool = False, list_only: bool = False) -> str:
     """The Lean script that replays `target_module`'s untrusted closure and then runs `callback_src`.
 
     `callback_src` is trusted Lean source (ours, never the module's) that must define
@@ -577,7 +606,8 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
     `target_module` is a module name or a list of them. `expect_oleans` maps each target to the realpath its .olean
     must resolve to (anything else, or no entry, is ``olean-mismatch``). `allow_axioms` lets the untrusted closure
     declare axioms (listed as ``declared=[...]``) and `allow_sorry` lets the targets use ``sorryAx``; both are refused
-    otherwise. `search_path` is the full olean search path, in order, that the closure is resolved over. It is DATA here and is
+    otherwise. `list_only` renders the LIST run: walk the closure, print a ``CLOSURE <module>\\t<file>`` line per
+    file it would read and ``REPLAY LISTED n``, replay nothing. `search_path` is the full olean search path, in order, that the closure is resolved over. It is DATA here and is
     never this process's LEAN_PATH. The callback runs with a fresh budget of `heartbeats` (thousands, as the
     ``maxHeartbeats`` option), and an exception it raises, a runtime one included, is reported as ``CALLBACK FAILED``."""
     if not re.fullmatch(r"[A-Za-z0-9]+", nonce):
@@ -592,6 +622,7 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
             .replace("__EXPECT__", f"[{pairs}]")
             .replace("__ALLOW_AXIOMS__", "true" if allow_axioms else "false")
             .replace("__ALLOW_SORRY__", "true" if allow_sorry else "false")
+            .replace("__LIST_ONLY__", "true" if list_only else "false")
             .replace("__PREFIXES__", _lean_strings(_realpath(p).rstrip("/") or "/" for p in trusted_prefixes))
             .replace("__SEARCH__", _lean_strings(search_path))
             .replace("__HEARTBEATS__", str(int(heartbeats)))
@@ -599,31 +630,56 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
 
 
 def parse_replay_output(output: str, nonce: str, rc: int = 0) -> tuple[str, str, list[str], list[str]]:
-    """(status, detail, callback lines, needed modules) from a run's output. Only lines carrying `nonce` count.
+    """(status, detail, lines, needed modules) from a run's output. Only lines carrying `nonce` count.
 
-    The status is OK, FAILED, NEEDS or ERROR. It is ERROR when the protocol is broken (not exactly one REPLAY line
-    first, not exactly one DONE as the last tagged line, a callback line without REPLAY OK, an OK line without an
-    axiom list), on a nonzero exit, and on a ``CALLBACK FAILED`` line (the callback lines are then still returned)."""
+    Before the one REPLAY line come only ``READ <file>`` (the untrusted files the replay read) or, in list mode,
+    ``CLOSURE <module>\\t<file>`` lines; see `pre_lines`. The status is OK, LISTED, FAILED, NEEDS or ERROR, and `lines`
+    are the callback's lines (OK) or the CLOSURE lines (LISTED). It is ERROR when the protocol is broken (not exactly
+    one REPLAY line, another line before it, not exactly one DONE as the last tagged line, a line after a FAILED,
+    NEEDS or LISTED, an OK line without an axiom list), on a nonzero exit, and on a ``CALLBACK FAILED`` line (the
+    callback lines are then still returned)."""
     if rc != 0:
         return "ERROR", f"lean exited {rc}: {output.strip()[-1500:]!r}", [], []
     tagged = [m.group(1) for m in re.finditer(rf"(?m)^{re.escape(nonce)}-(.*)$", output)]
-    replay = [t for t in tagged if re.match(r"REPLAY (OK|FAILED|NEEDS)\b", t)]
+    replay = [k for k, t in enumerate(tagged) if re.match(r"REPLAY (OK|FAILED|NEEDS|LISTED)\b", t)]
     if len(replay) != 1:
         return "ERROR", f"printed {len(replay)} REPLAY lines (want exactly one): {output.strip()[-1500:]!r}", [], []
-    if tagged.count("DONE") != 1 or tagged[-1] != "DONE" or tagged[0] != replay[0]:
-        return "ERROR", f"protocol broken (no single final DONE after a first REPLAY line): {output.strip()[-1500:]!r}", [], []
-    kind, _, rest = replay[0][len("REPLAY "):].partition(" ")
-    body = tagged[1:-1]
+    r = replay[0]
+    pre = tagged[:r]
+    if tagged.count("DONE") != 1 or tagged[-1] != "DONE" or \
+            not all(t.startswith("READ ") or t.startswith("CLOSURE ") for t in pre):
+        return "ERROR", f"protocol broken (no single final DONE after a REPLAY line): {output.strip()[-1500:]!r}", [], []
+    kind, _, rest = tagged[r][len("REPLAY "):].partition(" ")
+    body = tagged[r + 1:-1]
+    if kind in ("NEEDS", "FAILED", "LISTED") and body:
+        return "ERROR", f"lines after REPLAY {kind}", [], []
     if kind == "NEEDS":
-        return ("ERROR", "callback lines after REPLAY NEEDS", [], []) if body else ("NEEDS", rest, [], rest.split())
+        return "NEEDS", rest, [], rest.split()
     if kind == "FAILED":
-        return ("ERROR", "callback lines after REPLAY FAILED", [], []) if body else ("FAILED", rest, [], [])
+        return "FAILED", rest, [], []
+    if kind == "LISTED":
+        closure = [t for t in pre if t.startswith("CLOSURE ")]
+        return ("LISTED", rest, closure, []) if len(closure) == len(pre) else ("ERROR", "READ lines in list mode", [], [])
+    if any(t.startswith("CLOSURE ") for t in pre):
+        return "ERROR", "CLOSURE lines in a replay run", [], []
     if parse_axioms(rest) is None:
         return "ERROR", f"REPLAY OK line without an axiom list: {rest!r}", [], []
     failed = [t for t in body if t.startswith("CALLBACK FAILED")]
     if failed:
         return "ERROR", f"the callback failed: {failed[0][len('CALLBACK FAILED '):]}", body, []
     return "OK", rest, body, []
+
+
+def pre_lines(output: str, nonce: str, kind: str) -> list[str]:
+    """The payloads of the `kind` (``READ`` or ``CLOSURE``) lines before the REPLAY line."""
+    out = []
+    for m in re.finditer(rf"(?m)^{re.escape(nonce)}-(.*)$", output):
+        t = m.group(1)
+        if t.startswith("REPLAY "):
+            break
+        if t.startswith(kind + " "):
+            out.append(t[len(kind) + 1:])
+    return out
 
 
 def parse_axioms(detail: str) -> list[str] | None:
@@ -675,16 +731,18 @@ def resolve_olean(search, module: str) -> str | None:
     return None
 
 
-def olean_sha256(olean) -> str:
-    """sha256 of a module's .olean parts concatenated in order: the .olean, then .olean.server and .olean.private
-    when they exist (a ``module`` file has all three)."""
-    h = hashlib.sha256()
-    for part in (str(olean), f"{olean}.server", f"{olean}.private"):
-        if part == str(olean) or os.path.isfile(part):
-            with open(part, "rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-    return h.hexdigest()
+def _part(path: str) -> str:
+    """Which part of a module's olean a file is: ``olean``, ``olean.server`` or ``olean.private``."""
+    for suffix in (".olean.server", ".olean.private", ".olean"):
+        if path.endswith(suffix):
+            return suffix[1:]
+    raise ValueError(f"not an olean part: {path}")
+
+
+def closure_digest(entries) -> str:
+    """sha256 of the closure list (sorted ``[module, part, sha256]`` triples), as compact JSON: the ``olean_sha256``
+    that binds a check to every untrusted byte it replayed."""
+    return hashlib.sha256(json.dumps(sorted(map(list, entries)), separators=(",", ":")).encode()).hexdigest()
 
 
 def default_manifest_path(trusted_env=None) -> Path:
@@ -706,22 +764,42 @@ def default_manifest_path(trusted_env=None) -> Path:
 MANIFEST_HINT = "build it with `telperion trusted-manifest build --env {env}`"
 
 
+DEFAULT_MEMORY_MB = 8192
+_NO_CALLBACK = "def TelperionReplay.callback : Lean.Elab.Term.TermElabM Unit := pure ()\n"
+
+
+def _lean_cmd(prefix, pinned: PinnedEnv, script: Path, memory_mb) -> list[str]:
+    """The pinned lean on `script`, LEAN_PATH = the trusted entries only, with ``--memory`` when `memory_mb` is set."""
+    mem = [f"--memory={int(memory_mb)}"] if memory_mb else []
+    return [*prefix, "env", f"LEAN_PATH={os.pathsep.join(pinned.entries)}", pinned.lean, *mem, str(script)]
+
+
 def run_replay(target_module, callback_src: str, *, project=None, untrusted_paths=(),
                trusted_imports=("Mathlib",), trusted_env=None, manifest=None, elan_home=None,
                wrapper: list[str] | None = None, timeout: int = 1800, heartbeats: int = 200000,
                allow_axioms: bool = False, allow_sorry: bool = False, expect_oleans=None,
-               prefixes_override=None) -> ReplayResult:
+               prefixes_override=None, memory_mb: int | None = DEFAULT_MEMORY_MB) -> ReplayResult:
     """Replay `target_module` (a name, or a list of names) from the submission's olean dirs (see `submission_paths`)
     into a process that imports only `trusted_imports` from the pinned `trusted_env`, then run `callback_src` (see
     render_replay_script).
 
-    Before running, the trusted files are checked against `manifest` (default `default_manifest_path`), and each
-    target's .olean is resolved and hashed here; Lean must resolve it to the same file, and it must hash the same
-    after the run (`ReplayResult.olean_sha256`). The script runs as the pinned ``lean`` (through `wrapper`, leanlock by
-    default) in a private temp dir, with LEAN_PATH = the trusted entries only. If the closure needs a trusted module
-    that is not imported, it is added and the run is repeated once. `expect_oleans` and `prefixes_override` replace
-    the resolved oleans and the trusted prefixes given to the script (tests only). `allow_axioms` is for tests of the
-    replay itself only: no check passes it (Ruling 10, untrusted axioms are refused)."""
+    Before running, the trusted files are checked against `manifest` (default `default_manifest_path`). Then:
+
+    1. a LIST run (``import Lean`` only, nothing replayed) walks the untrusted closure over the submission's dirs and
+       prints every file the replay would read;
+    2. those files are COPIED into the private 0700 run dir and hashed there;
+    3. the replay run resolves the untrusted modules ONLY from the copies (expect_oleans = the copies' realpaths) and
+       prints every untrusted file it read, which must be exactly the copies; the copies must hash the same after
+       the run (a sanity check: no other process should reach them, though a same-user writer still can, as long as
+       there is no sandbox).
+
+    `ReplayResult.olean_sha256` is `closure_digest` of the copies (`olean_closure`). Both runs use the pinned
+    ``lean`` (through `wrapper`, leanlock by default) with ``--memory=<memory_mb>`` (Lean's own allocation bound, a
+    best-effort limit until the sandbox; None for none) and LEAN_PATH = the trusted entries only. If the closure needs
+    a trusted module that is not imported, it is added and the replay run is repeated once. `expect_oleans` and
+    `prefixes_override` replace the expected target oleans and the trusted prefixes given to the replay script
+    (tests only). `allow_axioms` is for tests of the replay itself only: no check passes it (Ruling 10, untrusted
+    axioms are refused)."""
     prefix = default_wrapper() if wrapper is None else list(wrapper)
     targets = _targets(target_module)
     try:
@@ -738,27 +816,73 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
             _module(m)
     except (OSError, ValueError) as exc:
         return ReplayResult("ERROR", f"cannot set up the replay: {exc}")
-    search = [*pinned.entries, pinned.libdir, *untrusted]
-    resolved = {m: resolve_olean(search, m) for m in targets}
-    before = {m: olean_sha256(f) for m, f in resolved.items() if f}
-    expect = dict(expect_oleans) if expect_oleans is not None else {m: f or "" for m, f in resolved.items()}
     prefixes = pinned.prefixes if prefixes_override is None else tuple(prefixes_override)
     env = {k: v for k, v in os.environ.items() if not k.startswith("LEAN")}
-    imports = list(dict.fromkeys(trusted_imports))
-    rdir = Path(tempfile.mkdtemp(prefix="telperion_replay_"))        # 0700, outside any project
+    rdir = Path(_realpath(tempfile.mkdtemp(prefix="telperion_replay_")))     # 0700, outside any project
+    copies_dir = rdir / "olean"
+    copies_dir.mkdir()
+    script = rdir / "Replay.lean"
+
+    def run(src: str) -> tuple[int, str]:
+        script.write_text(src, encoding="utf-8")
+        return run_lean(_lean_cmd(prefix, pinned, script, memory_mb), rdir, timeout, env=env)
+
     try:
+        # 1. list the untrusted closure over the submission's dirs
+        closure: list[tuple[str, str]] = []
+        if targets:
+            search = [*pinned.entries, pinned.libdir, *untrusted]
+            expect = {m: resolve_olean(search, m) or "" for m in targets}
+            nonce = f"TR{secrets.token_hex(16)}"
+            try:
+                src = render_replay_script(["Lean"], targets, pinned.prefixes, _NO_CALLBACK, nonce, search,
+                                           heartbeats, expect_oleans=expect, list_only=True,
+                                           allow_axioms=allow_axioms)
+                rc, out = run(src)
+            except ValueError as exc:
+                return ReplayResult("ERROR", str(exc))
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return ReplayResult("ERROR", f"replay did not finish (list run): {exc}")
+            status, detail, lines, _ = parse_replay_output(out, nonce, rc)
+            if status != "LISTED":
+                return ReplayResult(status if status == "FAILED" else "ERROR",
+                                    detail if status == "FAILED" else f"list run: {detail}", [], out)
+            for ln in lines:
+                mod, sep, f = ln[len("CLOSURE "):].partition("\t")
+                if not sep:
+                    return ReplayResult("ERROR", f"malformed CLOSURE line {ln!r}", [], out)
+                closure.append((mod, f))
+        # 2. copy every listed file into the private run dir, keeping its path below its submission dir
+        copies: dict[str, tuple[str, str]] = {}            # copy realpath -> (module, part)
+        main_copy: dict[str, str] = {}
+        for mod, f in closure:
+            base = next((u for u in untrusted if under_prefix(f, [u])), None)
+            if base is None:
+                return ReplayResult("ERROR", f"listed file {f} is in no submission dir", [], "")
+            dst = copies_dir / os.path.relpath(f, base)
+            if dst.exists():
+                return ReplayResult("ERROR", f"two listed files map to the copy {dst}", [], "")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(f, dst)
+            copies[str(dst)] = (mod, _part(str(dst)))
+            if _part(str(dst)) == "olean":
+                main_copy[mod] = str(dst)
+        missing = [m for m in targets if m not in main_copy]
+        if missing:
+            return ReplayResult("ERROR", f"the list run did not list the target olean of {missing}", [], "")
+        entries = sorted((mod, part, _sha256(c)) for c, (mod, part) in copies.items())
+        # 3. replay from the copies only
+        search = [*pinned.entries, pinned.libdir, str(copies_dir)]
+        expect = dict(expect_oleans) if expect_oleans is not None else {m: main_copy.get(m, "") for m in targets}
+        imports = list(dict.fromkeys(trusted_imports))
         for _attempt in range(2):
             nonce = f"TR{secrets.token_hex(16)}"
             try:
                 src = render_replay_script(imports, targets, prefixes, callback_src, nonce, search, heartbeats,
                                            expect_oleans=expect, allow_axioms=allow_axioms, allow_sorry=allow_sorry)
+                rc, out = run(src)
             except ValueError as exc:
                 return ReplayResult("ERROR", str(exc))
-            f = rdir / "Replay.lean"
-            f.write_text(src, encoding="utf-8")
-            try:
-                rc, out = run_lean([*prefix, "env", f"LEAN_PATH={os.pathsep.join(pinned.entries)}", pinned.lean,
-                                    str(f)], rdir, timeout, env=env)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 return ReplayResult("ERROR", f"replay did not finish: {exc}")
             status, detail, lines, needs = parse_replay_output(out, nonce, rc)
@@ -767,14 +891,19 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
                     return ReplayResult("ERROR", f"replay still needs {needs} after importing them", [], out)
                 imports += needs
                 continue
+            if status == "LISTED":
+                return ReplayResult("ERROR", "a list result from the replay run", [], out)
             res = ReplayResult(status, detail, lines, out, parse_axioms(detail) if status == "OK" else None)
             if status == "OK":
+                read = set(pre_lines(out, nonce, "READ"))
+                if read != set(copies):
+                    return ReplayResult("ERROR", f"the replay read {sorted(read - set(copies))[:3]} beyond the copies "
+                                        f"or missed {sorted(set(copies) - read)[:3]}", lines, out)
+                if sorted((mod, part, _sha256(c)) for c, (mod, part) in copies.items()) != entries:
+                    return ReplayResult("ERROR", "a copied olean changed during the run", lines, out)
                 res.declared = parse_declared(detail)
-                after = {m: olean_sha256(f) for m, f in resolved.items() if f}
-                if after != before or len(before) != len(targets):
-                    return ReplayResult("ERROR", "a target .olean changed during the run, or was not resolved", lines,
-                                        out)
-                res.olean_sha256 = after
+                res.olean_closure = [list(e) for e in entries]
+                res.olean_sha256 = closure_digest(entries)
             return res
         return ReplayResult("ERROR", f"replay needs more trusted modules after one retry: {detail}", [], out)
     finally:

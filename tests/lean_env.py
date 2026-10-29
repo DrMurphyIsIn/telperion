@@ -80,3 +80,22 @@ def session_trusted_manifest(env_dir) -> Path:
         _SESSION_MANIFEST[key] = build_trusted_manifest(env_dir, d / "trusted.json")
     os.environ["TELPERION_TRUSTED_MANIFEST"] = str(_SESSION_MANIFEST[key])
     return _SESSION_MANIFEST[key]
+
+
+def fake_replay_output(script: str, ok_body: str = "", needs: str | None = None, always: bool = False) -> str:
+    """What a replay script would print, for pure tests: in a list run, one CLOSURE line per target (its expected
+    olean, no dependencies) and LISTED; in a replay run, one READ line per target (its expected copy), then REPLAY OK,
+    `ok_body` (callback output, untagged or not) and DONE; or REPLAY NEEDS `needs` unless the script imports it."""
+    import re
+    tag = re.search(r'def tag : String := "(TR[0-9a-f]+)"', script).group(1)
+    expect = re.search(r"def expectOleans : List \(Name × String\) := \[(.*)\]", script).group(1)
+    pairs = re.findall(r'\(`([^,]+), "([^"]*)"\)', expect)
+    out = []
+    if "def listOnly : Bool := true" in script:
+        out += [f"CLOSURE {m}\t{f}" for m, f in pairs if f] + [f"REPLAY LISTED {len(pairs)}", "DONE"]
+        return "".join(f"{tag}-{ln}\n" for ln in out)
+    out += [f"READ {f}" for _m, f in pairs if f]
+    if needs is not None and (always or f"\nimport {needs}\n" not in script):
+        return "".join(f"{tag}-{ln}\n" for ln in out + [f"REPLAY NEEDS {needs}", "DONE"])
+    head = "".join(f"{tag}-{ln}\n" for ln in out + ["REPLAY OK modules=[] constants=0 declared=[] axioms=[propext]"])
+    return head + ok_body.replace("<TAG>", tag) + f"{tag}-DONE\n"
