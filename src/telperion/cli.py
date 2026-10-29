@@ -2545,18 +2545,25 @@ def cmd_probe_negation(args) -> int:
     import json as _json
     import shlex
 
-    from .checks.negation_probe import ProbeResult, ProbeSpec, read_signature, run_probe
+    from .checks import negation_probe as np_
+    from .checks.negation_probe import ProbeResult, ProbeSpec, local_command_problems, read_signature
     from .missions.judge import JudgeError
 
     try:
-        file_imports, prelude, binders, concl = read_signature(
-            Path(args.file).read_text(encoding="utf-8"), args.theorem)
-        spec = ProbeSpec(args.imports or file_imports, prelude, binders, concl, args.witness)
-        res = run_probe(spec, Path(args.project),
-                        wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
-                        timeout=args.timeout)
+        text = Path(args.file).read_text(encoding="utf-8")
+        bad = local_command_problems(text, imported=bool(args.imports))
+        if bad:
+            res = ProbeResult("ERROR", bad)
+        else:
+            file_imports, prelude, binders, concl = read_signature(text, args.theorem)
+            spec = ProbeSpec(args.imports or file_imports, prelude, binders, concl, args.witness)
+            res = np_.run_probe(spec, Path(args.project),
+                                wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                                timeout=args.timeout)
     except (OSError, JudgeError) as exc:
         res = ProbeResult("ERROR", f"cannot read {args.theorem} from {args.file}: {exc}")
+    except Exception as exc:  # any surprise is ERROR (exit 2), never a traceback or a failing verdict
+        res = ProbeResult("ERROR", f"probe-negation failed: {type(exc).__name__}: {exc}")
     if args.json:
         print(_json.dumps(res.to_json()))
     else:
@@ -3163,8 +3170,10 @@ def main(argv=None) -> int:
                    help="a term proving `∃ <binders>, True` (the hypotheses are satisfiable)")
     p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
                    help="module to import instead of the file's own imports (repeatable). REQUIRED "
-                        "when the statement uses definitions local to its file: pass that file's "
-                        "module (and Mathlib if it does not import it), or the probe is ERROR")
+                        "when the file declares anything besides theorems (local definitions can "
+                        "silently change what the statement's names mean): pass that file's BUILT "
+                        "module, or the probe is ERROR. local/scoped/private declarations and "
+                        "`variable`s are ERROR even with --import")
     p.add_argument("--wrapper", default=None,
                    help="command prefix before `lake env lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")

@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 from telperion.checks.negation_probe import classify, render_probes
 
-OK = (0, "")
+# Fix round 2: a compiled `false`/`witness` probe counts only with its `#print axioms` line, clean axioms only.
+OK = (0, "'_tp_false' does not depend on any axioms\n'_tp_witness' depends on axioms: [propext]\n")
 
 
 def test_false_compiled_is_vacuous():
@@ -32,7 +33,7 @@ def test_witness():
 
 def test_render_contains_parts():
     src = render_probes(["Mathlib"], "", "(x : ℕ) (h : x < 3)", "x < 5", None)
-    assert "example (x : ℕ) (h : x < 3) : False" in src["false"]
+    assert "theorem _tp_false (x : ℕ) (h : x < 3) : False" in src["false"]
     assert "plausible" in src["negation"] and "witness" not in src
 
 
@@ -93,7 +94,7 @@ def test_render_autoimplicit_off_and_witness_binders():
     src = render_probes(["Mathlib"], "open Nat", "{n : ℕ} [Fact (1 < n)] (h : n < 3)", "n = 2", "⟨2, ⟨by norm_num⟩, by norm_num, trivial⟩")
     for s in src.values():
         assert "set_option autoImplicit false in" in s and "open Nat" in s
-    assert "example : ∃ (n : ℕ) (_ : Fact (1 < n)) (h : n < 3), True :=" in src["witness"]
+    assert "theorem _tp_witness : ∃ (n : ℕ) (_ : Fact (1 < n)) (h : n < 3), True :=" in src["witness"]
 
 
 def test_read_signature_and_cli_json(tmp_path, monkeypatch, capsys):
@@ -178,3 +179,133 @@ def test_cli_help_documents_local_definitions(capsys):
     with pytest.raises(SystemExit):
         cli.main(["probe-negation", "--help"])
     assert "local" in capsys.readouterr().out
+
+
+# Fix round 2. (1) local/shadowing declarations; the reviewer's example: in the real file `factorial` is
+# `Foo.factorial` (current namespace beats `open Nat`), in a probe without it it would be `Nat.factorial`.
+SHADOW = ("import Mathlib\n\nnamespace Foo\nopen Nat\n\ndef factorial (n : ℕ) : ℕ := n\n\n"
+          "theorem t (n : ℕ) : factorial n ≤ n := le_refl _\n\nend Foo\n")
+
+
+def test_scanner_refuses_def_without_import():
+    from telperion.checks.negation_probe import local_command_problems
+    bad = local_command_problems(SHADOW, imported=False)
+    assert bad and "line 6" in bad and "def" in bad
+    assert "local declarations can change name resolution; pass --import <module>" in bad
+    assert local_command_problems(SHADOW, imported=True) is None
+
+
+def test_scanner_always_refuses_local_scoped_private_variable():
+    from telperion.checks.negation_probe import local_command_problems
+    for cmd in ("local notation \"‖\" x \"‖\" => x + 1", "scoped infix:50 \" ≺ \" => LT.lt",
+                "attribute [local simp] Nat.add_comm", "@[local simp] theorem s : 1 = 1 := rfl",
+                "private def factorial (n : ℕ) : ℕ := n", "variable [inst : Inhabited ℕ]",
+                "local instance : Inhabited ℕ := ⟨3⟩"):
+        text = f"import Mathlib\n\nnamespace Foo\n{cmd}\n\ntheorem t (n : ℕ) : n ≤ n := le_refl _\n"
+        bad = local_command_problems(text, imported=True)
+        assert bad and "line 4" in bad, cmd
+
+
+def test_scanner_allows_theorems_opens_options_comments():
+    from telperion.checks.negation_probe import local_command_problems
+    text = ("import Mathlib\n/- def hidden : ℕ := 0\n-/\nuniverse u\nset_option maxHeartbeats 400000\n"
+            "open scoped BigOperators\nnamespace Foo\n-- def also_hidden := 1\nnoncomputable section\n"
+            "theorem a (n : ℕ) : n ≤ n := le_refl _\nlemma b (n : ℕ) : n ≤ n + 1 := by\n  omega\nend\nend Foo\n")
+    assert local_command_problems(text, imported=False) is None
+
+
+def test_cli_shadowing_is_error(tmp_path, capsys):
+    import json
+    from telperion import cli
+    f = tmp_path / "S.lean"
+    f.write_text(SHADOW, encoding="utf-8")
+    rc = cli.main(["probe-negation", "--project", str(tmp_path), "--file", str(f), "--theorem", "Foo.t", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 2 and out["verdict"] == "ERROR" and "line 6" in out["detail"]
+
+
+# (2) REFUTED only on plausible's banner, not on the phrase anywhere in the output.
+def test_counterexample_phrase_outside_banner_is_not_refuted():
+    neg = (0, "Unable to find a counter-example\nf.lean:3:0: warning: unused `s = \"Found a counter-example!\"`\n"
+              "f.lean:3:0: warning: declaration uses `sorry`\n")
+    assert classify({"false": AESOP, "negation": neg}).verdict == "PROBE_ONLY"
+    neg2 = (1, "f.lean:3:8: error: type mismatch \"Found a counter-example!\"\n")
+    assert classify({"false": AESOP, "negation": neg2}).verdict == "ERROR"
+
+
+# (3) any unexpected exception is ERROR, exit 2, JSON shape kept.
+def test_cli_unexpected_exception_is_error(tmp_path, monkeypatch, capsys):
+    import json
+    from telperion import cli
+    from telperion.checks import negation_probe as np_
+    f = tmp_path / "T.lean"
+    f.write_text("import Mathlib\n\ntheorem t (n : ℕ) : n ≤ n := le_refl _\n", encoding="utf-8")
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(np_, "run_probe", boom)
+    rc = cli.main(["probe-negation", "--project", str(tmp_path), "--file", str(f), "--theorem", "t", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 2 and out["verdict"] == "ERROR" and "kaboom" in out["detail"]
+
+
+# (4) the wall-clock timeout kills the whole process group, grandchildren included.
+def test_wallclock_timeout_kills_process_group(tmp_path):
+    import time
+    from telperion.checks.negation_probe import ProbeSpec, run_probe
+    pidfile = tmp_path / "child.pid"
+    wrapper = ["sh", "-c", f"sleep 60 & echo $! > {pidfile}; wait", "sh"]
+    r = run_probe(ProbeSpec(["Mathlib"], "", "(x : ℕ)", "x = x", None), tmp_path, wrapper=wrapper, timeout=1)
+    assert r.verdict == "ERROR" and "did not finish" in r.detail
+    pid = int(pidfile.read_text().strip())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"grandchild {pid} outlived the timeout")
+    assert not (tmp_path / ".telperion_probe").exists()
+
+
+# (6) axiom audit of the verdict-producing probes.
+def test_false_probe_with_nonstandard_axiom_not_counted():
+    r = classify({"false": (0, "'Foo._tp_false' depends on axioms: [bad]\n"), "negation": UNABLE})
+    assert r.verdict == "PROBE_ONLY" and "probe 'false' used non-standard axioms ['bad']; not counted" in r.detail
+
+
+def test_compiled_probe_without_axiom_line_not_counted():
+    r = classify({"false": (0, ""), "negation": UNABLE, "witness": (0, "")})
+    assert r.verdict == "PROBE_ONLY" and "probe 'false'" in r.detail and "probe 'witness'" in r.detail
+
+
+def test_witness_with_sorryax_not_counted_and_namespaced_clean_counts():
+    w = (0, "'Foo._tp_witness' depends on axioms: [propext,\n sorryAx]\n")
+    r = classify({"false": AESOP, "negation": UNABLE, "witness": w})
+    assert r.verdict == "PROBE_ONLY" and "sorryAx" in r.detail
+    f = (0, "'Foo._tp_false' depends on axioms: [propext, Classical.choice, Quot.sound]\n")
+    assert classify({"false": f, "negation": UNABLE}).verdict == "VACUOUS"
+
+
+@lean
+def test_lean_bad_axiom_is_not_vacuous():
+    from telperion.checks.negation_probe import run_probe, ProbeSpec
+    prelude = "namespace TpBad\n@[aesop safe apply] axiom bad : False"
+    r = run_probe(ProbeSpec(["Mathlib"], prelude, "(x : ℕ) (h : x < 3)", "x < 5", None), Path(LEAN_ENV))
+    assert r.verdict == "PROBE_ONLY" and "non-standard axioms ['bad']" in r.detail, r.detail
+
+
+@lean
+def test_lean_shadowing_example():
+    # the hazard: the spec as a probe without the local def reads `factorial` as `Nat.factorial` and is REFUTED ...
+    from telperion.checks.negation_probe import run_probe, ProbeSpec, read_signature
+    imps, prelude, binders, concl = read_signature(SHADOW, "Foo.t")
+    assert run_probe(ProbeSpec(imps, prelude, binders, concl, None), Path(LEAN_ENV)).verdict == "REFUTED"
+    # ... so the CLI refuses the file before any Lean runs
+    import tempfile
+    from telperion import cli
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "S.lean"
+        f.write_text(SHADOW, encoding="utf-8")
+        assert cli.main(["probe-negation", "--project", LEAN_ENV, "--file", str(f), "--theorem", "Foo.t"]) == 2
