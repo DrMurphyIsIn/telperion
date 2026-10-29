@@ -72,6 +72,80 @@ package `ten-proofs`, module `Permanent`). The Comparator matches theorems by
 fully-qualified name, so challenge and solution are different *modules* under the
 same names.
 
+## Kernel policy
+
+Comparator's second kernel is one of our two defenses against a bad Lean kernel. The
+other is just running a *recent enough* one, and that turned out to need its own
+enforcement, because for a while a handful of example islands were quietly pinned to
+a toolchain old enough to predate real kernel fixes.
+
+Lean v4.33.1 landed a cluster of kernel soundness fixes: #14806 (an order-dependent
+defeq cache — two calls that should agree on whether two terms are definitionally
+equal could disagree depending on what had already been cached), #14807 (`isProp`
+accepting a stuck type it shouldn't have), #14808 (a gap in the recursor checks),
+#14582 (non-uniform inductives), and #14849 (a numeral-size check). Any one of these,
+on its own, is the kind of bug that lets a false theorem through the kernel — exactly
+what Telperion's whole trust model exists to rule out. So we don't treat "the kernel
+accepted it" as good enough until the kernel in question is new enough to have all
+five fixes. `leanprover/lean4:v4.34.1` is the first tagged release that carries the
+complete set, and that's why it's the floor: `telperion.checks.kernel_policy.FLOOR`.
+
+The policy itself (`src/telperion/checks/kernel_policy.py`, spec 5.1) walks every
+tracked `lean-toolchain` file in the repo (skipping anything under `.lake/`, since
+that's vendored dependency code we don't control) and compares it against the floor.
+Run it yourself with:
+
+```
+telperion kernel-policy check
+```
+
+A project below the floor fails the check — unless it's named in
+`kernel_policy_exceptions.toml` at the repo root. That file is how we admit that a
+handful of older example islands were proved before v4.34.1 existed, without
+pretending the problem doesn't exist. Each entry looks like this:
+
+```toml
+[[exception]]
+project = "examples/bernoulli/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; judged with nanoda"
+```
+
+`project` is the directory holding the `lean-toolchain` file, `toolchain` is the exact
+pinned string (it has to match what's on disk, or the check flags a "toolchain
+mismatch" — the exception is for a *specific* pin, not a standing exemption from the
+floor), and `reason` says why it's safe anyway. In every case so far that reason comes
+down to the same thing: the project is also judged through Comparator with nanoda
+enabled, so even though the Lean kernel it was built with predates the fixes, a
+second, independently-implemented kernel is standing behind the same proof.
+
+The list is **shrink-only**. An exception can be removed (because the project's
+toolchain got bumped past the floor) or edited to match a new pin, but a *new*
+exception should only ever appear for a project that genuinely predates the floor —
+never as a way to let a brand-new project skip ahead of it. The check itself leans on
+this: an exception for a project that now meets the floor is flagged as "stale" and
+has to be deleted, and an exception for a project that no longer exists at all is
+flagged as stale too. There's no code path that silently grows the list; growing it is
+something a human has to do on purpose, in a reviewed commit.
+
+### The heavy-node rule
+
+The same spec section also governs the Comparator configs we *render* for judging,
+via `judge_config_problems` in the same module. Two things have to be true of every
+rendered config: the axiom whitelist has to be exactly `CLEAN_AXIOMS` (no extra axioms
+smuggled in, nothing missing), and `enable_nanoda` has to be on — nanoda, the second
+kernel, has to actually run.
+
+The one place nanoda is allowed to be off is a **heavy node**: one whose config sets
+`heavy_certificates` or `judge_via = "heavy"`. Those are nodes whose certificates are
+too expensive to re-export and re-check through Comparator's normal path in CI, so
+instead they get a **local** second-kernel re-judge — someone runs nanoda against them
+by hand, off to the side, and that re-judge is what stands in for the CI-driven check
+everything else gets. A heavy node without nanoda in its rendered config isn't skipping
+the second kernel; it's just getting it from a different, out-of-band place. Anything
+*not* marked heavy that ships with `enable_nanoda: false` is a bug, and
+`judge_config_problems` — and `judge.build_bundle`, which calls it — will say so.
+
 ## Running it end-to-end
 
 All pins are **v4.32.0** — the toolchain, mathlib, and the comparator tag must
