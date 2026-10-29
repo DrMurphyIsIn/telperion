@@ -833,6 +833,59 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+#: Nodes created on or after this date are granted `proved` only with a passing `[checks]`
+#: record (spec 5.2 grant rule, step 4 Task 4). Earlier nodes are "pre-process".
+CHECKS_CUTOFF = "2026-10-28"
+
+
+def checks_required(node: Node) -> bool:
+    """True unless the node's `created` is an explicit, valid date before CHECKS_CUTOFF.
+
+    Ruling 2 (step 4): an EMPTY `created` requires checks (fail-closed) -- otherwise a new node
+    that omits the field skips every check. So does one that does not parse as an ISO date:
+    a string compare alone would read "1999" as pre-process.
+    """
+    created = (node.created or "").strip()
+    try:
+        date.fromisoformat(created[:10])
+    except ValueError:
+        return True
+    return created[:10] >= CHECKS_CUTOFF
+
+
+def checks_problem(campaign_root: Path, node: Node) -> str:
+    """"" iff the node's `[checks]` record passes on the artifact currently on disk; else why not.
+
+    Passing: probe verdict WITNESSED, or PROBE_ONLY with a reviewer's `signoff: <who>` in the
+    note (the probe is one-sided, spec 5.2); VACUOUS, REFUTED and ERROR block. The closure
+    verdict must be PASS. Currency is checked by the artifact SOURCE digest only: the record's
+    `olean_sha256` (the replayed closure the probe and fingerprint both ran on) cannot be
+    recomputed without a build, so it is recorded for the reader and a changed source is what
+    makes the record stale. Does not look at the cutoff; the gate applies `checks_required`.
+    """
+    k = node.checks
+    if k is None:
+        return "no [checks] record (`mission checks-record`)"
+    if k.probe_verdict == "PROBE_ONLY":
+        if not re.search(r"signoff:\s*\S", k.note or ""):
+            return ("negation probe is PROBE_ONLY (one-sided: nothing witnessed the hypotheses); "
+                    "it needs a reviewer's 'signoff: <who>' in the [checks] note")
+    elif k.probe_verdict != "WITNESSED":
+        return f"negation probe verdict is {k.probe_verdict} (recorded {k.date})"
+    if k.closure_verdict != "PASS":
+        return f"closure audit verdict is {k.closure_verdict} (recorded {k.date})"
+    if node.proof is None:
+        return "[checks] recorded but the node has no artifact"
+    art = Path(campaign_root) / node.proof.artifact
+    if not art.exists():
+        return f"artifact {node.proof.artifact!r} does not exist"
+    cur = sha256_file(art)
+    if cur != k.artifact_sha256:
+        return (f"[checks] of {k.date} were on artifact sha256 {k.artifact_sha256[:12]}..., but "
+                f"the artifact on disk is {cur[:12]}...; re-run the checks on the current artifact")
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Migration and report
 # ---------------------------------------------------------------------------
@@ -995,6 +1048,25 @@ def render_provenance_report(campaign) -> str:
         if weak:
             lines.append(f"  {r.slug:<48} comparator={r.comparator_run} "
                          f"WEAKLY CHECKED: {'; '.join(weak)}")
+    # Step 4 Task 4: the spec 5.2 checks, for every proved node the grant rule covers. Nodes
+    # created before the cutoff were granted without them and are counted, not listed.
+    pre = 0
+    for r in proved:
+        node = campaign.nodes[r.slug]
+        if not checks_required(node):
+            pre += 1
+            continue
+        problem = checks_problem(campaign.root, node)
+        k = node.checks
+        if not problem:
+            signoff = " with sign-off" if k.probe_verdict == "PROBE_ONLY" else ""
+            lines.append(f"  {r.slug:<48} checks: probe {k.probe_verdict}{signoff}, closure "
+                         f"{k.closure_verdict} (recorded {k.date})")
+        else:
+            lines.append(f"  {r.slug:<48} checks: NOT PASSING -- {problem}")
+    if pre:
+        lines.append(f"  ({pre} proved node(s) pre-process: created before {CHECKS_CUTOFF}, "
+                     "no [checks] required)")
     return "\n".join(lines) + "\n"
 
 

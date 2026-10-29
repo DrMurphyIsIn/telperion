@@ -1783,6 +1783,129 @@ def cmd_mission_rejudge_record(args) -> int:
     return 0
 
 
+def cmd_mission_checks_record(args) -> int:
+    """Record the spec 5.2 checks (negation probe, closure audit, statement fingerprint) for a node.
+
+    Every verdict is read from the checks' own JSON output, never from a flag:
+    - `--probe-json`: `telperion probe-negation --json` stdout, {"verdict", "detail",
+      "olean_sha256", "olean_closure"};
+    - `--fingerprint-json`: `telperion fingerprint --json` stdout, {"fingerprints",
+      "olean_sha256", "olean_closure"} (or {"error"}, refused);
+    - `--closure-json`: the file `telperion audit-closure --json FILE` writes
+      (closure_audit.AuditResult.to_json). PASS only when its "verdict" is "PASS" AND "ok" is
+      true (a clean Lean exit); anything else, including no verdict, is recorded as FAIL.
+
+    Ruling 9: the probe and the fingerprint must have run on the SAME replayed olean closure,
+    so both JSONs must carry the same `olean_sha256`; it is stored next to the artifact's
+    source sha256. The fingerprinted theorem (`--target`, or the only one in the JSON) must be
+    one of the closure audit's targets.
+
+    Refuses (exit 2, no record): a malformed or unreadable JSON, an unknown probe verdict, a
+    missing or mismatched `olean_sha256`, an ambiguous or unaudited fingerprint target, no
+    proof link or a missing artifact, status `deprecated` or `refuted`. Otherwise writes the
+    record and exits 0 when it passes `provenance.checks_problem`, 1 when it does not (e.g.
+    VACUOUS, or PROBE_ONLY without a `signoff:` in --note). Never changes the node's status.
+    """
+    import dataclasses as _dc
+    import json as _json
+    from datetime import date as _date
+
+    from .missions.provenance import checks_problem, sha256_file
+    from .missions.registry import load_campaign
+    from .missions.schema import PROBE_VERDICTS, ChecksRecord, SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    camp_root = _resolve_campaign(_missions_root(args), slug,
+                                  getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+
+    def refuse(msg: str) -> int:
+        print(f"{slug}: {msg}. Refusing to record.", file=sys.stderr)
+        return 2
+
+    if node.proof is None:
+        return refuse("no artifact linked; the checks are about an artifact")
+    art = camp_root / node.proof.artifact
+    if not art.exists():
+        return refuse(f"artifact {node.proof.artifact!r} does not exist")
+    if node.status in ("deprecated", "refuted"):
+        return refuse(f"status is {node.status!r}; checks are recorded for a node that is or "
+                      "may become proved")
+
+    docs = {}
+    for name, path in (("probe", args.probe_json), ("fingerprint", args.fingerprint_json),
+                       ("closure", args.closure_json)):
+        try:
+            docs[name] = _json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return refuse(f"cannot read the {name} JSON {path}: {exc}")
+        if not isinstance(docs[name], dict):
+            return refuse(f"the {name} JSON {path} is not an object")
+    probe, fp, closure = docs["probe"], docs["fingerprint"], docs["closure"]
+
+    verdict = probe.get("verdict")
+    if verdict not in PROBE_VERDICTS:
+        return refuse(f"the probe JSON's verdict {verdict!r} is not one of {PROBE_VERDICTS}")
+    if "error" in fp or not isinstance(fp.get("fingerprints"), dict):
+        why = fp.get("error", 'no "fingerprints" object')
+        return refuse(f"the fingerprint JSON holds no fingerprints ({why})")
+    if "verdict" not in closure or "ok" not in closure or not isinstance(closure.get("targets"), list):
+        return refuse("the closure JSON is not `audit-closure --json` output (needs \"verdict\", "
+                      "\"ok\" and \"targets\")")
+
+    # Ruling 9: both checks ran on one replayed closure.
+    p_olean, f_olean = probe.get("olean_sha256"), fp.get("olean_sha256")
+    if not p_olean or not f_olean:
+        return refuse("the probe and fingerprint JSONs must both carry olean_sha256 (the "
+                      f"replayed closure); probe has {p_olean!r}, fingerprint has {f_olean!r}")
+    if p_olean != f_olean:
+        return refuse(f"the probe ran on olean_sha256 {str(p_olean)[:12]}... but the fingerprint "
+                      f"on {str(f_olean)[:12]}...; run both checks on the same build")
+
+    fps = fp["fingerprints"]
+    if args.target is not None:
+        target = args.target
+        if target not in fps:
+            return refuse(f"the fingerprint JSON has no target {target!r} (has {sorted(fps)})")
+    elif len(fps) == 1:
+        (target,) = fps
+    else:
+        return refuse(f"the fingerprint JSON has {len(fps)} targets {sorted(fps)}; pass --target")
+    audited = [t.get("name") for t in closure["targets"] if isinstance(t, dict)]
+    if target not in audited:
+        return refuse(f"the closure audit's targets {audited} do not include {target!r}")
+
+    closure_verdict = "PASS" if closure["verdict"] == "PASS" and closure["ok"] is True else "FAIL"
+    try:
+        rec = ChecksRecord(
+            date=_date.today().isoformat(), artifact_sha256=sha256_file(art),
+            olean_sha256=str(p_olean).lower(), probe_verdict=verdict,
+            closure_verdict=closure_verdict,
+            statement_fingerprint=str(fps[target]).lower(), theorem=target, note=args.note)
+    except SchemaError as exc:
+        return refuse(str(exc))
+    new = _dc.replace(node, checks=rec, updated=rec.date)
+    save_node(new, camp_root / "nodes" / f"{slug}.toml")
+    problem = checks_problem(camp_root, new)
+    if problem:
+        print(f"CHECKS NOT PASSING {slug}: {problem}", file=sys.stderr)
+        return 1
+    print(f"CHECKS PASS {slug}: probe {rec.probe_verdict}, closure {rec.closure_verdict}, "
+          f"fingerprint {rec.statement_fingerprint[:12]}... artifact {rec.artifact_sha256[:12]}... "
+          f"olean {rec.olean_sha256[:12]}...")
+    return 0
+
+
 def _nanoda_rev_path() -> Path:
     """The pinned nanoda rev, <project>/NANODA_REV, in the Arda and the standalone layout alike."""
     from . import paths
@@ -3149,6 +3272,25 @@ def main(argv=None) -> int:
     p.add_argument("--peak-rss-kb", type=int, default=0, dest="peak_rss_kb")
     p.add_argument("--note", default="")
     p.set_defaults(mission_fn=cmd_mission_rejudge_record)
+
+    # checks-record SLUG --campaign C --probe-json F --closure-json F --fingerprint-json F
+    #               [--target NAME] [--note S]
+    p = msub.add_parser("checks-record",
+                        help="record the negation probe, closure audit and statement fingerprint "
+                             "(read from their JSON output) for a node")
+    p.add_argument("slug")
+    p.add_argument("--campaign", required=True)
+    p.add_argument("--probe-json", required=True, type=Path, dest="probe_json",
+                   help="`telperion probe-negation --json` output")
+    p.add_argument("--closure-json", required=True, type=Path, dest="closure_json",
+                   help="the file `telperion audit-closure --json FILE` wrote")
+    p.add_argument("--fingerprint-json", required=True, type=Path, dest="fingerprint_json",
+                   help="`telperion fingerprint --json` output")
+    p.add_argument("--target", default=None,
+                   help="the fingerprinted theorem, when the fingerprint JSON has several")
+    p.add_argument("--note", default="",
+                   help="free text; a PROBE_ONLY verdict passes only with 'signoff: <who>' here")
+    p.set_defaults(mission_fn=cmd_mission_checks_record)
 
     # rejudge-backfill-closure SLUG --campaign C [--since 23bda8b16] [--rebind]
     p = msub.add_parser("rejudge-backfill-closure",

@@ -31,8 +31,11 @@ from .coverage import (
     islands_with_lean,
 )
 from .provenance import (
+    CHECKS_CUTOFF,
     ProvenanceError,
     build_grant,
+    checks_problem,
+    checks_required,
     comparator_staleness,
     grant_digest_errors,
     readback_is_self_audit,
@@ -612,6 +615,17 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
         rj = rejudge_problem(campaign.root, node)
         if rj:
             raise GateError(f"Node {slug!r}: {rj}")
+
+    # Spec 5.2 grant rule (step 4 Task 4): a node created on or after the cutoff, or with no
+    # `created` date at all (Ruling 2, fail-closed), is granted `proved` only with a passing,
+    # current `[checks]` record. Scoped to `proved` like the re-judge above: the negation probe
+    # and the fingerprint are about a theorem's statement, which a refutation does not prove.
+    if new_status == "proved" and checks_required(node):
+        ck = checks_problem(campaign.root, node)
+        if ck:
+            raise GateError(
+                f"Node {slug!r}: [checks] required (created {node.created or '(empty)'}, "
+                f"cutoff {CHECKS_CUTOFF}): {ck}")
 
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":
