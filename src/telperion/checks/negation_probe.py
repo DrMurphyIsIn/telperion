@@ -1,53 +1,58 @@
-"""Negation probe: a cheap, one-sided sanity check on a theorem STATEMENT, run before anyone proves it.
+"""Negation probe: a cheap, one-sided sanity check on a theorem STATEMENT, run on the ELABORATED CONSTANT.
 
-Three small Lean files are elaborated next to the statement, in a built Lake project:
+The probe imports the theorem's own BUILT module (plus Mathlib, for the tactics) and takes the statement from the
+constant's type, so nothing from the source is re-elaborated. Local definitions, notation, `local`/`scoped` attributes,
+erased instances, `variable`s and namespace-first name resolution are therefore exactly as they were when the file
+was compiled: the type the probe sees is the type the kernel accepted. An earlier version re-rendered the binders and
+conclusion as TEXT in a re-created `namespace`/`open` context; in `namespace Foo; open Nat; def factorial ...` that
+text read `factorial` as `Nat.factorial` and refuted a true theorem, and no text denylist of "dangerous" commands
+could be made sound (`public def`, two commands on one line, `with_weak_namespace`, a `'"'` literal, `run_cmd`,
+`attribute [-instance]`, ...). The module must be built in the project; an unbuilt module is ERROR ("build <module>
+first").
 
-* ``false``    -- ``theorem _tp_false <binders> : False`` closed by a fixed tactic battery. If it compiles, the
-  hypotheses contradict each other and the theorem is VACUOUS (true of nothing).
-* ``negation`` -- ``example : ∀ <binders>, <conclusion>`` handed to ``plausible``. If plausible's error opens with its
-  ``Found a counter-example!`` banner, the claim is REFUTED at a concrete point.
-* ``witness``  -- only with a caller-supplied term: ``theorem _tp_witness : ∃ <binders>, True := <witness>``. If it
-  compiles, the hypotheses are jointly satisfiable, so the theorem is WITNESSED non-vacuous.
+Three small Lean files are run with `lake env lean` in that project:
 
-The two probes that can produce VACUOUS or WITNESSED are named theorems followed by ``#print axioms``, and they count
-only when every reported axiom is in ``comparator.CLEAN_AXIOMS``. An axiom in scope (``axiom bad : False`` registered
-as an aesop rule, say), a ``sorry`` or a missing axiom line all mean the probe is not counted.
+* ``false``    -- a MetaM metaprogram. It opens the constant's type with ``forallBoundedTelescope`` over its PREMISES
+  (below), runs a fixed tactic battery on a fresh goal ``False`` in that local context, kernel-checks the closed proof
+  as an auxiliary theorem and collects its axioms. VACUOUS (the hypotheses contradict each other) needs a closed proof
+  with no metavariables, no ``sorry`` and only ``comparator.CLEAN_AXIOMS``.
+* ``negation`` -- ``example : type_of% @T := by plausible``. ``type_of% @T`` elaborates to exactly the constant's type.
+  If plausible's error opens with its ``Found a counter-example!`` banner, the claim is REFUTED at a concrete point.
+* ``witness``  -- only with a caller-supplied term: the ∃-closure of the premises (``∃ x₁ … xₙ, True``) is built as an
+  Expr, the witness is parsed and elaborated against it, kernel-checked and axiom-audited the same way. WITNESSED says
+  the hypotheses are jointly satisfiable. A witness that does not elaborate is ERROR.
 
-ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a compiled proof of ``False``, a printed
+PREMISES. In an elaborated type a binder `(h : P)` and an arrow `P → Q` in the conclusion are both ∀-binders; the
+elaborator names an arrow's binder with a hygienic `a✝`. The premises are the leading binders up to the first explicit
+binder with that name (so `theorem t (h : P) : Q → False` has the premise `h` only, and `Q` stays in the conclusion).
+The telescope does not reduce: `¬ P`, `a ≠ b` and `s ⊆ t` in a conclusion stay closed (reducing would turn
+`x + 1 ≠ 0` into the premise `x + 1 = 0`, prove False from it, and call a true theorem VACUOUS). A conclusion written
+with NAMED binders (`: ∀ (m : ℕ) (h : m < 0), False`) is read as premises.
+
+The metaprograms report through lines `<tag>-FALSE PROVED axioms=[...]`, `<tag>-FALSE FAILED <msg>`,
+`<tag>-FALSE INCOMPLETE ...` (and `-WITNESS` likewise), where the tag carries a per-run nonce; the last matching line
+in output order wins, and a line with any other tag (an imported module printing at `initialize`, say) is ignored.
+
+ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a kernel-checked proof of ``False``, a printed
 counterexample). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to find a
-counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an unknown
-identifier, a missing import, a parse error), so neither verdict could be read. A maxHeartbeats timeout in any probe
-is not an ERROR: that probe is inconclusive, and the verdict falls through to PROBE_ONLY with a note saying so.
+counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an unbuilt
+module, an unknown constant, a witness that does not elaborate), so no verdict could be read. A maxHeartbeats timeout in
+any probe is not an ERROR: that probe is inconclusive, and the verdict falls through to PROBE_ONLY with a note.
 
-LOCAL DECLARATIONS CAN CHANGE THE STATEMENT SILENTLY. The probes import modules and re-create the theorem's
-`namespace` and `open` lines; they do not re-declare anything from the file. Lean resolves a name in the current
-namespace BEFORE the opened ones, so in `namespace Foo; open Nat; def factorial ...` the theorem's `factorial` is
-`Foo.factorial`, but in a probe without that def it quietly becomes `Nat.factorial`, and a true theorem comes back
-REFUTED. It is not an "unknown identifier" ERROR. So the CLI scans the file first (`local_command_problems`) and
-refuses, with ERROR:
-* without `--import`, any non-theorem declaration in the file (def, abbrev, instance, structure, inductive, class,
-  notation and its infix/prefix/postfix forms, macro, syntax, elab, opaque, axiom, attribute, export, alias,
-  deriving...); pass `--import <Module>` of a BUILT module that contains them, and they are in scope as in the file;
-* even with `--import`, any `local`/`scoped` command or attribute, any `private` non-theorem declaration, and any
-  section `variable`. None of these carry over through an import.
-`universe`, `set_option`, `open`, `namespace`, `section` and other theorems are allowed. A theorem named in a statement
-and shadowed by a theorem of the file is not caught.
-
-KNOWN LIMITATION. A dotted theorem name declared inside a namespace (`theorem RI.mem_add` under
-`namespace ScaledInterval`) is not found by the judge's `decl_context`, so the CLI returns ERROR for it.
+KNOWN LIMITATION. A `private` theorem's constant has a mangled name and is not found by its source name (ERROR).
 """
 from __future__ import annotations
 
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..comparator import CLEAN_AXIOMS
-from ..verify import _AXIOMS, _NO_AXIOMS
 
 VERDICTS = ("VACUOUS", "REFUTED", "PROBE_ONLY", "WITNESSED", "ERROR")
 
@@ -56,45 +61,34 @@ PLAUSIBLE = "plausible (config := { numInst := 200 })"
 COUNTEREXAMPLE = "Found a counter-example!"
 NO_TESTABLE = "Failed to create a `testable` instance"
 PROBE_DIR = ".telperion_probe"
-
-# Errors the `false` probe is EXPECTED to produce when the hypotheses are consistent: the battery's tactics giving up.
-# `first` reports only the last alternative's failure, which is aesop's ("Tactic `aesop` failed, made no progress" on
-# v4.35.0); the others are kept for a battery that stops earlier. Any other error (unknown identifier, type mismatch in
-# a binder, parse error) means the hypotheses did not elaborate, so the probe proved nothing.
-FALSE_PURPOSE_ERRORS = (
-    "linarith failed",
-    "omega could not prove",
-    "aesop: failed",
-    "Tactic `aesop` failed",
-    "simp made no progress",
-    "norm_num failed",
-    "unsolved goals",
-)
+TACTIC_IMPORTS = ("Mathlib",)
 
 # Errors the `negation` probe is EXPECTED to produce when it finds nothing: plausible giving up, finding no
 # counterexample, or having no `Testable` instance for the claim (a real variable, an undecidable hypothesis). The
 # last one is raised only after the statement elaborated, so it never hides an elaboration error. The counterexample
-# itself is reported as an error too, and is the probe's purpose.
+# itself is reported as an error too, and is the probe's purpose (matched on its banner, see `_banner`).
 NEGATION_PURPOSE_ERRORS = (
-    COUNTEREXAMPLE,
     "Gave up",
     "gave up",
     "Unable to find",
     NO_TESTABLE,
 )
 
-# The witness probe has no expected errors: a witness that does not check is the caller's mistake, reported as ERROR.
-PURPOSE_ERRORS = {"false": FALSE_PURPOSE_ERRORS, "negation": NEGATION_PURPOSE_ERRORS, "witness": ()}
+# The `false` and `witness` metaprograms catch their own tactic/elaboration failures and report them on protocol
+# lines, so any error Lean prints for them is unrelated to their purpose.
+PURPOSE_ERRORS = {"false": (), "negation": NEGATION_PURPOSE_ERRORS, "witness": ()}
 
 # A maxHeartbeats timeout in ANY probe makes that probe inconclusive, never an ERROR: hypotheses that are merely hard
-# for the battery must not block a grant. `first` does not catch it, so it ends the `false` battery where it struck.
-# A timed-out probe is never read as compiled or as a counterexample, so a timeout cannot produce a positive verdict.
+# for the battery must not block a grant. The metaprograms' `try`/`catch` does not catch it (a runtime exception), so
+# it surfaces as an error of the probe file. A timed-out probe is never read as proved, refuted or witnessed.
 TIMEOUT_ERROR = "maximum number of heartbeats"
 
+# Lean's report of an `import` it cannot find: the module was never built in this project.
+_UNBUILT_RE = re.compile(r"unknown module prefix|object file .* does not exist|No directory .* or file .*\.olean")
+
 # A message header: `file:line:col: error:` from lean, or a bare `error:` from lake. v4.35.0 also tags some messages
-# with a code, `error(lean.unknownIdentifier):`; missing those would let an elaboration error pass as a tactic failure.
+# with a code, `error(lean.unknownIdentifier):`; missing those would let an error pass unnoticed.
 _MSG_RE = re.compile(r"(?m)^(?:\S[^\n]*?:\d+:\d+: )?(error|warning|info)(?:\([^)\n]*\))?:")
-_SORRY_RE = re.compile(r"declaration uses [`']sorry[`']")
 # plausible's counterexample error opens with a rule of `=` and then the banner; the phrase anywhere else (a string
 # literal in the statement, say) is not a counterexample.
 _BANNER_RE = re.compile(r"\s*(?:=+\s*)?" + re.escape(COUNTEREXAMPLE))
@@ -111,58 +105,104 @@ class ProbeResult:
 
 @dataclass
 class ProbeSpec:
-    imports: list[str]
-    prelude: str
-    binders: str
-    conclusion: str
+    module: str                      # the theorem's own module, built in the project
+    theorem: str                     # the constant's full name
     witness: str | None = None
+    imports: tuple[str, ...] = field(default=TACTIC_IMPORTS)
 
 
-def _exists_binders(binders: str) -> str:
-    """`binders` with every top-level `{..}`, `⦃..⦄` and `[..]` group rewritten as `(..)`, since `∃` accepts only
-    explicit binders. An anonymous instance `[C]` becomes `(_ : C)`."""
-    out, i, n = [], 0, len(binders)
-    pairs = {"{": "}", "⦃": "⦄", "[": "]", "(": ")"}
-    while i < n:
-        ch = binders[i]
-        if ch not in pairs:
-            out.append(ch)
-            i += 1
-            continue
-        close, depth, j = pairs[ch], 0, i
-        while j < n:
-            if binders[j] == ch:
-                depth += 1
-            elif binders[j] == close:
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        inner = binders[i + 1:j]
-        if ch == "[" and ":" not in inner:
-            inner = f"_ : {inner}"
-        out.append(f"({inner})")
-        i = j + 1
-    return "".join(out)
+def _lean_name(name: str) -> str:
+    """`name` with every component in «», so any component spelling is a valid identifier."""
+    if "«" in name:
+        return name
+    return ".".join(f"«{c}»" for c in name.split("."))
 
 
-def render_probes(imports: list[str], prelude: str, binders: str, conclusion: str,
-                  witness: str | None) -> dict[str, str]:
-    """Lean source for each probe, keyed "false", "negation" and (with a witness) "witness".
+def _lean_string(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t") + '"'
 
-    `autoImplicit` is off in every probe, so an unknown identifier in the statement is an error, never a fresh
-    variable that makes the hypotheses trivially consistent."""
-    head = "".join(f"import {m}\n" for m in imports) + "\n" + (prelude.rstrip() + "\n\n" if prelude.strip() else "")
-    opts = "set_option maxHeartbeats 200000 in\nset_option autoImplicit false in\n"
-    sig = f" {binders}" if binders.strip() else ""
-    prop = f"∀ {binders}, {conclusion}" if binders.strip() else conclusion
+
+# Shared by the `false` and `witness` metaprograms: the number of leading premise binders (module docstring).
+_PREMISES = """\
+namespace TelperionProbe
+open Lean in
+/-- Leading premise binders of a theorem type: up to the first explicit binder named like an arrow's (`a✝`). -/
+partial def premises : Expr → Nat
+  | .forallE n _ b bi =>
+    if bi == .default && n.hasMacroScopes && n.eraseMacroScopes == `a then 0 else premises b + 1
+  | .mdata _ e => premises e
+  | _ => 0
+end TelperionProbe
+"""
+
+
+def render_probes(module: str, theorem: str, witness: str | None, imports: tuple[str, ...] = TACTIC_IMPORTS,
+                  tag: str = "TP") -> dict[str, str]:
+    """Lean source for each probe, keyed "false", "negation" and (with a witness) "witness"."""
+    head = "".join(f"import {m}\n" for m in (*imports, module) if m) + "\n"
+    opts = "set_option maxHeartbeats 200000 in\n"
+    t = _lean_name(theorem)
+    meta = "open Lean Meta Elab Term in\n" + opts + "#eval show TermElabM Unit from do\n"
+    false_src = (
+        f"{head}{_PREMISES}\n{meta}"
+        f"  let info ← getConstInfo `{t}\n"
+        f"  let n := TelperionProbe.premises info.type\n"
+        f'  IO.println s!"{tag}-PREMISES {{n}}"\n'
+        f"  forallBoundedTelescope info.type (some n) fun xs _ => do\n"
+        f"    let g ← mkFreshExprMVar (Lean.mkConst ``False) .syntheticOpaque\n"
+        f"    let msgs := (← getThe Core.State).messages\n"
+        f"    try\n"
+        f"      let tac ← `(tactic| {FALSE_TACTIC})\n"
+        f"      let rest ← Tactic.run g.mvarId! (Tactic.evalTactic tac)\n"
+        f"      synthesizeSyntheticMVarsNoPostponing\n"
+        f"      let pf ← instantiateMVars g\n"
+        f"      if !rest.isEmpty || pf.hasMVar || pf.hasSorry then\n"
+        f'        IO.println s!"{tag}-FALSE INCOMPLETE goals={{rest.length}} mvars={{pf.hasMVar}} '
+        f'sorry={{pf.hasSorry}}"\n'
+        f"      else\n"
+        f"        let ty ← mkForallFVars xs (Lean.mkConst ``False)\n"
+        f"        let val ← mkLambdaFVars xs pf\n"
+        f"        addDecl (.thmDecl {{ name := `_telperion_probe_false, levelParams := info.levelParams,\n"
+        f"                            type := ty, value := val }})\n"
+        f"        let axs ← collectAxioms `_telperion_probe_false\n"
+        f'        IO.println s!"{tag}-FALSE PROVED axioms={{axs.toList}}"\n'
+        f"    catch ex =>\n"
+        f'      IO.println s!"{tag}-FALSE FAILED {{(← ex.toMessageData.toString).replace "\\n" " "}}"\n'
+        f"    modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
+    )
     src = {
-        "false": f"{head}{opts}theorem _tp_false{sig} : False := by\n  {FALSE_TACTIC}\n\n#print axioms _tp_false\n",
-        "negation": f"{head}{opts}example : {prop} := by {PLAUSIBLE}\n",
+        "false": false_src,
+        "negation": f"{head}{opts}example : type_of% @{t} := by {PLAUSIBLE}\n",
     }
     if witness is not None:
-        ex = f"∃ {_exists_binders(binders)}, True" if binders.strip() else "True"
-        src["witness"] = f"{head}{opts}theorem _tp_witness : {ex} :=\n  {witness}\n\n#print axioms _tp_witness\n"
+        src["witness"] = (
+            f"{head}{_PREMISES}\n{meta}"
+            f"  let info ← getConstInfo `{t}\n"
+            f"  let n := TelperionProbe.premises info.type\n"
+            f"  let ex ← forallBoundedTelescope info.type (some n) fun xs _ => do\n"
+            f"    let mut body := Lean.mkConst ``True\n"
+            f"    for x in xs.reverse do\n"
+            f"      body ← mkAppM ``Exists #[← mkLambdaFVars #[x] body]\n"
+            f"    pure body\n"
+            f"  let msgs := (← getThe Core.State).messages\n"
+            f"  try\n"
+            f"    let stx ← match Parser.runParserCategory (← getEnv) `term {_lean_string(witness)} with\n"
+            f"      | .ok s => pure s\n"
+            f"      | .error e => throwError e\n"
+            f"    let w ← withoutErrToSorry (elabTermEnsuringType stx (some ex))\n"
+            f"    synthesizeSyntheticMVarsNoPostponing\n"
+            f"    let w ← instantiateMVars w\n"
+            f"    if w.hasMVar || w.hasSorry then\n"
+            f'      IO.println s!"{tag}-WITNESS INCOMPLETE mvars={{w.hasMVar}} sorry={{w.hasSorry}}"\n'
+            f"    else\n"
+            f"      addDecl (.thmDecl {{ name := `_telperion_probe_witness, levelParams := info.levelParams,\n"
+            f"                          type := ex, value := w }})\n"
+            f"      let axs ← collectAxioms `_telperion_probe_witness\n"
+            f'      IO.println s!"{tag}-WITNESS PROVED axioms={{axs.toList}}"\n'
+            f"  catch e =>\n"
+            f'    IO.println s!"{tag}-WITNESS FAILED {{(← e.toMessageData.toString).replace "\\n" " "}}"\n'
+            f"  modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
+        )
     return src
 
 
@@ -188,18 +228,18 @@ def _purpose(key: str, err: str) -> bool:
         return True
     if key == "negation" and _banner(err):
         return True
-    return any(a in err for a in PURPOSE_ERRORS.get(key, ()) if a != COUNTEREXAMPLE)
+    return any(a in err for a in PURPOSE_ERRORS.get(key, ()))
 
 
-def _unrelated(key: str, rc: int, output: str) -> str | None:
+def _unrelated(key: str, rc: int, output: str, module: str) -> str | None:
     """The first error in probe `key`'s output that is not one its purpose explains, or None."""
     errs = _errors(output)
     if rc != 0 and not errs:
         return f"{key} probe exited {rc} with no error message: {output.strip()[-300:]!r}"
     for e in errs:
         if not _purpose(key, e):
-            if "autoImplicit" in e:
-                return f"statement relies on autoImplicit; make binders explicit ({key} probe: {e[:500]})"
+            if _UNBUILT_RE.search(e):
+                return f"build {module} first (lake build {module}): {key} probe: {e[:300]}"
             return f"{key} probe: {e[:500]}"
     return None
 
@@ -208,59 +248,71 @@ def _timed_out(output: str) -> bool:
     return any(TIMEOUT_ERROR in e for e in _errors(output))
 
 
-def _compiled(rc: int, output: str) -> bool:
-    return rc == 0 and not _errors(output) and not _SORRY_RE.search(output)
+def _result_line(output: str, tag: str, kind: str) -> tuple[str, str] | None:
+    """(status, rest) of the LAST `<tag>-<kind> <status> <rest>` line in output order, or None."""
+    found = None
+    for m in re.finditer(rf"(?m)^{re.escape(tag)}-{kind} (PROVED|FAILED|INCOMPLETE)\b[ \t]*(.*)$", output):
+        found = (m.group(1), m.group(2))
+    return found
 
 
-def _axiom_problem(key: str, output: str) -> str | None:
-    """Why compiled probe `key` does not count on axiom grounds (no `#print axioms` line for `_tp_<key>`, or an axiom
-    outside CLEAN_AXIOMS), or None when it counts."""
-    name = f"_tp_{key}"
-    axioms: list[str] | None = None
-    for m in _AXIOMS.finditer(output):
-        if m.group(1) == name or m.group(1).endswith("." + name):
-            axioms = [a.strip() for a in m.group(2).split(",") if a.strip()]
-    for m in _NO_AXIOMS.finditer(output):
-        if m.group(1) == name or m.group(1).endswith("." + name):
-            axioms = []
-    if axioms is None:
-        return f"probe '{key}' compiled but printed no `#print axioms` line; not counted"
-    bad = [a for a in axioms if a not in CLEAN_AXIOMS]
+def _axiom_problem(key: str, rest: str) -> str | None:
+    """Why proved probe `key` does not count on axiom grounds (an axiom outside CLEAN_AXIOMS, or no readable list),
+    or None when it counts."""
+    m = re.match(r"axioms=\[([^\]]*)\]", rest)
+    if not m:
+        return f"probe '{key}' printed no axiom list; not counted"
+    bad = [a.strip() for a in m.group(1).split(",") if a.strip() and a.strip() not in CLEAN_AXIOMS]
     return f"probe '{key}' used non-standard axioms {bad}; not counted" if bad else None
 
 
-def classify(outputs: dict[str, tuple[int, str]]) -> ProbeResult:
+def classify(outputs: dict[str, tuple[int, str]], tag: str = "TP", module: str = "<module>") -> ProbeResult:
     """The verdict from each probe's (returncode, output): ERROR, then VACUOUS, REFUTED, WITNESSED, PROBE_ONLY."""
     for key in ("false", "negation"):
         if key not in outputs:
             return ProbeResult("ERROR", f"{key} probe did not run")
     for key, (rc, out) in outputs.items():
-        bad = _unrelated(key, rc, out)
+        bad = _unrelated(key, rc, out, module)
         if bad:
             return ProbeResult("ERROR", bad)
     timed_out = [key for key, (_rc, out) in outputs.items() if _timed_out(out)]
+    lines = {key: _result_line(outputs[key][1], tag, key.upper()) for key in ("false", "witness") if key in outputs}
+    for key, line in lines.items():
+        if line is None and key not in timed_out:
+            return ProbeResult("ERROR", f"{key} probe printed no {tag}-{key.upper()} result line")
+        if line and line[0] == "FAILED" and key == "witness":
+            return ProbeResult("ERROR", f"the witness does not check: {line[1][:500]}")
     notes = [f"probe '{key}' timed out at maxHeartbeats 200000 (inconclusive)" for key in timed_out]
-    if "false" not in timed_out and _compiled(*outputs["false"]):
-        bad = _axiom_problem("false", outputs["false"][1])
+    prem = re.findall(rf"(?m)^{re.escape(tag)}-PREMISES (\d+)$", outputs["false"][1])
+    premises = f"the {prem[-1]} premise(s)" if prem else "the premises"
+    line = lines["false"]
+    if "false" not in timed_out and line and line[0] == "PROVED":
+        bad = _axiom_problem("false", line[1])
         if not bad:
-            return ProbeResult("VACUOUS", "the hypotheses alone prove False (the `false` probe compiled, clean axioms)")
+            return ProbeResult("VACUOUS", f"{premises} alone prove False (kernel-checked, clean axioms)")
         notes.append(bad)
+    elif line and line[0] == "INCOMPLETE":
+        notes.append(f"probe 'false' left goals, metavariables or sorry ({line[1]}); not counted")
     neg = outputs["negation"][1]
     banners = [e for e in _errors(neg) if _banner(e)]
     if "negation" not in timed_out and banners:
         body = banners[0][_MSG_RE.match(banners[0]).end():]
         return ProbeResult("REFUTED", "plausible found a counterexample: "
                            + " ".join(body.strip().lstrip("=").split("-------------------")[0].split()))
-    if "witness" in outputs and "witness" not in timed_out and _compiled(*outputs["witness"]):
-        bad = _axiom_problem("witness", outputs["witness"][1])
+    wline = lines.get("witness")
+    if "witness" not in timed_out and wline and wline[0] == "PROVED":
+        bad = _axiom_problem("witness", wline[1])
         if not bad:
-            return ProbeResult("WITNESSED", "the witness proves the hypotheses satisfiable (clean axioms); no "
-                               "counterexample found")
+            return ProbeResult("WITNESSED", f"the witness proves {premises} satisfiable (kernel-checked, clean "
+                               "axioms); no counterexample found")
         notes.append(bad)
+    elif wline and wline[0] == "INCOMPLETE":
+        notes.append(f"probe 'witness' left metavariables or sorry ({wline[1]}); not counted")
     if NO_TESTABLE in neg:
         notes.append("negation probe did not run: no testable instance (e.g. ℝ), so no counterexample was searched for")
-    return ProbeResult("PROBE_ONLY", "; ".join(notes + ["no contradiction in the hypotheses and no counterexample "
-                                                        "found; one-sided, not evidence the claim is true"]))
+    return ProbeResult("PROBE_ONLY", "; ".join(notes + [f"no contradiction derived from {premises} and no "
+                                                        "counterexample found; one-sided, not evidence the claim is "
+                                                        "true"]))
 
 
 def default_wrapper() -> list[str]:
@@ -300,7 +352,8 @@ def run_probe(spec: ProbeSpec, project: Path, wrapper: list[str] | None = None,
     as ERROR rather than overwritten."""
     project = Path(project)
     prefix = default_wrapper() if wrapper is None else list(wrapper)
-    srcs = render_probes(spec.imports, spec.prelude, spec.binders, spec.conclusion, spec.witness)
+    tag = f"TP{secrets.token_hex(6)}"
+    srcs = render_probes(spec.module, spec.theorem, spec.witness, spec.imports, tag=tag)
     pdir = project / PROBE_DIR
     try:
         pdir.mkdir()
@@ -319,114 +372,17 @@ def run_probe(spec: ProbeSpec, project: Path, wrapper: list[str] | None = None,
                 return ProbeResult("ERROR", f"{key} probe did not finish: {exc}")
     finally:
         shutil.rmtree(pdir, ignore_errors=True)
-    return classify(outputs)
+    return classify(outputs, tag=tag, module=spec.module)
 
 
-_COMMAND_START_RE = re.compile(
-    r"(?m)^(?:@\[|theorem\b|lemma\b|def\b|abbrev\b|instance\b|example\b|structure\b|inductive\b|class\b|axiom\b"
-    r"|opaque\b|noncomputable\b|private\b|protected\b|variable\b|universe\b|namespace\b|section\b|end\b|open\b"
-    r"|set_option\b|attribute\b|mutual\b|#)")
-
-
-def read_signature(module_text: str, theorem: str) -> tuple[list[str], str, str, str]:
-    """(import lines, prelude, binders, conclusion) of `theorem` (fully qualified) as `module_text` declares it.
-
-    The prelude re-creates the declaration's context: its `namespace` and the `open` lines above it, found with the
-    judge's `decl_context`. The declaration runs from its keyword to the next column-0 command; everything from its
-    first top-level `:=` after the signature colon is replaced by `:= by sorry`, so a `have _ := _` in the proof cannot
-    be read as part of the conclusion, and the result is split with the judge's `split_signature`. Raises JudgeError."""
+def qualify(module_text: str, theorem: str) -> str:
+    """`theorem` qualified by the namespace the file declares it in, when the file declares exactly one theorem/lemma
+    of that (short) name; otherwise `theorem` unchanged. Only LOCATES the constant: the statement itself is always
+    read from the elaborated constant, never from this text."""
     from ..missions import judge
 
     ga = judge._guard_anchors()
-    ns, opens = judge.decl_context(module_text, theorem)
-    short = theorem.rsplit(".", 1)[-1]
     code = ga.strip_lean_comments(module_text)
-    pat = re.compile(r"(?<![\w.'])(theorem|lemma)\s+" + re.escape(short) + r"(?![\w.'])")
-    for m in pat.finditer(code):
-        if ".".join(ga._namespace_at(code, m.start())) != ns:
-            continue
-        nxt = _COMMAND_START_RE.search(code, m.end())
-        decl = code[m.start():nxt.start() if nxt else len(code)]
-        colon = judge._scan_depth0(decl[m.end() - m.start():], ":")
-        if colon < 0:
-            break
-        head_len = m.end() - m.start() + colon + 1
-        assign = judge._scan_depth0(decl[head_len:], ":=")
-        sig = decl if assign < 0 else decl[:head_len + assign]
-        _short, binders, concl = judge.split_signature(sig + " := by sorry")
-        imports = [ln.split(None, 1)[1].strip() for ln in module_text.splitlines()
-                   if ln.startswith("import ") and len(ln.split()) > 1]
-        prelude = "\n".join(([f"namespace {ns}"] if ns else []) + opens)
-        return imports, prelude, binders, concl
-    raise judge.JudgeError(f"module does not declare `{theorem}` with a signature")
-
-
-def _blank_comments(text: str) -> str:
-    """`text` with comments and string-literal contents replaced by spaces, newlines kept, so offsets and line
-    numbers still match the source."""
-    out, i, n = list(text), 0, len(text)
-
-    def blank(a: int, b: int) -> None:
-        for k in range(a, b):
-            if out[k] != "\n":
-                out[k] = " "
-    while i < n:
-        if text.startswith("--", i):
-            j = text.find("\n", i)
-            j = n if j < 0 else j
-            blank(i, j)
-            i = j
-        elif text.startswith("/-", i):
-            depth, j = 1, i + 2
-            while j < n and depth:
-                if text.startswith("/-", j):
-                    depth, j = depth + 1, j + 2
-                elif text.startswith("-/", j):
-                    depth, j = depth - 1, j + 2
-                else:
-                    j += 1
-            blank(i, j)
-            i = j
-        elif text[i] == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            blank(i + 1, min(j, n))
-            i = j + 1
-        else:
-            i += 1
-    return "".join(out)
-
-
-# A command at the start of a line: optional `open ... in` / `set_option ... in` prefixes, attributes, modifiers, then
-# the keyword.
-_DECL_CMD_RE = re.compile(
-    r"(?m)^[ \t]*(?:(?:open|set_option)\b[^\n]*?\bin[ \t]+)*"
-    r"(?P<attrs>(?:@\[[^\]]*\][ \t\n]*)*)"
-    r"(?P<mods>(?:(?:noncomputable|private|protected|partial|unsafe|nonrec)[ \t]+)*)"
-    r"(?P<kw>local|scoped|attribute|variable|def|abbrev|instance|structure|inductive|class|notation3|notation"
-    r"|infixl|infixr|infix|prefix|postfix|macro_rules|macro|syntax|elab_rules|elab|opaque|axiom|export|alias"
-    r"|irreducible_def|declare_syntax_cat|deriving|theorem|lemma)\b(?P<rest>[^\n]*)")
-_LOCAL_RE = re.compile(r"\b(?:local|scoped)\b")
-_ALWAYS = ("local/scoped/private declarations and section variables can change name resolution and do not carry over "
-           "through --import; the probe cannot be trusted")
-_WITHOUT_IMPORT = ("local declarations can change name resolution; pass --import <module> of a built module that "
-                   "contains them, or the probe cannot be trusted")
-
-
-def local_command_problems(module_text: str, imported: bool) -> str | None:
-    """The first command in `module_text` that could make the probe read the statement differently from the file,
-    named with its line, or None. See the module docstring: `local`/`scoped` commands and attributes, `private`
-    non-theorem declarations and `variable`s always count; other non-theorem declarations count unless `imported`."""
-    code = _blank_comments(module_text)
-    for m in _DECL_CMD_RE.finditer(code):
-        kw = m.group("kw")
-        theorem = kw in ("theorem", "lemma")
-        always = (bool(_LOCAL_RE.search(m.group("attrs"))) or kw in ("local", "scoped", "variable")
-                  or (kw == "attribute" and bool(_LOCAL_RE.search(m.group("rest"))))
-                  or ("private" in m.group("mods") and not theorem))
-        if always or (not theorem and not imported):
-            line = code.count("\n", 0, m.start()) + 1
-            src = module_text.splitlines()[line - 1].strip()[:100]
-            return f"`{src}` at line {line}: {_ALWAYS if always else _WITHOUT_IMPORT}"
-    return None
+    pat = re.compile(r"(?<![\w.'])(?:theorem|lemma)\s+" + re.escape(theorem) + r"(?![\w.'])")
+    names = {".".join([*ga._namespace_at(code, m.start()), theorem]) for m in pat.finditer(code)}
+    return names.pop() if len(names) == 1 else theorem

@@ -2538,30 +2538,25 @@ def cmd_kernel_policy_check(args) -> int:
 
 
 def cmd_probe_negation(args) -> int:
-    """Negation probe of one theorem's statement (checks/negation_probe.py).
+    """Negation probe of one theorem's ELABORATED constant (checks/negation_probe.py).
 
-    Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including a theorem whose
-    signature cannot be read). With --json, stdout is exactly {"verdict": ..., "detail": ...}."""
+    Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including an unbuilt module or
+    any unexpected failure). With --json, stdout is exactly {"verdict": ..., "detail": ...}."""
     import json as _json
     import shlex
 
     from .checks import negation_probe as np_
-    from .checks.negation_probe import ProbeResult, ProbeSpec, local_command_problems, read_signature
-    from .missions.judge import JudgeError
+    from .checks.negation_probe import ProbeResult, ProbeSpec, TACTIC_IMPORTS
 
     try:
-        text = Path(args.file).read_text(encoding="utf-8")
-        bad = local_command_problems(text, imported=bool(args.imports))
-        if bad:
-            res = ProbeResult("ERROR", bad)
-        else:
-            file_imports, prelude, binders, concl = read_signature(text, args.theorem)
-            spec = ProbeSpec(args.imports or file_imports, prelude, binders, concl, args.witness)
-            res = np_.run_probe(spec, Path(args.project),
-                                wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
-                                timeout=args.timeout)
-    except (OSError, JudgeError) as exc:
-        res = ProbeResult("ERROR", f"cannot read {args.theorem} from {args.file}: {exc}")
+        theorem = args.theorem
+        if args.file:
+            theorem = np_.qualify(Path(args.file).read_text(encoding="utf-8"), theorem)
+        spec = ProbeSpec(args.module, theorem, args.witness,
+                         tuple(args.imports) if args.imports is not None else TACTIC_IMPORTS)
+        res = np_.run_probe(spec, Path(args.project),
+                            wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                            timeout=args.timeout)
     except Exception as exc:  # any surprise is ERROR (exit 2), never a traceback or a failing verdict
         res = ProbeResult("ERROR", f"probe-negation failed: {type(exc).__name__}: {exc}")
     if args.json:
@@ -3161,19 +3156,22 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_kernel_policy_check)
 
     p = sub.add_parser("probe-negation",
-                       help="one-sided statement probe: VACUOUS (hypotheses prove False), REFUTED "
-                            "(plausible counterexample), WITNESSED, PROBE_ONLY or ERROR")
-    p.add_argument("--project", required=True, help="a built Lake project with Mathlib (the probe env)")
-    p.add_argument("--file", required=True, help="the Lean file declaring the theorem")
-    p.add_argument("--theorem", required=True, help="fully qualified theorem name")
+                       help="one-sided probe of a theorem's ELABORATED constant: VACUOUS (its premises "
+                            "prove False), REFUTED (plausible counterexample), WITNESSED, PROBE_ONLY or ERROR")
+    p.add_argument("--project", required=True,
+                   help="the Lake project (with Mathlib) in which --module is built")
+    p.add_argument("--module", required=True,
+                   help="the theorem's own module, which must be BUILT in --project (lake build <module>); "
+                        "the statement is the elaborated constant's type, so local definitions, notation "
+                        "and attributes are exactly as in the file. An unbuilt module is ERROR")
+    p.add_argument("--theorem", required=True, help="the theorem's name (fully qualified unless --file is given)")
+    p.add_argument("--file", default=None,
+                   help="the Lean file declaring the theorem; used ONLY to qualify a short --theorem "
+                        "with its namespace, never to read the statement")
     p.add_argument("--witness", default=None,
-                   help="a term proving `∃ <binders>, True` (the hypotheses are satisfiable)")
+                   help="a term proving `∃ <premises>, True` (the hypotheses are satisfiable)")
     p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
-                   help="module to import instead of the file's own imports (repeatable). REQUIRED "
-                        "when the file declares anything besides theorems (local definitions can "
-                        "silently change what the statement's names mean): pass that file's BUILT "
-                        "module, or the probe is ERROR. local/scoped/private declarations and "
-                        "`variable`s are ERROR even with --import")
+                   help="tactic module imported beside --module (repeatable; default: Mathlib)")
     p.add_argument("--wrapper", default=None,
                    help="command prefix before `lake env lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
