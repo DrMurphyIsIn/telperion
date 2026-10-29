@@ -720,7 +720,8 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
     after the run (`ReplayResult.olean_sha256`). The script runs as the pinned ``lean`` (through `wrapper`, leanlock by
     default) in a private temp dir, with LEAN_PATH = the trusted entries only. If the closure needs a trusted module
     that is not imported, it is added and the run is repeated once. `expect_oleans` and `prefixes_override` replace
-    the resolved oleans and the trusted prefixes given to the script (tests only)."""
+    the resolved oleans and the trusted prefixes given to the script (tests only). `allow_axioms` is for tests of the
+    replay itself only: no check passes it (Ruling 10, untrusted axioms are refused)."""
     prefix = default_wrapper() if wrapper is None else list(wrapper)
     targets = _targets(target_module)
     try:

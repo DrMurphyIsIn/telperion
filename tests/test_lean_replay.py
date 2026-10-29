@@ -242,6 +242,7 @@ def test_render_imports_only_trusted_modules_and_never_the_target(tmp_path):
 
 
 def test_render_targets_expectations_and_flags(tmp_path):
+    # allow_axioms=True here is a test-only control of the flag's rendering; no check passes it (Ruling 10)
     src = render_replay_script(["Lean"], ["A", "B.C"], ["/"], CB, NONCE, expect_oleans={"A": "/x/A.olean"},
                                allow_axioms=True, allow_sorry=True)
     assert "def targetModules : List Name := [`A, `B.C]" in src
@@ -605,6 +606,7 @@ def test_i_untrusted_axiom_is_refused(lib, manifest):
     r = _replay(lib, manifest, "TpAx", FOUND_CB, trusted_imports=("Lean",))
     assert r.status == "FAILED" and "declares the axiom TpAx.bad" in r.detail, (r.status, r.detail)
     assert r.lines == []
+    # test-only control: the flag works when set; no check sets it (Ruling 10: untrusted axioms are refused)
     r = _replay(lib, manifest, "TpAx", FOUND_CB, trusted_imports=("Lean",), allow_axioms=True)
     assert r.status == "OK" and r.declared == ["TpAx.bad"] and "TpAx.bad" in r.axioms, (r.status, r.detail)
 
