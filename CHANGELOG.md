@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased -- standalone-repo follow-up cleanup (2026-10-29)
+
+Small fixes to the 0.2.0.dev0 extraction, found during review:
+
+- **Broken relative links** in `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/COMPARATOR.md` and
+  `docs/NEW_EMITTERS_SUMMARY.md` (18 links pointing past the repository root, or at files that
+  stayed in Arda) now resolve: in-repo targets were corrected, and targets that stayed in Arda
+  were replaced with absolute links into [DrMurphyIsIn/Arda](https://github.com/DrMurphyIsIn/Arda).
+- **Arda-layout setup instructions** (`cd telperion`, `pip install -e telperion`) in
+  `CONTRIBUTING.md` and `docs/GETTING_STARTED.md` rewritten for a standalone checkout
+  (`git clone ... && cd telperion && pip install -e .`).
+- **Stale comments**: `src/telperion/__init__.py`'s research-lab comment reworded (labs live in
+  their consumer repos, not under `telperion.bg` specifically); the `__version__` definition gained
+  a one-line note on why it stays `0.1.6`.
+- **`python -m telperion`** now runs the CLI (`src/telperion/__main__.py`, mirroring the
+  `telperion` console script), with a test (`tests/test_dunder_main.py`) that `--help` exits 0.
+- **`examples/hermitian_moment/`** copied over from Arda: the verbatim Apache-2.0 port of the
+  Hermitian-matrix linear-algebra core (`RHLinalg`: `posIndex`, Sylvester, Weyl, von Neumann) that
+  `examples/gram_inertia/lean/lakefile.toml` requires as a sibling `path` dependency. It is neutral
+  linear algebra (classical inertia/rank-trace/Weyl/von-Neumann inequalities) with no RH/BG research
+  data and nothing from the zeta/rvm/li/quasicrystal/brualdi/goldwasser programmes, despite the
+  `RHLinalg` name (inherited from its upstream source, `anthropics/zeta-23-lean`) and its citing
+  paper (arXiv:2608.13637). This fixes `examples/gram_inertia`'s dangling `../../hermitian_moment/lean`
+  require, which pointed outside this repository.
+
 ## 0.2.0.dev0 -- standalone repository (2026-10-29)
 
 Telperion now has a repository of its own. Until this version it lived in `telperion/` inside Arda, next to the
@@ -206,7 +231,9 @@ Brualdi-Goldwasser and Riemann-hypothesis research it was built for. This is the
   to the curvature-sign setting; the transcendental-enclosure emitter ships the
   rational log face only (the trig/`C₀` face is deferred, refused at cert time).
   Attribution now appears in the emitted `.lean` headers, the generator
-  docstrings, and the top-level [`NOTICE.md`](../NOTICE.md). This is *not* the
+  docstrings, and the top-level
+  [`NOTICE.md`](https://github.com/DrMurphyIsIn/Arda/blob/main/NOTICE.md) (stayed in Arda, at
+  the Arda repo root rather than under `telperion/`). This is *not* the
   same project as AXLE (arXiv:2606.26442, an engineering-patterns source);
   `conjecture1_proved = False`.
 ## Unreleased — Analytic cert structures (Tasks 1–5)

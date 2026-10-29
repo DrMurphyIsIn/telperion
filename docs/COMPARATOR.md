@@ -10,7 +10,8 @@ kernel written by someone else.
 
 This is the canonical reference. For runnable examples see
 [`examples/bernoulli/lean/`](../examples/bernoulli/lean/) (single-file, end-to-end
-CI) and [`examples/r7_starofhubs/comparator/`](../examples/r7_starofhubs/) (sharded).
+CI) and `examples/r7_starofhubs/comparator/` (sharded), which stayed in Arda:
+[`examples/r7_starofhubs/`](https://github.com/DrMurphyIsIn/Arda/tree/main/telperion/examples/r7_starofhubs/).
 
 ## What the Comparator checks
 
@@ -103,8 +104,10 @@ security-critical — the kernel replay is the guarantee — so the CI points
 child un-sandboxed with `--` preserved.
 
 For judging **untrusted third-party** solutions, use
-[`.github/comparator/landrun-bwrap.sh`](../../.github/comparator/landrun-bwrap.sh):
-a landrun-CLI-compatible wrapper backed by [bubblewrap](https://github.com/containers/bubblewrap)
+`.github/comparator/landrun-bwrap.sh`, which stayed in Arda (at the Arda repo root, not
+under `telperion/`):
+[`.github/comparator/landrun-bwrap.sh`](https://github.com/DrMurphyIsIn/Arda/blob/main/.github/comparator/landrun-bwrap.sh).
+It is a landrun-CLI-compatible wrapper backed by [bubblewrap](https://github.com/containers/bubblewrap)
 that gives real isolation (mount namespace, `--unshare-net`, `--clearenv`) *and*
 preserves `--`. The `comparator-sandbox-check` CI job self-tests it (bwrap runs,
 `--` survives, ro-root writes blocked, network unshared). A full run under bwrap

@@ -15,19 +15,20 @@ There are two halves, and you can stop after the first:
 
 ## 1. Install the Python package
 
-Telperion requires **Python ≥ 3.11**. From the repository root:
+Telperion requires **Python ≥ 3.11**.
 
 ```bash
-pip install -e telperion            # the engine (sympy-only core)
+git clone https://github.com/DrMurphyIsIn/telperion && cd telperion
+pip install -e .                    # the engine (sympy-only core)
 ```
 
 Optional extras, installed as needed:
 
 ```bash
-pip install -e "telperion[dev]"     # pytest + numpy + networkx (run the test suite)
-pip install -e "telperion[sdp]"     # cvxpy — the SDP certificate finders
-pip install -e "telperion[bg]"      # numpy + networkx — the Brualdi–Goldwasser research lab
-pip install -e "telperion[mcp]"     # expose Telperion to LLM agents over MCP
+pip install -e ".[dev]"             # pytest + numpy + networkx (run the test suite)
+pip install -e ".[sdp]"             # cvxpy — the SDP certificate finders
+pip install -e ".[bg]"              # numpy + networkx — the Brualdi–Goldwasser research lab
+pip install -e ".[mcp]"             # expose Telperion to LLM agents over MCP
 ```
 
 This installs two console commands: `telperion` (the CLI) and `telperion-mcp`
@@ -43,7 +44,6 @@ Every example is a self-contained `generate.py`. The simplest non-research one
 proves Bernoulli's inequality `(1 + x)^k − 1 − kx ≥ 0`:
 
 ```bash
-cd telperion
 python examples/bernoulli/generate.py
 # → wrote Bernoulli (5 theorems); input hash 3aa1dbc9…
 ```
@@ -78,7 +78,7 @@ curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf 
 **3b. Fetch the prebuilt Mathlib oleans, then build:**
 
 ```bash
-cd telperion/examples/bernoulli/lean
+cd examples/bernoulli/lean
 lake exe cache get      # downloads the prebuilt Mathlib cache (minutes, not hours)
 lake build              # the Lean kernel re-checks every emitted theorem
 ```
@@ -88,7 +88,7 @@ the whole guarantee: **a wrong certificate is a compile error, never a false
 theorem.** Try it — edit a numeric constant in `BernoulliSolution.lean` and
 re-run `lake build`; the kernel rejects it.
 
-Every example under `telperion/examples/*/lean/` follows this identical
+Every example under `examples/*/lean/` follows this identical
 `lake exe cache get && lake build` pattern.
 
 ### Optional: independent second check (the Comparator)
@@ -112,7 +112,7 @@ add a new certificate shape is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 - **`lake build` starts compiling Mathlib from source** — you skipped
   `lake exe cache get`, or your Lean version doesn't match the cache. Confirm
   `lean-toolchain` reads `leanprover/lean4:v4.32.0` and re-run the cache fetch.
-- **`telperion` command not found** — the `pip install -e telperion` didn't put
+- **`telperion` command not found** — the `pip install -e .` didn't put
   the console script on your `PATH`; use `python -m telperion.cli` instead.
 - **`ModuleNotFoundError: cvxpy` / `networkx`** — install the matching extra
   (`[sdp]` for cvxpy, `[bg]`/`[dev]` for networkx). The sympy-only core never

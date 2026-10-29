@@ -6,6 +6,9 @@ trusted component.  A defective certificate manifests as a compile failure,
 never a false theorem.  See docs/METHODOLOGY.md.
 """
 
+# Stays 0.1.6 until the first standalone release: it feeds the provenance hash and the
+# header stamped into every emitted file, so bumping it would re-stamp every frozen example
+# (see CHANGELOG 0.2.0.dev0).
 __version__ = "0.1.6"
 
 from .certify import (  # noqa: F401
@@ -786,7 +789,8 @@ from .negative_control_harness import (  # noqa: F401
 )
 from . import negctrl_adapters  # noqa: F401  (registers all first-party adapters)
 
-# The Brualdi-Goldwasser research lab lives under telperion.bg (opt-in).  The bg-named modules
-# `bg_bulk_discharge` and `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them
-# directly (`from telperion.bg_upper_bound import UpperBoundReduction`), not via `import telperion`, so the
-# core/bg boundary (test_core_boundary) stays clean.
+# Research labs (telperion.bg and the others listed in `telperion.boundary.LABS`) live in their
+# consumer repos, not here, and are opt-in.  The bg-named modules `bg_bulk_discharge` and
+# `bg_upper_bound` (composed reduction skeleton) are opt-in too -- import them directly
+# (`from telperion.bg_upper_bound import UpperBoundReduction`), not via `import telperion`, so the
+# core/lab boundary (test_engine_boundary) stays clean.

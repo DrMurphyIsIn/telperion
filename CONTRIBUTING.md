@@ -12,8 +12,8 @@ and the engine/research-lab boundary), then [`docs/GETTING_STARTED.md`](docs/GET
 ## Setup
 
 ```bash
-pip install -e "telperion[dev]"     # sympy + pytest + numpy + networkx
-cd telperion
+git clone https://github.com/DrMurphyIsIn/telperion && cd telperion
+pip install -e ".[dev]"             # sympy + pytest + numpy + networkx
 python -m pytest tests -q           # the suite should be green before you start
 ```
 
@@ -57,7 +57,6 @@ the `bg/` research lab and the `[bg]` extra; cvxpy belongs to the `[sdp]` finder
 Run what CI runs:
 
 ```bash
-cd telperion
 python -m pytest tests -q                         # unit tests (incl. the sensitivity gate)
 PYTHONPATH=src python -m telperion.cli verify --group quick   # regen drift + byte-stability
 python examples/<shape>/generate.py --check       # your example is byte-stable
@@ -95,5 +94,5 @@ Lean for you; do not merge on a red Lean job.
 
 The Telperion engine (`src/`, CLI, MCP server) is **BUSL-1.1**; emitted
 certificates and the `examples/` artifacts are Apache-2.0 (they are yours). See
-[`../LICENSING.md`](../LICENSING.md). By contributing you agree your changes are
+[`LICENSING.md`](LICENSING.md). By contributing you agree your changes are
 licensed on the same split terms.

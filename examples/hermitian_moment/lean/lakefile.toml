@@ -1,0 +1,13 @@
+name = "RHLinalg"
+defaultTargets = ["RHLinalg"]
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+# The self-contained linear-algebra core of §3 of arXiv:2608.13637, ported verbatim from
+# anthropics/zeta-23-lean (namespace `RHLinalg`). Aggregator `RHLinalg.lean` imports all seven
+# modules; a bare `lake build` builds the whole library.
+[[lean_lib]]
+name = "RHLinalg"
