@@ -908,9 +908,10 @@ def _heavy_certificates(node_toml: Path) -> bool:
 
 def _config_heavy(node_toml: Path) -> bool:
     """Heavy for the kernel-policy config check (spec 5.1): `heavy_certificates` OR
-    `judge_via = "heavy"` -- the same notion as provenance.needs_rejudge (Ruling 0b-9), so a
-    rendered config may have nanoda off exactly where a local second-kernel re-judge is
-    mandatory."""
+    `judge_via = "heavy"`. These are the two render-time disjuncts of provenance.needs_rejudge
+    (Ruling 0b-9); its third, `judged_lean_kernel_only`, depends on a recorded [comparator] result
+    and is deliberately not used here, so this check is never looser than needs_rejudge. A
+    rendered config may have nanoda off only where a local second-kernel re-judge is mandatory."""
     return _heavy_certificates(node_toml) or _judge_via(node_toml) == "heavy"
 
 
