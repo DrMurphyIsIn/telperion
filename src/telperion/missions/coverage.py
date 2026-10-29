@@ -629,9 +629,51 @@ def _imports(path: Path) -> Tuple[str, ...]:
             continue
         m = _HEADER_IMPORT_RE.match(line)
         if not m:
+            # Controller Ruling 0b-9 (2026-10-28): FAIL CLOSED. Before, a header written
+            # across lines (`import` alone, then the modules; or `import A` then a
+            # continuation line `B`) ended the header here and silently dropped every
+            # module after it -- a closure digest that then covered less than the build.
+            # A line that is a bare `import` keyword, or is nothing but module-name tokens
+            # and does not start with a command keyword, can only be such a continuation.
+            if _BARE_IMPORT_RE.match(line) or _is_import_continuation(line):
+                from .provenance import ClosureError
+                raise ClosureError(
+                    f"{path}: cannot parse import header line {line!r} (a multi-line "
+                    "import?); write each import on its own `import` line -- refusing to "
+                    "guess which modules it names")
             break  # the header ends at the first non-import command
         mods.extend(m.group(1).split())
     return tuple(mods)
+
+
+#: `import` with its modifiers and NOTHING after it: the first line of a multi-line import.
+_BARE_IMPORT_RE = re.compile(r"^(?:public\s+|private\s+)?(?:meta\s+)?import(?:\s+all)?$")
+
+#: One module-name token as an `import` takes it (dotted identifiers, «guillemets» allowed).
+_MODULE_TOKEN_RE = re.compile(r"^(?:[A-Za-z_][\w']*|«[^»]+»)(?:\.(?:[A-Za-z_][\w']*|«[^»]+»))*$")
+
+#: First words that start a Lean command (or a modifier of one), plus the Lake DSL's own
+#: commands (a `lakefile.lean` is a Lean file too) -- a line beginning with one of these
+#: ends the header normally. Anything else made only of module-name tokens is a
+#: continuation of the previous `import`.
+_COMMAND_WORDS = frozenset("""
+    abbrev add_decl_doc alias assert_not_exists attribute axiom builtin_initialize class
+    compile_inductive declare_syntax_cat deriving elab elab_rules end example export
+    include infix infixl infixr initialize inductive instance irreducible_def lemma
+    library_note local macro macro_rules meta mutual namespace noncomputable notation omit
+    opaque open partial postfix prefix private protected public recall register_option
+    run_cmd run_elab run_meta scoped seal section set_option structure suppress_compilation
+    syntax theorem universe unsafe unseal variable def
+    package require lean_lib lean_exe target extern_lib script input_file input_dir
+    module_facet package_facet library_facet
+""".split())
+
+
+def _is_import_continuation(line: str) -> bool:
+    toks = line.split()
+    if not toks or toks[0] in _COMMAND_WORDS:
+        return False
+    return all(_MODULE_TOKEN_RE.match(t) for t in toks)
 
 
 def _closure(ws: Tuple[_Package, ...], files: Iterable[Path]) -> Set[Path]:

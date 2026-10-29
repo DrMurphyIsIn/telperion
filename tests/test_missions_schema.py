@@ -1,4 +1,5 @@
 """Schema round-trip, validation, and the closed-loop TOML fallback."""
+import os
 import sys
 from pathlib import Path
 
@@ -112,3 +113,50 @@ def test_load_node_missing_key_raises_schema_error_with_path(tmp_path):
     with pytest.raises(SchemaError) as exc_info:
         load_node(p)
     assert str(p) in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Final-fix 4: atomic_write_text keeps the replaced file's mode (and owner), and a new file
+# gets 0o644 -- not mkstemp's 0o600, which made every rewritten node toml owner-only.
+# ---------------------------------------------------------------------------
+
+def test_atomic_write_text_preserves_existing_mode(tmp_path):
+    import os
+    import stat
+    from telperion.missions.schema import atomic_write_text
+    p = tmp_path / "n.toml"
+    p.write_text("old\n")
+    os.chmod(p, 0o664)
+    atomic_write_text(p, "new\n")
+    assert p.read_text() == "new\n"
+    assert stat.S_IMODE(p.stat().st_mode) == 0o664
+    os.chmod(p, 0o640)
+    atomic_write_text(p, "newer\n")
+    assert stat.S_IMODE(p.stat().st_mode) == 0o640
+
+
+def test_atomic_write_text_new_file_is_0644(tmp_path):
+    import os
+    import stat
+    from telperion.missions.schema import atomic_write_text
+    p = tmp_path / "sub" / "fresh.toml"
+    old = os.umask(0o022)
+    try:
+        atomic_write_text(p, "x\n")
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(p.stat().st_mode) == 0o644
+    assert not list(p.parent.glob(".fresh.toml.*.tmp"))     # no temp file left behind
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0,
+                    reason="chown to another owner needs root")
+def test_atomic_write_text_preserves_owner_as_root(tmp_path):
+    import os
+    from telperion.missions.schema import atomic_write_text
+    p = tmp_path / "owned.toml"
+    p.write_text("old\n")
+    os.chown(p, 501, 20)
+    atomic_write_text(p, "new\n")
+    st = p.stat()
+    assert (st.st_uid, st.st_gid) == (501, 20)

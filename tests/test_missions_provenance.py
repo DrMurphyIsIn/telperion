@@ -110,6 +110,15 @@ def _open_with_proof(croot: Path, slug: str, statement: str, artifact_text: str,
     return node
 
 
+def _closure_fields(croot: Path, node: Node) -> dict:
+    """Step 0b Task 1 (2026-10-28): a [rejudge] record now also binds to the artifact's
+    whole import closure. These fixtures' artifacts are on no judge island, so the
+    closure is just the artifact file itself -- computed for real, not faked, so these
+    records are genuinely current under the new rule."""
+    return dict(closure_sha256=prov.closure_digest(croot, node),
+               closure_files=len(prov.closure_files(croot, node)))
+
+
 # ---------------------------------------------------------------------------
 # add: authorship
 # ---------------------------------------------------------------------------
@@ -441,12 +450,25 @@ def test_ci_record_round_trips_and_refuses_empty_fields(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
+    from telperion.missions.schema import RejudgeRecord
     mroot, croot = _demo(tmp_path)
     stmt = "theorem hv : 1 = 1"
     node = _open_with_proof(croot, "HV_one", stmt, f"{stmt} := by rfl\n")
-    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_one.toml")
+    # Task 5 (2026-10-27): grant_status now refuses a heavy node with no passing local
+    # re-judge, so attach one (matching the current artifact) before granting.
+    art_sha = prov.sha256_file(croot / "proof" / "HV_one.lean")
+    rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=art_sha,
+                        verdict="pass", log_sha256="c" * 64, **_closure_fields(croot, node))
+    save_node(dataclasses.replace(node, heavy_certificates=True, rejudge=rec),
+             croot / "nodes" / "HV_one.toml")
     assert "heavy_certificates = true" in (croot / "nodes" / "HV_one.toml").read_text()
     grant_status(load_campaign(croot), "HV_one", **GATE)
+    # This test is about the scenario the re-judge rule exists to catch: a heavy node
+    # proved via CI's Lean-kernel-only judge, with nanoda not (yet, or no longer) re-run
+    # locally. Clear the record granting needed, so the rest of this test exercises that.
+    n0 = load_node(croot / "nodes" / "HV_one.toml")
+    save_node(dataclasses.replace(n0, rejudge=None), croot / "nodes" / "HV_one.toml")
     # a plain record is refused: the judge did not run nanoda on this node
     assert _cli(mroot, "comparator-record", "HV_one", "--campaign", "demo",
                 "--run-id", "9", "--theorem", "hv") == 1
@@ -465,6 +487,20 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
     assert _cli(mroot, "provenance-report", "demo") == 0
     out = capsys.readouterr().out
     assert "HV_one" in out and "Lean kernel only" in out
+    # Fix round 1 (2026-10-27): this test protects a specific invariant -- a correctly
+    # labelled lean-kernel-only comparator record (log_check = "skipped", second_kernel =
+    # "none: heavy_certificates") produces NO verify error on its own. That invariant is
+    # unchanged by Task 5's re-judge rule; a MISSING re-judge is a separate, now-also-checked
+    # condition, covered by test_verify_rejects_proved_heavy_node_without_rejudge and
+    # test_grant_status_refuses_heavy_node_without_rejudge in test_missions_rejudge.py. So
+    # attach a passing local re-judge on the current artifact here too, and assert the
+    # campaign is clean again, as it was before Task 5 touched this test.
+    n2 = load_node(croot / "nodes" / "HV_one.toml")
+    rec2 = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                         comparator_tag="v4.32.0",
+                         artifact_sha256=prov.sha256_file(croot / "proof" / "HV_one.lean"),
+                         verdict="pass", log_sha256="d" * 64, **_closure_fields(croot, n2))
+    save_node(dataclasses.replace(n2, rejudge=rec2), croot / "nodes" / "HV_one.toml")
     assert verify_campaign(croot).ok
 
 
@@ -472,11 +508,23 @@ def test_provenance_report_heavy_node_without_comparator_reads_lean_kernel_only(
     """Fix round 1 (2026-10-27): the heavy report line is driven from `heavy_certificates`,
     not from having a `[comparator]` block at all -- a heavy node proved with NO comparator
     record yet (e.g. AND_ladder_h11000_kernel on the real registry) must still be reported."""
+    from telperion.missions.schema import RejudgeRecord
     mroot, croot = _demo(tmp_path)
     stmt = "theorem hv2 : 2 = 2"
     node = _open_with_proof(croot, "HV_two", stmt, f"{stmt} := by rfl\n")
-    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_two.toml")
+    # Task 5 (2026-10-27): attach a passing re-judge before granting (grant_status now
+    # requires one on a heavy node), then clear it to model the state this test is about: a
+    # heavy node proved with NO re-judge recorded (e.g. AND_ladder_h11000_kernel on the real
+    # registry, before Task 4 ran the local nanoda queue against it).
+    art_sha = prov.sha256_file(croot / "proof" / "HV_two.lean")
+    rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
+                        comparator_tag="v4.32.0", artifact_sha256=art_sha,
+                        verdict="pass", log_sha256="c" * 64, **_closure_fields(croot, node))
+    save_node(dataclasses.replace(node, heavy_certificates=True, rejudge=rec),
+             croot / "nodes" / "HV_two.toml")
     grant_status(load_campaign(croot), "HV_two", **GATE)
+    n0 = load_node(croot / "nodes" / "HV_two.toml")
+    save_node(dataclasses.replace(n0, rejudge=None), croot / "nodes" / "HV_two.toml")
     assert load_node(croot / "nodes" / "HV_two.toml").comparator is None
     capsys.readouterr()
     assert _cli(mroot, "provenance-report", "demo") == 0
@@ -491,14 +539,15 @@ def test_provenance_report_heavy_node_with_passing_rejudge_reads_lean_kernel_plu
     mroot, croot = _demo(tmp_path)
     stmt = "theorem hv3 : 3 = 3"
     node = _open_with_proof(croot, "HV_three", stmt, f"{stmt} := by rfl\n")
-    save_node(dataclasses.replace(node, heavy_certificates=True), croot / "nodes" / "HV_three.toml")
-    grant_status(load_campaign(croot), "HV_three", **GATE)
-    n = load_node(croot / "nodes" / "HV_three.toml")
     art = croot / "proof" / "HV_three.lean"
     rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
                         comparator_tag="v4.32.0", artifact_sha256=prov.sha256_file(art),
-                        verdict="pass", log_sha256="c" * 64)
-    save_node(dataclasses.replace(n, rejudge=rec), croot / "nodes" / "HV_three.toml")
+                        verdict="pass", log_sha256="c" * 64, **_closure_fields(croot, node))
+    # Task 5 (2026-10-27): grant_status now requires the passing re-judge to already be on
+    # record, so attach it before granting rather than after.
+    save_node(dataclasses.replace(node, heavy_certificates=True, rejudge=rec),
+             croot / "nodes" / "HV_three.toml")
+    grant_status(load_campaign(croot), "HV_three", **GATE)
     capsys.readouterr()
     assert _cli(mroot, "provenance-report", "demo") == 0
     out = capsys.readouterr().out

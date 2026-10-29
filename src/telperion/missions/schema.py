@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
@@ -393,6 +394,20 @@ class RejudgeRecord:
     log_sha256: str
     peak_rss_kb: int = 0
     note: str = ""
+    #: sha256 over the artifact's whole import closure (step 0b Task 1, 2026-10-28) --
+    #: `provenance.closure_digest`. "" on a record written before this field existed
+    #: (`rejudge_problem` then reports it as unproven against the closure until it is
+    #: back-filled, Task 2, or re-judged).
+    closure_sha256: str = ""
+    #: How many files `closure_sha256` covers (`len(provenance.closure_files(...))`),
+    #: carried alongside the digest so a reader does not have to recompute it to see the
+    #: closure's size.
+    closure_files: int = 0
+    #: How this record was produced. "comparator" (default) = a Comparator run (nanoda
+    #: ON), as every record before this field existed. A later route (e.g.
+    #: "nanoda-direct", step 0b Task 3) is reported differently by
+    #: `render_provenance_report` -- never read as a Comparator run.
+    route: str = "comparator"
 
     def __post_init__(self):
         for f in ("date", "machine", "nanoda_rev", "comparator_tag", "artifact_sha256", "log_sha256"):
@@ -400,6 +415,8 @@ class RejudgeRecord:
                 raise SchemaError(f"rejudge.{f} must be non-empty")
         if self.verdict not in ("pass", "fail"):
             raise SchemaError(f"rejudge.verdict must be 'pass' or 'fail', not {self.verdict!r}")
+        if not str(self.route).strip():
+            raise SchemaError("rejudge.route must be non-empty")
 
 
 @dataclass(frozen=True)
@@ -449,6 +466,13 @@ class Node:
     #: <m>` each, peak RSS logged), before it builds the challenge. () = the ladder's segment
     #: discovery, unchanged. E.g. the HODGE-1 certificates (13.4 GB peak on a 16 GB runner).
     heavy_build_targets: Tuple[str, ...] = ()
+    #: A DURABLE registry marker naming the second-kernel route this node's proved status
+    #: claims (Controller Ruling 0b-9, 2026-10-28): "" (no claim), "comparator", or
+    #: "nanoda-direct". Set by `mission second-kernel-mark` only once the node's current
+    #: `[rejudge]` passes on that route. Without it, deleting a `[rejudge]` table (or editing
+    #: its `route`) from a node that is neither heavy nor Lean-kernel-only silently dropped
+    #: (or changed) the claim: `rejudge_problem` then reports the marker's mismatch instead.
+    second_kernel_route: str = ""
     #: Top-level keys and tables present in the file that this schema does not model, kept
     #: verbatim so a write-back cannot destroy them. Audit 2026-09-19: a live node carries a
     #: `[nonvacuity]` table and a `proof.fidelity_note`, and any CLI mutation on it silently
@@ -473,6 +497,8 @@ class Node:
         if self.heavy_build_targets and self.judge_via != "heavy":
             raise SchemaError("heavy_build_targets needs judge_via = \"heavy\": only the heavy "
                               "workflow reads it")
+        object.__setattr__(self, "second_kernel_route",
+                           _second_kernel_route(self.second_kernel_route))
         # Coerce depends_on to tuple if a list was passed
         if not isinstance(self.depends_on, tuple):
             object.__setattr__(self, "depends_on", tuple(self.depends_on))
@@ -514,7 +540,7 @@ _MODELLED_NODE_KEYS = frozenset({
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
     "requires_ci_job", "ci_record", "rejudge", "heavy_certificates", "judge_via", "compose",
-    "heavy_build_targets",
+    "heavy_build_targets", "second_kernel_route",
 })
 
 
@@ -526,6 +552,18 @@ def _judge_via(v) -> str:
     v = str(v or "").strip()
     if v not in JUDGE_VIA:
         raise SchemaError(f"judge_via must be one of {JUDGE_VIA!r}, got {v!r}")
+    return v
+
+
+#: Allowed values of `second_kernel_route` ("" = no second-kernel claim; Ruling 0b-9).
+SECOND_KERNEL_ROUTES = ("", "comparator", "nanoda-direct")
+
+
+def _second_kernel_route(v) -> str:
+    v = str(v or "").strip()
+    if v not in SECOND_KERNEL_ROUTES:
+        raise SchemaError(
+            f"second_kernel_route must be one of {SECOND_KERNEL_ROUTES!r}, got {v!r}")
     return v
 
 
@@ -565,6 +603,8 @@ def _node_to_doc(node: Node) -> dict:
         doc["judge_via"] = node.judge_via
     if node.heavy_build_targets:
         doc["heavy_build_targets"] = list(node.heavy_build_targets)
+    if node.second_kernel_route:
+        doc["second_kernel_route"] = node.second_kernel_route
     if node.compose is not None:
         c = node.compose
         doc["compose"] = {
@@ -653,6 +693,12 @@ def _node_to_doc(node: Node) -> dict:
         doc["rejudge"] = {k: getattr(r, k) for k in (
             "date", "machine", "nanoda_rev", "comparator_tag", "artifact_sha256", "verdict",
             "log_sha256", "peak_rss_kb")}
+        if r.closure_sha256:
+            doc["rejudge"]["closure_sha256"] = r.closure_sha256
+        if r.closure_files:
+            doc["rejudge"]["closure_files"] = r.closure_files
+        if r.route != "comparator":
+            doc["rejudge"]["route"] = r.route
         if r.note:
             doc["rejudge"]["note"] = r.note
     return doc
@@ -723,7 +769,10 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 date=r["date"], machine=r["machine"], nanoda_rev=r["nanoda_rev"],
                 comparator_tag=r["comparator_tag"], artifact_sha256=r["artifact_sha256"],
                 verdict=r["verdict"], log_sha256=r["log_sha256"],
-                peak_rss_kb=int(r.get("peak_rss_kb", 0)), note=r.get("note", ""))
+                peak_rss_kb=int(r.get("peak_rss_kb", 0)), note=r.get("note", ""),
+                closure_sha256=r.get("closure_sha256", ""),
+                closure_files=int(r.get("closure_files", 0)),
+                route=r.get("route", "comparator"))
         compose = None
         if "compose" in doc:
             c = doc["compose"]
@@ -760,6 +809,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             judge_via=_judge_via(doc.get("judge_via", "")),
             compose=compose,
             heavy_build_targets=_heavy_build_targets(doc.get("heavy_build_targets", [])),
+            second_kernel_route=_second_kernel_route(doc.get("second_kernel_route", "")),
             extra={k: v for k, v in doc.items() if k not in _MODELLED_NODE_KEYS} or None,
         )
     except (KeyError, SchemaError) as exc:
@@ -781,15 +831,31 @@ def atomic_write_text(path: Path, text: str) -> None:
     the read-back -- the record that gates `promote_to_open` -- with no error anywhere.
 
     `os.replace` is atomic on POSIX and Windows, so a reader never observes a partial file.
+
+    Final-fix 4: the replacement keeps the replaced file's mode and (best effort) owner, and
+    a NEW file is 0o644. Before, every write left mkstemp's 0o600, so one rewrite by a root
+    session turned a shared node toml into a root-owned, owner-only file.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        st = None
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
+        if st is None:
+            os.chmod(tmp, 0o644)
+        else:
+            os.chmod(tmp, stat.S_IMODE(st.st_mode))
+            try:
+                os.chown(tmp, st.st_uid, st.st_gid)
+            except PermissionError:
+                pass            # not root and not the owner: keep our own uid/gid
         os.replace(tmp, path)
     except BaseException:
         try:

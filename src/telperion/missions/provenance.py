@@ -25,13 +25,14 @@ attempts ledger, and a CLI that will not write a self-audit without being lied t
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .schema import Author, ComparatorRecord, Grant, Node, Readback, SchemaError, load_node, save_node
 from .statements import statement_path
@@ -169,6 +170,429 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Closure digest (step 0b Task 1, 2026-10-28; fail-closed + srcDir fix round 1, 10-28;
+# manifest-driven externals fix round 2, Controller Ruling 0b-3, 10-28)
+#
+# WHY. Before this, a [rejudge] record bound itself to the sha256 of the top-level
+# artifact FILE alone (RejudgeRecord.artifact_sha256). For the ladders the certificates
+# live in IMPORTED modules (Arb4_h8000 imports every segment's edge certificates; the
+# Hodge1 capstones import a chain of LDL^T blocks), so a re-judge that is current on the
+# artifact file can still be stale on what the artifact actually proves. The owner's fix:
+# bind the record to a digest over the artifact's WHOLE import closure instead.
+#
+# FIX ROUND 1 (Controller Ruling 0b-2): srcDir. The first cut resolved a module under a
+# candidate package directory by checking `D/module_path.lean` directly -- which ignores
+# `srcDir`. zzl_core's lakefile declares `srcDir = ".."`, so its modules live one
+# directory ABOVE zzl_core/ itself; the first cut read each one as "external" and
+# dropped it (and everything it imports). Fixed by reusing coverage.py's srcDir-aware
+# package model. It also introduced FAIL CLOSED (a hand-written LIBRARY_ROOTS list).
+#
+# FIX ROUND 2 (Controller Ruling 0b-3): LIBRARY_ROOTS replaced by a manifest-driven
+# rule, because the hand list missed `Zeta23` (rvm_bridge's `[[require]] git = ...`
+# dependency) -- discovered when re-binding found its modules unresolvable under round
+# 1's rule. A module is external iff its root package is a NON-PATH dependency in a
+# relevant `lake-manifest.json`, or it sits under a CORE_ROOT (Init/Lean/Std/Lake). The
+# package's module roots are read from its OWN lakefile under `.lake/packages/<name>
+# [/subDir]` when parseable (a `.toml`, e.g. Zeta23's); when it is not (a `.lean`
+# lakefile, e.g. Mathlib's) or absent, the package's own directory is treated as a bare
+# source root (`Mathlib.lean` sits right there). An import matching neither still fails
+# CLOSED. The digest now also pins every such external package's `name\trev`, so
+# bumping Mathlib or Zeta23 makes a bound re-judge stale too.
+# ---------------------------------------------------------------------------
+
+#: Lean/Lake toolchain roots that are never a manifest-listed package (Controller
+#: Ruling 0b-3): the prelude, the compiler, and their immediate core libraries.
+CORE_ROOTS = frozenset({"Init", "Lean", "Std", "Lake"})
+
+
+class ClosureError(ProvenanceError):
+    """An import resolves to no local file, matches no manifest package, and is not a
+    core root (Controller Ruling 0b-3): the closure fails CLOSED instead of silently
+    shrinking."""
+
+
+def _manifest_entries(pkg_dir: Path) -> Tuple[dict, ...]:
+    """The `packages` entries of *pkg_dir*'s `lake-manifest.json`, or `()` when absent
+    or unreadable.
+
+    Deliberately NOT cached (unlike `coverage._package`/`_workspace`, which assume a
+    stable repo during one process): a test that rewrites a manifest mid-run (e.g.
+    bumping a pinned rev) must see the new content, and the file is small enough that
+    re-reading it is cheap relative to the coverage.py calls already made per module.
+    """
+    mf = Path(pkg_dir) / "lake-manifest.json"
+    if not mf.is_file():
+        return ()
+    try:
+        doc = json.loads(mf.read_text())
+    except (OSError, ValueError):
+        return ()
+    return tuple(e for e in (doc.get("packages") or []) if isinstance(e, dict))
+
+
+def _external_package_dir(pkg_dir: Path, entry: dict) -> Path:
+    """Where *entry* (a non-path manifest dependency of the package at *pkg_dir*) lives
+    on disk: `<pkg_dir>/.lake/packages/<name>[/<subDir>]`."""
+    base = Path(pkg_dir) / ".lake" / "packages" / str(entry.get("name") or "")
+    sub = entry.get("subDir")
+    return (base / str(sub)) if sub else base
+
+
+def _resolve_external_entry(ws: tuple, root: str) -> Optional[dict]:
+    """The non-path manifest entry (from any package's `lake-manifest.json` in *ws*)
+    that provides module root *root*, or None.
+
+    Three tiers, cheapest first, matching the brief's "declared lib" fallback:
+      1. *root* matches the entry's own `name` field case-insensitively (Lake's own
+         convention: `lake init Foo` gives package `foo` module root `Foo`; this is
+         what resolves Mathlib/Zeta23 even when `.lake/packages` is not on disk at
+         all -- e.g. a fresh checkout, or a copy that deliberately excludes `.lake`).
+      2. that entry's OWN lakefile, if parseable (a `.toml` under
+         `.lake/packages/<name>[/subDir]`), declares a `[[lean_lib]]` whose roots
+         include *root* -- for a package whose OTHER libs don't share its name
+         (Zeta23 also provides `ChallengeDeps`/`Challenge`/`Solution`).
+      3. *root* exists, as a file or a directory, right under that package's own
+         directory on disk (the "bare source root" convention `coverage.py` already
+         uses for a local package with no declared `[[lean_lib]]`).
+    """
+    from . import coverage
+    seen: set = set()
+    for pkg in ws:
+        for entry in _manifest_entries(pkg.dir):
+            if entry.get("type") == "path":
+                continue
+            name = str(entry.get("name") or "")
+            if not name or (name, str(entry.get("rev") or "")) in seen:
+                continue
+            seen.add((name, str(entry.get("rev") or "")))
+            if root.lower() == name.lower():
+                return entry
+            base = _external_package_dir(pkg.dir, entry)
+            toml = base / "lakefile.toml"
+            if toml.is_file():
+                epkg = coverage._package(base)
+                if epkg is not None and any(
+                        root in lib_roots for lib_roots, _g, _s in epkg.libs.values()):
+                    return entry
+            if (base / (root + ".lean")).is_file() or (base / root).is_dir():
+                return entry
+    return None
+
+
+def _manifest_pins(ws: tuple) -> List[str]:
+    """Sorted, deduplicated `"<name>\\t<rev>"` lines for every non-path dependency
+    named in any package's `lake-manifest.json` in *ws* (Controller Ruling 0b-3): what
+    the closure digest pins so bumping Mathlib or Zeta23 makes a bound record stale."""
+    pins: set = set()
+    for pkg in ws:
+        for entry in _manifest_entries(pkg.dir):
+            if entry.get("type") == "path":
+                continue
+            name = str(entry.get("name") or "")
+            if name:
+                pins.add(f"{name}\t{entry.get('rev') or ''}")
+    return sorted(pins)
+
+
+# ---------------------------------------------------------------------------
+# lake_workspace (Controller Ruling 0b-7, 2026-10-28)
+#
+# WHY. `telperion/examples/zeta_zero_localization/lean`'s own lakefile.toml declares
+# 27,090 `[[lean_lib]]` entries. `lake env` there emits ~2.5 MB of environment -- over
+# macOS ARG_MAX (1 MB) -- so every process lake spawns from that directory fails with
+# "could not execute external process", including `lake exe cache get` and even `lake
+# env sh`. CI never builds the monolith directly: it builds the slim sub-workspace
+# `zzl_aux/` (23 libs, `srcDir = ".."`, its own lake-manifest.json/lean-toolchain, and
+# `../zzl_core` + `../../../zero_free_bridge/lean` path-required), which actually
+# declares the same modules and can spawn a process. `lake_workspace` finds that
+# smaller workspace generically, so the nanoda-direct route (and the closure digest's
+# manifest pins) can build/export from it instead of the unusable island root.
+# ---------------------------------------------------------------------------
+
+def lake_workspace(campaign_root: Path, node: Node) -> Path:
+    """The SMALLEST lakefile directory -- measured by fewest `[[lean_lib]]` entries --
+    among *node*'s island lean dir and that dir's immediate subdirectories, that
+    declares a `lean_lib` covering the artifact's own module (`judge.module_name_of`,
+    the same module resolution `node_module`/the grant gate use; `coverage.py`'s
+    lakefile model, the same one `closure_digest` already parses manifests with) AND
+    whose declaration resolves that module to the artifact's own file (Fix 1,
+    2026-10-28): a candidate whose `lean_lib` happens to name the same module but
+    points (no `srcDir = ".."`, its own copy of the file) at a DIFFERENT file on disk is
+    rejected, not accepted -- otherwise this would build and export from that copy while
+    `closure_digest` goes on hashing the original artifact.
+
+    Deterministic: ties are broken by path (lexicographic on the resolved directory
+    string). When NO candidate other than the island lean dir declares the module --
+    every island without a slimmer sub-workspace -- returns the island lean dir
+    itself, exactly the behaviour every other route already relies on. Off-island (no
+    recognised judge island at all, e.g. a synthetic test fixture with no
+    `examples/<island>/lean` tree), returns the artifact's own directory, matching
+    `_closure_workspace`'s fallback.
+    """
+    from . import coverage, judge
+    from .rejudge import RejudgeSetupError, island_of_artifact
+
+    campaign_root = Path(campaign_root).resolve()
+    if node.proof is None:
+        raise ProvenanceError("lake_workspace: node has no proof link")
+    artifact = (campaign_root / node.proof.artifact).resolve()
+    if not artifact.is_file():
+        raise ProvenanceError(f"lake_workspace: artifact {artifact} does not exist")
+
+    troot = campaign_root.parent.parent
+    lean_dir = artifact.parent
+    try:
+        island = island_of_artifact(troot, artifact)
+        lean_dir = judge.island_dir(troot, island).resolve()
+    except (RejudgeSetupError, judge.JudgeError):
+        return lean_dir       # off-island: no recognised workspace to search at all
+
+    module = judge.module_name_of(lean_dir, artifact)
+    # Controller Ruling 0b-9 (2026-10-28): the closure as the island model resolves it --
+    # every module imported anywhere in it, mapped to its file (None = external). A
+    # candidate build workspace must resolve EVERY one of these the same way (the 0b-8
+    # same-file guard, extended transitively), or the build would compile a different
+    # closure from the one `closure_digest` hashes.
+    _files, _ws, resolution = _closure_resolution(campaign_root, node)
+
+    candidates = [lean_dir]
+    try:
+        subdirs = sorted(p for p in lean_dir.iterdir() if p.is_dir())
+    except OSError:
+        subdirs = []
+    for d in subdirs:
+        if (d / "lakefile.toml").is_file():
+            candidates.append(d.resolve())
+
+    best: Optional[Tuple[Tuple[int, str], Path]] = None
+    for d in candidates:
+        pkg = coverage._package(d)
+        if pkg is None:
+            continue
+        got = coverage._lib_module_file((pkg,), module)
+        # Fix 1 (2026-10-28): a candidate is only a candidate if the module it declares
+        # resolves to the SAME file as the artifact. Without this check, a subdir lakefile
+        # with no `srcDir = ".."` that carries its own copy of the module (same name,
+        # different content) would be accepted, built and exported here, while
+        # `closure_digest` goes on hashing the original artifact -- the gate and the
+        # export would be looking at two different files.
+        if got is None or got != artifact:
+            continue
+        # Ruling 0b-9: transitively, not only the artifact module. The island lean dir
+        # IS the island model, so it agrees with itself by construction.
+        if d != lean_dir:
+            cand_ws = coverage._workspace(d)
+            if any(coverage._module_file(cand_ws, mod) != want
+                   for mod, want in resolution.items()):
+                continue
+        key = (len(pkg.libs), str(d))
+        if best is None or key < best[0]:
+            best = (key, d)
+    return best[1] if best is not None else lean_dir
+
+
+def _closure_workspace(campaign_root: Path, node: Node) -> Tuple[Path, tuple]:
+    """(artifact, workspace) for *node*: the artifact's resolved path, and the
+    `coverage.py` package workspace (island + every `path`-required sibling,
+    transitively, srcDir and all) its imports resolve against. Off-island, the
+    workspace is whatever `coverage._workspace` finds at the artifact's own directory
+    (typically nothing: no lakefile.toml there)."""
+    if node.proof is None:
+        raise ProvenanceError("closure_files: node has no proof link")
+    campaign_root = Path(campaign_root).resolve()
+    artifact = (Path(campaign_root) / node.proof.artifact).resolve()
+    if not artifact.is_file():
+        raise ProvenanceError(f"closure_files: artifact {artifact} does not exist")
+    from . import coverage, judge
+    from . import rejudge as _rejudge
+
+    lean_dir = artifact.parent
+    try:
+        troot = campaign_root.parent.parent
+        island = _rejudge.island_of_artifact(troot, artifact)
+        lean_dir = judge.island_dir(troot, island)
+    except (_rejudge.RejudgeSetupError, judge.JudgeError):
+        pass       # no recognised island: resolve only against the artifact's own dir
+
+    return artifact, coverage._workspace(Path(lean_dir).resolve())
+
+
+def _resolve_closure(campaign_root: Path, node: Node) -> Tuple[List[Path], tuple]:
+    """(closure files, workspace) for *node*'s artifact: every local Lean source file
+    it imports, directly or transitively, plus the artifact itself.
+
+    Each file's own imports (`coverage._imports`) are resolved against the workspace
+    (`coverage._module_file`, which already honours `srcDir`). An import that does not
+    resolve locally is external WITHOUT being an error iff it sits under a CORE_ROOT or
+    matches a non-path `lake-manifest.json` dependency (`_resolve_external_entry`);
+    anything else raises `ClosureError` naming the module and the importing file.
+    """
+    files, ws, _resolution = _closure_resolution(campaign_root, node)
+    return files, ws
+
+
+def _closure_resolution(campaign_root: Path, node: Node
+                        ) -> Tuple[List[Path], tuple, dict]:
+    """`_resolve_closure` plus the RESOLUTION it used: `{module: file-or-None}` for every
+    module imported anywhere in the closure (None = external: a core root or a manifest
+    package). Controller Ruling 0b-9: `lake_workspace` checks a candidate build workspace
+    against exactly this map, so the closure the digest hashes is the closure the build
+    actually sees."""
+    artifact, ws = _closure_workspace(campaign_root, node)
+    from . import coverage
+
+    resolved: set = set()
+    resolution: dict = {}
+    stack = [artifact]
+    while stack:
+        f = stack.pop()
+        if f in resolved:
+            continue
+        resolved.add(f)
+        for mod in coverage._imports(f):
+            g = coverage._module_file(ws, mod)
+            resolution[mod] = g
+            if g is not None:
+                if g not in resolved:
+                    stack.append(g)
+                continue
+            root = mod.split(".", 1)[0]
+            if root in CORE_ROOTS or _resolve_external_entry(ws, root) is not None:
+                continue
+            raise ClosureError(
+                f"import {mod!r} in {f} resolves to no local file, matches no "
+                "manifest package, and is not a core root; the closure cannot be bound")
+    return sorted(resolved), ws, resolution
+
+
+def closure_files(campaign_root: Path, node: Node) -> List[Path]:
+    """Every local Lean source file *node*'s artifact imports, directly or
+    transitively, plus the artifact itself -- the import closure a [rejudge] record is
+    bound to (Task 1; manifest-driven externals, Controller Ruling 0b-3)."""
+    files, _ws = _resolve_closure(campaign_root, node)
+    return files
+
+
+def closure_support_files(campaign_root: Path, node: Node) -> List[Path]:
+    """`lakefile.toml` + `lake-manifest.json` of the island (or the artifact's own
+    directory, off-island) and every `path`-required sibling (Controller Ruling 0b-3),
+    PLUS the same files for the workspace `lake_workspace` actually picks to build and
+    export from and that workspace's own path-required siblings (Fix 2, 2026-10-28):
+    the back-fill git rule must also cover these, since a changed `srcDir`, a changed
+    `[[require]] path`, or a changed pinned `rev` could change the closure or its
+    digest without any closure .lean FILE itself changing -- and since Controller
+    Ruling 0b-7, the pins `closure_digest` hashes come from `lake_workspace`'s own
+    workspace, not necessarily the island root's."""
+    from . import coverage
+
+    _artifact, ws = _closure_workspace(campaign_root, node)
+    chosen = lake_workspace(campaign_root, node)
+    chosen_ws = coverage._workspace(chosen.resolve())
+    out = []
+    for d in _package_dirs(tuple(ws) + chosen_ws):
+        # Controller Ruling 0b-9: `lean-toolchain` (which Lean the build used) and a
+        # `lakefile.lean` (a path-required package coverage.py cannot parse) are in the
+        # git rule too -- they are in the digest now (`_build_config_files`).
+        for name in ("lakefile.toml", "lakefile.lean", "lake-manifest.json", "lean-toolchain"):
+            f = Path(d) / name
+            if f.is_file():
+                out.append(f.resolve())
+    return sorted(set(out))
+
+
+def _package_dirs(ws: tuple) -> List[Path]:
+    """Every package directory of *ws*, plus each `path`-required directory of those
+    packages that `coverage._workspace` itself dropped (a `lakefile.lean` package it does
+    not parse) -- deduplicated, in a stable order."""
+    seen: List[Path] = []
+    for pkg in ws:
+        for d in [Path(pkg.dir)] + [Path(r) for r in pkg.requires]:
+            try:
+                d = d.resolve()
+            except OSError:
+                continue
+            if d.is_dir() and d not in seen:
+                seen.append(d)
+    return seen
+
+
+def _build_config_files(build_dir: Path) -> List[Path]:
+    """Controller Ruling 0b-9 (2026-10-28): the build configuration `closure_digest`
+    hashes by CONTENT -- `lean-toolchain`, `lakefile.toml` and `lakefile.lean` of the
+    build workspace `lake_workspace` picks and of each of its path-required packages.
+    Before this, a toolchain bump or a lakefile edit (an option, a `moreLeanArgs`, a lib
+    `srcDir`) left a bound re-judge looking current."""
+    from . import coverage
+    out = []
+    for d in _package_dirs(coverage._workspace(Path(build_dir).resolve())):
+        for name in ("lean-toolchain", "lakefile.toml", "lakefile.lean"):
+            f = d / name
+            if f.is_file():
+                out.append(f.resolve())
+    return sorted(set(out))
+
+
+def closure_digest(campaign_root: Path, node: Node) -> str:
+    """sha256 binding a [rejudge] record to *node*'s WHOLE import closure (Task 1):
+    the concatenation of every closure file's path (relative to the telperion root, so
+    the digest is the same wherever the repo is checked out) and its own sha256, in
+    sorted path order, followed by every external dependency's `name\\trev`
+    (`_manifest_pins`, Controller Ruling 0b-3). Changes if any closure file's CONTENT
+    changes, if the SET of closure files changes, or if an external dependency's
+    pinned rev changes (bumping Mathlib or Zeta23).
+
+    Controller Ruling 0b-7 (2026-10-28): the FILE set above is unchanged -- still every
+    closure file resolved against the island's own (possibly monolith) workspace. The
+    PINS are not: they come from `lake_workspace`'s own `lake-manifest.json` plus its
+    path-required packages, i.e. the workspace actually built and exported from. For an
+    island with no slimmer sub-workspace (every island this ruling does not touch),
+    `lake_workspace` returns the same lean dir `_resolve_closure` already used, so the
+    pins are unchanged too -- a record time/verify time MUST agree, which they do
+    because both call this same function.
+
+    Controller Ruling 0b-9 (2026-10-28): followed by `CFG` lines -- the path and sha256 of
+    every `lean-toolchain`, `lakefile.toml` and `lakefile.lean` of that same build workspace
+    and its path-required packages (`_build_config_files`), so a toolchain bump or a
+    lakefile edit also makes a bound record stale. Since the same ruling, `lake_workspace`
+    only picks a build workspace that resolves every closure module to the same file as
+    the island model, so the FILE set above is also the set the build compiles."""
+    campaign_root = Path(campaign_root).resolve()
+    troot = campaign_root.parent.parent
+    files, _ws = _resolve_closure(campaign_root, node)
+    from . import coverage
+    build_dir = lake_workspace(campaign_root, node).resolve()
+    pin_ws = coverage._workspace(build_dir)
+    h = hashlib.sha256()
+    for f in files:
+        try:
+            rel = f.relative_to(troot)
+        except ValueError:
+            rel = f
+        h.update(str(rel).encode("utf-8"))
+        h.update(b"\0")
+        h.update(sha256_file(f).encode("utf-8"))
+        h.update(b"\n")
+    for pin in _manifest_pins(pin_ws):
+        h.update(b"PIN\0")
+        h.update(pin.encode("utf-8"))
+        h.update(b"\n")
+    # Controller Ruling 0b-9 (2026-10-28): the build configuration's CONTENT --
+    # lean-toolchain + lakefile.toml/lakefile.lean of the build workspace and its
+    # path-required packages.
+    for cfg in _build_config_files(build_dir):
+        try:
+            rel = cfg.relative_to(troot)
+        except ValueError:
+            rel = cfg
+        h.update(b"CFG\0")
+        h.update(str(rel).encode("utf-8"))
+        h.update(b"\0")
+        h.update(sha256_file(cfg).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 def build_grant(campaign_root: Path, node: Node, *, identity: str, session: str,
                 today: Optional[str] = None) -> Grant:
     """The [grant] block for *node*: digests of the artifact and statement files as they are
@@ -278,13 +702,111 @@ def required_ci_problem(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+def judged_lean_kernel_only(node: Node) -> bool:
+    """True when the node's `[comparator]` record says the judge ran with nanoda OFF.
+
+    `second_kernel` starting with "none" (e.g. "none: heavy_certificates") is the record's
+    reading; `kernel_mode = "lean-kernel-only"` is the literal token the PASS line printed.
+    Either one means only the Lean kernel replayed the export.
+    """
+    c = node.comparator
+    if c is None:
+        return False
+    return (c.second_kernel.strip().lower().startswith("none")
+            or c.kernel_mode.strip() == "lean-kernel-only")
+
+
+def needs_rejudge(node: Node) -> bool:
+    """A node whose proved status needs a passing local nanoda re-judge.
+
+    Final-fix 1 (whole-branch review, 2026-10-28): driven by the flag OR by the judge record.
+    Before, deleting `heavy_certificates = true` from a node toml made `rejudge_problem`
+    return "" -- a node judged Lean-kernel-only in CI then stayed proved with no nanoda run at
+    all. A `[comparator]` record that says nanoda was off now makes the node heavy too.
+
+    Controller Ruling 0b-9 (2026-10-28): `judge_via = "heavy"` also counts. A node excluded
+    from the per-PR bundle BY RULE (heavy workflow) is exactly the node the owner approved a
+    Comparator re-judge for; before this, an h11000-shaped node with its `heavy_certificates`
+    flag deleted and no `[comparator]` record read as "not needs_rejudge", so a nanoda-direct
+    record could stand in for the Comparator re-judge Ruling 0b-4 demands.
+    """
+    return (bool(node.heavy_certificates) or judged_lean_kernel_only(node)
+            or (getattr(node, "judge_via", "") or "").strip() == "heavy")
+
+
+def second_kernel_claimed(node: Node) -> bool:
+    """A node whose proved status is accompanied by SOME claim about a second kernel: either
+    `needs_rejudge` (heavy, or judged Lean-kernel-only -- a re-judge is demanded) OR a
+    `[rejudge]` record already exists (one was recorded voluntarily, as every nanoda-direct
+    node's is -- none of the 7 is heavy_certificates or carries a `[comparator]` record at
+    all, so `needs_rejudge` alone never sees them).
+
+    Review fix round 1 (2026-10-28), item 2: before this, `rejudge_problem`'s `not
+    needs_rejudge(node)` early return made a FAIL record or a stale-artifact-sha record on a
+    non-heavy, no-`[comparator]` node completely invisible to `rejudge_problem` (and so to
+    `mission verify`, the grant gate, and `render_provenance_report`) -- the record existed on
+    disk, said something was wrong, and nothing downstream ever looked at it.
+
+    Controller Ruling 0b-9 (2026-10-28): OR the node carries the durable registry marker
+    `second_kernel_route`. Without it, deleting the `[rejudge]` table from one of the 7
+    nanoda-direct nodes made this False, and the claim vanished with no error anywhere.
+    """
+    return (bool(needs_rejudge(node)) or bool(getattr(node, "second_kernel_route", ""))
+            or node.rejudge is not None)
+
+
 def rejudge_problem(campaign_root: Path, node: Node) -> str:
-    """"" unless a heavy node lacks a passing nanoda re-judge on its current artifact."""
-    if not node.heavy_certificates:
+    """"" unless a node with a claimed second kernel (see `second_kernel_claimed`) lacks a
+    passing, current, sufficient nanoda re-judge.
+
+    "Claimed" covers three shapes: `heavy_certificates = true`; a `[comparator]` record whose
+    second kernel was off; or simply a `[rejudge]` record being present at all (a node that is
+    neither of the first two, but has one anyway -- every nanoda-direct node, step 0b Task 3).
+    """
+    if not second_kernel_claimed(node):
         return ""
+    marker = (getattr(node, "second_kernel_route", "") or "").strip()
+    if node.heavy_certificates:
+        why = "heavy_certificates"
+    elif judged_lean_kernel_only(node):
+        why = (f"judged Lean-kernel-only (second_kernel = {node.comparator.second_kernel!r}, "
+               "heavy_certificates absent)")
+    elif (getattr(node, "judge_via", "") or "").strip() == "heavy":
+        why = 'judge_via = "heavy"'
+    elif marker:
+        why = f"second_kernel_route = {marker!r}"
+    else:
+        why = "a [rejudge] record is present"
     r = node.rejudge
+    # Controller Ruling 0b-9 (2026-10-28): the durable marker. A marked node whose
+    # `[rejudge]` table was deleted, or whose record's route was edited, must fail --
+    # never silently drop or change the claim. And a node that `needs_rejudge` may not be
+    # MARKED nanoda-direct either (Ruling 0b-4 applies to the claim, not just the record).
+    if marker and r is None:
+        return f"second_kernel_route={marker} declared but no re-judge recorded"
+    if marker and needs_rejudge(node) and marker != "comparator":
+        return (f"second_kernel_route={marker} declared on a node that needs a Comparator "
+                "re-judge (heavy, judge_via = \"heavy\", or judged Lean-kernel-only); "
+                "nanoda-direct is not sufficient")
     if r is None:
-        return "heavy_certificates: no local nanoda re-judge recorded (`mission rejudge-record`)"
+        return f"{why}: no local nanoda re-judge recorded (`mission rejudge-record`)"
+    if marker and r.route != marker:
+        return (f"second_kernel_route={marker} declared but the [rejudge] record's route is "
+                f"{r.route!r}")
+    # Controller ruling 0b-5 (2026-10-28, review fix round 2): a record whose `route` is not
+    # one of `rejudge.VALID_ROUTES` names nothing this codebase understands how to check --
+    # reject it outright rather than let it fall through to the Comparator-only ruling below
+    # (which only ever compares against the literal string "comparator").
+    from .rejudge import VALID_ROUTES
+    if r.route not in VALID_ROUTES:
+        return f"re-judge route {r.route!r} is not a recognized route (must be one of {VALID_ROUTES})"
+    # Controller ruling 0b-4 (2026-10-28, review fix round 1 item 2): a node `needs_rejudge`
+    # demands a Comparator re-judge specifically -- nanoda-direct has no statement-identity
+    # step, so it cannot discharge the stronger requirement a heavy/Lean-kernel-only node
+    # carries, no matter how cleanly it passes. Checked before the verdict itself: a PASSING
+    # nanoda-direct record on such a node is still insufficient, not merely "stale" or "FAILED".
+    if needs_rejudge(node) and r.route != "comparator":
+        return "heavy node requires a Comparator re-judge; nanoda-direct is not sufficient"
     if r.verdict != "pass":
         return f"local nanoda re-judge on {r.date} FAILED (nanoda {r.nanoda_rev[:8]})"
     if node.proof is None:
@@ -295,6 +817,19 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     if sha256_file(art) != r.artifact_sha256:
         return (f"re-judge of {r.date} was on artifact sha256 {r.artifact_sha256[:12]}, "
                 "which is no longer the artifact")
+    # Task 1 (2026-10-28): a record must also be bound to the artifact's WHOLE import
+    # closure, not only the top-level file -- a ladder capstone's certificates live in
+    # imported modules. A record written before this field existed is not WRONG, just
+    # unproven against the closure; back-fill (Task 2, git-verified unchanged) or re-judge.
+    if not r.closure_sha256:
+        return "re-judge predates closure binding; back-fill or re-judge"
+    try:
+        cur_closure = closure_digest(campaign_root, node)
+    except ClosureError as exc:
+        return f"re-judge closure cannot be resolved: {exc}"
+    if cur_closure != r.closure_sha256:
+        return (f"re-judge closure digest {r.closure_sha256[:12]}... no longer matches the "
+                f"current import closure (now {cur_closure[:12]}...); back-fill or re-judge")
     return ""
 
 
@@ -417,20 +952,44 @@ def render_provenance_report(campaign) -> str:
     # heavy node can be proved with NO comparator record yet, e.g. AND_ladder_h11000_kernel
     # on the real registry, and must still be reported on). `lean_kernel_only` is kept as an
     # OR so a legacy record that marks itself Lean-kernel-only without the flag still shows.
+    # Review fix round 1 (2026-10-28), item 2: `second_kernel_claimed` (not `needs_rejudge`
+    # alone) also picks up a node that is neither heavy nor Lean-kernel-only but carries a
+    # `[rejudge]` record anyway -- every nanoda-direct node, none of which trips the first two.
     heavy_rows = [r for r in proved
-                 if r.lean_kernel_only or campaign.nodes[r.slug].heavy_certificates]
+                 if r.lean_kernel_only or second_kernel_claimed(campaign.nodes[r.slug])]
     for r in heavy_rows:
         node = campaign.nodes[r.slug]
         problem = rejudge_problem(campaign.root, node)
         comp = f"comparator={r.comparator_run}" if r.comparator_run else "comparator=-"
         if not problem and node.rejudge is not None:
             rj = node.rejudge
-            lines.append(f"  {r.slug:<48} {comp} Lean kernel + nanoda "
-                         f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]})")
+            # Controller Ruling 0b-9 (2026-10-28): name the route and whether the durable
+            # `second_kernel_route` marker is set, on every passing second-kernel line.
+            tag = (f" [route={rj.route}, marker="
+                   f"{getattr(node, 'second_kernel_route', '') or 'unset'}]")
+            if rj.route == "nanoda-direct":
+                # Step 0b Task 3 (2026-10-28): this route has no Comparator statement-identity
+                # step (no bundle was ever rendered for this node), so it must not read like
+                # the stronger Comparator-checked line below -- see Review Focus 5.
+                lines.append(f"  {r.slug:<48} {comp} Lean kernel + nanoda-direct "
+                             f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]}; "
+                             f"no Comparator statement check){tag}")
+            else:
+                lines.append(f"  {r.slug:<48} {comp} Lean kernel + nanoda "
+                             f"(local re-judge {rj.date}, nanoda {rj.nanoda_rev[:8]}){tag}")
         else:
             suffix = f" -- {problem}" if problem else ""
-            lines.append(f"  {r.slug:<48} {comp} Lean kernel only "
-                         f"(heavy_certificates: nanoda not run){suffix}")
+            # Review fix round 1 (2026-10-28), item 2: a non-heavy, non-Lean-kernel-only node
+            # (every nanoda-direct node) reaching this branch is NOT "heavy_certificates:
+            # nanoda not run" -- that wording is simply false for it, and was the reason a
+            # FAIL/stale record on one of the 7 used to read like an unrelated heavy node's.
+            if node.heavy_certificates:
+                base = "Lean kernel only (heavy_certificates: nanoda not run)"
+            elif judged_lean_kernel_only(node):
+                base = "Lean kernel only (judged Lean-kernel-only; nanoda not run)"
+            else:
+                base = "no passing second-kernel re-judge recorded"
+            lines.append(f"  {r.slug:<48} {comp} {base}{suffix}")
     for r in covered:
         weak = weak_record_reasons(r)
         if weak:

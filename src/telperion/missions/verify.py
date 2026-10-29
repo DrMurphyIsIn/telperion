@@ -36,6 +36,7 @@ from .provenance import (
     comparator_staleness,
     grant_digest_errors,
     readback_is_self_audit,
+    rejudge_problem,
     require_identity,
     required_ci_problem,
 )
@@ -600,6 +601,16 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
             f"or refutation. Normalized statement: {norm_stmt!r}"
         )
 
+    # Owner ruling 2026-10-27, scoped by controller ruling 7: a heavy_certificates node
+    # stays PROVED only with a passing LOCAL nanoda re-judge on its current artifact. Checked
+    # only when this grant would set `proved` -- a refutation artifact cannot produce a
+    # passing re-judge log (there is no theorem for nanoda to replay), so this must not block
+    # a heavy node being correctly granted `refuted`.
+    if new_status == "proved":
+        rj = rejudge_problem(campaign.root, node)
+        if rj:
+            raise GateError(f"Node {slug!r}: {rj}")
+
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":
         from .registry import parse_dep
@@ -816,6 +827,9 @@ def verify_campaign(
         ci = required_ci_problem(root, node)
         if ci and node.status == "proved":
             errors.append(f"Node {sl!r}: status is 'proved' but it {ci}")
+        rj = rejudge_problem(root, node)
+        if rj and node.status == "proved":
+            errors.append(f"Node {sl!r}: status is 'proved' but {rj} (re-judge)")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":
