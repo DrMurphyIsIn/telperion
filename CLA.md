@@ -5,7 +5,7 @@ licensed by Peter W. Murphy (the "Licensor") under the Business Source
 License 1.1.
 
 By submitting a contribution to the Telperion engine (any material in
-`telperion/` other than `telperion/examples/`), you accept the following
+this repository other than `examples/` and `docs/`), you accept the following
 terms for your present and future contributions:
 
 1. **Grant of copyright license.** You grant the Licensor a perpetual,

@@ -20,7 +20,7 @@ emitters, the CLI, the MCP server and the missions framework), the tests in `tes
 ## The open part: Apache-2.0 / CC-BY-4.0
 
 - The examples in `examples/`, and the documentation in `docs/`, are licensed under the
-  [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) for code (generators, scripts, Lean sources) and under
+  [Apache License 2.0](LICENSE-APACHE) for code (generators, scripts, Lean sources) and under
   [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) for documents (READMEs, notes, write-ups).
 - Emitted certificates (every `.lean` file a generator writes, and every `frozen/` record) are part of the open
   mathematical record and are Apache-2.0, not BSL.

@@ -9,9 +9,11 @@ Parameters
 
 Licensor:             Peter W. Murphy
 
-Licensed Work:        Telperion (the contents of this telperion/ directory,
-                      including the certificate-emission engine, emitters,
-                      CLI, MCP server, and associated tooling).
+Licensed Work:        Telperion (the contents of this repository other than
+                      the examples/ and docs/ directories: the
+                      certificate-emission engine in src/telperion/, its
+                      emitters, CLI, MCP server and missions framework, and
+                      the associated tests and tooling).
                       The Licensed Work is (c) 2026 Peter W. Murphy.
 
 Additional Use Grant: You may use, copy, modify, and redistribute the
