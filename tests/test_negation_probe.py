@@ -120,3 +120,61 @@ def test_coded_error_header_is_parsed():
                 "Note: It is not possible to treat `Foo` as an implicitly bound variable here\n" + AESOP[1])
     r = classify({"false": coded, "negation": UNABLE})
     assert r.verdict == "ERROR" and "unknownIdentifier" in r.detail
+
+
+# Fix round 1. Real v4.35.0 timeout text; `first` does not catch it, so it ends the `false` battery.
+TIMEOUT = (1, "f.lean:5:29: error: (deterministic) timeout at `isDefEq`, maximum number of heartbeats (200000) has "
+              "been reached\n\nNote: Use `set_option maxHeartbeats <num>` to set the limit.\n")
+REFUTE = (1, "f.lean:3:38: error: \n===================\nFound a counter-example!\nx := 4\n-------------------\n")
+
+
+def test_false_timeout_is_inconclusive():
+    r = classify({"false": TIMEOUT, "negation": UNABLE})
+    assert r.verdict == "PROBE_ONLY" and "probe 'false' timed out at maxHeartbeats 200000 (inconclusive)" in r.detail
+
+
+def test_negation_timeout_is_inconclusive():
+    r = classify({"false": AESOP, "negation": TIMEOUT})
+    assert r.verdict == "PROBE_ONLY" and "probe 'negation' timed out at maxHeartbeats 200000 (inconclusive)" in r.detail
+
+
+def test_timeout_plus_counterexample_elsewhere_is_refuted():
+    assert classify({"false": TIMEOUT, "negation": REFUTE}).verdict == "REFUTED"
+
+
+def test_timeout_never_gives_positive_verdict():
+    # a timed-out probe is never read as compiled or as a counterexample, even with rc 0 or the line in its output
+    assert classify({"false": (0, TIMEOUT[1]), "negation": UNABLE}).verdict == "PROBE_ONLY"
+    assert classify({"false": AESOP, "negation": (1, REFUTE[1] + TIMEOUT[1])}).verdict == "PROBE_ONLY"
+    r = classify({"false": AESOP, "negation": UNABLE, "witness": TIMEOUT})
+    assert r.verdict == "PROBE_ONLY" and "probe 'witness' timed out" in r.detail
+
+
+def test_no_testable_detail_says_search_never_ran():
+    neg = (1, "f.lean:3:37: error: Failed to create a `testable` instance for `∀ (x : ℝ), x * x ≥ 0`.\n")
+    r = classify({"false": AESOP, "negation": neg})
+    assert "negation probe did not run: no testable instance (e.g. ℝ)" in r.detail
+
+
+def test_autoimplicit_error_detail():
+    coded = (1, "p/false.lean:5:25: error(lean.unknownIdentifier): Unknown identifier `Foo`\n\nNote: It is not "
+                "possible to treat `Foo` as an implicitly bound variable here because the `autoImplicit` option is "
+                "set to `false`.\n")
+    r = classify({"false": coded, "negation": coded})
+    assert r.verdict == "ERROR" and "statement relies on autoImplicit; make binders explicit" in r.detail
+
+
+def test_leftover_probe_dir_detail(tmp_path):
+    from telperion.checks.negation_probe import ProbeSpec, run_probe
+    (tmp_path / ".telperion_probe").mkdir()
+    r = run_probe(ProbeSpec(["Mathlib"], "", "(x : ℕ)", "x = x", None), tmp_path, wrapper=["false"])
+    assert r.verdict == "ERROR" and str(tmp_path / ".telperion_probe") in r.detail
+    assert "remove it if no other probe is running" in r.detail
+    assert (tmp_path / ".telperion_probe").is_dir()
+
+
+def test_cli_help_documents_local_definitions(capsys):
+    from telperion import cli
+    with pytest.raises(SystemExit):
+        cli.main(["probe-negation", "--help"])
+    assert "local" in capsys.readouterr().out

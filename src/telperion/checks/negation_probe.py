@@ -12,7 +12,13 @@ Three small Lean files are elaborated next to the statement, in a built Lake pro
 ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a compiled proof of ``False``, a printed
 counterexample). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to find a
 counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an unknown
-identifier, a missing import, a parse error), so neither verdict could be read.
+identifier, a missing import, a parse error), so neither verdict could be read. A maxHeartbeats timeout in any probe
+is not an ERROR: that probe is inconclusive, and the verdict falls through to PROBE_ONLY with a note saying so.
+
+LOCAL DEFINITIONS. The probes import modules; they do not re-declare anything. A statement that uses a `def` from its
+own file elaborates only if that file's MODULE is imported (`telperion probe-negation --import <Module>`), not just the
+file's own imports; otherwise the name is unknown and the verdict is ERROR. Section `variable`s are not reproduced
+either, so binders must be explicit.
 """
 from __future__ import annotations
 
@@ -28,6 +34,7 @@ VERDICTS = ("VACUOUS", "REFUTED", "PROBE_ONLY", "WITNESSED", "ERROR")
 FALSE_TACTIC = "first | (exfalso; omega) | linarith | (simp_all; done) | (norm_num at *; done) | aesop"
 PLAUSIBLE = "plausible (config := { numInst := 200 })"
 COUNTEREXAMPLE = "Found a counter-example!"
+NO_TESTABLE = "Failed to create a `testable` instance"
 PROBE_DIR = ".telperion_probe"
 
 # Errors the `false` probe is EXPECTED to produce when the hypotheses are consistent: the battery's tactics giving up.
@@ -53,11 +60,16 @@ NEGATION_PURPOSE_ERRORS = (
     "Gave up",
     "gave up",
     "Unable to find",
-    "Failed to create a `testable` instance",
+    NO_TESTABLE,
 )
 
 # The witness probe has no expected errors: a witness that does not check is the caller's mistake, reported as ERROR.
 PURPOSE_ERRORS = {"false": FALSE_PURPOSE_ERRORS, "negation": NEGATION_PURPOSE_ERRORS, "witness": ()}
+
+# A maxHeartbeats timeout in ANY probe makes that probe inconclusive, never an ERROR: hypotheses that are merely hard
+# for the battery must not block a grant. `first` does not catch it, so it ends the `false` battery where it struck.
+# A timed-out probe is never read as compiled or as a counterexample, so a timeout cannot produce a positive verdict.
+TIMEOUT_ERROR = "maximum number of heartbeats"
 
 # A message header: `file:line:col: error:` from lean, or a bare `error:` from lake. v4.35.0 also tags some messages
 # with a code, `error(lean.unknownIdentifier):`; missing those would let an elaboration error pass as a tactic failure.
@@ -147,11 +159,17 @@ def _unrelated(key: str, rc: int, output: str) -> str | None:
     errs = _errors(output)
     if rc != 0 and not errs:
         return f"{key} probe exited {rc} with no error message: {output.strip()[-300:]!r}"
-    allowed = PURPOSE_ERRORS.get(key, ())
+    allowed = PURPOSE_ERRORS.get(key, ()) + (TIMEOUT_ERROR,)
     for e in errs:
         if not any(a in e for a in allowed):
+            if "autoImplicit" in e:
+                return f"statement relies on autoImplicit; make binders explicit ({key} probe: {e[:500]})"
             return f"{key} probe: {e[:500]}"
     return None
+
+
+def _timed_out(output: str) -> bool:
+    return any(TIMEOUT_ERROR in e for e in _errors(output))
 
 
 def _compiled(rc: int, output: str) -> bool:
@@ -167,17 +185,21 @@ def classify(outputs: dict[str, tuple[int, str]]) -> ProbeResult:
         bad = _unrelated(key, rc, out)
         if bad:
             return ProbeResult("ERROR", bad)
-    if _compiled(*outputs["false"]):
+    timed_out = [key for key, (_rc, out) in outputs.items() if _timed_out(out)]
+    if "false" not in timed_out and _compiled(*outputs["false"]):
         return ProbeResult("VACUOUS", "the hypotheses alone prove False (the `false` probe compiled)")
     neg = outputs["negation"][1]
-    if COUNTEREXAMPLE in neg:
+    if "negation" not in timed_out and COUNTEREXAMPLE in neg:
         at = neg.index(COUNTEREXAMPLE)
         return ProbeResult("REFUTED", "plausible found a counterexample: "
                            + " ".join(neg[at:].split("-------------------")[0].split()))
-    if "witness" in outputs and _compiled(*outputs["witness"]):
+    if "witness" in outputs and "witness" not in timed_out and _compiled(*outputs["witness"]):
         return ProbeResult("WITNESSED", "the witness proves the hypotheses satisfiable; no counterexample found")
-    return ProbeResult("PROBE_ONLY", "no contradiction in the hypotheses and no counterexample found; one-sided, "
-                       "not evidence the claim is true")
+    notes = [f"probe '{key}' timed out at maxHeartbeats 200000 (inconclusive)" for key in timed_out]
+    if NO_TESTABLE in neg:
+        notes.append("negation probe did not run: no testable instance (e.g. ℝ), so no counterexample was searched for")
+    return ProbeResult("PROBE_ONLY", "; ".join(notes + ["no contradiction in the hypotheses and no counterexample "
+                                                        "found; one-sided, not evidence the claim is true"]))
 
 
 def default_wrapper() -> list[str]:
@@ -197,6 +219,8 @@ def run_probe(spec: ProbeSpec, project: Path, wrapper: list[str] | None = None,
     pdir = project / PROBE_DIR
     try:
         pdir.mkdir()
+    except FileExistsError:
+        return ProbeResult("ERROR", f"probe dir {pdir} already exists; remove it if no other probe is running")
     except OSError as exc:
         return ProbeResult("ERROR", f"cannot create {pdir}: {exc}")
     outputs: dict[str, tuple[int, str]] = {}

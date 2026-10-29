@@ -3142,8 +3142,9 @@ def main(argv=None) -> int:
     p.add_argument("--witness", default=None,
                    help="a term proving `∃ <binders>, True` (the hypotheses are satisfiable)")
     p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
-                   help="module to import instead of the file's own imports (repeatable); pass the "
-                        "file's module when the statement uses definitions local to it")
+                   help="module to import instead of the file's own imports (repeatable). REQUIRED "
+                        "when the statement uses definitions local to its file: pass that file's "
+                        "module (and Mathlib if it does not import it), or the probe is ERROR")
     p.add_argument("--wrapper", default=None,
                    help="command prefix before `lake env lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
