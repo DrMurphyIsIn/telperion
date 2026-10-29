@@ -2490,7 +2490,14 @@ def cmd_mission(args) -> int:
 
 
 def cmd_kernel_policy_check(args) -> int:
-    """Lean toolchain floor + shrink-only exception list (spec 5.1). Exit 1 if any problem."""
+    """Lean toolchain floor + shrink-only exception list (spec 5.1). Exit 1 if any problem.
+
+    With --base REF, also enforces that the exception list only shrinks relative to
+    REF: the base-ref copy of the exceptions file is read with `git show`, treating
+    "path does not exist at REF" as a brand-new file (every current entry then counts
+    as added) and any other git error as a hard failure."""
+    import subprocess
+
     from .checks import kernel_policy as kp
 
     root = Path(args.root)
@@ -2502,6 +2509,26 @@ def cmd_kernel_policy_check(args) -> int:
         return 1
     projects = kp.find_projects(root)
     problems = kp.policy_problems(root, exceptions)
+    base = getattr(args, "base", None)
+    if base:
+        try:
+            relpath = exceptions_path.resolve().relative_to(root.resolve())
+        except ValueError:
+            relpath = Path(exceptions_path.name)
+        result = subprocess.run(["git", "show", f"{base}:{relpath.as_posix()}"],
+                                cwd=root, capture_output=True, text=True)
+        if result.returncode == 0:
+            base_text = result.stdout
+        elif "does not exist in" in result.stderr or "exists on disk, but not in" in result.stderr:
+            base_text = None
+        else:
+            print(f"kernel-policy check: cannot read {relpath} at {base}: {result.stderr.strip()}")
+            return 1
+        try:
+            problems += kp.shrink_problems(base_text, exceptions)
+        except ValueError as e:
+            print(e)
+            return 1
     if problems:
         for p in problems:
             print(p)
@@ -3074,6 +3101,9 @@ def main(argv=None) -> int:
     p.add_argument("--root", default=".", help="repo root to scan (default: .)")
     p.add_argument("--exceptions", default=None,
                    help="exceptions TOML (default: <root>/kernel_policy_exceptions.toml)")
+    p.add_argument("--base", default=None,
+                   help="base git ref; also enforce that the exception list only shrinks "
+                        "relative to this ref (read via `git show REF:<path>` in --root)")
     p.set_defaults(fn=cmd_kernel_policy_check)
 
     args = ap.parse_args(argv)

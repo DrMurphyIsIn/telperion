@@ -128,8 +128,12 @@ this: an exception for a project that now meets the floor is flagged as "stale" 
 has to be deleted, and an exception for a project that no longer exists at all is
 flagged as stale too. There's no code path that silently grows the list; growing it is
 something a human has to do on purpose, in a reviewed commit. Shrink-only is enforced
-by review today — an automated check that the list only shrinks relative to the base
-branch is pending.
+automatically on pull requests: `telperion kernel-policy check --base REF` (`kp.shrink_problems`
+in the same module) reads the exceptions file as it stood at `REF` with `git show` and
+flags any project added since, or any project whose toolchain dropped relative to that
+base — removing an entry or raising a toolchain is always fine. CI passes `--base
+origin/${{ github.base_ref }}` on `pull_request`; a plain push has no base to diff
+against, so it runs the check without `--base`.
 
 ### The heavy-node rule
 

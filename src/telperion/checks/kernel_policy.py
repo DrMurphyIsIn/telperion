@@ -50,23 +50,49 @@ def find_projects(root: Path) -> list[tuple[str, str]]:
     return found
 
 
-def load_exceptions(path: Path) -> dict[str, dict]:
-    if not path.exists():
-        return {}
+def _parse_exceptions_text(text: str, source: str) -> dict[str, dict]:
+    """Shared by load_exceptions and shrink_problems: parse exceptions TOML *text*
+    (not yet read from a path — a base-ref blob has no path of its own), reporting
+    problems against *source* (a path, or a ref-qualified label for a base blob)."""
     try:
-        doc = tomllib.loads(path.read_text())
+        doc = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"exceptions file {path}: not valid TOML: {e}") from e
+        raise ValueError(f"exceptions file {source}: not valid TOML: {e}") from e
     result: dict[str, dict] = {}
     for i, e in enumerate(doc.get("exception", [])):
         for key in ("project", "toolchain", "reason"):
             if key not in e:
-                raise ValueError(f"exceptions file {path}: entry {i} is missing '{key}'")
+                raise ValueError(f"exceptions file {source}: entry {i} is missing '{key}'")
         name = e["project"]
         if name in result:
-            raise ValueError(f"exceptions file {path}: duplicate project '{name}'")
+            raise ValueError(f"exceptions file {source}: duplicate project '{name}'")
         result[name] = {"toolchain": e["toolchain"], "reason": e["reason"]}
     return result
+
+
+def load_exceptions(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    return _parse_exceptions_text(path.read_text(), str(path))
+
+
+def shrink_problems(base_text: str | None, current: dict) -> list[str]:
+    """What is wrong if `current`'s exception list is not a shrink of the one at the
+    base ref (spec 5.1: the list is shrink-only). *base_text* is the TOML text of the
+    exceptions file at the base ref, or None if the file did not exist there — a brand
+    new exceptions file has no base to shrink from, so every entry in `current` is
+    correctly reported as added.
+
+    Removing an entry, or raising its toolchain (e.g. bumping a project past the
+    floor), is always fine and never reported."""
+    base = _parse_exceptions_text(base_text, "<base ref>") if base_text is not None else {}
+    problems: list[str] = []
+    for proj in sorted(set(current) - set(base)):
+        problems.append(f"exception added: {proj} (the list is shrink-only)")
+    for proj in sorted(set(current) & set(base)):
+        if parse_toolchain(current[proj]["toolchain"]) < parse_toolchain(base[proj]["toolchain"]):
+            problems.append(f"exception toolchain lowered: {proj}")
+    return problems
 
 
 def policy_problems(root: Path, exceptions: dict) -> list[str]:
