@@ -295,3 +295,40 @@ def test_verify_against_built_env_catches_error():
     r = verify_lean(src, env_dir=env_dir, decls=["tv_bad"])
     assert r.okay is False, r.summary()
     assert len(r.errors) >= 1
+
+
+# --------------------------------------------------------------------------- #
+# E2BIG fallback: the compact LEAN_PATH.                                      #
+# --------------------------------------------------------------------------- #
+
+def _built(d):
+    b = d / ".lake" / "build" / "lib" / "lean"
+    b.mkdir(parents=True)
+    return str(b)
+
+
+def test_e2big_fallback_lean_path_has_the_path_required_sibling_islands(monkeypatch, tmp_path):
+    """`lake env` cannot spawn on a huge workspace, so verify reruns `lean` with LEAN_PATH built by hand. A sibling
+    island the env requires by `path` (as lake-manifest.json records it) must be on it; an unrelated built sibling
+    must not."""
+    import json
+    env_dir = tmp_path / "examples" / "isl" / "lean"
+    env_dir.mkdir(parents=True)
+    pkg = _built(env_dir / ".lake" / "packages" / "mathlib")
+    dep = _built(tmp_path / "examples" / "dep" / "lean")
+    _built(tmp_path / "examples" / "unrelated" / "lean")
+    own = str(env_dir / ".lake" / "build" / "lib" / "lean")
+    (env_dir / "lake-manifest.json").write_text(json.dumps({"packages": [
+        {"type": "path", "name": "Dep", "dir": "../../dep/lean", "inherited": False},
+        {"type": "git", "name": "mathlib", "dir": None, "inherited": False}]}))
+    seen = []
+
+    def _run(cmd, **kw):
+        seen.append(kw.get("env", {}).get("LEAN_PATH"))
+        if cmd[0] == "lake":
+            return _FakeProc(stdout="error: could not execute external process 'lean'", returncode=1)
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(V.subprocess, "run", _run)
+    verify_lean("theorem t : True := trivial\n", env_dir=env_dir)
+    assert seen[-1].split(V.os.pathsep) == [pkg, dep, own]

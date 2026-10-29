@@ -99,3 +99,11 @@ def test_evolve_default_lean_project_is_a_kept_canonical_example():
     lp = Path(EvolveConfig.default().lean_project)
     assert lp == paths.examples_dir() / "primality" / "lean"
     assert (lp / "lakefile.toml").is_file()
+
+
+def test_examples_prefix_relative_to_an_explicit_repo(tmp_path):
+    # a caller that already holds the repo root (the coverage gate) gets the prefix relative to THAT root
+    repo = tmp_path / "repo"
+    (repo / "telperion" / "examples").mkdir(parents=True)
+    assert paths.examples_prefix(repo / "telperion", repo=repo) == "telperion/examples"
+    assert paths.examples_prefix(repo, repo=repo) == "examples"

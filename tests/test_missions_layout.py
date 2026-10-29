@@ -65,3 +65,17 @@ def test_empty_band_driver_has_no_lab_default_output(tmp_path):
     from telperion.driver_empty_band import run_empty_band
     with pytest.raises(ValueError, match="out_dir"):
         run_empty_band("1/100", "99/100", "0", "55/16", winding_prec=160, write=True, check=True)
+
+
+def test_unwired_island_message_names_the_arda_path(tmp_path):
+    repo, camp, art = _tree(tmp_path, arda=True, wire_ci=False)
+    err = artifact_coverage_error(art, _repo_root(camp))
+    assert err is not None and "`lake build` in telperion/examples/isl/lean" in err
+
+
+def test_coverage_message_uses_the_shared_examples_prefix(tmp_path, monkeypatch):
+    # one definition of "the examples dir as a workflow spells it": telperion.paths.examples_prefix
+    import telperion.missions.coverage as cov
+    monkeypatch.setattr(cov, "examples_prefix", lambda project=None, repo=None: "SHARED")
+    repo, camp, art = _tree(tmp_path, arda=False, wire_ci=False)
+    assert "`lake build` in SHARED/isl/lean" in artifact_coverage_error(art, _repo_root(camp))

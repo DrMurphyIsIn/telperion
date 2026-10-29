@@ -53,7 +53,7 @@ def examples_dir(project: Optional[Path] = None) -> Path:
     return project_root(project) / "examples"
 
 
-def examples_prefix(project: Optional[Path] = None) -> str:
+def examples_prefix(project: Optional[Path] = None, repo: Optional[Path] = None) -> str:
     """The examples dir relative to the repo root, as CI workflows spell it: "telperion/examples" in Arda,
-    "examples" standalone."""
-    return examples_dir(project).relative_to(repo_root(project)).as_posix()
+    "examples" standalone. A caller that already holds the repo root passes it as `repo`."""
+    return examples_dir(project).relative_to(Path(repo) if repo is not None else repo_root(project)).as_posix()

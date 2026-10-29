@@ -52,7 +52,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from ..paths import project_of_repo
+from ..paths import examples_prefix, project_of_repo
 
 __all__ = [
     "island_of",
@@ -83,11 +83,6 @@ def island_of(path: Path | str) -> Optional[str]:
 def _examples_dir(repo_root: Path) -> Path:
     """<repo>/telperion/examples in Arda, <repo>/examples standalone."""
     return project_of_repo(repo_root) / "examples"
-
-
-def _examples_prefix(repo_root: Path) -> str:
-    """The examples dir as a workflow spells it, relative to the repo root."""
-    return _examples_dir(repo_root).relative_to(Path(repo_root)).as_posix()
 
 
 def _workflow_paths(repo_root: Path) -> List[Path]:
@@ -1040,9 +1035,10 @@ def artifact_coverage_error(
     if built is None:
         built = ci_built_islands(repo_root)
     if name not in built:
+        prefix = examples_prefix(project_of_repo(repo_root), repo=repo_root)
         return (
             f"artifact lives in example island {name!r}, which no CI workflow builds "
-            f"(no step runs `lake build` in {_examples_prefix(repo_root)}/{name}/lean). A node may not be "
+            f"(no step runs `lake build` in {prefix}/{name}/lean). A node may not be "
             f"`proved` against Lean that nothing compiles -- wire the island into "
             f".github/workflows/ or move the artifact to one that is wired."
         )

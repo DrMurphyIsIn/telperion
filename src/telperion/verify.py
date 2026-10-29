@@ -184,6 +184,28 @@ def _parse_output(out: str, returncode: int, *, decls, permitted) -> dict:
     )
 
 
+def _path_required_siblings(env_dir: Path) -> list:
+    """Sibling islands (`<examples>/<other>/lean`) that env_dir requires by `path`, per its lake-manifest.json.
+
+    A path require is built in place, not under `.lake/packages`, so the compact LEAN_PATH must name it
+    explicitly. Only sibling island roots count (inherited ones included); other path packages are left out.
+    """
+    import json
+    try:
+        pkgs = json.loads((env_dir / "lake-manifest.json").read_text(encoding="utf-8")).get("packages", [])
+    except (OSError, ValueError):
+        return []
+    examples = Path(os.path.normpath(env_dir.parent.parent))
+    out = []
+    for p in pkgs:
+        if p.get("type") != "path" or not p.get("dir"):
+            continue
+        d = Path(os.path.normpath(env_dir / p["dir"]))
+        if d.name == "lean" and d.parent.parent == examples and d.parent != Path(os.path.normpath(env_dir.parent)) and d not in out:
+            out.append(d)
+    return out
+
+
 def verify_lean(
     content: str,
     *,
@@ -260,7 +282,7 @@ def verify_lean(
                     cand = d / ".lake" / "build" / "lib" / "lean"
                     if cand.is_dir():
                         lp.append(str(cand))
-            for extra in (env_dir.parent.parent / "zero_free_bridge" / "lean",):
+            for extra in _path_required_siblings(env_dir):
                 cand = extra / ".lake" / "build" / "lib" / "lean"
                 if cand.is_dir():
                     lp.append(str(cand))
