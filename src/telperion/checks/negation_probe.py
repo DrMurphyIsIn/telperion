@@ -18,13 +18,19 @@ Three small Lean files are run with `lake env lean` in that project:
   with no metavariables, no ``sorry`` and only ``comparator.CLEAN_AXIOMS``.
 * ``negation`` -- ``example : type_of% @T := by plausible``. ``type_of% @T`` elaborates to exactly the constant's type.
   If plausible's error opens with its ``Found a counter-example!`` banner, the claim is REFUTED at a concrete point.
-* ``witness``  -- only with a caller-supplied term: the ∃-closure of the premises (``∃ x₁ … xₙ, True``) is built as an
-  Expr, the witness is parsed and elaborated against it, kernel-checked and axiom-audited the same way. WITNESSED says
-  the hypotheses are jointly satisfiable. A witness that does not elaborate is ERROR.
+* ``witness``  -- only with a caller-supplied term: the ∃-closure of the FULL non-reducing ∀-telescope of the type
+  (every ∀/→ binder, the conclusion's arrows included; ``¬`` and ``≠`` stay closed, as they are not ∀-binders) is
+  built as an Expr, the witness is parsed and elaborated against it, kernel-checked and axiom-audited the same way.
+  WITNESSED says every antecedent is jointly satisfiable. It does NOT use the premise split below, which the author
+  controls (`theorem arrow (n) : n < 0 → n = 7` with ⟨0, trivial⟩ would otherwise be WITNESSED). A witness that does
+  not elaborate is ERROR.
 
 PREMISES. In an elaborated type a binder `(h : P)` and an arrow `P → Q` in the conclusion are both ∀-binders; the
-elaborator names an arrow's binder with a hygienic `a✝`. The premises are the leading binders up to the first explicit
-binder with that name (so `theorem t (h : P) : Q → False` has the premise `h` only, and `Q` stays in the conclusion).
+elaborator names an arrow's binder `a._@._internal._hyg.N`: in v4.35.0's `MacroScopesView`, name `a`, ctx exactly
+`_internal` and no module (a macro's binders have ctx `_hygCtx` and the macro's module, measured). The
+premises, used by the `false` probe only, are the leading binders up to the first explicit binder with exactly that
+name (so `theorem t (h : P) : Q → False` has the premise `h` only, and `Q` stays in the conclusion). Binders a macro
+introduced carry the macro's module instead, so they count as premises.
 The telescope does not reduce: `¬ P`, `a ≠ b` and `s ⊆ t` in a conclusion stay closed (reducing would turn
 `x + 1 ≠ 0` into the premise `x + 1 = 0`, prove False from it, and call a true theorem VACUOUS). A conclusion written
 with NAMED binders (`: ∀ (m : ℕ) (h : m < 0), False`) is read as premises.
@@ -127,10 +133,13 @@ def _lean_string(s: str) -> str:
 _PREMISES = """\
 namespace TelperionProbe
 open Lean in
-/-- Leading premise binders of a theorem type: up to the first explicit binder named like an arrow's (`a✝`). -/
+/-- Leading premise binders of a theorem type: up to the first explicit binder carrying the elaborator's arrow name
+`a._@._internal._hyg.*` exactly. A macro's own scoped binder (`a._@.<Module>..._hygCtx...`) is a premise. -/
 partial def premises : Expr → Nat
   | .forallE n _ b bi =>
-    if bi == .default && n.hasMacroScopes && n.eraseMacroScopes == `a then 0 else premises b + 1
+    let v := extractMacroScopes n
+    if bi == .default && n.hasMacroScopes && v.name == `a && v.ctx == `_internal && v.imported.isAnonymous then 0
+    else premises b + 1
   | .mdata _ e => premises e
   | _ => 0
 end TelperionProbe
@@ -180,8 +189,7 @@ def render_probes(module: str, theorem: str, witness: str | None, imports: tuple
         src["witness"] = (
             f"{head}{_PREMISES}\n{meta}"
             f"  let info ← getConstInfo `{t}\n"
-            f"  let n := TelperionProbe.premises info.type\n"
-            f"  let ex ← forallBoundedTelescope info.type (some n) fun xs _ => do\n"
+            f"  let ex ← forallTelescope info.type fun xs _ => do\n"
             f"    let mut body := Lean.mkConst ``True\n"
             f"    for x in xs.reverse do\n"
             f"      body ← mkAppM ``Exists #[← mkLambdaFVars #[x] body]\n"
@@ -361,15 +369,14 @@ def _run(cmd: list[str], cwd: Path, timeout: int) -> tuple[int, str]:
 
 def run_probe(spec: ProbeSpec, project: Path, wrapper: list[str] | None = None,
               timeout: int = 1800) -> ProbeResult:
-    """Write the probes to `<project>/.telperion_probe/`, run each with `lake env lean`, classify, delete the dir.
-
-    The directory must not already exist: a second probe running in the same project, or a stale one, is reported
-    as ERROR rather than overwritten."""
+    """Write the probes to `<project>/.telperion_probe_<nonce>/`, run each with `lake env lean`, classify, delete the
+    dir. The dir is per run, so concurrent probes in one project never collide and a dir left by a killed run (removed
+    by hand when convenient) never blocks a later probe; an existing dir of the same name is still ERROR."""
     project = Path(project)
     prefix = default_wrapper() if wrapper is None else list(wrapper)
     tag = f"TP{secrets.token_hex(16)}"     # 128-bit per-run nonce on every protocol line
     srcs = render_probes(spec.module, spec.theorem, spec.witness, spec.imports, tag=tag)
-    pdir = project / PROBE_DIR
+    pdir = project / f"{PROBE_DIR}_{tag[2:]}"     # per run: a SIGKILLed run's dir never blocks a later one
     try:
         pdir.mkdir()
     except FileExistsError:

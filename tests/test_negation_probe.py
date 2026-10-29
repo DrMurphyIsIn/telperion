@@ -3,6 +3,7 @@ import secrets
 import shutil
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 import pytest
 from telperion.checks.negation_probe import classify, render_probes
 
@@ -44,6 +45,9 @@ def test_render_contains_parts():
     w = render_probes("Foo.Bar", "Foo.t", 'by exact ⟨2, "a\\"b"⟩', tag="TPx")["witness"]
     assert '"by exact ⟨2, \\"a\\\\\\"b\\"⟩"' in w and "TPx-WITNESS PROVED" in w and 'IO.println "TPx-DONE"' in w
     assert 'IO.println "TP-DONE"' in src["false"]
+    # round 4: the witness ranges over the FULL non-reducing telescope; the premise split checks the exact marker
+    assert "forallTelescope info.type" in w and "forallBoundedTelescope" not in w
+    assert "v.ctx == `_internal && v.imported.isAnonymous" in src["false"]
 
 
 # Real v4.35.0 outputs: plausible's no-counterexample and no-Testable reports; a caught tactic failure.
@@ -106,9 +110,14 @@ def test_run_probe_nonce_is_128_bit(tmp_path):
     import re
     from telperion.checks.negation_probe import ProbeSpec, run_probe
     # the wrapper prints the probe source instead of running Lean: no protocol line, so ERROR naming the tag
-    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", 'cat "$4"', "sh"])
+    seen = tmp_path / "seen.txt"
+    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", f'echo "$4" >> {seen}; cat "$4"', "sh"])
     m = re.search(r"no (TP[0-9a-f]+)-FALSE result line", r.detail)
     assert r.verdict == "ERROR" and m and len(m.group(1)) == 2 + 32, r.detail
+    # round 4: the probe dir is per run, named by the same nonce, and removed afterwards
+    assert seen.read_text().split() == [f".telperion_probe_{m.group(1)[2:]}/false.lean",
+                                        f".telperion_probe_{m.group(1)[2:]}/negation.lean"]
+    assert not list(tmp_path.glob(".telperion_probe*"))
 
 
 def test_unbuilt_module_is_error():
@@ -145,13 +154,16 @@ def test_timeout_never_gives_positive_verdict():
     assert r.verdict == "PROBE_ONLY" and "probe 'witness' timed out" in r.detail
 
 
-def test_leftover_probe_dir_detail(tmp_path):
+def test_stale_probe_dirs_do_not_wedge_later_probes(tmp_path):
+    # round 4: a SIGKILLed run leaves its own `.telperion_probe_<nonce>`; later probes use fresh dirs and never touch it
     from telperion.checks.negation_probe import ProbeSpec, run_probe
-    (tmp_path / ".telperion_probe").mkdir()
+    for stale in (".telperion_probe", ".telperion_probe_deadbeef"):
+        (tmp_path / stale).mkdir()
+        (tmp_path / stale / "false.lean").write_text("stale", encoding="utf-8")
     r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["false"])
-    assert r.verdict == "ERROR" and str(tmp_path / ".telperion_probe") in r.detail
-    assert "remove it if no other probe is running" in r.detail
-    assert (tmp_path / ".telperion_probe").is_dir()
+    assert r.verdict == "ERROR" and "probe dir" not in r.detail and "exited 1" in r.detail
+    assert sorted(p.name for p in tmp_path.glob(".telperion_probe*")) == [".telperion_probe", ".telperion_probe_deadbeef"]
+    assert (tmp_path / ".telperion_probe_deadbeef" / "false.lean").read_text(encoding="utf-8") == "stale"
 
 
 def test_cli_help_documents_built_module(capsys):
@@ -255,6 +267,14 @@ theorem ne_t (x : ℕ) : x + 1 ≠ 0 := by omega
 theorem imp_t (x : ℕ) (h : x < 3) : x < 0 → False := by omega
 end Controls
 
+namespace C2
+-- round 4, the re-reviewer's C2 cases: an arrow conclusion, and macro-generated binders `a✝`/`h✝` (macro scopes of
+-- THIS module, not the elaborator's `_internal` arrow marker)
+theorem arrow (n : ℕ) : n < 0 → n = 7 := by omega
+macro "tp_mk_hyg" : command => `(theorem $(Lean.mkIdent `hyg) (a : ℕ) (h : a < 0) : a = 7 := by omega)
+tp_mk_hyg
+end C2
+
 namespace S0
 open Nat
 def factorial (n : ℕ) : ℕ := n
@@ -309,57 +329,59 @@ end S7
 BAD = "namespace TpBad\n@[aesop safe apply] axiom bad : False\ntheorem tb (x : ℕ) (h : x < 3) : x < 5 := by omega\nend TpBad\n"
 
 
-def _build_module(env: Path, body: str, must_build: bool = True) -> str | None:
-    """Compile `import Mathlib` + body as a fresh module in env/.lake/build/lib/lean (on env's LEAN_PATH). With
-    must_build=False a failed build returns None instead of failing the test."""
+class Built(NamedTuple):
+    name: str
+    lib: Path                         # this module's own dir, appended to LEAN_PATH (lake env keeps it)
+
+
+def _lean_path_wrapper(lib: Path | None) -> list[str]:
     from telperion.checks.negation_probe import default_wrapper
-    name = f"TpTmp{secrets.token_hex(4)}"
-    src = env / f".{name}_src"
-    src.mkdir()
-    (src / f"{name}.lean").write_text("import Mathlib\n" + body, encoding="utf-8")
-    lib = env / ".lake" / "build" / "lib" / "lean"
-    lib.mkdir(parents=True, exist_ok=True)
-    p = subprocess.run([*default_wrapper(), "lake", "env", "lean", "-R", str(src), "-o", str(lib / f"{name}.olean"),
-                        "-i", str(lib / f"{name}.ilean"), str(src / f"{name}.lean")], cwd=env,
-                       capture_output=True, text=True, timeout=1800)
+    return (["env", f"LEAN_PATH={lib}"] if lib else []) + default_wrapper()
+
+
+def _build_module(env: Path, body: str, must_build: bool = True) -> Built | None:
+    """Compile `import Mathlib` + body as a fresh module into its OWN dir `<env>/.tp_mod_<hex>/`, which only the
+    probes of this module put on LEAN_PATH. Nothing shared (the env's `.lake/build`) is created or removed, so a
+    concurrent compile cannot race the cleanup. With must_build=False a failed build returns None."""
+    hexid = secrets.token_hex(8)
+    built = Built(f"TpTmp{hexid}", env / f".tp_mod_{hexid}")
+    src = built.lib / "src"
+    src.mkdir(parents=True)
+    (src / f"{built.name}.lean").write_text("import Mathlib\n" + body, encoding="utf-8")
+    p = subprocess.run([*_lean_path_wrapper(None), "lake", "env", "lean", "-R", str(src),
+                        "-o", str(built.lib / f"{built.name}.olean"), "-i", str(built.lib / f"{built.name}.ilean"),
+                        str(src / f"{built.name}.lean")], cwd=env, capture_output=True, text=True, timeout=1800)
     shutil.rmtree(src)
     if p.returncode != 0:
-        _remove_module(env, name)
+        _remove_module(built)
         if must_build:
             pytest.fail(p.stdout + p.stderr)
         return None
-    return name
+    return built
 
 
-def _remove_module(env: Path, name: str) -> None:
-    lib = env / ".lake" / "build" / "lib" / "lean"
-    for ext in (".olean", ".ilean"):
-        (lib / f"{name}{ext}").unlink(missing_ok=True)
-    for d in (lib, lib.parent, lib.parent.parent):
-        try:
-            d.rmdir()                       # only if now empty: never remove anything else's build output
-        except OSError:
-            break
+def _remove_module(built: Built) -> None:
+    shutil.rmtree(built.lib, ignore_errors=True)
 
 
 @pytest.fixture(scope="module")
 def cases_module():
-    env = Path(LEAN_ENV)
-    name = _build_module(env, CASES)
-    yield name
-    _remove_module(env, name)
+    built = _build_module(Path(LEAN_ENV), CASES)
+    yield built
+    _remove_module(built)
 
 
 @pytest.fixture(scope="module")
 def bad_module():
-    env = Path(LEAN_ENV)
-    name = _build_module(env, BAD)
-    yield name
-    _remove_module(env, name)
+    built = _build_module(Path(LEAN_ENV), BAD)
+    yield built
+    _remove_module(built)
 
 
-def _probe(module, theorem, witness=None):
+def _probe(module: Built | str, theorem, witness=None):
     from telperion.checks.negation_probe import run_probe, ProbeSpec
+    if isinstance(module, Built):
+        return run_probe(ProbeSpec(module.name, theorem, witness), Path(LEAN_ENV), wrapper=_lean_path_wrapper(module.lib))
     return run_probe(ProbeSpec(module, theorem, witness), Path(LEAN_ENV))
 
 
@@ -453,8 +475,8 @@ def rereview_modules():
     mods["mod_a"] = _build_module(env, REREVIEW_MOD_A)
     mods["control_sorry"] = _build_module(env, REREVIEW_CONTROL.replace("Nat.le_refl _", "sorry"))
     yield mods
-    for name in mods.values():
-        _remove_module(env, name)
+    for built in mods.values():
+        _remove_module(built)
 
 
 @lean
@@ -477,3 +499,16 @@ def test_lean_rereview_instthm_and_erased_instance(rereview_modules):
     assert r.verdict == "PROBE_ONLY", r.detail
     r = _probe(rereview_modules["mod_a"], "inA")
     assert r.verdict == "PROBE_ONLY", r.detail
+
+
+@lean
+def test_lean_witness_ranges_over_the_full_telescope(cases_module):   # C2: the premise split is author-controlled
+    # `n < 0 → n = 7`: the arrow is not a premise for VACUOUS, but the witness must also satisfy it
+    assert _probe(cases_module, "C2.arrow").verdict == "PROBE_ONLY"
+    r = _probe(cases_module, "C2.arrow", "⟨0, trivial⟩")
+    assert r.verdict != "WITNESSED", r.detail
+    # macro-scoped user binders are premises (exact `_internal` marker), so `a < 0` is seen, and is contradictory
+    r = _probe(cases_module, "C2.hyg")
+    assert r.verdict == "VACUOUS" and "the 2 premise(s)" in r.detail, r.detail
+    r = _probe(cases_module, "C2.hyg", "trivial")
+    assert r.verdict != "WITNESSED", r.detail
