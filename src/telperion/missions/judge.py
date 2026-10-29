@@ -906,6 +906,21 @@ def _heavy_certificates(node_toml: Path) -> bool:
         return False
 
 
+def _config_heavy(node_toml: Path) -> bool:
+    """Heavy for the kernel-policy config check (spec 5.1): `heavy_certificates` OR
+    `judge_via = "heavy"` -- the same notion as provenance.needs_rejudge (Ruling 0b-9), so a
+    rendered config may have nanoda off exactly where a local second-kernel re-judge is
+    mandatory."""
+    return _heavy_certificates(node_toml) or _judge_via(node_toml) == "heavy"
+
+
+def _check_config(slug: str, config, *, node_heavy: bool) -> None:
+    from ..checks.kernel_policy import judge_config_problems
+    problems = judge_config_problems(config, node_heavy=node_heavy)
+    if problems:
+        raise JudgeError(f"{slug}: " + "; ".join(problems))
+
+
 #: The dispatch-only workflow that judges `judge_via = "heavy"` nodes.
 HEAVY_WORKFLOW = "missions-comparator-heavy.yml"
 
@@ -1029,7 +1044,9 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
                     guards=guards_for(lean_dir, island, guards, spec.module),
                     vocab_guard=vocab_guard, statement_text=statement_text,
                     artifact_sha256=_sha256(a.artifact), statement_sha256=_sha256(stmt_path),
-                    force_nanoda=force_nanoda and enable_nanoda)
+                    force_nanoda=force_nanoda and enable_nanoda,
+                    node_heavy=_config_heavy(telperion_root / "missions" / a.campaign / "nodes"
+                                             / f"{a.node}.toml"))
                 continue
         status = _node_status(telperion_root / "missions" / a.campaign / "nodes"
                               / f"{a.node}.toml")
@@ -1067,6 +1084,8 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
         cfg = challenge_config(
             challenge_module=chal, solution_module=chal, theorem_names=[bridge],
             permitted_axioms=CLEAN_AXIOMS, enable_nanoda=node_nanoda)
+        _check_config(f"{a.campaign}/{a.node}", cfg, node_heavy=_config_heavy(
+            telperion_root / "missions" / a.campaign / "nodes" / f"{a.node}.toml"))
         challenges.append(Challenge(
             slug=a.node, campaign=a.campaign, theorem=a.theorem, solution_module=sol,
             challenge_module=chal, bridge_theorem=bridge, nanoda=node_nanoda,
@@ -1086,12 +1105,14 @@ def build_bundle(telperion_root: Path, island: str, *, enable_nanoda: bool = Tru
 
 def compose_parts(*, node: str, campaign: str, spec, lean_dir: Path, guards: Sequence[str],
                   vocab_guard: bool, statement_text: str, artifact_sha256: str,
-                  statement_sha256: str, force_nanoda: bool = False) -> List[Challenge]:
+                  statement_sha256: str, force_nanoda: bool = False,
+                  node_heavy: bool = False) -> List[Challenge]:
     """The challenges of a COMPOSITIONAL judgement (see compose.py): one per segment, plus the
     implication.  Every part is Lean-kernel-only by default: the segments carry the heavy
     certificates, and one kernel mode per verdict keeps the record honest. force_nanoda=True
     (the local re-judge override; already folded with `enable_nanoda` by the caller) turns the
-    second kernel back on for every part."""
+    second kernel back on for every part. node_heavy is the node's `_config_heavy` value; every
+    part's config is checked against it (spec 5.1)."""
     from .compose import compose_slug, seg_slug
     part_nanoda = bool(force_nanoda)
     out: List[Challenge] = []
@@ -1109,6 +1130,7 @@ def compose_parts(*, node: str, campaign: str, spec, lean_dir: Path, guards: Seq
                                     enable_nanoda=part_nanoda),
             artifact_sha256=artifact_sha256, statement_sha256=statement_sha256,
             part=f"seg:{nm}", exports=(stmt,), node=node))
+        _check_config(f"{campaign}/{slug}", out[-1].config, node_heavy=node_heavy)
     slug = compose_slug(node)
     chal = f"MissionChallenges.{slug}"
     br = bridge_theorem_name(slug)
@@ -1128,6 +1150,7 @@ def compose_parts(*, node: str, campaign: str, spec, lean_dir: Path, guards: Seq
                                 permitted_axioms=CLEAN_AXIOMS, enable_nanoda=part_nanoda),
         artifact_sha256=artifact_sha256, statement_sha256=statement_sha256,
         part="compose", exports=tuple(spec.segment_statements), node=node))
+    _check_config(f"{campaign}/{slug}", out[-1].config, node_heavy=node_heavy)
     return out
 
 
@@ -1193,7 +1216,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="bundle directory (default: telperion/missions/judge/<island>)")
     ap.add_argument("--check", action="store_true",
                     help="verify the committed bundle matches the registry; write nothing")
-    ap.add_argument("--no-nanoda", action="store_true", help="enable_nanoda = false")
+    ap.add_argument("--no-nanoda", action="store_true",
+                    help="enable_nanoda = false; allowed only for heavy nodes "
+                         "(heavy_certificates or judge_via=heavy), spec 5.1 kernel policy")
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these node slugs")
     ap.add_argument("--heavy", action="store_true",
                     help="render ONLY the --only nodes, each of which must be judge_via = \"heavy\" "

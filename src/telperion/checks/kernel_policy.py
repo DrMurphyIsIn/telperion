@@ -97,3 +97,18 @@ def policy_problems(root: Path, exceptions: dict) -> list[str]:
     for proj in sorted(set(exceptions) - known_projects):
         problems.append(f"{proj}: stale exception: no such project")
     return problems
+
+
+def judge_config_problems(config: dict, *, node_heavy: bool) -> list[str]:
+    """What is wrong with one rendered Comparator config: the axiom whitelist must be exactly
+    CLEAN_AXIOMS, and nanoda may be off only for a heavy node (spec 5.1)."""
+    from telperion.missions.judge import CLEAN_AXIOMS
+    problems = []
+    got, want = list(config.get("permitted_axioms", [])), list(CLEAN_AXIOMS)
+    if sorted(got) != sorted(want):
+        extra, missing = sorted(set(got) - set(want)), sorted(set(want) - set(got))
+        problems.append(f"permitted_axioms must be exactly {want}; extra {extra}, missing {missing}")
+    if not config.get("enable_nanoda", False) and not node_heavy:
+        problems.append("enable_nanoda is off for a non-heavy node (neither heavy_certificates nor "
+                        "judge_via = \"heavy\"; spec 5.1: nanoda required)")
+    return problems

@@ -149,3 +149,35 @@ def test_cli_check_calls_find_projects_once_on_ok_path(tmp_path, monkeypatch):
     rc = cli.cmd_kernel_policy_check(args)
     assert rc == 0
     assert calls["n"] == 1
+
+
+from telperion.checks.kernel_policy import judge_config_problems
+
+
+def test_extra_axiom_rejected():
+    cfg = {"permitted_axioms": ["propext", "Quot.sound", "Classical.choice", "sorryAx"], "enable_nanoda": True}
+    assert any("sorryAx" in p for p in judge_config_problems(cfg, node_heavy=False))
+
+
+def test_nanoda_off_only_for_heavy():
+    cfg = {"permitted_axioms": ["propext", "Quot.sound", "Classical.choice"], "enable_nanoda": False}
+    assert judge_config_problems(cfg, node_heavy=True) == []
+    assert any("nanoda" in p for p in judge_config_problems(cfg, node_heavy=False))
+
+
+def test_build_bundle_rejects_nanoda_off_for_non_heavy(monkeypatch, tmp_path):
+    import sys
+    import telperion.missions.judge as judge
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_missions_judge import ARTIFACT_NS, STATEMENT_NS, _island
+    real = judge.challenge_config if hasattr(judge, "challenge_config") else None
+    assert real is not None, "judge.challenge_config is the config factory the bundle uses"
+
+    def off(*a, **k):
+        k["enable_nanoda"] = False
+        return real(*a, **k)
+
+    tel = _island(tmp_path, artifact=ARTIFACT_NS, statement=STATEMENT_NS)
+    monkeypatch.setattr(judge, "challenge_config", off)
+    with pytest.raises(judge.JudgeError, match="nanoda"):
+        judge.build_bundle(tel, "isl", only=None)

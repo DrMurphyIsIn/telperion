@@ -343,10 +343,55 @@ def test_only_proved_nodes_are_judged(tmp_path):
         judge.build_bundle(tel, "isl")
 
 
-def test_nanoda_off_when_requested(tmp_path):
+def test_nanoda_off_refused_for_non_heavy(tmp_path):
+    """Spec 5.1 kernel policy: nanoda may be off only for a heavy node (heavy_certificates or
+    judge_via = "heavy"), so --no-nanoda on an ordinary node is refused, not rendered."""
     tel = _island(tmp_path, artifact=ARTIFACT_NS, statement=STATEMENT_NS)
+    with pytest.raises(judge.JudgeError, match="nanoda"):
+        judge.build_bundle(tel, "isl", enable_nanoda=False)
+
+
+def test_nanoda_off_renders_for_heavy_certificates_node(tmp_path):
+    tel = _island(tmp_path, artifact=ARTIFACT_NS, statement=STATEMENT_NS)
+    toml = tel / "missions" / "x" / "nodes" / "X_node.toml"
+    toml.write_text("heavy_certificates = true\n" + toml.read_text())
     [c] = judge.build_bundle(tel, "isl", enable_nanoda=False).challenges
     assert c.config["enable_nanoda"] is False
+
+
+def test_compose_parts_render_without_heavy_certificates(tmp_path):
+    """A [compose] node is judge_via = "heavy" (the schema demands it) and its parts are
+    Lean-kernel-only by default. judge_via = "heavy" alone makes it heavy for the kernel-policy
+    check (a local re-judge is mandatory, Ruling 0b-9), so the parts render with no
+    heavy_certificates flag."""
+    tel = _island(tmp_path, artifact=ARTIFACT_NS, statement=STATEMENT_NS)
+    lean = tel / "examples" / "isl" / "lean"
+    (lean / "Seg.lean").write_text("def SegA : Prop := True\ntheorem seg_a : SegA := trivial\n")
+    (lean / "Comp.lean").write_text(textwrap.dedent("""\
+        import Mathlib
+        import Seg
+        namespace Isl.Deep
+        theorem node_thm {x : ℝ} (hx : 0 < x) [inst : Nonempty ℕ] : 0 < x ^ 2 := by
+          positivity
+        end Isl.Deep
+        """))
+    toml = tel / "missions" / "x" / "nodes" / "X_node.toml"
+    assert "heavy_certificates" not in toml.read_text()
+    toml.write_text('judge_via = "heavy"\n' + toml.read_text() + textwrap.dedent("""\
+
+        [compose]
+        module = "Comp"
+        theorem = "Isl.Deep.node_thm"
+        forbidden_modules = "^Seg$"
+        segment_names = ["a"]
+        segment_statements = ["SegA"]
+        segment_theorems = ["seg_a"]
+        segment_modules = ["Seg"]
+        """))
+    b = judge.build_bundle(tel, "isl", heavy=True, only=["X_node"])
+    by = {c.slug: c for c in b.challenges}
+    assert set(by) == {"X_node__seg_a", "X_node__compose"}
+    assert all(c.config["enable_nanoda"] is False for c in b.challenges)
 
 
 def test_shard_partitions_slug_order():
