@@ -1,10 +1,10 @@
 """nat_root_bracket_table emitter -- kernel-decided q-th-root brackets of m^(+-p/q), singly and
-as blocked List ℕ range-sum tables (CN-1 emitter survey phase 2, item N1).
+as blocked List ℕ range-sum tables (reference emitter survey phase 2, item N1).
 
 These tests pin, in order: the exact integer arithmetic (Newton q-th root against brute force,
 the bracket invariants the kernel will decide, the one-ulp width); the certify-time refusals
 (forged endpoints, bad inputs, floats, the block cap); the emitted text (shape, determinism,
-lint, the statement gate, the exact CN-1 ZetaTables numbers for the shared block); the
+lint, the statement gate, the exact reference ZetaTables numbers for the shared block); the
 sensitivity-registry classification and the negative-control adapter; the example's
 byte-stability; and, Lean-gated, an end-to-end kernel check of the four example instances plus
 the two-sided negative control and the single-face `U := L` forgery.
@@ -63,7 +63,7 @@ def test_nat_iroot_large_exact_powers_and_neighbours(q):
 
 
 def test_nat_iroot_is_newton_not_a_decrement_loop_on_a_1e12_scale_root():
-    """The CN-1 generator note: a decrement loop from a float start hung for over two minutes on a
+    """The reference generator note: a decrement loop from a float start hung for over two minutes on a
     10^12-scale root; Newton returns at once (the gate is a generous wall-clock bound)."""
     import time
     t0 = time.time()
@@ -106,7 +106,7 @@ def test_pos_bracket_facts(m, p, q):
 
 def test_rat_base_brackets_match_the_cn1_gamma_ratio_factors():
     """GammaRatio.lean g_hA: 3635432077/10^12 <= (64003/8)^(-5/8); g_hD: 325168010868/10^12 <=
-    (64007/8)^(-1/8) (the CN-1 hand-built lower endpoints)."""
+    (64007/8)^(-1/8) (the reference hand-built lower endpoints)."""
     lo, hi = nat_root_bracket(64003, 8, 5, 8, 10 ** 12, -1)
     assert lo == 3635432077 and hi == lo + 1
     assert lo ** 8 * 64003 ** 5 <= 8 ** 5 * (10 ** 12) ** 8 <= hi ** 8 * 64003 ** 5
@@ -182,7 +182,7 @@ def test_single_certificate_refusals(kwargs):
 
 def test_table_certificate_reproduces_the_cn1_zeta_tables_block_sums():
     """ZetaTables.lean zlo34_0_sum / zhi34_0_sum = 116105226077 / 116105226275 and zlo34_1_sum /
-    zhi34_1_sum = 28423242284 / 28423242483 (the generated CN-1 file, sigma = 3/4, K = 200,
+    zhi34_1_sum = 28423242284 / 28423242483 (the generated reference file, sigma = 3/4, K = 200,
     S = 10^10); the first two blocks of a 400-term table are the same numbers."""
     c = nat_root_bracket_table_certificate(3, 4, 400, scale=10 ** 10, block=200)
     assert isinstance(c, NatRootBracketTableCert)

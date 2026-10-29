@@ -602,8 +602,8 @@ def _parts_log(slugs, bodies=None, header: str = "") -> str:
                             enumerate(zip(slugs, bodies), 1))
 
 
-H8000 = ["AND_ladder_h8000_kernel__compose"] + [
-    f"AND_ladder_h8000_kernel__seg_h{h}" for h in range(1000, 9000, 1000)]
+LADDER_BIG = ["ladder_big_kernel__compose"] + [
+    f"ladder_big_kernel__seg_h{h}" for h in range(1000, 9000, 1000)]
 
 
 def test_partial_multipart_log_fails():
@@ -639,17 +639,17 @@ def test_correct_one_part_log_passes():
 
 def test_correct_nine_part_log_passes():
     from telperion.missions.rejudge import rejudge_log_verdict
-    assert rejudge_log_verdict(_parts_log(H8000), H8000) == "pass"
+    assert rejudge_log_verdict(_parts_log(LADDER_BIG), LADDER_BIG) == "pass"
 
 
 def test_wrong_part_count_or_shape_fails():
     from telperion.missions.rejudge import rejudge_log_verdict
-    assert rejudge_log_verdict(_parts_log(H8000[:8]), H8000) == "fail"     # 8 of 9 parts
+    assert rejudge_log_verdict(_parts_log(LADDER_BIG[:8]), LADDER_BIG) == "fail"  # 8 of 9 parts
     assert rejudge_log_verdict(PASS_LOG, ["X"]) == "fail"                  # no delimiter at all
     assert rejudge_log_verdict(_parts_log(["X", "X"]), ["X"]) == "fail"    # extra part
     assert rejudge_log_verdict(_parts_log(["Y"]), ["X"]) == "fail"         # wrong part slug
-    swapped = _parts_log([H8000[1], H8000[0]] + H8000[2:])
-    assert rejudge_log_verdict(swapped, H8000) == "fail"                   # wrong order
+    swapped = _parts_log([LADDER_BIG[1], LADDER_BIG[0]] + LADDER_BIG[2:])
+    assert rejudge_log_verdict(swapped, LADDER_BIG) == "fail"              # wrong order
     nonzero = _part(1, 1, "X", PASS_LOG, rc=137)
     assert rejudge_log_verdict(nonzero, ["X"]) == "fail"                   # comparator exit != 0
     garbled = PASS_LOG + "==== REJUDGE-PART 1/1 X ====\n" + PASS_LOG

@@ -1047,7 +1047,7 @@ def test_verify_fails_when_marked_route_edited(tmp_path):
                "record's route is 'comparator'" in e for e in errors), errors
 
 
-def test_verify_fails_h11000_style_judge_via_heavy_with_nanoda_direct_record(tmp_path):
+def test_verify_fails_large_node_style_judge_via_heavy_with_nanoda_direct_record(tmp_path):
     """The reviewer's shape: a node judged via the heavy workflow (no [comparator] record), its
     heavy_certificates flag DELETED, judge_via = "heavy" kept, and a nanoda-direct record.
     Before Ruling 0b-9, needs_rejudge ignored judge_via, so the nanoda-direct record stood in

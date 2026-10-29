@@ -1,4 +1,4 @@
-"""Li positivity-ladder emitter (RH-roadmap Track 2).
+"""Li positivity-ladder emitter (roadmap Track 2).
 
 Certifies the n-th Li-criterion rung `0 ≤ (taylorCoeff riemannXi n).re` from a
 certified positive rational lower bound (the Arb enclosure = trust-seam hypothesis

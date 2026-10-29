@@ -61,7 +61,7 @@ def test_unwired_island_message_names_the_standalone_path(tmp_path):
 
 
 def test_empty_band_driver_has_no_lab_default_output(tmp_path):
-    # run_empty_band used to default its output to examples/zeta_zero_localization/lean, an RH lab island
+    # run_empty_band used to default its output to examples/zeta_zero_localization/lean, a legacy lab island
     from telperion.driver_empty_band import run_empty_band
     with pytest.raises(ValueError, match="out_dir"):
         run_empty_band("1/100", "99/100", "0", "55/16", winding_prec=160, write=True, check=True)

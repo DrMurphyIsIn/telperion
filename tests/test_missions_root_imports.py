@@ -3,7 +3,7 @@
 Background (2026-09-24).  The `mission-statements-compile` CI job runs `lake build` in
 `missions/<campaign>/lean`, which compiles exactly the import closure of the package root
 `Statements.lean`.  `write_statement` wrote the module file but nothing ever added the
-import line, so fifteen registered statements (eleven rh, four mirrormere, most of them
+import line, so fifteen registered statements (eleven campaign_a, four campaign_b, most of them
 `status = "proved"`) had never been elaborated by any job, and one of them had no
 `import` line at all.  These tests pin the gate that closes that hole:
 
@@ -190,7 +190,7 @@ def test_missing_root_imports_both_directions(tmp_path):
     ("import Statements.DemoDefs\ntheorem t : 1 = 1", True),
     ("import Mathlib.Tactic\ntheorem t : 1 = 1", True),
     ("import Mathlib\nimport Statements.DemoDefs\nopen Nat\ntheorem t : 1 = 1", True),
-    ("theorem t : 1 = 1", False),                       # MM_weil_positivity_window_tenth's shape
+    ("theorem t : 1 = 1", False),                       # campaign_b_window_node's shape
     ("import Statements.Other\ntheorem t : 1 = 1", False),
 ])
 def test_import_header_error(tmp_path, stmt, ok):

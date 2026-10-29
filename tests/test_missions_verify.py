@@ -327,7 +327,7 @@ def test_normalize_strips_multiline_doc_comments_without_residue():
     # Regression (2026-09-16 grant pre-flight): a /-- doc comment -/ whose
     # opener line carries `--` was mutilated by line-comment stripping BEFORE
     # block stripping ran, leaving prose residue between adjacent decls and
-    # breaking containment for AND_g2_reflected_band.
+    # breaking containment for reflected_band_node.
     raw = (
         "namespace ReflectedBand_t14\n"
         "/-- The boxes are nonoverlapping\n"
@@ -677,8 +677,8 @@ def test_verify_campaign_flags_proved_node_with_sorry_artifact(tmp_path):
 
 # ---------------------------------------------------------------------------
 # T10: a node may not be granted against Lean that no CI job compiles
-# (audit 2026-09-19: all six proved anduril nodes pointed at the zeta_reflection
-#  island, which no workflow built; two rh nodes had the same shape a day earlier)
+# (audit 2026-09-19: all six proved campaign_a nodes pointed at the zeta_reflection
+#  island, which no workflow built; two campaign_b nodes had the same shape a day earlier)
 # ---------------------------------------------------------------------------
 
 def _fake_repo(tmp_path, island: str, *, wire_ci: bool):

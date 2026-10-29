@@ -507,14 +507,14 @@ def test_heavy_node_record_must_say_lean_kernel_only(tmp_path, capsys):
 def test_provenance_report_heavy_node_without_comparator_reads_lean_kernel_only(tmp_path, capsys):
     """Fix round 1 (2026-10-27): the heavy report line is driven from `heavy_certificates`,
     not from having a `[comparator]` block at all -- a heavy node proved with NO comparator
-    record yet (e.g. AND_ladder_h11000_kernel on the real registry) must still be reported."""
+    record yet (e.g. ladder_large_kernel on the real registry) must still be reported."""
     from telperion.missions.schema import RejudgeRecord
     mroot, croot = _demo(tmp_path)
     stmt = "theorem hv2 : 2 = 2"
     node = _open_with_proof(croot, "HV_two", stmt, f"{stmt} := by rfl\n")
     # Task 5 (2026-10-27): attach a passing re-judge before granting (grant_status now
     # requires one on a heavy node), then clear it to model the state this test is about: a
-    # heavy node proved with NO re-judge recorded (e.g. AND_ladder_h11000_kernel on the real
+    # heavy node proved with NO re-judge recorded (e.g. ladder_large_kernel on the real
     # registry, before Task 4 ran the local nanoda queue against it).
     art_sha = prov.sha256_file(croot / "proof" / "HV_two.lean")
     rec = RejudgeRecord(date="2026-10-27", machine="m", nanoda_rev="a" * 40,
