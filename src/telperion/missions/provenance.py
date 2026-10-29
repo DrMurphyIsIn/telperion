@@ -41,7 +41,10 @@ from .statements import statement_path
 #: than a fresh one. History:
 #:   2026-09-23.1  first version that writes a [grant] block (digests + provenance) and
 #:                 refuses a read-back whose auditor matches the author.
-GATE_VERSION = "2026-09-23.1"
+#:   2026-10-29.1  grants of nodes created on or after 2026-10-28 (or with no created date)
+#:                 require a passing [checks] record (probe + closure + fingerprint, one olean
+#:                 closure). Existing grants keep their recorded version.
+GATE_VERSION = "2026-10-29.1"
 
 #: A read-back shorter than this is not a rendering of a formal statement; it is a label.
 #: The shortest genuine read-back in the live registry on 2026-09-23 was 262 characters.
@@ -861,7 +864,16 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     verdict must be PASS. Currency is checked by the artifact SOURCE digest only: the record's
     `olean_sha256` (the replayed closure the probe and fingerprint both ran on) cannot be
     recomputed without a build, so it is recorded for the reader and a changed source is what
-    makes the record stale. Does not look at the cutoff; the gate applies `checks_required`.
+    makes the record stale. Does not look at the cutoff; the gate (and `mission verify`, for
+    proved nodes, Ruling 11) applies `checks_required`.
+
+    Known limitations (Ruling 11):
+    - the sign-off is free text in the note, written by whoever runs `checks-record`; nothing
+      checks that the reviewer is independent of the author. A later step could require a
+      sign-off identity distinct from the `[author]`, as the read-back rule does;
+    - the closure audit is tied to the probe and fingerprint by the theorem NAME only:
+      `audit-closure` imports rather than replays, so its JSON carries no olean digest. A
+      later step could have it emit the replayed closure's `olean_sha256` too.
     """
     k = node.checks
     if k is None:

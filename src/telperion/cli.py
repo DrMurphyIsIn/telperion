@@ -1798,7 +1798,9 @@ def cmd_mission_checks_record(args) -> int:
     Ruling 9: the probe and the fingerprint must have run on the SAME replayed olean closure,
     so both JSONs must carry the same `olean_sha256`; it is stored next to the artifact's
     source sha256. The fingerprinted theorem (`--target`, or the only one in the JSON) must be
-    one of the closure audit's targets.
+    one of the closure audit's targets -- the closure JSON carries no olean digest, so that name
+    is its only tie to the other two. A `signoff:` in --note is free text: nothing checks the
+    reviewer is independent of the author (see `provenance.checks_problem`).
 
     Refuses (exit 2, no record): a malformed or unreadable JSON, an unknown probe verdict, a
     missing or mismatched `olean_sha256`, an ambiguous or unaudited fingerprint target, no

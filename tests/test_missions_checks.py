@@ -410,3 +410,65 @@ def test_checks_record_then_grant_closes_the_loop(tmp_path):
         _grant(croot)
     assert _record(mroot, _write_jsons(tmp_path)) == 0
     assert _grant(croot).status == "proved"
+
+
+# ---------------------------------------------------------------------------
+# Ruling 11: GATE_VERSION, and `mission verify` re-checks [checks] on proved nodes
+# ---------------------------------------------------------------------------
+
+def test_gate_version_bumped_for_checks(tmp_path):
+    from telperion.missions import provenance as prov
+    assert prov.GATE_VERSION == "2026-10-29.1"
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    _with_checks(root, _rec(_art_sha(root, load_node(root / "nodes" / "Demo_ck.toml"))))
+    assert _grant(root).grant.gate_version == "2026-10-29.1"
+
+
+def _proved(tmp_path: Path, *, created: str, checks: bool = True) -> Path:
+    """A node granted `proved` through the gate (with a current [checks] record when the
+    gate demands one), then optionally stripped of its record afterwards."""
+    root = _grant_campaign(tmp_path, created=created)
+    p = root / "nodes" / "Demo_ck.toml"
+    _with_checks(root, _rec(_art_sha(root, load_node(p))))
+    _grant(root)
+    if not checks:
+        save_node(dataclasses.replace(load_node(p), checks=None), p)
+    return root
+
+
+def _checks_errors(root: Path) -> list:
+    from telperion.missions.verify import verify_campaign
+    return [e for e in verify_campaign(root).errors if "[checks]" in e]
+
+
+def test_verify_post_cutoff_proved_node_with_current_checks_passes(tmp_path):
+    assert _checks_errors(_proved(tmp_path, created="2026-10-29")) == []
+
+
+def test_verify_post_cutoff_proved_node_missing_checks_fails(tmp_path):
+    errs = _checks_errors(_proved(tmp_path, created="2026-10-29", checks=False))
+    assert len(errs) == 1 and "Demo_ck" in errs[0] and "checks-record" in errs[0], errs
+
+
+def test_verify_post_cutoff_proved_node_stale_checks_fails(tmp_path):
+    root = _proved(tmp_path, created="2026-10-29")
+    art = root / "proof" / "Demo_ck.lean"
+    art.write_text(art.read_text() + "-- edited after the grant\n")
+    errs = _checks_errors(root)
+    assert len(errs) == 1 and "artifact" in errs[0], errs
+
+
+def test_verify_proved_node_without_created_needs_checks(tmp_path):
+    root = _proved(tmp_path, created="2026-10-29", checks=False)
+    p = root / "nodes" / "Demo_ck.toml"
+    save_node(dataclasses.replace(load_node(p), created=""), p)
+    assert len(_checks_errors(root)) == 1
+
+
+def test_verify_pre_cutoff_proved_node_without_checks_passes(tmp_path):
+    assert _checks_errors(_proved(tmp_path, created="2026-10-01", checks=False)) == []
+
+
+def test_verify_open_post_cutoff_node_without_checks_not_an_error(tmp_path):
+    """Only a PROVED status rests on the checks; an open node simply has not been granted."""
+    assert _checks_errors(_grant_campaign(tmp_path, created="2026-10-29")) == []

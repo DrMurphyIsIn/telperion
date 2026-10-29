@@ -846,6 +846,13 @@ def verify_campaign(
         rj = rejudge_problem(root, node)
         if rj and node.status == "proved":
             errors.append(f"Node {sl!r}: status is 'proved' but {rj} (re-judge)")
+        # Ruling 11 (step 4): a proved node the grant rule covers stays proved only with a
+        # passing [checks] record on its CURRENT artifact, as the re-judge above.
+        if node.status == "proved" and checks_required(node):
+            ck = checks_problem(root, node)
+            if ck:
+                errors.append(f"Node {sl!r}: status is 'proved' but [checks] are required "
+                              f"(created {node.created or '(empty)'}, cutoff {CHECKS_CUTOFF}): {ck}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":
