@@ -7,9 +7,9 @@ import pytest
 from telperion.checks.negation_probe import classify, render_probes
 
 # Fix round 3 (Ruling 7): the probes run on the ELABORATED CONSTANT. The `false` and `witness` metaprograms print
-# protocol lines `<tag>-FALSE ...` / `<tag>-WITNESS ...`; classify's default tag is "TP".
-OK = (0, "TP-PREMISES 2\nTP-FALSE PROVED axioms=[]\nTP-WITNESS PROVED axioms=[propext]\n")
-NOT_FALSE = (0, "TP-PREMISES 2\nTP-FALSE FAILED linarith failed\n")
+# protocol lines `<tag>-FALSE ...` / `<tag>-WITNESS ...`, then a final `<tag>-DONE`; classify's default tag is "TP".
+OK = (0, "TP-PREMISES 2\nTP-FALSE PROVED axioms=[]\nTP-WITNESS PROVED axioms=[propext]\nTP-DONE\n")
+NOT_FALSE = (0, "TP-PREMISES 2\nTP-FALSE FAILED linarith failed\nTP-DONE\n")
 
 
 def test_false_compiled_is_vacuous():
@@ -42,11 +42,13 @@ def test_render_contains_parts():
     assert "getConstInfo `«Foo».«t»" in src["false"] and "forallBoundedTelescope" in src["false"]
     assert "example : type_of% @«Foo».«t» := by plausible" in src["negation"] and "witness" not in src
     w = render_probes("Foo.Bar", "Foo.t", 'by exact ⟨2, "a\\"b"⟩', tag="TPx")["witness"]
-    assert '"by exact ⟨2, \\"a\\\\\\"b\\"⟩"' in w and "TPx-WITNESS PROVED" in w
+    assert '"by exact ⟨2, \\"a\\\\\\"b\\"⟩"' in w and "TPx-WITNESS PROVED" in w and 'IO.println "TPx-DONE"' in w
+    assert 'IO.println "TP-DONE"' in src["false"]
 
 
 # Real v4.35.0 outputs: plausible's no-counterexample and no-Testable reports; a caught tactic failure.
-AESOP = (0, "TP-PREMISES 1\nTP-FALSE FAILED Tactic `aesop` failed, made no progress Initial goal: x : ℕ ⊢ False\n")
+AESOP = (0, "TP-PREMISES 1\nTP-FALSE FAILED Tactic `aesop` failed, made no progress Initial goal: x : ℕ ⊢ False\n"
+            "TP-DONE\n")
 UNABLE = (0, "Unable to find a counter-example\nf.lean:3:0: warning: declaration uses `sorry`\n")
 
 
@@ -61,13 +63,13 @@ def test_no_testable_instance_is_probe_only():
 
 
 def test_incomplete_witness_is_not_witnessed():
-    w = (0, "TP-WITNESS INCOMPLETE mvars=false sorry=true\n")
+    w = (0, "TP-WITNESS INCOMPLETE mvars=false sorry=true\nTP-DONE\n")
     r = classify({"false": AESOP, "negation": UNABLE, "witness": w})
     assert r.verdict == "PROBE_ONLY" and "probe 'witness'" in r.detail
 
 
 def test_failed_witness_is_error():
-    w = (0, "TP-WITNESS FAILED type mismatch trivial\n")
+    w = (0, "TP-WITNESS FAILED type mismatch trivial\nTP-DONE\n")
     assert classify({"false": AESOP, "negation": UNABLE, "witness": w}).verdict == "ERROR"
 
 
@@ -82,17 +84,31 @@ def test_coded_error_header_is_parsed():
 
 
 def test_missing_protocol_line_is_error():
-    r = classify({"false": (0, "TP-PREMISES 1\n"), "negation": UNABLE})
+    r = classify({"false": (0, "TP-PREMISES 1\nTP-DONE\n"), "negation": UNABLE})
     assert r.verdict == "ERROR" and "no TP-FALSE result line" in r.detail
 
 
-def test_protocol_tag_and_last_match_wins():
-    # a line with another tag (an imported module's `initialize` printing, say) is ignored
+def test_protocol_tag_done_and_duplicates():
+    # a line with another tag (an imported module printing at `initialize`, say) is ignored
     assert classify({"false": OK, "negation": UNABLE}, tag="TPab12").verdict == "ERROR"
-    both = (0, "TP-FALSE PROVED axioms=[]\nTP-FALSE FAILED later\n")
-    assert classify({"false": both, "negation": UNABLE}).verdict == "PROBE_ONLY"
-    both = (0, "TP-FALSE FAILED earlier\nTP-FALSE PROVED axioms=[]\n")
-    assert classify({"false": both, "negation": UNABLE}).verdict == "VACUOUS"
+    # exactly one result line per probe, then exactly one DONE, nothing tagged after it
+    for out in ("TP-FALSE PROVED axioms=[]\nTP-FALSE FAILED later\nTP-DONE\n",
+                "TP-FALSE FAILED earlier\nTP-FALSE PROVED axioms=[]\nTP-DONE\n",
+                "TP-FALSE PROVED axioms=[]\n",
+                "TP-FALSE PROVED axioms=[]\nTP-DONE\nTP-DONE\n",
+                "TP-DONE\nTP-FALSE PROVED axioms=[]\n"):
+        r = classify({"false": (0, out), "negation": UNABLE})
+        assert r.verdict == "ERROR", out
+    assert classify({"false": (0, "TP-FALSE PROVED axioms=[]\nTP-DONE\n"), "negation": UNABLE}).verdict == "VACUOUS"
+
+
+def test_run_probe_nonce_is_128_bit(tmp_path):
+    import re
+    from telperion.checks.negation_probe import ProbeSpec, run_probe
+    # the wrapper prints the probe source instead of running Lean: no protocol line, so ERROR naming the tag
+    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", 'cat "$4"', "sh"])
+    m = re.search(r"no (TP[0-9a-f]+)-FALSE result line", r.detail)
+    assert r.verdict == "ERROR" and m and len(m.group(1)) == 2 + 32, r.detail
 
 
 def test_unbuilt_module_is_error():
@@ -210,15 +226,15 @@ def test_wallclock_timeout_kills_process_group(tmp_path):
 
 
 def test_false_probe_with_nonstandard_axiom_not_counted():
-    r = classify({"false": (0, "TP-FALSE PROVED axioms=[TpBad.bad]\n"), "negation": UNABLE})
+    r = classify({"false": (0, "TP-FALSE PROVED axioms=[TpBad.bad]\nTP-DONE\n"), "negation": UNABLE})
     assert r.verdict == "PROBE_ONLY" and "probe 'false' used non-standard axioms ['TpBad.bad']; not counted" in r.detail
 
 
 def test_witness_with_sorryax_not_counted_and_clean_counts():
-    w = (0, "TP-WITNESS PROVED axioms=[propext, sorryAx]\n")
+    w = (0, "TP-WITNESS PROVED axioms=[propext, sorryAx]\nTP-DONE\n")
     r = classify({"false": AESOP, "negation": UNABLE, "witness": w})
     assert r.verdict == "PROBE_ONLY" and "sorryAx" in r.detail
-    f = (0, "TP-FALSE PROVED axioms=[propext, Classical.choice, Quot.sound]\n")
+    f = (0, "TP-FALSE PROVED axioms=[propext, Classical.choice, Quot.sound]\nTP-DONE\n")
     assert classify({"false": f, "negation": UNABLE}).verdict == "VACUOUS"
 
 
@@ -293,8 +309,9 @@ end S7
 BAD = "namespace TpBad\n@[aesop safe apply] axiom bad : False\ntheorem tb (x : ℕ) (h : x < 3) : x < 5 := by omega\nend TpBad\n"
 
 
-def _build_module(env: Path, body: str) -> str:
-    """Compile `import Mathlib` + body as a fresh module in env/.lake/build/lib/lean (on env's LEAN_PATH)."""
+def _build_module(env: Path, body: str, must_build: bool = True) -> str | None:
+    """Compile `import Mathlib` + body as a fresh module in env/.lake/build/lib/lean (on env's LEAN_PATH). With
+    must_build=False a failed build returns None instead of failing the test."""
     from telperion.checks.negation_probe import default_wrapper
     name = f"TpTmp{secrets.token_hex(4)}"
     src = env / f".{name}_src"
@@ -308,7 +325,9 @@ def _build_module(env: Path, body: str) -> str:
     shutil.rmtree(src)
     if p.returncode != 0:
         _remove_module(env, name)
-        pytest.fail(p.stdout + p.stderr)
+        if must_build:
+            pytest.fail(p.stdout + p.stderr)
+        return None
     return name
 
 
@@ -394,3 +413,67 @@ def test_lean_unbuilt_module_is_error():
 def test_lean_unknown_constant_is_error(cases_module):
     r = _probe(cases_module, "Controls.nope")
     assert r.verdict == "ERROR", r.detail
+
+
+# The re-reviewer's Lean-confirmed regression files (.superpowers/sdd/2026-10-27-step4-checks/rereview_lean_cases/,
+# git-excluded, so copied here verbatim). Each compiles, so each `Foo.t` is TRUE as stated: `factorial` is the local
+# identity, which a text re-render under `open Nat` read as `Nat.factorial` (a wrong REFUTED).
+REREVIEW = {
+    "charlit": "namespace Foo\ntheorem c0 : '\"'.toNat = 34 := rfl\ndef factorial (n : Nat) : Nat := n\n-- \"\nopen Nat\n"
+               "theorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+    "meta": "namespace Foo\nmeta def factorial (n : Nat) : Nat := n\nopen Nat\n"
+            "theorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+    "public": "namespace Foo\npublic def factorial (n : Nat) : Nat := n\nopen Nat\n"
+              "theorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+    "runcmd": "import Lean\nnamespace Foo\nrun_cmd Lean.Elab.Command.elabCommand (← `(def $(Lean.mkIdent `factorial) "
+              "(n : Nat) : Nat := n))\nopen Nat\ntheorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+    "sameend": "namespace Foo\nsection S end S def factorial (n : Nat) : Nat := n\nopen Nat\n"
+               "theorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+    "sameline": "namespace Foo\ntheorem t0 : True := trivial def factorial (n : Nat) : Nat := n\nopen Nat\n"
+                "theorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+    "weakns": "with_weak_namespace Foo def factorial (n : Nat) : Nat := n\nnamespace Foo\nopen Nat\n"
+              "theorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n",
+}
+# control.lean: no local def, so `factorial` IS `Nat.factorial` and the proof does not compile (the shadowing above is
+# real). Its sorry'd form is a FALSE statement and must be REFUTED.
+REREVIEW_CONTROL = "namespace Foo\nopen Nat\ntheorem t (n : Nat) : factorial n ≤ n := Nat.le_refl _\nend Foo\n"
+# instthm.lean: an `@[instance] theorem`; no premises, nothing to refute.
+REREVIEW_INSTTHM = "namespace Foo\n@[instance] theorem fi : Fact (1 < 2) := ⟨by decide⟩\nend Foo\n"
+# mod/A.lean: `attribute [-instance] hi` makes `K.v` mean `lo`'s 2 in A; it does not carry over to an importer (mod/B.lean,
+# `theorem inB : K.v = 2 := rfl`, does not compile), so a text re-render outside A would read `hi`'s 1.
+REREVIEW_MOD_A = ("class K where v : Nat\ninstance hi : K := ⟨1⟩\ninstance (priority := low) lo : K := ⟨2⟩\n"
+                  "attribute [-instance] hi\ntheorem inA : K.v = 2 := rfl\n")
+
+
+@pytest.fixture(scope="module")
+def rereview_modules():
+    env = Path(LEAN_ENV)
+    mods = {k: _build_module(env, body) for k, body in REREVIEW.items()}
+    mods["instthm"] = _build_module(env, REREVIEW_INSTTHM)
+    mods["mod_a"] = _build_module(env, REREVIEW_MOD_A)
+    mods["control_sorry"] = _build_module(env, REREVIEW_CONTROL.replace("Nat.le_refl _", "sorry"))
+    yield mods
+    for name in mods.values():
+        _remove_module(env, name)
+
+
+@lean
+@pytest.mark.parametrize("case", sorted(REREVIEW))
+def test_lean_rereview_cases_probe_the_real_statement(rereview_modules, case):   # MUST-PASS: true theorems
+    r = _probe(rereview_modules[case], "Foo.t")
+    assert r.verdict == "PROBE_ONLY", r.detail
+
+
+@lean
+def test_lean_rereview_control_is_really_false(rereview_modules):
+    assert _build_module(Path(LEAN_ENV), REREVIEW_CONTROL, must_build=False) is None
+    r = _probe(rereview_modules["control_sorry"], "Foo.t")
+    assert r.verdict == "REFUTED", r.detail
+
+
+@lean
+def test_lean_rereview_instthm_and_erased_instance(rereview_modules):
+    r = _probe(rereview_modules["instthm"], "Foo.fi")
+    assert r.verdict == "PROBE_ONLY", r.detail
+    r = _probe(rereview_modules["mod_a"], "inA")
+    assert r.verdict == "PROBE_ONLY", r.detail

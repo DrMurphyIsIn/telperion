@@ -30,8 +30,9 @@ The telescope does not reduce: `¬ P`, `a ≠ b` and `s ⊆ t` in a conclusion s
 with NAMED binders (`: ∀ (m : ℕ) (h : m < 0), False`) is read as premises.
 
 The metaprograms report through lines `<tag>-FALSE PROVED axioms=[...]`, `<tag>-FALSE FAILED <msg>`,
-`<tag>-FALSE INCOMPLETE ...` (and `-WITNESS` likewise), where the tag carries a per-run nonce; the last matching line
-in output order wins, and a line with any other tag (an imported module printing at `initialize`, say) is ignored.
+`<tag>-FALSE INCOMPLETE ...` (and `-WITNESS` likewise), then a final `<tag>-DONE`, where the tag carries a 128-bit
+per-run nonce. A line with any other tag is ignored (the imported module's own `#eval`s ran at ITS compile, not here,
+and the nonce makes that structural); a probe without exactly one result line and exactly one final DONE is ERROR.
 
 ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a kernel-checked proof of ``False``, a printed
 counterexample). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to find a
@@ -169,6 +170,7 @@ def render_probes(module: str, theorem: str, witness: str | None, imports: tuple
         f"    catch ex =>\n"
         f'      IO.println s!"{tag}-FALSE FAILED {{(← ex.toMessageData.toString).replace "\\n" " "}}"\n'
         f"    modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
+        f'  IO.println "{tag}-DONE"\n'
     )
     src = {
         "false": false_src,
@@ -202,6 +204,7 @@ def render_probes(module: str, theorem: str, witness: str | None, imports: tuple
             f"  catch e =>\n"
             f'    IO.println s!"{tag}-WITNESS FAILED {{(← e.toMessageData.toString).replace "\\n" " "}}"\n'
             f"  modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
+            f'  IO.println "{tag}-DONE"\n'
         )
     return src
 
@@ -248,12 +251,18 @@ def _timed_out(output: str) -> bool:
     return any(TIMEOUT_ERROR in e for e in _errors(output))
 
 
-def _result_line(output: str, tag: str, kind: str) -> tuple[str, str] | None:
-    """(status, rest) of the LAST `<tag>-<kind> <status> <rest>` line in output order, or None."""
-    found = None
-    for m in re.finditer(rf"(?m)^{re.escape(tag)}-{kind} (PROVED|FAILED|INCOMPLETE)\b[ \t]*(.*)$", output):
-        found = (m.group(1), m.group(2))
-    return found
+def _result_line(output: str, tag: str, kind: str) -> tuple[str, str] | str:
+    """(status, rest) of the ONE `<tag>-<kind> <status> <rest>` line, or why the protocol was broken: no result line,
+    more than one, or no single `<tag>-DONE` as the last tagged line. Only lines carrying this run's tag count."""
+    tagged = [m.group(1) for m in re.finditer(rf"(?m)^{re.escape(tag)}-(.*)$", output)]
+    results = [m for m in (re.match(rf"{kind} (PROVED|FAILED|INCOMPLETE)\b[ \t]*(.*)$", t) for t in tagged) if m]
+    if not results:
+        return f"printed no {tag}-{kind} result line"
+    if len(results) > 1:
+        return f"printed {len(results)} {tag}-{kind} result lines; refusing a duplicated protocol"
+    if tagged.count("DONE") != 1 or tagged[-1] != "DONE":
+        return f"did not end with exactly one {tag}-DONE line; refusing an incomplete or duplicated protocol"
+    return results[0].group(1), results[0].group(2)
 
 
 def _axiom_problem(key: str, rest: str) -> str | None:
@@ -276,10 +285,16 @@ def classify(outputs: dict[str, tuple[int, str]], tag: str = "TP", module: str =
         if bad:
             return ProbeResult("ERROR", bad)
     timed_out = [key for key, (_rc, out) in outputs.items() if _timed_out(out)]
-    lines = {key: _result_line(outputs[key][1], tag, key.upper()) for key in ("false", "witness") if key in outputs}
-    for key, line in lines.items():
-        if line is None and key not in timed_out:
-            return ProbeResult("ERROR", f"{key} probe printed no {tag}-{key.upper()} result line")
+    lines = {}
+    for key in ("false", "witness"):
+        if key not in outputs:
+            continue
+        line = _result_line(outputs[key][1], tag, key.upper())
+        if isinstance(line, str):
+            if key not in timed_out:
+                return ProbeResult("ERROR", f"{key} probe {line}")
+            line = None                     # a timed-out probe is inconclusive, its protocol is not read
+        lines[key] = line
         if line and line[0] == "FAILED" and key == "witness":
             return ProbeResult("ERROR", f"the witness does not check: {line[1][:500]}")
     notes = [f"probe '{key}' timed out at maxHeartbeats 200000 (inconclusive)" for key in timed_out]
@@ -352,7 +367,7 @@ def run_probe(spec: ProbeSpec, project: Path, wrapper: list[str] | None = None,
     as ERROR rather than overwritten."""
     project = Path(project)
     prefix = default_wrapper() if wrapper is None else list(wrapper)
-    tag = f"TP{secrets.token_hex(6)}"
+    tag = f"TP{secrets.token_hex(16)}"     # 128-bit per-run nonce on every protocol line
     srcs = render_probes(spec.module, spec.theorem, spec.witness, spec.imports, tag=tag)
     pdir = project / PROBE_DIR
     try:
