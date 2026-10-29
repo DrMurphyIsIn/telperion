@@ -2537,6 +2537,33 @@ def cmd_kernel_policy_check(args) -> int:
     return 0
 
 
+def cmd_probe_negation(args) -> int:
+    """Negation probe of one theorem's statement (checks/negation_probe.py).
+
+    Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including a theorem whose
+    signature cannot be read). With --json, stdout is exactly {"verdict": ..., "detail": ...}."""
+    import json as _json
+    import shlex
+
+    from .checks.negation_probe import ProbeResult, ProbeSpec, read_signature, run_probe
+    from .missions.judge import JudgeError
+
+    try:
+        file_imports, prelude, binders, concl = read_signature(
+            Path(args.file).read_text(encoding="utf-8"), args.theorem)
+        spec = ProbeSpec(args.imports or file_imports, prelude, binders, concl, args.witness)
+        res = run_probe(spec, Path(args.project),
+                        wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                        timeout=args.timeout)
+    except (OSError, JudgeError) as exc:
+        res = ProbeResult("ERROR", f"cannot read {args.theorem} from {args.file}: {exc}")
+    if args.json:
+        print(_json.dumps(res.to_json()))
+    else:
+        print(f"probe-negation {args.theorem}: {res.verdict} -- {res.detail}")
+    return {"PROBE_ONLY": 0, "WITNESSED": 0, "VACUOUS": 1, "REFUTED": 1}.get(res.verdict, 2)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -3105,6 +3132,24 @@ def main(argv=None) -> int:
                    help="base git ref; also enforce that the exception list only shrinks "
                         "relative to this ref (read via `git show REF:<path>` in --root)")
     p.set_defaults(fn=cmd_kernel_policy_check)
+
+    p = sub.add_parser("probe-negation",
+                       help="one-sided statement probe: VACUOUS (hypotheses prove False), REFUTED "
+                            "(plausible counterexample), WITNESSED, PROBE_ONLY or ERROR")
+    p.add_argument("--project", required=True, help="a built Lake project with Mathlib (the probe env)")
+    p.add_argument("--file", required=True, help="the Lean file declaring the theorem")
+    p.add_argument("--theorem", required=True, help="fully qualified theorem name")
+    p.add_argument("--witness", default=None,
+                   help="a term proving `∃ <binders>, True` (the hypotheses are satisfiable)")
+    p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
+                   help="module to import instead of the file's own imports (repeatable); pass the "
+                        "file's module when the statement uses definitions local to it")
+    p.add_argument("--wrapper", default=None,
+                   help="command prefix before `lake env lean` (default: leanlock with one slot "
+                        "when ~/hodge-engine/leanlock.sh exists; '' for none)")
+    p.add_argument("--timeout", type=int, default=1800, help="seconds per probe file")
+    p.add_argument("--json", action="store_true", help='print {"verdict": ..., "detail": ...} only')
+    p.set_defaults(fn=cmd_probe_negation)
 
     args = ap.parse_args(argv)
     return args.fn(args)
