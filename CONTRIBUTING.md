@@ -19,7 +19,7 @@ python -m pytest tests -q           # the suite should be green before you start
 
 Keep the **engine core (`src/telperion/`) sympy-only**. numpy/networkx belong to
 the `bg/` research lab and the `[bg]` extra; cvxpy belongs to the `[sdp]` finders.
-`tests/test_core_boundary.py` enforces this and will fail if the core imports them.
+`tests/test_engine_boundary.py` enforces this and will fail if the core imports them.
 
 ## Adding a certificate shape (an emitter)
 
