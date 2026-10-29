@@ -1,66 +1,109 @@
 # Telperion
 
-**A certificate compiler for Lean 4 — it turns families of concrete mathematical
-claims into kernel-checked Mathlib proofs by exact-arithmetic witness, not by
-trust.**
+**A certificate engine for Lean 4. You write a family of concrete mathematical
+claims in sympy; Telperion checks every instance in exact rational arithmetic,
+then writes Lean 4 that Mathlib's kernel re-proves from scratch.**
 
 > **New to Telperion?** → [Getting Started](docs/GETTING_STARTED.md) (install →
 > generate → verify a proof locally) · [Architecture](docs/ARCHITECTURE.md) (how it
-> works; engine vs. research lab) · [Contributing](CONTRIBUTING.md) (add a
-> certificate shape).
+> works) · [Contributing](CONTRIBUTING.md) (add a certificate shape) ·
+> [Licensing](LICENSING.md) (what is BSL, what is Apache).
 
-You describe your problem as a parameterized *family* of statements. Telperion
-certifies each instance in exact rational arithmetic, then emits Lean 4 that
-Mathlib's kernel re-proves from scratch. **The generator is untrusted by
-design** — a wrong certificate is a compile error, never a false theorem — so
+## What Telperion is
+
+Most of the work in formally proving a concrete inequality is not insight. It is
+bookkeeping: clear the denominators, find the sum of squares, check the corners,
+pick the right Mathlib lemma, and then do it all again for the next row of the
+table. Telperion does that bookkeeping for you, in three stages.
+
+1. **sympy families.** You describe your problem as a parameterized *family* of
+   statements: a grid of parameter values and, at each point, a target
+   expression written in sympy. One family can stand for a single theorem or for
+   three thousand of them.
+2. **Exact validation.** Telperion certifies each instance in exact rational
+   arithmetic. It finds a witness (a Pólya form, a sum-of-squares decomposition,
+   a Handelman or Putinar multiplier, a rational bracket, and so on) and
+   re-checks that witness exactly. No floating-point number takes part in the
+   verdict. If an instance fails, you are told which one and why, before any Lean
+   is written.
+3. **Kernel-checked Lean 4.** Only a family that certified, and whose validation
+   report is green, can be emitted. The emitter writes Lean 4 in which the witness
+   *is* the proof, and Mathlib's kernel re-proves every theorem from scratch when
+   you run `lake build`.
+
+The design decision that everything else hangs on is that **the generator is
+untrusted**. A wrong certificate is a compile error, never a false theorem, so
 you get machine-checked proofs without having to trust, or even read, the tool
 that wrote them. That inversion (check the witness, don't trust the author) is
 the whole point: it is exactly what makes an unreliable, heuristic, or
 LLM-driven generator safe to build on.
 
-Telperion was forged as the engine behind a hard research proof — the
-Brualdi–Goldwasser Laplacian-ratio problem — but nothing in the engine is
-specific to it. It is now a standalone, problem-agnostic artifact, battle-tested
-across three very different campaigns:
+## Why it now lives in its own repository
 
-- **Extremal combinatorics** — the Brualdi–Goldwasser proof, thousands of
-  CI-green Mathlib theorems (`g1_floors` alone: 3,084). That campaign reached
-  its goal: the maximizer of `per(L(T))/∏deg` for every `n ≥ 4` is
-  kernel-checked in Lean 4 / Mathlib (not yet refereed), released at
-  [DrMurphyIsIn/brualdi-goldwasser](https://github.com/DrMurphyIsIn/brualdi-goldwasser)
-  (doi:10.5281/zenodo.22983412), with its certificates packaged by Telperion.
-- **Analytic number theory** — an *unconditional* Riemann-ζ zero-free region,
-  the Borel–Carathéodory machinery, and sharp near-line growth bounds, all
-  sorry-free (classical-analysis formalization, not a claim on RH itself).  Plus a
-  **Turing-style RH-in-a-box capstone** (`examples/zeta_zero_localization/`):
-  `BoxLocalization.all_nontrivial_zeros_in_box_on_critical_line` kernel-verifies
-  that *every* nontrivial ζ zero in `[2/5,3/5]×[10,35]` lies on `Re s = 1/2` — RH
-  VERIFIED IN THIS BOX (the winding integer 5, edge non-vanishing, and enclosures
-  are Arb-certified non-kernel input), which is **not** a proof of RH.  This is now
-  a *parameterized* generic theorem (`RHInBox.rh_in_box_of_certificate`) driven by
-  `generate.py --box`/`--height`; the committed **T=100 milestone**
-  (`RHInBox_2d5_3d5_0_100.lean`) extends the verified RANGE to
-  `[2/5,3/5]×[0,100]`, kernel-certifying all `N(100) = 29` on-line zeros (winding
-  `N` = on-line count) — still Turing's method, still **not** a proof of RH.
-  And, as of 2026-10-09, the first **machine-checked bound on the de Bruijn–Newman
-  constant below de Bruijn's 1/2**: `Λ ≤ 9/32`. OpenAI's kernel-checked quasi-Riemann
-  hypothesis (`ζ(s) ≠ 0` for `Re s > 7/8`, [openai/math](https://github.com/openai/math),
-  Apache-2.0, replayed here through Comparator with nanoda) is composed with the dbn island's
-  de Bruijn heat-flow theorem in ONE Lean environment at OpenAI's pin
-  (`examples/oai_qrh_bridge/`, design and audit trail in
-  `docs/QRH_DBN_BRIDGE_2026-10-07.md`); the four registry nodes are proved, operator-read-back,
-  and judge-verified by the missions Comparator job. On 2026-10-10 the lower half followed
-  (PR #679, node `RH_dbn_newman`: proved, operator-read-back, judge-verified with nanoda):
-  Newman's conjecture `Λ ≥ 0` (Rodgers–Tao), kernel-checked on the dbn island after Dobner —
-  every `H_t` with `t < 0` has a non-real zero — so the machine-checked range is
-  `0 ≤ Λ ≤ 9/32` (`docs/NEWMAN_LAMBDA_NONNEG_SCOPING_2026-10-10.md`; released at
-  [newman-lambda-nonneg](https://github.com/DrMurphyIsIn/newman-lambda-nonneg), Zenodo DOI 10.5281/zenodo.23287832). It is weaker than the numerical 0.22
-  and it is **not** a proof of RH (RH is `Λ = 0`).
-- **Proof complexity** — sum-of-squares refutations of unsatisfiable systems and
-  their pseudo-expectation-duality complement (no low-degree refutation exists).
+Telperion grew up inside [Arda](https://github.com/DrMurphyIsIn/Arda). It was
+built as the engine behind a research proof of the Brualdi–Goldwasser
+Laplacian-ratio problem, and it later carried a long run of work on the Riemann
+zeta function. That was a good place to grow up: nearly every certificate shape
+in the table below exists because a real proof needed it. But it also meant the
+engine and the research were tangled together, in one directory tree, one test
+suite, one CI and one changelog. A reader who wanted to know what Telperion
+*is* had to dig it out from under what it had been used *for*.
 
-The same `certify → emit → freeze` pipeline that discharges a 3,084-theorem
-combinatorial floor table also proves a textbook inequality
+This repository is the engine on its own. It was extracted from Arda with a
+filtered history, so the commits that built the files kept here are still here,
+with their original authorship. The research stayed behind:
+
+- **Here:** the engine (`src/telperion/`: certification, the emitters,
+  validation and emission, the Comparator bridge, the CLI and the MCP server),
+  the missions *framework* (schema, registry, judge and provenance, with no
+  campaign data), the test suite, and the examples under `examples/` that are
+  either domain-neutral or read as data by an engine test.
+- **Not here:** the research labs (`telperion.bg` and the other BG modules,
+  `rh_jensen`, `li_coeff`, `weil_form_eval`), their mission campaigns and judge
+  bundles, the research examples, and most of the per-emitter design notes.
+
+A test holds that line. [`tests/test_engine_boundary.py`](tests/test_engine_boundary.py)
+fails if any engine module imports a lab, statically (any spelling, at any
+nesting) or at runtime, so a lab dependency cannot creep back in quietly.
+
+This is version `0.2.0.dev0`, the first standalone line. It is not a release
+yet; the [changelog](CHANGELOG.md) says what moved and what stayed.
+
+## How other projects use it: vendoring
+
+The projects that use Telperion keep their own copy of it inside their
+repositories, rather than installing whatever happens to be current. That way a
+published proof travels with the exact engine that produced it. Until now those
+copies were made by hand: the public repositories listed below each carry a
+full copy of version 0.1.6, with no record of the commit it came from. The plan
+is for every vendored copy to come from a tagged release of this repository,
+with a manifest that the consumer's CI checks for drift. That is not built
+yet: see `VENDORING.md`, added in step 7 of the
+[standalone plan](docs/superpowers/specs/2026-10-27-telperion-standalone-design.md).
+
+## Where the research lives
+
+Telperion is a tool. The mathematics it has been used for belongs to the
+projects that did it, and those projects are *consumers* of this repository:
+each carries a vendored copy, states and checks its own results, and is the
+place to read about them. This README makes no claims about their results.
+
+- **[Arda](https://github.com/DrMurphyIsIn/Arda)** is where Telperion started.
+  It is still the home of the research labs: the Riemann-hypothesis lab with its
+  examples and mission campaigns, and, for now, the Brualdi–Goldwasser lab. When
+  this README names a path that is not in this repository (some example and
+  design-note paths in the emitter table, for instance), it is under
+  `telperion/` in Arda.
+- **[brualdi-goldwasser](https://github.com/DrMurphyIsIn/brualdi-goldwasser)**
+  is the released Brualdi–Goldwasser Laplacian-ratio work. The plan is for the
+  BG lab to move there.
+- **[riemann-hypothesis-lean](https://github.com/DrMurphyIsIn/riemann-hypothesis-lean)**
+  collects the Lean 4 work around the Riemann hypothesis.
+- **[tenth-discriminant](https://github.com/DrMurphyIsIn/tenth-discriminant)**
+  holds the Lean 4 work on tenth-discriminant bounds and class number one.
+
+The same `certify → emit → freeze` pipeline that has discharged tables of
+thousands of theorems for that research also proves a textbook inequality
 ([`examples/bernoulli`](examples/bernoulli/)) through identical machinery. Bring
 your own inequality, identity, bound, enclosure, or positivity certificate, and
 it will try to hand you a kernel-checked Lean proof of it.
@@ -104,8 +147,14 @@ trust model and the whole pipeline come for free.
 ### Certificate shapes
 
 Each shape is an *emitter*; all flow through the same `certify → validate →
-emit → freeze` workflow, and every one below has a worked, CI-compiled example
-under [`examples/`](examples/).
+emit → freeze` workflow. Thirty worked examples live under
+[`examples/`](examples/) in this repository. Many of the other shapes were built
+and dogfooded against Lean projects in the research that needed them, and their
+rows say so: when a row says "Dogfooded on the rvm_bridge island", or names a
+`docs/EMITTER_*_DESIGN_*.md` note or an `examples/` path that is not in this
+repository, that file stayed in Arda, under `telperion/`. A row that mentions
+BG, RH, MIRRORMERE or ANDÚRIL is telling you where a shape came from; the
+emitter itself is general, and it lives here in the engine.
 
 | Emitter | Proves | Lean it writes |
 |---|---|---|
@@ -212,13 +261,11 @@ under [`examples/`](examples/).
 
 | `ExpLaurentIdentityEmitter` | **RH Face 4 <-> Face 1 dictionary bookkeeping.** An identity in `Real.exp d` and `Real.exp (-d)` -- amplitude sums `e^d + e^(-d)` (a `2 cosh` channel), one-sided clearances `e^d - 1` / `1 - e^(-d)`, their products and squares -- certified as an EXACT reduction of `lhs - rhs` modulo the single relation `e^d * e^(-d) = 1` in `Q[y, z]`; the quotient (cofactor) is the load-bearing certificate. Refuses a nonzero remainder (the motivating case: the clearances' SUM is `2d + O(d^3)`, NOT the amplification excess -- QC_RECURRENCE section 6's own corrected mistake) and refuses a cofactor-0 plain ring identity (that shape is `IdentityEmitter`'s). Unconditional, zeta-free; dictionary bookkeeping, NOT an analytic theorem and NOT a step toward RH | `have hrel : Real.exp d * Real.exp (-d) = 1 := by rw [<- Real.exp_add]; norm_num` then `linear_combination (cofactor) * hrel` |
 
-*Candidate (not-yet-built) shapes are tracked in the emitter roadmaps under
-[`docs/`](docs/) — `EMITTER_ROADMAP_2026-08-21.md` (BG / P=NP backlog: `SymmetricQuadForm`,
-`PolytopeMaxMonotone`, `SingularPSD`, …), `EMITTER_ROADMAP_2026-09-02_RH_CROSSCUT.md`
-(RH cross-cutting, all 8 shipped), and `EMITTER_ROADMAP_2026-09-02_SWEEP2.md`
-(second sweep, all 4 shipped). The two sweeps found the corpus close to
-saturated; the remaining roadmap items are the 08-21 BG/P=NP backlog and a few
-fold-in sub-modes (`HodgeRiemann`→`psd_form`, `DiscreteConcavity`→`logconcave`).*
+*Candidate (not-yet-built) shapes were tracked in emitter roadmaps that stayed
+in Arda with the research that motivated them (`telperion/docs/EMITTER_ROADMAP_*.md`
+there: the 2026-08-21 BG / P=NP backlog and two 2026-09-02 sweeps). The two
+sweeps found the corpus close to saturated; what remains is the 08-21 backlog and
+a few fold-in sub-modes (`HodgeRiemann`→`psd_form`, `DiscreteConcavity`→`logconcave`).*
 
 Under the positivity shapes sits an automatic search: the Pólya engine
 (`polya_lift` — multiply through by `(1+Σxᵢ)^N`, recursively subdivide the box,
@@ -237,9 +284,11 @@ generator trustworthy (hopeless for a heuristic search or an LLM), Telperion
 makes its trustworthiness irrelevant. Finding a certificate is hard and can be
 delegated to anything; *checking* one is a cheap, mechanical kernel computation.
 The exact-arithmetic self-checks exist only to catch mistakes *before* you burn
-a CI round-trip — not to establish truth. The corollary is a small, readable,
-dependency-light engine (sympy only, a few thousand lines) a referee can audit
-rather than trust.
+a CI round-trip — not to establish truth. The corollary is that the engine's
+size does not matter for soundness. Its core is dependency-light (sympy is the
+only required dependency), but it is no longer small: it is over a hundred
+thousand lines of Python. A referee needs to trust none of them, only the
+kernel and the statement.
 
 **Why this matters for LLM-generated mathematics.** The defining failure of a
 language model let loose on math is the confident *hallucination* — a
@@ -314,22 +363,27 @@ write_challenge_config(out / "MyFam.comparator.json", cfg)
 ```
 
 Sharded (multi-file) emits get one config per shard via
-`sharded_challenge_configs(...)`. A full, CI-green worked example — mathlib build,
-both kernels, and all — lives in [`examples/bernoulli/lean`](examples/bernoulli/lean/)
-(workflow `telperion-comparator.yml`).
+`sharded_challenge_configs(...)`. A worked example, with challenge, solution and
+Comparator config, lives in [`examples/bernoulli/lean`](examples/bernoulli/lean/).
+In Arda, the `telperion-comparator.yml` workflow builds it against pinned Mathlib
+and runs both kernels on it. This repository's own CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the Python test
+suite only; it does not build Lean yet.
 
-**It has been pointed at real proofs, not just the examples.** The three anchor
-theorems of the Brualdi–Goldwasser formalization (the `Φ ≤ 1` crux, the g-step /
-master-inequality crux, and the conditional R7′ capstone) are re-verified in CI
-through the full judge — both the Lean kernel *and* nanoda accept each,
-axiom-clean. The campaign's final theorem, the maximizer for every `n ≥ 4`,
-was put through the same two kernels in its standalone release (a genuine
-challenge/solution pair in Mathlib's vocabulary; run locally, both kernels
-accepted). The analytic-number-theory campaign is guarded in the same spirit
-at the kernel level: its unconditional anchors (the elementary and polylog ζ
-zero-free regions, the sharp near-line growth bound, the strip representation)
-carry a `#print axioms` guard in CI that fails on any hidden `sorryAx` — so a
-green build cannot smuggle a gap past a docstring that merely *says* "no sorry".
+**The missions judge, and the pinned second kernel.** The missions framework
+uses the same Comparator to judge a campaign's proved results.
+`python -m telperion.missions.judge --island <island>` writes, for each proved
+node in a registry, a bridge module that states the registered statement
+verbatim and proves it with the artifact's theorem, plus a Comparator config
+that admits only the three standard axioms and turns nanoda on (the details are
+in [`missions/judge/README.md`](missions/judge/README.md)). nanoda is pinned to
+one reviewed commit, the hash in [`NANODA_REV`](NANODA_REV). One exception is
+built in: a node whose certificates are too heavy for a hosted runner under
+nanoda (`heavy_certificates = true`) is judged by the Lean kernel alone in
+hosted CI, and it stays proved only with a passing local re-judge with nanoda
+on, which `telperion mission rejudge-record` records together with that pinned
+revision. The campaigns themselves, with their judge bundles and records, live
+in the research repositories, not here.
 
 Two honest notes. First, for verifying *your own* output the sandbox isn't the
 point (the kernel replay is), so CI wraps the judge in a shim that sidesteps a
@@ -390,10 +444,10 @@ print(res.files["Demo.lean"])          # kernel-checkable Lean, one theorem per 
 
 `telperion init myproof` scaffolds a complete new project — a family template, a
 pinned Lean+Mathlib shell, a drift manifest, and a CI workflow — so you can go
-from an idea to a CI-checked theorem without wiring any of it by hand. The
-fully worked reference is [`examples/toy_box/`](examples/toy_box/) (compiled
-against pinned Mathlib in this repo's CI); [`examples/bernoulli/`](examples/bernoulli/)
-is the non-BG example, Bernoulli's inequality end-to-end through the core engine.
+from an idea to a CI-checked theorem without wiring any of it by hand. In this
+repository, [`examples/bernoulli/`](examples/bernoulli/) is the end-to-end
+reference: Bernoulli's inequality, through the core engine, from family to
+frozen Lean. (The older `toy_box` reference example stayed in Arda.)
 
 ## Extending it
 
@@ -405,7 +459,7 @@ are the working examples: the newest were added by modelling each emitted proof
 on a lemma already proven in the corpus, then verifying with a single
 `lake build`. `docs/TACTIC_CONTRACT.md` documents the exact Mathlib tactics the
 default templates assume; `docs/METHODOLOGY.md`, the discipline. Candidate
-shapes still on the roadmap live in `docs/EMITTER_ROADMAP_*.md`.
+shapes still on the roadmap are listed in Arda's `telperion/docs/EMITTER_ROADMAP_*.md`.
 
 ## Honest scope — what it is and isn't
 
@@ -419,16 +473,11 @@ When a target is *outside* its shapes it says so — `diagnose` triages any refu
 into `FALSE` (with an exact rational counterexample), `NOT_POLYA` (with remedy
 hints), or `CERTIFIABLE` — rather than emitting a plausible-but-wrong proof.
 
-The same discipline governs the research campaigns. Telperion formalizes
-*classical and certificate-shaped* mathematics: the analytic-number-theory work
-is a kernel-checked, unconditional **zero-free region** and its supporting
-bounds — classical results, formalized honestly — and carries
-`conjecture1_proved = False` throughout; it is **not** progress on the Riemann
-Hypothesis, and the Brualdi–Goldwasser and proof-complexity campaigns are held to
-the same standard. (In the Brualdi–Goldwasser campaign the flag tracks the
-campaign's own first, conditional route; the 1984 problem itself was answered
-by a different route and is kernel-checked, as described above.) The project
-names what it cannot do rather than paper over it.
+The same discipline applies to the research that uses it, but that research is
+not described here. Each consumer repository (see
+[Where the research lives](#where-the-research-lives)) states its own results,
+with its own scope notes and its own list of what is and is not proved. The
+project names what it cannot do rather than paper over it.
 
 ## Search, when you don't know the certificate yet — `telperion.evolve`
 
@@ -452,13 +501,12 @@ subgoal, Telperion returns either a kernel-checked discharge or a clean refusal,
 and it never fabricates a proof — so the certificate-shaped fraction of the
 model's reasoning inherits the no-false-theorem guarantee for free. The
 integration seam is one JSON request/response (`telperion.tactic::discharge`),
-with a sketched Lean `telperion_discharge` tactic frontend and a lift harness +
-certifiable benchmark for measuring what the backend adds — see
-[`examples/backend_integration/`](examples/backend_integration/) and the
-frontier-prover gap analysis in
-`docs/COMPARISON_ALPHAPROOF_DEEPSEEK_PROVER_V2_2026-08-20.md`. A companion
-`audit` verb (the proof-auditor) re-screens any Lean text for the
-"green build ≠ proved" classes.
+and the lift harness (`telperion.lift`) and certifiable benchmark
+(`telperion.benchmark`) measure what the backend adds. The worked integration
+example (`examples/backend_integration/`, with a sketched Lean
+`telperion_discharge` tactic frontend) and the frontier-prover gap analysis
+stayed in Arda. A companion `audit` verb (the proof-auditor) re-screens any Lean
+text for the "green build ≠ proved" classes.
 
 ## Using it from LLM agents
 
@@ -470,55 +518,50 @@ Three surfaces, all on the same enforced workflow:
   proof-auditor), `audit-closure` (the kernel-level dependency-closure census of
   a built theorem), `freeze-manifest` / `verify-manifest` (pin a Lake project's
   source state around a verdict-of-record run; see
-  `docs/CLOSURE_AUDIT_MANIFEST_DESIGN_2026-10-22.md`), `benchmark`, plus analysis (`margins`, `ties`, `hunt`,
+  [`examples/closure_audit/`](examples/closure_audit/)), `benchmark`, plus analysis (`margins`, `ties`, `hunt`,
   `relax`, `sharpen`) and reporting (`latex`, `ledger`, `status`, `package`,
   `export-certs`, `recheck`). Every string-taking surface parses through a
   token whitelist — sympy's evaluating parser never sees raw input.
-- **MCP server** — `pip install "telperion[mcp]"`, then
+- **MCP server** — `pip install -e ".[mcp]"` from a checkout, then
   `claude mcp add telperion -- telperion-mcp`. Tools mirror the workflow
   (`polya_probe`, `certify_family`, `emit_family`, `diff_family`,
   `read_manifest`); there is no path to Lean that skips certification.
-- **Claude Code plugin / skill** — [`claude-plugin/`](claude-plugin/) bundles
+- **Claude Code plugin / skill** — Arda's `telperion/claude-plugin/` bundles
   the MCP registration with a skill that teaches an agent the discipline (probe
   first, never hand-edit emitted files, never skip validation, compile in CI,
-  diff on every change).
+  diff on every change). It has not moved to this repository yet.
 
 ## Install
 
 ```bash
-pip install -e "telperion"        # the engine — sympy only
-pip install -e "telperion[dev]"   # + pytest, to run the tests
+pip install -e .            # the engine — sympy only
+pip install -e ".[dev]"     # + pytest, to run the tests
 ```
 
 `sympy` is the only core dependency; `import telperion` and the whole
 certify→emit pipeline need nothing else. Optional extras: `mcp` (agent server),
-`sdp` (cvxpy, for the SOS emitter), `flint` (faster arithmetic). The
-`telperion.evolve` search layer needs no extra — it is pure-stdlib, and its
-optional LLM arm simply talks to a local [Ollama](https://ollama.com) server if
-one is running. See [Origin](#origin) for the `bg` research-lab extra.
+`sdp` (cvxpy, for the SOS emitter), `flint` (faster arithmetic), `graph`
+(networkx and numpy, for the graph modules). The `telperion.evolve` search layer
+needs no extra — it is pure-stdlib, and its optional LLM arm simply talks to a
+local [Ollama](https://ollama.com) server if one is running. The `bg` and
+`rh_jensen` extras serve the research labs, which now live in Arda; the engine
+does not need them.
 
 ## Origin
 
 Telperion was extracted clean-room from the Brualdi–Goldwasser (1984)
-Laplacian-ratio proof campaign in [`../proof/`](../proof/) (a campaign that
-has since produced a complete, kernel-checked answer), where the pattern
-produced thousands of CI-green Mathlib theorems (a 36-cell bilinear certificate
-table, 36 dispatch adapters, 72 vee/mirror branches, 42 leg and 55 shedding
-certificates — most batches first-try green; `g1_floors` alone is 3,084). That
-campaign is still the tool's largest single stress test: its frozen families are
-re-certified and byte-diffed in CI, the biggest also compiled against pinned
-Mathlib by the `telperion-production` gate.
+Laplacian-ratio proof campaign in Arda, where the pattern first produced
+thousands of CI-green Mathlib theorems, most batches first-try green. Later
+research in Arda drove the engine well past that origin, first the
+analytic-number-theory work and then the proof-complexity work (sum-of-squares
+refutations and pseudo-expectation duality). Each contributed new certificate
+shapes, and that is how the catalog grew to the size it is today.
 
-Two further campaigns then drove the engine well past its origin — the
-analytic-number-theory work (the ζ zero-free region, Borel–Carathéodory, the
-sharp near-line bound) and the proof-complexity work (SoS refutations and
-pseudo-expectation duality). Each contributed new certificate shapes, growing the
-catalog to fifty-plus, and each is exercised in CI against pinned Mathlib. The
-problem-specific research modules live in the opt-in `telperion.bg` subpackage —
-`import telperion` loads **zero** of them (statically and dynamically enforced by
-[`tests/test_core_boundary.py`](tests/test_core_boundary.py)), keeping the
-general engine small and auditable. Install the `bg` extra (networkx, numpy) only
-if you want the research lab.
+For most of that time the problem-specific research code sat next to the engine
+as opt-in "labs", kept out of `import telperion` by a boundary test. With this
+repository the labs are gone from the tree altogether, and
+[`tests/test_engine_boundary.py`](tests/test_engine_boundary.py) checks that no
+engine module imports one.
 
 The methodology — untrusted generator, trusted kernel, numeric-first discipline,
 provenance-and-drift — is written up in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
@@ -526,11 +569,11 @@ provenance-and-drift — is written up in [`docs/METHODOLOGY.md`](docs/METHODOLO
 
 ## License
 
-Telperion is source-available under the
-[Business Source License 1.1](LICENSE): free for academic research,
-teaching, and evaluation; commercial production use requires a license
-from the Licensor; each version converts to Apache-2.0 three years after
-release. Emitted Lean certificates are excluded from the Licensed Work —
-your outputs are yours. The mathematical content elsewhere in this
-repository is Apache-2.0/CC-BY-4.0 (see ../LICENSING.md). Engine
-contributions require the [CLA](CLA.md).
+The engine is source-available under the
+[Business Source License 1.1](LICENSE): free for academic research, teaching,
+and evaluation; commercial production use requires a license from the Licensor;
+each version converts to Apache-2.0 three years after release. Emitted Lean
+certificates are excluded from the Licensed Work — your outputs are yours. The
+examples and documentation in this repository are Apache-2.0 (code) /
+CC-BY-4.0 (documents). [`LICENSING.md`](LICENSING.md) gives the split file by
+file. Engine contributions require the [CLA](CLA.md).

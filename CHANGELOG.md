@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.2.0.dev0 -- standalone repository (2026-10-29)
+
+Telperion now has a repository of its own. Until this version it lived in `telperion/` inside Arda, next to the
+Brualdi-Goldwasser and Riemann-hypothesis research it was built for. This is the first standalone line, not a release.
+
+- **Extracted with its history.** `git filter-repo` over Arda's history kept only the paths of the standalone tree (883
+  files) and the 816 commits that touched them. Claude-Session trailers were stripped; Co-Authored-By lines were kept.
+- **What came over:**
+  - the engine, `src/telperion/`, including the missions framework (schema, registry, judge, provenance, rejudge,
+    nanoda-direct), `evolve`, `negctrl_adapters` and `prove2me`;
+  - the engine tests in `tests/` (3818 tests in the step 2 baseline), including `tests/test_engine_boundary.py`;
+  - 30 examples: the ten canonical ones (`rational_sos`, `sos_refutation`, `handelman`, `putinar`,
+    `real_nullstellensatz`, `sturm_positive`, `polya_zeros`, `wz`, `primality`, `padic_valuation`) and twenty that engine
+    tests read as data;
+  - `missions/judge/README.md`, `missions/judge_tools/`, `scripts/guard_anchors.py`, `scripts/judge_materialize.sh` and
+    `NANODA_REV`;
+  - an allowlist of engine docs (`ARCHITECTURE`, `COMPARATOR`, `GETTING_STARTED`, `METHODOLOGY`, `MISSIONS_HOWTO`,
+    `TACTIC_CONTRACT`, `TRUSTED_FLOOR` and others), with the evolve, analytic-structures and standalone specs and plans;
+  - `pyproject.toml`, `README.md`, `LICENSE`, `CLA.md`, `CONTRIBUTING.md` and this changelog.
+- **What stayed in Arda:**
+  - the research labs: `telperion.bg`, `bg_upper_bound`, `bg_bulk_discharge`, `rh_jensen`, `li_coeff` and
+    `weil_form_eval` (`telperion.boundary.LABS`), with their tests, including the lab halves of the test files split in
+    step 2c;
+  - the mission campaigns (`missions/rh`, `missions/bg`, `missions/mirrormere`, `missions/anduril`) and the committed
+    judge bundles in `missions/judge/`, with the step 0 re-judge queue and log;
+  - the research examples (the BG examples, `zeta_zero_localization`, `rvm_bridge`, `li_positivity`, `quasicrystal`, the
+    RH-face examples and others), plus `toy_box`, `backend_integration` and `claude-plugin/`;
+  - `research/`, `explorer/`, `prototypes/`, `scratch/`, `tools/` and the top-level research notes (`PROOF_*.md`,
+    `TIER_*_TARGETS.md` and the like);
+  - nearly all of `telperion/docs/`: the RH and BG mission notes, the per-emitter design notes and the emitter roadmaps;
+  - Arda's CI workflows, and the tests that read them;
+  - **the Arda-side extraction tooling**: `scripts/lab_manifest.py`, `scripts/extraction_paths.py`,
+    `scripts/extraction_baseline.py`, `scripts/extract_repo.sh`, `docs/extraction/` (`extraction_rules.toml`,
+    `LAB_MANIFEST.json`, `EXTRACTION_PATHS.txt`, `BASELINE.json`, `BASELINE.md`) and their tests
+    (`test_lab_manifest.py`, `test_extraction_paths.py`, `test_extraction_baseline.py`). They describe Arda's labs, so
+    they were never part of the extracted tree.
+- **Done in Arda first (steps 0 to 2), so the extraction could be checked by test equivalence:**
+  - nanoda pinned to one commit in `NANODA_REV`;
+  - the engine/lab boundary generalised from BG to every lab (`telperion.boundary`, `tests/test_engine_boundary.py`);
+  - layout-neutral paths (`telperion.paths`), so the same code finds `NANODA_REV` and the examples in the Arda layout
+    and in this one;
+  - the `mcp` extra capped at `mcp>=1.2,<2`;
+  - 28 mixed test files split into an engine half and a lab half, then a cosmetic pass over the split engine halves
+    that renamed RH/BG programme names in comments, slugs and made-up strings.
+- **New in this repository:**
+  - `.github/workflows/ci.yml`: one job, `test`, on Python 3.11 and 3.14 with the same sympy matrix as Arda's
+    `telperion-test.yml` (sympy 1.12 on 3.11 only). It uses Arda's install line plus `-e .` and `mpmath`, and runs
+    `pytest tests -q -rs`. It does not build Lean.
+  - `LICENSING.md`: the engine is BSL 1.1; `examples/`, `docs/` and emitted certificates are Apache-2.0 /
+    CC-BY-4.0.
+  - `README.md` rewritten for a standalone engine. It points to Arda and to the public consumer repositories
+    (tenth-discriminant, brualdi-goldwasser, riemann-hypothesis-lean) for the research.
+  - The package version is `0.2.0.dev0`.
+- **Not changed:**
+  - `telperion.__version__` is still `0.1.6`. It feeds the provenance hash and the header stamped into every emitted
+    file, so bumping it would re-stamp every frozen example; that belongs to the release.
+  - `LICENSE` and `CLA.md` are unchanged.
+- **Not built yet:** vendoring (`telperion vendor`, `VENDORED.json`, `VENDORING.md`) arrives in step 7.
+
 ## Unreleased -- range_completeness_decide emitter (2026-10-22, PR #762 + follow-up)
 
 - **`RangeCompletenessEmitter`** / `range_completeness_family` (kind

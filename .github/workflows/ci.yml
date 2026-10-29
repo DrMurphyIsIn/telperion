@@ -1,0 +1,35 @@
+name: telperion-ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Arda's telperion-test.yml needed 40 minutes for the full suite with python-flint installed.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+        # The same sympy matrix as Arda's telperion-test.yml: the declared floor (pyproject: sympy>=1.12) and the latest.
+        sympy: ["sympy==1.12", "sympy"]
+        exclude:
+          # sympy 1.12 predates Python 3.14; the floor is exercised on the floor interpreter.
+          - python: "3.14"
+            sympy: "sympy==1.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # Mirrors Arda's telperion-test.yml install line, plus `-e .` and mpmath. scs is pinned <3.3 because the
+      # scs 3.3.0 Linux wheel links Intel MKL without bundling it, which aborts the interpreter mid-suite.
+      - run: pip install -e . "${{ matrix.sympy }}" pytest networkx numpy cvxpy "scs<3.3" pyyaml "python-flint==0.9.0" mpmath
+      - name: Unit tests
+        # TELPERION_REQUIRE_FLINT: python-flint is installed above, so tests/test_flint_required.py turns a missing
+        # flint or an unfound libflint into a failure instead of letting the rigorous winding tests skip. -rs lists
+        # every skip reason in the log; faulthandler dumps a C stack on any native crash.
+        env:
+          PYTHONFAULTHANDLER: "1"
+          TELPERION_REQUIRE_FLINT: "1"
+        run: python -X faulthandler -m pytest tests -q -rs
