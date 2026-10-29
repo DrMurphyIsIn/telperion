@@ -149,7 +149,8 @@ def test_closure_fail_blocks(tmp_path):
 
 
 @pytest.mark.parametrize("created,required", [
-    ("2026-10-01", False), ("2026-10-27", False), ("2026-10-27T23:59:00Z", False),
+    ("2026-10-01", False), ("2026-10-27", False),
+    ("2026-10-27T23:59:00Z", True), ("2026-10-01junk", True),   # Ruling 12: the WHOLE string
     ("2026-10-28", True), ("2026-10-29", True),
     ("", True),                       # Ruling 2: no date is not pre-process
     ("1999", True), ("yesterday", True), ("2026-00-00", True),   # unparseable: fail-closed
@@ -278,18 +279,37 @@ def _cli(mroot: Path, *args: str) -> int:
     return main(["mission", "--missions-root", str(mroot), *args])
 
 
+#: Stands for "the sha256 of the CLI campaign's artifact as it is on disk now".
+CUR = object()
+_SAME = object()
+
+
 def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "PASS",
                  probe_olean: str = OLEAN, fp_olean: str = OLEAN,
-                 fingerprints=None, targets=("lemma_ck",), lean_exit_code=0):
+                 fingerprints=None, targets=("lemma_ck",), lean_exit_code=0,
+                 probe_theorem="lemma_ck", fp_theorem=_SAME, probe_src=CUR, fp_src=CUR):
     """The three JSONs in the exact shapes the checks print: `probe-negation --json`
-    (ProbeResult.to_json), `fingerprint --json` (cmd_fingerprint) and `audit-closure --json`
-    (AuditResult.to_json, the real serializer)."""
+    (ProbeResult.to_json plus module/theorem/source_sha256, cmd_probe_negation),
+    `fingerprint --json` (cmd_fingerprint) and `audit-closure --json` (AuditResult.to_json,
+    the real serializer). A value of None leaves the key out (an older JSON)."""
+    cur = hashlib.sha256((tmp_path / "missions" / "demo" / "proof" / "Demo_ck.lean")
+                         .read_bytes()).hexdigest()
     closure_list = [["Demo.Proof", "olean", "f" * 64]]
+    fps = fingerprints if fingerprints is not None else {"lemma_ck": FPRINT}
+    if fp_theorem is _SAME:
+        fp_theorem = next(iter(fps)) if len(fps) == 1 else None
     probe = {"verdict": verdict, "detail": "synthetic"}
     if probe_olean is not None:
         probe.update(olean_sha256=probe_olean, olean_closure=closure_list)
-    fp = {"fingerprints": fingerprints if fingerprints is not None else {"lemma_ck": FPRINT},
-          "olean_sha256": fp_olean, "olean_closure": closure_list}
+    probe["module"] = "Demo.Proof"
+    if probe_theorem is not None:
+        probe["theorem"] = probe_theorem
+    if probe_src is not None:
+        probe["source_sha256"] = cur if probe_src is CUR else probe_src
+    fp = {"fingerprints": fps, "olean_sha256": fp_olean, "olean_closure": closure_list,
+          "module": "Demo.Proof", "theorem": fp_theorem}
+    if fp_src is not None:
+        fp["source_sha256"] = cur if fp_src is CUR else fp_src
     audit = AuditResult(verdict=closure, lean_exit_code=lean_exit_code,
                         targets=[TargetInfo(name=t, kind="theorem", statement="1 + 1 = 2")
                                  for t in targets])
@@ -387,6 +407,9 @@ def test_cli_several_fingerprints_need_target(tmp_path):
                          targets=("lemma_ck", "other"))
     assert _record(mroot, paths) == 2
     assert _node(mroot).checks is None
+    assert _record(mroot, paths, "--target", "other") == 2      # the probe was of lemma_ck
+    paths = _write_jsons(tmp_path, fingerprints={"lemma_ck": FPRINT, "other": "a" * 64},
+                         targets=("lemma_ck", "other"), probe_theorem="other")
     assert _record(mroot, paths, "--target", "other") == 0
     assert _node(mroot).checks.statement_fingerprint == "a" * 64
 
@@ -472,3 +495,114 @@ def test_verify_pre_cutoff_proved_node_without_checks_passes(tmp_path):
 def test_verify_open_post_cutoff_node_without_checks_not_an_error(tmp_path):
     """Only a PROVED status rests on the checks; an open node simply has not been granted."""
     assert _checks_errors(_grant_campaign(tmp_path, created="2026-10-29")) == []
+
+
+# ---------------------------------------------------------------------------
+# Ruling 12: the requirement survives a `created` edit; strict parsing; unknown keys;
+# the probe and fingerprint JSONs are tied to the artifact source and to one theorem
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flag,required", [(True, True), (False, False)])
+def test_checks_required_by_grant_record(flag, required):
+    from telperion.missions.provenance import checks_required
+    from telperion.missions.schema import Grant
+    node = Node(name="n", title="t", kind="lemma", status="open", depends_on=(),
+                statement_module="S", created="2026-10-01",
+                grant=Grant("a" * 64, "b" * 64, "2026-10-29.1", "2026-10-29", "gi", "gs",
+                            checks_required=flag))
+    assert checks_required(node) is required
+
+
+@pytest.mark.parametrize("created,flag", [("2026-10-29", True), ("", True), ("2026-10-01", False)])
+def test_gate_records_its_checks_decision(tmp_path, created, flag):
+    """Every grant the new gate writes is 2026-10-29.1, so the decision itself is recorded: a
+    pre-cutoff node granted today stays exempt (Ruling 11), a post-cutoff one keeps the rule."""
+    root = _proved(tmp_path, created=created)
+    p = root / "nodes" / "Demo_ck.toml"
+    assert load_node(p).grant.checks_required is flag
+    assert ("checks_required = true" in p.read_text()) is flag
+
+
+def test_verify_created_edited_after_new_gate_grant_still_needs_checks(tmp_path):
+    root = _proved(tmp_path, created="2026-10-29", checks=False)
+    p = root / "nodes" / "Demo_ck.toml"
+    assert load_node(p).grant.gate_version == "2026-10-29.1"
+    save_node(dataclasses.replace(load_node(p), created="2026-10-01"), p)
+    errs = _checks_errors(root)
+    assert len(errs) == 1 and "checks-record" in errs[0], errs
+
+
+def test_regrant_after_created_edit_still_needs_checks(tmp_path):
+    """The re-grant path shares the predicate: a node reopened with its [grant] block kept
+    cannot be granted again without [checks] by back-dating `created`."""
+    root = _proved(tmp_path, created="2026-10-29", checks=False)
+    p = root / "nodes" / "Demo_ck.toml"
+    n = load_node(p)
+    save_node(dataclasses.replace(n, status="open", created="2026-10-01"), p)
+    with pytest.raises(GateError, match=r"\[checks\]"):
+        _grant(root)
+
+
+def test_unknown_checks_key_rejected(tmp_path):
+    from telperion.missions.schema import _node_to_doc, _doc_to_node
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    doc = _node_to_doc(dataclasses.replace(node, checks=_rec("b" * 64)))
+    doc["checks"]["probe_override"] = "WITNESSED"
+    with pytest.raises(SchemaError, match="probe_override"):
+        _doc_to_node(doc, tmp_path / "n.toml")
+
+
+@pytest.mark.parametrize("which", ["probe_src", "fp_src"])
+def test_cli_stale_source_sha_refused(tmp_path, which, capsys):
+    mroot = _cli_campaign(tmp_path)
+    paths = _write_jsons(tmp_path, **{which: "0" * 64})
+    assert _record(mroot, paths, "--allow-missing-source") == 2   # a WRONG value is never allowed
+    assert _node(mroot).checks is None
+    assert "source_sha256" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kw", [dict(probe_src=None), dict(fp_src=None), dict(probe_theorem=None)])
+def test_cli_missing_source_or_theorem_needs_flag(tmp_path, kw):
+    mroot = _cli_campaign(tmp_path)
+    paths = _write_jsons(tmp_path, **kw)
+    assert _record(mroot, paths) == 2
+    assert _node(mroot).checks is None
+    assert _record(mroot, paths, "--allow-missing-source", "--note", "older JSONs") == 0
+    note = _node(mroot).checks.note
+    assert note.startswith("older JSONs") and "--allow-missing-source" in note
+
+
+@pytest.mark.parametrize("kw", [dict(probe_theorem="other"), dict(fp_theorem="other")])
+def test_cli_theorem_must_agree(tmp_path, kw, capsys):
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path, **kw), "--allow-missing-source") == 2
+    assert _node(mroot).checks is None
+    assert "theorem" in capsys.readouterr().err
+
+
+def test_cli_probe_json_carries_module_theorem_source(tmp_path, monkeypatch, capsys):
+    from telperion.checks import negation_probe as np_
+    from telperion.checks.negation_probe import ProbeResult
+    monkeypatch.setattr(np_, "run_probe", lambda spec, project, **kw: ProbeResult("WITNESSED", "ok"))
+    assert main(["probe-negation", "--project", str(tmp_path), "--module", "T", "--theorem",
+                 "Foo.bar", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (out["module"], out["theorem"], out["source_sha256"]) == ("T", "Foo.bar", None)
+
+
+def test_cli_fingerprint_json_carries_module_theorem_source(tmp_path, monkeypatch, capsys):
+    from telperion.checks import fingerprint as fp_
+    monkeypatch.setattr(fp_, "run_fingerprint", lambda project, imports, targets, **kw:
+                        fp_.Fingerprints({t: "a" * 64 for t in targets}, "b" * 64, []))
+    src = tmp_path / "M.lean"
+    src.write_text("theorem foo : True := trivial\n")
+    assert main(["fingerprint", "--project", ".", "--import", "M", "--target", "foo",
+                 "--file", str(src), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (out["module"], out["theorem"]) == ("M", "foo")
+    assert out["source_sha256"] == hashlib.sha256(src.read_bytes()).hexdigest()
+    assert main(["fingerprint", "--project", ".", "--import", "M", "--import", "N",
+                 "--target", "foo", "--target", "bar", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (out["module"], out["theorem"], out["source_sha256"]) == (None, None, None)

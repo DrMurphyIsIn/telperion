@@ -213,7 +213,10 @@ def test_cli_json_and_theorem_qualified_from_file(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr(np_, "run_probe", fake)
     rc = cli.main(["probe-negation", "--project", str(tmp_path), "--module", "T", "--file", str(f),
                    "--theorem", "bar", "--json"])
-    assert rc == 1 and json.loads(capsys.readouterr().out) == {"verdict": "REFUTED", "detail": "x := 4"}
+    import hashlib
+    assert rc == 1 and json.loads(capsys.readouterr().out) == {
+        "verdict": "REFUTED", "detail": "x := 4", "module": "T", "theorem": "Foo.bar",
+        "source_sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
     assert (seen["spec"].module, seen["spec"].theorem) == ("T", "Foo.bar")
     rc = cli.main(["probe-negation", "--project", str(tmp_path), "--module", "T", "--theorem", "Foo.bar"])
     assert rc == 1 and seen["spec"].theorem == "Foo.bar"

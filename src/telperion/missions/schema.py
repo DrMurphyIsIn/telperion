@@ -224,6 +224,11 @@ class Grant:
     date: str
     identity: str
     session: str
+    #: True when the gate that wrote this grant required a passing [checks] record for the node
+    #: (`provenance.checks_required`, gate 2026-10-29.1+). It keeps the requirement once
+    #: granted, so back-dating `created` afterwards cannot drop it (Ruling 12). Written only
+    #: when True, so every older grant round-trips unchanged.
+    checks_required: bool = False
 
     def __post_init__(self):
         for f in ("artifact_sha256", "statement_sha256", "gate_version", "date",
@@ -464,6 +469,10 @@ class ChecksRecord:
         if self.closure_verdict not in ("PASS", "FAIL"):
             raise SchemaError(f"checks.closure_verdict must be 'PASS' or 'FAIL', "
                               f"not {self.closure_verdict!r}")
+
+
+#: The keys a `[checks]` table may carry (one per ChecksRecord field).
+_CHECKS_KEYS = frozenset(ChecksRecord.__dataclass_fields__)
 
 
 @dataclass(frozen=True)
@@ -712,6 +721,8 @@ def _node_to_doc(node: Node) -> dict:
             "session": node.grant.session,
             "statement_sha256": node.grant.statement_sha256,
         }
+        if node.grant.checks_required:
+            doc["grant"]["checks_required"] = True
     if node.comparator is not None:
         doc["comparator"] = {
             "artifact_sha256": node.comparator.artifact_sha256,
@@ -798,6 +809,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 date=g["date"],
                 identity=g["identity"],
                 session=g["session"],
+                checks_required=bool(g.get("checks_required", False)),
             )
         comparator = None
         if "comparator" in doc:
@@ -835,6 +847,14 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
         checks = None
         if "checks" in doc:
             k = doc["checks"]
+            # Ruling 12: unlike [rejudge], an unknown key is an error, not silently dropped --
+            # a gate record that half-parses must fail loudly.
+            if not isinstance(k, dict):
+                raise SchemaError(f"[checks] must be a table, not {type(k).__name__}")
+            unknown = sorted(set(k) - _CHECKS_KEYS)
+            if unknown:
+                raise SchemaError(f"[checks] has unknown key(s) {unknown}; "
+                                  f"allowed: {sorted(_CHECKS_KEYS)}")
             checks = ChecksRecord(
                 date=k["date"], artifact_sha256=k["artifact_sha256"],
                 olean_sha256=k["olean_sha256"], probe_verdict=k["probe_verdict"],

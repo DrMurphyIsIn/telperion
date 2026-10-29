@@ -612,6 +612,7 @@ def build_grant(campaign_root: Path, node: Node, *, identity: str, session: str,
         date=today or date.today().isoformat(),
         identity=identity.strip(),
         session=session.strip(),
+        checks_required=checks_required(node),
     )
 
 
@@ -842,18 +843,28 @@ CHECKS_CUTOFF = "2026-10-28"
 
 
 def checks_required(node: Node) -> bool:
-    """True unless the node's `created` is an explicit, valid date before CHECKS_CUTOFF.
+    """True unless the node's `created` is an explicit, valid date before CHECKS_CUTOFF and its
+    `[grant]` (if any) does not record that the gate required checks.
 
     Ruling 2 (step 4): an EMPTY `created` requires checks (fail-closed) -- otherwise a new node
-    that omits the field skips every check. So does one that does not parse as an ISO date:
-    a string compare alone would read "1999" as pre-process.
+    that omits the field skips every check. Ruling 12: the WHOLE string must parse as an ISO
+    date ("2026-10-01junk" or a timestamp does not), or checks are required.
+
+    Ruling 12: a node whose `[grant]` says `checks_required = true` (the gate, 2026-10-29.1
+    and later, records its own decision there) always requires checks, so back-dating
+    `created` after such a grant cannot drop the requirement, in `mission verify` or on a
+    re-grant (both call this one predicate). The decision is recorded rather than read off
+    `gate_version`: every grant the new gate writes carries that version, including a
+    pre-cutoff node's, which must stay exempt. A back-dated `created` BEFORE the first grant
+    is not caught here (see `checks_problem`).
     """
-    created = (node.created or "").strip()
+    if node.grant is not None and node.grant.checks_required:
+        return True
     try:
-        date.fromisoformat(created[:10])
+        created = date.fromisoformat((node.created or "").strip())
     except ValueError:
         return True
-    return created[:10] >= CHECKS_CUTOFF
+    return created >= date.fromisoformat(CHECKS_CUTOFF)
 
 
 def checks_problem(campaign_root: Path, node: Node) -> str:
@@ -873,7 +884,11 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       sign-off identity distinct from the `[author]`, as the read-back rule does;
     - the closure audit is tied to the probe and fingerprint by the theorem NAME only:
       `audit-closure` imports rather than replays, so its JSON carries no olean digest. A
-      later step could have it emit the replayed closure's `olean_sha256` too.
+      later step could have it emit the replayed closure's `olean_sha256` too;
+    - the cutoff keys on `created`, which nothing protects before a node's first grant: a
+      node back-dated to before 2026-10-28 while still unproved is granted without checks.
+      Once a gate has granted it with `checks_required = true` in the `[grant]`, the
+      requirement holds regardless of `created`. A future CI check could refuse any diff that changes an existing `created`.
     """
     k = node.checks
     if k is None:

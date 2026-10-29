@@ -527,7 +527,8 @@ def test_cli_json_includes_olean_sha256(monkeypatch, capsys):
     monkeypatch.setattr(fp_, "run_fingerprint", ok)
     assert cli.main(["fingerprint", "--project", ".", "--import", "M", "--target", "foo", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {"fingerprints": {"foo": "a" * 64}, "olean_sha256": "b" * 64,
-                                                   "olean_closure": [["M", "olean", "c" * 64]]}
+                                                   "olean_closure": [["M", "olean", "c" * 64]],
+                                                   "module": "M", "theorem": "foo", "source_sha256": None}
 
 
 def test_cli_trusted_manifest_build_verify(tmp_path, monkeypatch, capsys):

@@ -1802,6 +1802,11 @@ def cmd_mission_checks_record(args) -> int:
     is its only tie to the other two. A `signoff:` in --note is free text: nothing checks the
     reviewer is independent of the author (see `provenance.checks_problem`).
 
+    Ruling 12: the probe's `theorem` (and the fingerprint's, when it names one) must be that
+    target, and both JSONs' `source_sha256` (the --file each check was given) must be the
+    artifact's CURRENT sha256. A mismatch is refused; an absent value is refused unless
+    --allow-missing-source, which the record's note then says.
+
     Refuses (exit 2, no record): a malformed or unreadable JSON, an unknown probe verdict, a
     missing or mismatched `olean_sha256`, an ambiguous or unaudited fingerprint target, no
     proof link or a missing artifact, status `deprecated` or `refuted`. Otherwise writes the
@@ -1887,13 +1892,40 @@ def cmd_mission_checks_record(args) -> int:
     if target not in audited:
         return refuse(f"the closure audit's targets {audited} do not include {target!r}")
 
+    # Ruling 12: one theorem across all three, and the probe and fingerprint ran on the
+    # artifact's CURRENT source. A WRONG value is always refused; an ABSENT one (an older JSON,
+    # or a run without --file) only with --allow-missing-source, which the note records.
+    cur_sha = sha256_file(art)
+    missing = []
+    if probe.get("theorem") is None:
+        missing.append("probe theorem")
+    elif probe["theorem"] != target:
+        return refuse(f"the probe was of theorem {probe['theorem']!r} but the fingerprint and "
+                      f"closure audit are of {target!r}")
+    if fp.get("theorem") is not None and fp["theorem"] != target:
+        return refuse(f"the fingerprint JSON's theorem {fp['theorem']!r} is not {target!r}")
+    for name, doc in (("probe", probe), ("fingerprint", fp)):
+        src = doc.get("source_sha256")
+        if src is None:
+            missing.append(f"{name} source_sha256")
+        elif str(src).lower() != cur_sha:
+            return refuse(f"the {name} ran on source_sha256 {str(src)[:12]}..., but the artifact "
+                          f"on disk is {cur_sha[:12]}...; re-run the {name} on the current artifact")
+    note = args.note
+    if missing:
+        if not args.allow_missing_source:
+            return refuse(f"the JSONs lack {', '.join(missing)}; re-run the checks with --file, or "
+                          "pass --allow-missing-source")
+        extra = f"recorded with --allow-missing-source (absent: {', '.join(missing)})"
+        note = f"{note}; {extra}" if note else extra
+
     closure_verdict = "PASS" if closure["verdict"] == "PASS" and closure["ok"] is True else "FAIL"
     try:
         rec = ChecksRecord(
-            date=_date.today().isoformat(), artifact_sha256=sha256_file(art),
+            date=_date.today().isoformat(), artifact_sha256=cur_sha,
             olean_sha256=str(p_olean).lower(), probe_verdict=verdict,
             closure_verdict=closure_verdict,
-            statement_fingerprint=str(fps[target]).lower(), theorem=target, note=args.note)
+            statement_fingerprint=str(fps[target]).lower(), theorem=target, note=note)
     except SchemaError as exc:
         return refuse(str(exc))
     new = _dc.replace(node, checks=rec, updated=rec.date)
@@ -2676,6 +2708,17 @@ def _trust_kwargs(args) -> dict:
     return kw
 
 
+def _source_sha256(path) -> "str | None":
+    """sha256 of the `--file` source a check was given, or None (no file, or unreadable)."""
+    import hashlib as _hashlib
+    if not path:
+        return None
+    try:
+        return _hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def cmd_probe_negation(args) -> int:
     """Negation probe of one theorem's ELABORATED constant (checks/negation_probe.py), run on the module's KERNEL
     REPLAY into the pinned trusted env; the module itself is never imported.
@@ -2689,8 +2732,8 @@ def cmd_probe_negation(args) -> int:
     from .checks import negation_probe as np_
     from .checks.negation_probe import ProbeResult, ProbeSpec, TACTIC_IMPORTS
 
+    theorem = args.theorem
     try:
-        theorem = args.theorem
         if args.file:
             theorem = np_.qualify(Path(args.file).read_text(encoding="utf-8"), theorem)
         spec = ProbeSpec(args.module, theorem, args.witness,
@@ -2701,7 +2744,10 @@ def cmd_probe_negation(args) -> int:
     except Exception as exc:  # any surprise is ERROR (exit 2), never a traceback or a failing verdict
         res = ProbeResult("ERROR", f"probe-negation failed: {type(exc).__name__}: {exc}")
     if args.json:
-        print(_json.dumps(res.to_json()))
+        # Ruling 12: name what was probed and the source it came from (`mission checks-record`).
+        out = res.to_json()
+        out.update(module=args.module, theorem=theorem, source_sha256=_source_sha256(args.file))
+        print(_json.dumps(out))
     else:
         print(f"probe-negation {args.theorem}: {res.verdict} -- {res.detail}")
     return {"PROBE_ONLY": 0, "WITNESSED": 0, "VACUOUS": 1, "REFUTED": 1}.get(res.verdict, 2)
@@ -2730,9 +2776,13 @@ def cmd_fingerprint(args) -> int:
             print(f"fingerprint: {exc}")
         return 2
     if args.json:
+        # Ruling 12: `module`/`theorem` only when there is exactly one; `source_sha256` of --file.
         print(_json.dumps({"fingerprints": {t: fps[t] for t in args.targets},
                            "olean_sha256": getattr(fps, "olean_sha256", None),
-                           "olean_closure": getattr(fps, "olean_closure", [])}))
+                           "olean_closure": getattr(fps, "olean_closure", []),
+                           "module": args.imports[0] if len(args.imports) == 1 else None,
+                           "theorem": args.targets[0] if len(args.targets) == 1 else None,
+                           "source_sha256": _source_sha256(args.file)}))
         return 0
     for t in args.targets:
         print(f"{t} {fps[t]}")
@@ -3292,6 +3342,9 @@ def main(argv=None) -> int:
                    help="the fingerprinted theorem, when the fingerprint JSON has several")
     p.add_argument("--note", default="",
                    help="free text; a PROBE_ONLY verdict passes only with 'signoff: <who>' here")
+    p.add_argument("--allow-missing-source", action="store_true", dest="allow_missing_source",
+                   help="record even when the probe or fingerprint JSON lacks source_sha256 or the "
+                        "probe's theorem (the note says so); a mismatched value is never allowed")
     p.set_defaults(mission_fn=cmd_mission_checks_record)
 
     # rejudge-backfill-closure SLUG --campaign C [--since 23bda8b16] [--rebind]
@@ -3396,6 +3449,9 @@ def main(argv=None) -> int:
                    help="module to import (repeatable)")
     p.add_argument("--target", dest="targets", action="append", required=True, metavar="THEOREM",
                    help="fully qualified theorem name (repeatable)")
+    p.add_argument("--file", default=None,
+                   help="the theorem's source file; only hashed, into the --json `source_sha256` that "
+                        "`mission checks-record` compares with the node's artifact")
     p.add_argument("--wrapper", default=None,
                    help="command prefix before the pinned `lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
