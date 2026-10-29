@@ -2495,14 +2495,18 @@ def cmd_kernel_policy_check(args) -> int:
 
     root = Path(args.root)
     exceptions_path = Path(args.exceptions) if args.exceptions else root / "kernel_policy_exceptions.toml"
-    exceptions = kp.load_exceptions(exceptions_path)
+    try:
+        exceptions = kp.load_exceptions(exceptions_path)
+    except ValueError as e:
+        print(e)
+        return 1
+    projects = kp.find_projects(root)
     problems = kp.policy_problems(root, exceptions)
     if problems:
         for p in problems:
             print(p)
         return 1
-    n_projects = len(kp.find_projects(root))
-    print(f"kernel policy: OK ({n_projects} projects, {len(exceptions)} exceptions)")
+    print(f"kernel policy: OK ({len(projects)} projects, {len(exceptions)} exceptions)")
     return 0
 
 

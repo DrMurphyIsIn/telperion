@@ -1,3 +1,4 @@
+import argparse
 import subprocess
 from pathlib import Path
 import pytest
@@ -73,3 +74,78 @@ def test_cli_exit_codes(tmp_path):
     (root / "kernel_policy_exceptions.toml").write_text(
         '[[exception]]\nproject = "old"\ntoolchain = "leanprover/lean4:v4.32.0"\nreason = "nanoda required"\n')
     assert subprocess.run(cmd, env=env, capture_output=True).returncode == 0
+
+
+# --- Fix round 1 ---------------------------------------------------------
+
+def test_missing_toolchain_file_is_a_problem_not_a_crash(tmp_path):
+    root = _repo(tmp_path, {"old": "leanprover/lean4:v4.32.0"})
+    (root / "old" / "lean-toolchain").unlink()
+    # find_projects must not crash
+    kp.find_projects(root)
+    probs = kp.policy_problems(root, {})
+    assert any("old" in p and "lean-toolchain is tracked but missing on disk" in p for p in probs)
+
+
+def test_cli_exit_1_on_missing_toolchain_file(tmp_path):
+    import sys
+    root = _repo(tmp_path, {"old": "leanprover/lean4:v4.32.0"})
+    (root / "old" / "lean-toolchain").unlink()
+    cmd = [sys.executable, "-m", "telperion.cli", "kernel-policy", "check", "--root", str(root)]
+    env = {**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "missing on disk" in result.stdout
+
+
+def test_load_exceptions_missing_key_raises(tmp_path):
+    p = tmp_path / "e.toml"
+    p.write_text('[[exception]]\ntoolchain = "leanprover/lean4:v4.32.0"\nreason = "x"\n')
+    with pytest.raises(ValueError, match="missing 'project'"):
+        kp.load_exceptions(p)
+
+
+def test_load_exceptions_duplicate_project_raises(tmp_path):
+    p = tmp_path / "e.toml"
+    p.write_text(
+        '[[exception]]\nproject = "a"\ntoolchain = "leanprover/lean4:v4.32.0"\nreason = "x"\n'
+        '[[exception]]\nproject = "a"\ntoolchain = "leanprover/lean4:v4.32.0"\nreason = "y"\n'
+    )
+    with pytest.raises(ValueError, match="duplicate project 'a'"):
+        kp.load_exceptions(p)
+
+
+def test_load_exceptions_bad_toml_raises(tmp_path):
+    p = tmp_path / "e.toml"
+    p.write_text("not [ valid toml =")
+    with pytest.raises(ValueError, match="not valid TOML"):
+        kp.load_exceptions(p)
+
+
+def test_cli_exit_1_on_malformed_exceptions_file(tmp_path):
+    import sys
+    root = _repo(tmp_path, {"old": "leanprover/lean4:v4.32.0"})
+    (root / "kernel_policy_exceptions.toml").write_text(
+        '[[exception]]\ntoolchain = "leanprover/lean4:v4.32.0"\nreason = "x"\n')
+    cmd = [sys.executable, "-m", "telperion.cli", "kernel-policy", "check", "--root", str(root)]
+    env = {**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "missing 'project'" in result.stdout
+
+
+def test_cli_check_calls_find_projects_once_on_ok_path(tmp_path, monkeypatch):
+    from telperion import cli
+    root = _repo(tmp_path, {"new": "leanprover/lean4:v4.35.0"})
+    calls = {"n": 0}
+    orig = kp.find_projects
+
+    def counting(r):
+        calls["n"] += 1
+        return orig(r)
+
+    monkeypatch.setattr(kp, "find_projects", counting)
+    args = argparse.Namespace(root=str(root), exceptions=None)
+    rc = cli.cmd_kernel_policy_check(args)
+    assert rc == 0
+    assert calls["n"] == 1

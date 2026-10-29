@@ -28,27 +28,59 @@ def below_floor(toolchain: str) -> bool:
     return parse_toolchain(toolchain) < parse_toolchain(FLOOR)
 
 
-def find_projects(root: Path) -> list[tuple[str, str]]:
+def _tracked_toolchain_paths(root: Path) -> list[str]:
+    """Tracked `lean-toolchain` paths (relative to root) outside any `.lake/`, sorted.
+
+    Shared by find_projects and policy_problems so both see the same tracked set; neither
+    reads the file here, so a toolchain tracked in git but deleted on disk cannot crash this."""
     out = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True).stdout.decode()
+    return sorted(
+        p for p in (x for x in out.split("\0") if x)
+        if Path(p).parts[-1] == "lean-toolchain" and ".lake" not in Path(p).parts
+    )
+
+
+def find_projects(root: Path) -> list[tuple[str, str]]:
     found = []
-    for p in sorted(x for x in out.split("\0") if x):
-        parts = Path(p).parts
-        if parts[-1] != "lean-toolchain" or ".lake" in parts:
+    for p in _tracked_toolchain_paths(root):
+        fp = root / p
+        if not fp.exists():
             continue
-        found.append((str(Path(p).parent), (root / p).read_text().strip()))
+        found.append((str(Path(p).parent), fp.read_text().strip()))
     return found
 
 
 def load_exceptions(path: Path) -> dict[str, dict]:
     if not path.exists():
         return {}
-    doc = tomllib.loads(path.read_text())
-    return {e["project"]: {"toolchain": e["toolchain"], "reason": e["reason"]} for e in doc.get("exception", [])}
+    try:
+        doc = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"exceptions file {path}: not valid TOML: {e}") from e
+    result: dict[str, dict] = {}
+    for i, e in enumerate(doc.get("exception", [])):
+        for key in ("project", "toolchain", "reason"):
+            if key not in e:
+                raise ValueError(f"exceptions file {path}: entry {i} is missing '{key}'")
+        name = e["project"]
+        if name in result:
+            raise ValueError(f"exceptions file {path}: duplicate project '{name}'")
+        result[name] = {"toolchain": e["toolchain"], "reason": e["reason"]}
+    return result
 
 
 def policy_problems(root: Path, exceptions: dict) -> list[str]:
     problems: list[str] = []
-    projects = dict(find_projects(root))
+    known_projects: set[str] = set()
+    projects: dict[str, str] = {}
+    for p in _tracked_toolchain_paths(root):
+        proj = str(Path(p).parent)
+        known_projects.add(proj)
+        fp = root / p
+        if not fp.exists():
+            problems.append(f"{proj}: lean-toolchain is tracked but missing on disk")
+            continue
+        projects[proj] = fp.read_text().strip()
     for proj, tc in projects.items():
         try:
             low = below_floor(tc)
@@ -62,6 +94,6 @@ def policy_problems(root: Path, exceptions: dict) -> list[str]:
             problems.append(f"{proj}: stale exception: {tc} meets the floor; remove it from the list")
         elif ex is not None and ex["toolchain"].strip() != tc:
             problems.append(f"{proj}: toolchain mismatch: list says {ex['toolchain']}, project has {tc}")
-    for proj in sorted(set(exceptions) - set(projects)):
+    for proj in sorted(set(exceptions) - known_projects):
         problems.append(f"{proj}: stale exception: no such project")
     return problems
