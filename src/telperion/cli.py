@@ -2564,6 +2564,26 @@ def cmd_probe_negation(args) -> int:
     return {"PROBE_ONLY": 0, "WITNESSED": 0, "VACUOUS": 1, "REFUTED": 1}.get(res.verdict, 2)
 
 
+def cmd_fingerprint(args) -> int:
+    """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target.
+
+    Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a Lean error, an elided statement)."""
+    import shlex
+
+    from .checks import fingerprint
+
+    try:
+        fps = fingerprint.run_fingerprint(Path(args.project), args.imports, args.targets,
+                                          wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                                          timeout=args.timeout)
+    except ValueError as exc:
+        print(f"fingerprint: {exc}")
+        return 2
+    for t in args.targets:
+        print(f"{t} {fps[t]}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -3151,6 +3171,20 @@ def main(argv=None) -> int:
     p.add_argument("--timeout", type=int, default=1800, help="seconds per probe file")
     p.add_argument("--json", action="store_true", help='print {"verdict": ..., "detail": ...} only')
     p.set_defaults(fn=cmd_probe_negation)
+
+    p = sub.add_parser("fingerprint",
+                       help="sha256 of each theorem's statement, delta-unfolded past the library roots, "
+                            "binder-name-insensitive")
+    p.add_argument("--project", required=True, help="a built Lake project in which the imports resolve")
+    p.add_argument("--import", dest="imports", action="append", required=True, metavar="MODULE",
+                   help="module to import (repeatable)")
+    p.add_argument("--target", dest="targets", action="append", required=True, metavar="THEOREM",
+                   help="fully qualified theorem name (repeatable)")
+    p.add_argument("--wrapper", default=None,
+                   help="command prefix before `lake env lean` (default: leanlock with one slot "
+                        "when ~/hodge-engine/leanlock.sh exists; '' for none)")
+    p.add_argument("--timeout", type=int, default=1800, help="seconds for the Lean run")
+    p.set_defaults(fn=cmd_fingerprint)
 
     args = ap.parse_args(argv)
     return args.fn(args)
