@@ -28,6 +28,20 @@ emitters, the CLI, the MCP server and the missions framework), the tests in `tes
 Reviewers do not need any license beyond the Additional Use Grant to regenerate and check every certificate in this
 repository.
 
+## Third-party code
+
+`examples/hermitian_moment/lean/` is a verbatim port (see
+[`PORT_NOTES.md`](examples/hermitian_moment/lean/PORT_NOTES.md)) of the linear-algebra core from
+the public repository [anthropics/zeta-23-lean](https://github.com/anthropics/zeta-23-lean). Those
+files are Copyright (c) 2026 Anthropic, PBC, licensed under Apache-2.0, and keep their original
+copyright and SPDX headers. The only edit to their bodies is the import-path rename
+(`Zeta23.LinAlg.X` → `RHLinalg.X`) that `PORT_NOTES.md` documents; every statement and proof body
+is otherwise byte-for-byte identical to the source.
+
+Those headers say "the file LICENSE" — for these files that means
+[`examples/hermitian_moment/lean/LICENSE`](examples/hermitian_moment/lean/LICENSE), a byte-identical
+copy of this repository's [`LICENSE-APACHE`](LICENSE-APACHE), placed alongside them for that reason.
+
 ## History
 
 Telperion was developed inside the public repository [Arda](https://github.com/DrMurphyIsIn/Arda) before it moved here.

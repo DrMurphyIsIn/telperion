@@ -1,0 +1,119 @@
+# Kernel policy exceptions (spec 5.1; see docs/COMPARATOR.md, "Kernel policy").
+#
+# An entry here is a named debt: it lets one project's pin stay below the floor
+# (leanprover/lean4:v4.34.1), not a claim that a second kernel already covers it. The
+# v4.33.1 kernel soundness fixes (#14806, #14807, #14808, #14582, #14849) have not been
+# re-checked for these projects by a second kernel such as nanoda. The list is meant to
+# shrink as toolchains get upgraded past the floor; it should never grow for a project
+# that could just as well be pinned at or above it. Shrink-only is enforced by review
+# today — an automated check against the base branch is pending.
+
+[[exception]]
+project = "examples/affine_hull_dominance/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/anchored_monotone_extension/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/bernoulli/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/bohr_mollerup_gamma_ratio/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/closure_audit/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/concave_pooled_induction/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/curvature_boundary/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/factored_endpoint_enclosure/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/gap_budget_multiplicity/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/gram_inertia/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/hermitian_moment/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/log_combination/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/mobius_tangent_cell/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/pl_node_tail/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/primality/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "canonical example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/quadratic_sign_race/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/range_completeness_decide/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/rational_identity/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/scaled_interval_eval/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/single_crossing_ladder/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "examples/typed_cavity_induction/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
+
+[[exception]]
+project = "tests/fixtures/missions/demo_root/examples/demo_island/lean"
+toolchain = "leanprover/lean4:v4.32.0"
+reason = "synthetic test fixture; never judged; pinned below the floor on purpose for the missions tests"

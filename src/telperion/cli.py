@@ -2489,6 +2489,27 @@ def cmd_mission(args) -> int:
     return args.mission_fn(args)
 
 
+def cmd_kernel_policy_check(args) -> int:
+    """Lean toolchain floor + shrink-only exception list (spec 5.1). Exit 1 if any problem."""
+    from .checks import kernel_policy as kp
+
+    root = Path(args.root)
+    exceptions_path = Path(args.exceptions) if args.exceptions else root / "kernel_policy_exceptions.toml"
+    try:
+        exceptions = kp.load_exceptions(exceptions_path)
+    except ValueError as e:
+        print(e)
+        return 1
+    projects = kp.find_projects(root)
+    problems = kp.policy_problems(root, exceptions)
+    if problems:
+        for p in problems:
+            print(p)
+        return 1
+    print(f"kernel policy: OK ({len(projects)} projects, {len(exceptions)} exceptions)")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="telperion")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -3046,6 +3067,14 @@ def main(argv=None) -> int:
     p = msub.add_parser("graph", help="emit DOT-language dependency graph to stdout")
     p.add_argument("campaign", nargs="?", default=None)
     p.set_defaults(mission_fn=cmd_mission_graph)
+
+    kpp = sub.add_parser("kernel-policy", help="Lean toolchain floor + shrink-only exception list (spec 5.1)")
+    kpp_sub = kpp.add_subparsers(dest="kernel_policy_cmd", required=True)
+    p = kpp_sub.add_parser("check", help="print policy problems and exit 1 if any")
+    p.add_argument("--root", default=".", help="repo root to scan (default: .)")
+    p.add_argument("--exceptions", default=None,
+                   help="exceptions TOML (default: <root>/kernel_policy_exceptions.toml)")
+    p.set_defaults(fn=cmd_kernel_policy_check)
 
     args = ap.parse_args(argv)
     return args.fn(args)
