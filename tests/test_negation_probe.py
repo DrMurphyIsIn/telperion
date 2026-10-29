@@ -267,10 +267,12 @@ def test_witness_with_sorryax_not_counted_and_clean_counts():
 
 
 # Phase 2: the value-based negation statuses, the declared-axiom note, and the olean binding.
-def test_unavailable_negation_and_declared_axioms_are_probe_only_notes():
-    r = classify(AESOP + ["NEGATION UNAVAILABLE Failed to find LCNF signature for S0.factorial"], declared=["M.ax"])
+def test_unavailable_negation_is_a_probe_only_note_and_untrusted_axioms_are_error():
+    r = classify(AESOP + ["NEGATION UNAVAILABLE Failed to find LCNF signature for S0.factorial"])
     assert r.verdict == "PROBE_ONLY" and "could not evaluate the statement" in r.detail
-    assert "non-standard axioms ['M.ax']" in r.detail
+    refused = ReplayResult("FAILED", "the untrusted module M declares the axiom M.ax; refusing")
+    r = classify_replay(refused, ProbeSpec("M", "t"))
+    assert (r.verdict, r.detail) == ("ERROR", "module declares axiom M.ax; untrusted axioms are refused by replay")
     assert classify(AESOP + ["NEGATION BOGUS"]).verdict == "ERROR"
     assert classify(["MISSING"]).verdict == "ERROR"
 
@@ -462,8 +464,11 @@ def test_lean_local_declarations_cannot_change_the_statement(cases_module, ns): 
 
 @lean
 def test_lean_bad_axiom_is_not_vacuous(bad_module):
+    # Ruling 10: never VACUOUS through an untrusted axiom; the replay refuses the axiom outright (was: PROBE_ONLY with
+    # "non-standard axioms ['TpBad.bad']" when the module was imported and aesop used the axiom)
     r = _probe(bad_module, "TpBad.tb")
-    assert r.verdict == "PROBE_ONLY" and "non-standard axioms ['TpBad.bad']" in r.detail, r.detail
+    assert r.verdict == "ERROR" and r.detail == ("module declares axiom TpBad.bad; untrusted axioms are refused by "
+                                                 "replay"), r.detail
 
 
 @lean

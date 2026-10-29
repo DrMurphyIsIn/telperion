@@ -11,6 +11,7 @@ Nothing goes through the pretty-printer. Constants declared in a non-library mod
 used, because it would unfold library constants too.
 
 WHAT IS REFUSED (fail closed, ``FP-REFUSED``, a ValueError).
+  * An axiom declared by any untrusted module (Ruling 10: the replay refuses it, so it never enters the env).
   * Any non-library constant still left after unfolding, which would be hashed by its NAME alone: a local inductive,
     constructor, recursor, structure (also through a projection's structure name), axiom, opaque, quotient or theorem,
     and an ``irreducible_def`` (whose wrapper is an opaque structure). Hashing an inductive's full declaration closure
@@ -55,6 +56,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -365,12 +367,16 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
         r = lean_replay.run_replay(replayed, render_fingerprint_callback(targets, nonce), project=None,
                                    untrusted_paths=untrusted, trusted_imports=["Mathlib", *trusted_imps],
                                    trusted_env=pinned.root, manifest=manifest, elan_home=elan_home, wrapper=prefix,
-                                   timeout=timeout, allow_axioms=True, allow_sorry=True, expect_oleans=expect,
+                                   timeout=timeout, allow_sorry=True, expect_oleans=expect,
                                    prefixes_override=trusted)
     finally:
         if cdir is not None:
             shutil.rmtree(cdir, ignore_errors=True)
     if r.status == "FAILED":
+        ax = re.search(r"declares the axiom (\S+); refusing", r.detail)
+        if ax:                                                  # Ruling 10: untrusted axioms never enter the env
+            raise ValueError(f"refused: {ax.group(1)} axiom declared by an untrusted module; untrusted axioms are "
+                             "refused by replay")
         detail = r.detail.replace("olean-mismatch", "body-olean-mismatch") if body is not None else r.detail
         raise ValueError(f"replay refused: {detail}")
     if r.status != "OK":

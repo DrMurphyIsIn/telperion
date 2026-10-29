@@ -51,8 +51,8 @@ counterexample value). Everything else is PROBE_ONLY: the battery failing to der
 find a counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an
 unbuilt module, an unknown constant, a witness that does not elaborate, a refused replay), so no verdict could be read.
 A maxHeartbeats timeout in any probe is not an ERROR: that probe is inconclusive, and the verdict falls through to
-PROBE_ONLY with a note. Axioms the module closure declares are allowed in the replay (the probe still runs) and noted;
-a proof that uses one is not counted.
+PROBE_ONLY with a note. An axiom declared anywhere in the module's untrusted closure is refused by the replay (Ruling
+10: no untrusted axiom ever enters an environment that tactics run in), which is ERROR naming the axiom.
 
 KNOWN LIMITATION. A `private` theorem's constant has a mangled name and is not found by its source name (ERROR).
 """
@@ -256,10 +256,10 @@ def _results(lines: list[str], kind: str) -> list[tuple[str, str]]:
     return out
 
 
-def classify(lines: list[str], witness: bool = False, declared=(), tag: str = "TP") -> ProbeResult:
+def classify(lines: list[str], witness: bool = False, tag: str = "TP") -> ProbeResult:
     """The verdict from the callback's lines (tag already stripped): ERROR, then VACUOUS, REFUTED, WITNESSED,
     PROBE_ONLY. A probe with a TIMEOUT line is inconclusive and its other lines are not read; otherwise it must have
-    exactly one result line with a known status. `declared` are axioms the module closure declares."""
+    exactly one result line with a known status."""
     if "MISSING" in lines:
         return ProbeResult("ERROR", "the constant is not in the replayed module (unknown or private name)")
     kinds = ("FALSE", "NEGATION", "WITNESS") if witness else ("FALSE", "NEGATION")
@@ -282,9 +282,6 @@ def classify(lines: list[str], witness: bool = False, declared=(), tag: str = "T
     if got.get("WITNESS") and got["WITNESS"][0] == "FAILED":
         return ProbeResult("ERROR", f"the witness does not check: {got['WITNESS'][1][:500]}")
     notes = [f"probe '{key}' timed out at maxHeartbeats {HEARTBEATS} (inconclusive)" for key in timed_out]
-    if declared:
-        notes.append(f"the module closure declares non-standard axioms {list(declared)}; a probe proof using them is "
-                     "not counted")
     prem = [m.group(1) for m in (re.fullmatch(r"PREMISES (\d+)", ln) for ln in lines) if m]
     premises = f"the {prem[-1]} premise(s)" if prem else "the premises"
     line = got["FALSE"]
@@ -320,12 +317,15 @@ def classify(lines: list[str], witness: bool = False, declared=(), tag: str = "T
 def classify_replay(r: ReplayResult, spec: ProbeSpec) -> ProbeResult:
     """The verdict of a replay run of the probe callback."""
     if r.status == "FAILED":
+        ax = re.search(r"declares the axiom (\S+); refusing", r.detail)
+        if ax:
+            return ProbeResult("ERROR", f"module declares axiom {ax.group(1)}; untrusted axioms are refused by replay")
         if "build it first" in r.detail:
             return ProbeResult("ERROR", f"build {spec.module} first (lake build {spec.module}): {r.detail[:300]}")
         return ProbeResult("ERROR", f"the replay refused the module: {r.detail[:500]}")
     if r.status != "OK":
         return ProbeResult("ERROR", f"probe did not run: {r.detail[:1500]}")
-    res = classify(r.lines, spec.witness is not None, r.declared)
+    res = classify(r.lines, spec.witness is not None)
     res.olean_sha256 = r.olean_sha256.get(spec.module)
     return res
 
@@ -341,8 +341,7 @@ def run_probe(spec: ProbeSpec, project: Path | None = None, wrapper: list[str] |
         return ProbeResult("ERROR", str(exc))
     r = lean_replay.run_replay(spec.module, callback, project=project, untrusted_paths=untrusted_paths,
                                trusted_imports=spec.imports, trusted_env=trusted_env, manifest=manifest,
-                               elan_home=elan_home, wrapper=wrapper, timeout=timeout, allow_axioms=True,
-                               allow_sorry=True)
+                               elan_home=elan_home, wrapper=wrapper, timeout=timeout, allow_sorry=True)
     return classify_replay(r, spec)
 
 
