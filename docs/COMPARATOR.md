@@ -108,16 +108,17 @@ pretending the problem doesn't exist. Each entry looks like this:
 [[exception]]
 project = "examples/bernoulli/lean"
 toolchain = "leanprover/lean4:v4.32.0"
-reason = "support example pinned before the v4.33.1 kernel fixes; judged with nanoda"
+reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
 ```
 
 `project` is the directory holding the `lean-toolchain` file, `toolchain` is the exact
 pinned string (it has to match what's on disk, or the check flags a "toolchain
 mismatch" — the exception is for a *specific* pin, not a standing exemption from the
-floor), and `reason` says why it's safe anyway. In every case so far that reason comes
-down to the same thing: the project is also judged through Comparator with nanoda
-enabled, so even though the Lean kernel it was built with predates the fixes, a
-second, independently-implemented kernel is standing behind the same proof.
+floor), and `reason` says why it's there. Today that reason is the same for every
+entry: the project was pinned before v4.34.1 existed, and nothing in this repo has
+re-checked it with a second kernel since. The entry is a named debt, not a clean bill
+of health — closing it means either bumping the toolchain past the floor, or actually
+running a second kernel such as nanoda against it and recording that.
 
 The list is **shrink-only**. An exception can be removed (because the project's
 toolchain got bumped past the floor) or edited to match a new pin, but a *new*
@@ -126,7 +127,9 @@ never as a way to let a brand-new project skip ahead of it. The check itself lea
 this: an exception for a project that now meets the floor is flagged as "stale" and
 has to be deleted, and an exception for a project that no longer exists at all is
 flagged as stale too. There's no code path that silently grows the list; growing it is
-something a human has to do on purpose, in a reviewed commit.
+something a human has to do on purpose, in a reviewed commit. Shrink-only is enforced
+by review today — an automated check that the list only shrinks relative to the base
+branch is pending.
 
 ### The heavy-node rule
 
@@ -142,14 +145,20 @@ too expensive to re-export and re-check through Comparator's normal path in CI, 
 instead they get a **local** second-kernel re-judge — someone runs nanoda against them
 by hand, off to the side, and that re-judge is what stands in for the CI-driven check
 everything else gets. A heavy node without nanoda in its rendered config isn't skipping
-the second kernel; it's just getting it from a different, out-of-band place. Anything
-*not* marked heavy that ships with `enable_nanoda: false` is a bug, and
-`judge_config_problems` — and `judge.build_bundle`, which calls it — will say so.
+the second kernel; it's just getting it from a different, out-of-band place. This rule
+is scoped to the mission bundles that `missions.judge.build_bundle` renders: a non-heavy
+bundle it renders with `enable_nanoda: false` is a bug, and `judge_config_problems` — and
+`build_bundle`, which calls it — will say so. It does not cover a committed standalone
+Comparator config outside that path — `examples/bernoulli/lean/Bernoulli.comparator.json`
+is one, and it ships `enable_nanoda: false` on purpose, which this check never sees.
 
 ## Running it end-to-end
 
 All pins are **v4.32.0** — the toolchain, mathlib, and the comparator tag must
-match (they do across every Telperion lean example). In CI:
+match (they do across every Telperion lean example). Several of these pins are below
+the kernel-policy floor and are carried as named exceptions in
+`kernel_policy_exceptions.toml` (see "Kernel policy" above) until they're upgraded or
+actually re-checked by a second kernel. In CI:
 
 1. Build your lean project (`lake exe cache get` + `lake build`).
 2. Build the judge from the matching tag — `lake build lean4export comparator`

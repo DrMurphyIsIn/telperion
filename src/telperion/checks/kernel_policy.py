@@ -3,7 +3,7 @@ never turn the second kernel (nanoda) off except for re-judged heavy nodes.
 
 Lean v4.33.1 fixed kernel soundness bugs (#14806 order-dependent defeq cache, #14807 is_prop on a stuck type,
 #14808 recursor checks, #14582 non-uniform inductives, #14849 numeral size). v4.34.1 is the first line we pin
-that carries them; older projects are allowed only by name, and only with nanoda as a second kernel.
+that carries them; older projects are allowed only by name, on a list meant to shrink.
 """
 from __future__ import annotations
 
