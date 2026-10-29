@@ -11,9 +11,11 @@ from pathlib import Path
 import pytest
 
 from telperion.checks import lean_replay
-from telperion.checks.lean_replay import (build_trusted_manifest, parse_axioms, parse_replay_output, pinned_env,
-                                          render_replay_script, run_replay, split_search_path, under_prefix,
+from telperion.checks.lean_replay import (build_trusted_manifest, default_manifest_path, olean_sha256, parse_axioms,
+                                          parse_declared, parse_replay_output, pinned_env, render_replay_script,
+                                          resolve_olean, run_replay, split_search_path, under_prefix,
                                           verify_trusted_manifest)
+from telperion.checks.lean_run import run_lean
 
 NONCE = "TR" + "ab" * 16
 CB = "def TelperionReplay.callback : Lean.Elab.Term.TermElabM Unit := TelperionReplay.line \"CB hi\"\n"
@@ -139,16 +141,23 @@ def _fake_lean(log: Path, body: str) -> list[str]:
 OK_BODY = 'printf "%s-REPLAY OK m axioms=[propext]\\n%s-CB x\\n%s-DONE\\n" $t $t $t'
 
 
+def _submission(tmp_path: Path) -> Path:
+    sub = tmp_path / "submission"
+    sub.mkdir()
+    (sub / "Foo.olean").write_bytes(b"foo")
+    return sub
+
+
 def test_run_replay_uses_only_pinned_anchors_and_a_private_cwd(tmp_path):
     env, elan = _fake_env(tmp_path)
     m = build_trusted_manifest(env, tmp_path / "manifest.json", elan)
     p = pinned_env(env, elan)
-    sub = tmp_path / "submission"
-    sub.mkdir()
+    sub = _submission(tmp_path)
     log = tmp_path / "log"
     r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
                    wrapper=_fake_lean(log, OK_BODY))
     assert (r.status, r.lines, r.axioms) == ("OK", ["CB x"], ["propext"]), r
+    assert r.olean_sha256 == {"Foo": olean_sha256(sub / "Foo.olean")}
     lean_path, binary, cwd, mode = log.read_text().strip().split("|")
     assert lean_path == "LEAN_PATH=" + os.pathsep.join(p.entries) and binary == p.lean
     assert mode == "700" and not under_prefix(cwd, [tmp_path]) and not os.path.exists(cwd)
@@ -160,7 +169,9 @@ def test_run_replay_reruns_once_with_needed_trusted_modules(tmp_path):
     log = tmp_path / "log"
     body = (f'if grep -q "^import Foo.Bar$" "$4"; then {OK_BODY}; '
             'else printf "%s-REPLAY NEEDS Foo.Bar\\n%s-DONE\\n" $t $t; fi')
-    r = run_replay("Foo", CB, trusted_env=env, manifest=m, elan_home=elan, wrapper=_fake_lean(log, body))
+    sub = _submission(tmp_path)
+    r = run_replay("Foo", CB, untrusted_paths=[sub], trusted_env=env, manifest=m, elan_home=elan,
+                   wrapper=_fake_lean(log, body))
     assert (r.status, r.lines) == ("OK", ["CB x"]), r
     assert len(log.read_text().splitlines()) == 2
     always = 'printf "%s-REPLAY NEEDS Foo.Bar\\n%s-DONE\\n" $t $t'
@@ -177,14 +188,16 @@ def test_run_replay_refuses_before_running_lean(tmp_path):
     cases = {
         "lies under a trusted prefix": dict(untrusted_paths=[ml / "Mathlib"]),
         "contains a trusted prefix": dict(untrusted_paths=[env]),
-        # the env as the project: its own build dir is trusted, so it cannot also be the submission's
-        "lies under a trusted prefix ": dict(project=env),
         "no readable trusted manifest": dict(manifest=tmp_path / "absent.json"),
     }
     for why, kw in cases.items():
         kw = {"trusted_env": env, "manifest": m, "elan_home": elan, **kw}
         r = run_replay("Foo", CB, wrapper=ran, **kw)
         assert r.status == "ERROR" and why.strip() in r.detail, (why, r.detail)
+    # the env as the project adds no submission dir (its own build dir is trusted): nothing to replay Foo from
+    r = run_replay("Foo", CB, project=env, trusted_env=env, manifest=m, elan_home=elan, wrapper=ran)
+    assert r.status == "ERROR" and "not resolved" in r.detail and log.exists(), r.detail
+    log.unlink()
     (ml / "Mathlib" / "Basic.olean").write_bytes(b"tampered")
     r = run_replay("Foo", CB, trusted_env=env, manifest=m, elan_home=elan, wrapper=ran)
     assert r.status == "ERROR" and "differ" in r.detail
@@ -201,7 +214,7 @@ def test_run_replay_timeout_is_error(tmp_path):
 
 def test_run_reaps_the_process_group_after_a_normal_exit(tmp_path):
     pidfile = tmp_path / "daemon.pid"
-    rc, out = lean_replay._run(["sh", "-c", f"sleep 60 & echo $! > {pidfile}; echo hi"], tmp_path, 30)
+    rc, out = run_lean(["sh", "-c", f"sleep 60 & echo $! > {pidfile}; echo hi"], tmp_path, 30)
     assert (rc, out) == (0, "hi\n")
     pid = int(pidfile.read_text())
     with pytest.raises(ProcessLookupError):
@@ -214,7 +227,9 @@ def test_render_imports_only_trusted_modules_and_never_the_target(tmp_path):
     src = render_replay_script(["Mathlib", "Plausible"], "Foo.Bar", [tmp_path], CB, NONCE, ["/x", str(tmp_path)])
     imports = [ln for ln in src.splitlines() if ln.startswith("import ")]
     assert imports == ["import Mathlib", "import Plausible", "import Lean"]
-    assert "def targetModule : Name := `Foo.Bar" in src
+    assert "def targetModules : List Name := [`Foo.Bar]" in src
+    assert 'def expectOleans : List (Name × String) := [(`Foo.Bar, "")]' in src
+    assert "def allowAxioms : Bool := false" in src and "def allowSorry : Bool := false" in src
     assert f'def tag : String := "{NONCE}"' in src
     assert f'def trustedPrefixes : List String := ["{os.path.realpath(tmp_path)}"]' in src
     assert f'(["/x", "{tmp_path}"] : List String)' in src          # the search path is data, not LEAN_PATH
@@ -224,6 +239,52 @@ def test_render_imports_only_trusted_modules_and_never_the_target(tmp_path):
     assert "SearchPath.findWithExt searchPath" in src and "TelperionReplay.fidelity env env' c.consts" in src
     port = src[src.index("namespace Replay"):src.index("end Replay")]
     assert "]!" not in port and "unreachable!" not in port and "inductiveVal!" not in port
+
+
+def test_render_targets_expectations_and_flags(tmp_path):
+    src = render_replay_script(["Lean"], ["A", "B.C"], ["/"], CB, NONCE, expect_oleans={"A": "/x/A.olean"},
+                               allow_axioms=True, allow_sorry=True)
+    assert "def targetModules : List Name := [`A, `B.C]" in src
+    assert 'def expectOleans : List (Name × String) := [(`A, "/x/A.olean"), (`B.C, "")]' in src
+    assert "def allowAxioms : Bool := true" in src and "def allowSorry : Bool := true" in src
+
+
+def test_resolve_olean_and_olean_sha256_follow_import_resolution(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    (a / "Mathlib").mkdir(parents=True)
+    (b / "Mathlib").mkdir(parents=True)
+    (b / "Mathlib" / "Evil.olean").write_bytes(b"e")
+    (b / "Solo.olean").write_bytes(b"s")
+    # the first entry holding the root `Mathlib` wins, as in `SearchPath.findWithExt`: no Mathlib.Evil there
+    assert resolve_olean([str(a), str(b)], "Mathlib.Evil") is None
+    assert resolve_olean([str(b), str(a)], "Mathlib.Evil") == os.path.realpath(b / "Mathlib" / "Evil.olean")
+    assert resolve_olean([str(a), str(b)], "Solo") == os.path.realpath(b / "Solo.olean")
+    assert resolve_olean([str(a)], "Nope") is None
+    import hashlib
+    f = b / "Solo.olean"
+    assert olean_sha256(f) == hashlib.sha256(b"s").hexdigest()
+    (b / "Solo.olean.server").write_bytes(b"v")
+    (b / "Solo.olean.private").write_bytes(b"p")
+    assert olean_sha256(f) == hashlib.sha256(b"svp").hexdigest()
+
+
+def test_default_manifest_path_is_outside_the_env_and_tracks_its_pins(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELPERION_TRUSTED_MANIFEST", raising=False)
+    env, _elan = _fake_env(tmp_path)
+    p1 = default_manifest_path(env)
+    assert p1.parent == Path(os.path.expanduser("~/telperion-tools/trusted-manifests")) and not under_prefix(p1, [env])
+    (env / "lake-manifest.json").write_text('{"packages": []}')
+    p2 = default_manifest_path(env)
+    assert p2 != p1 and p2.parent == p1.parent
+    monkeypatch.setenv("TELPERION_TRUSTED_MANIFEST", str(tmp_path / "m.json"))
+    assert default_manifest_path(env) == tmp_path / "m.json"
+
+
+def test_missing_default_manifest_names_the_build_command(tmp_path, monkeypatch):
+    env, elan = _fake_env(tmp_path)
+    monkeypatch.setenv("TELPERION_TRUSTED_MANIFEST", str(tmp_path / "absent.json"))
+    r = run_replay("Foo", CB, trusted_env=env, elan_home=elan, wrapper=["false"])
+    assert r.status == "ERROR" and f"telperion trusted-manifest build --env {os.path.realpath(env)}" in r.detail
 
 
 def test_render_escapes_paths_and_refuses_bad_names_and_nonces(tmp_path):
@@ -246,9 +307,11 @@ def _out(*lines: str, tag: str = NONCE) -> str:
 
 
 def test_parse_ok_failed_needs():
-    out = "noise\n" + _out("REPLAY OK modules=[Foo] constants=3 axioms=[propext, Quot.sound]", "CB a", "CB b", "DONE")
+    out = "noise\n" + _out("REPLAY OK modules=[Foo] constants=3 declared=[Foo.ax] axioms=[propext, Quot.sound]",
+                           "CB a", "CB b", "DONE")
     st, detail, lines, needs = parse_replay_output(out, NONCE)
     assert (st, lines, needs) == ("OK", ["CB a", "CB b"], []) and parse_axioms(detail) == ["propext", "Quot.sound"]
+    assert parse_declared(detail) == ["Foo.ax"] and parse_declared("axioms=[]") == []
     assert parse_axioms("modules=[Foo] constants=0 axioms=[]") == []
     assert parse_replay_output(_out("REPLAY FAILED (kernel) bad", "DONE"), NONCE)[:2] == ("FAILED", "(kernel) bad")
     assert parse_replay_output(_out("REPLAY NEEDS A.B C", "DONE"), NONCE) == ("NEEDS", "A.B C", [], ["A.B", "C"])
@@ -456,6 +519,7 @@ def test_a_replayed_types_are_identical_to_imported_ones(lib, manifest):
     r = _replay(lib, manifest, "TpHonest", TYPE_CB)
     assert r.status == "OK" and "modules=[TpHonest]" in r.detail, (r.status, r.detail, r.output[-3000:])
     assert r.axioms is not None and set(r.axioms) <= CLEAN, r.axioms
+    assert r.olean_sha256 == {"TpHonest": olean_sha256(lib / "TpHonest.olean")}
     replayed = [ln for ln in r.lines if ln.startswith("TYPE ")]
     assert len(replayed) == 4
     # The same types through a normal import. `repr` of an Expr is its whole tree (binder names and infos, levels,
@@ -541,6 +605,8 @@ def test_i_untrusted_axiom_is_refused(lib, manifest):
     r = _replay(lib, manifest, "TpAx", FOUND_CB, trusted_imports=("Lean",))
     assert r.status == "FAILED" and "declares the axiom TpAx.bad" in r.detail, (r.status, r.detail)
     assert r.lines == []
+    r = _replay(lib, manifest, "TpAx", FOUND_CB, trusted_imports=("Lean",), allow_axioms=True)
+    assert r.status == "OK" and r.declared == ["TpAx.bad"] and "TpAx.bad" in r.axioms, (r.status, r.detail)
 
 
 @lean
@@ -549,6 +615,8 @@ def test_j_sorry_in_the_target_is_refused(lib, manifest):
     r = _replay(lib, manifest, "TpSorry", FOUND_CB, trusted_imports=("Lean",))
     assert r.status == "FAILED" and "uses sorryAx" in r.detail, (r.status, r.detail)
     assert r.lines == []
+    r = _replay(lib, manifest, "TpSorry", FOUND_CB, trusted_imports=("Lean",), allow_sorry=True)
+    assert r.status == "OK" and "sorryAx" in r.axioms, (r.status, r.detail)
 
 
 @lean
@@ -559,3 +627,14 @@ def test_k_fidelity_comparison(lib, manifest):
     assert r.axioms == []
     assert r.lines == ["CB-FID same ok", "CB-FID value refused", "CB-FID binder refused", "CB-FID dedup ok",
                        "CB-FID missing refused"]
+
+
+@lean
+def test_l_target_olean_binding_and_several_targets(lib, manifest):
+    _build(lib, "TpTiny", TINY)
+    _build(lib, "TpSorry", SORRY)
+    r = _replay(lib, manifest, "TpTiny", FOUND_CB, trusted_imports=("Lean",), expect_oleans={"TpTiny": "/nowhere.olean"})
+    assert r.status == "FAILED" and "olean-mismatch TpTiny" in r.detail, (r.status, r.detail)
+    r = _replay(lib, manifest, ["TpTiny", "TpSorry"], FOUND_CB, trusted_imports=("Lean",), allow_sorry=True)
+    assert r.status == "OK" and "modules=[TpTiny, TpSorry]" in r.detail, (r.status, r.detail)
+    assert r.olean_sha256 == {m: olean_sha256(lib / f"{m}.olean") for m in ("TpTiny", "TpSorry")}

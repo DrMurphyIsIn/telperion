@@ -2,165 +2,179 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import NamedTuple
 import pytest
-from telperion.checks.negation_probe import classify, render_probes
+from telperion.checks.lean_replay import ReplayResult
+from telperion.checks.negation_probe import ProbeSpec, classify, classify_replay, render_callback
 
-# Fix round 3 (Ruling 7): the probes run on the ELABORATED CONSTANT. The `false` and `witness` metaprograms print
-# protocol lines `<tag>-FALSE ...` / `<tag>-WITNESS ...`, then a final `<tag>-DONE`; classify's default tag is "TP".
-OK = (0, "TP-PREMISES 2\nTP-FALSE PROVED axioms=[]\nTP-WITNESS PROVED axioms=[propext]\nTP-DONE\n")
-NOT_FALSE = (0, "TP-PREMISES 2\nTP-FALSE FAILED linarith failed\nTP-DONE\n")
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # shared lean_env helpers
+from lean_env import fake_trusted_env, session_trusted_manifest  # noqa: E402
+
+# Phase 2 (replay isolation): the probes run as ONE callback on the module's kernel replay and report through the
+# replay's nonce'd lines (tag stripped here): `PREMISES n`, then one `FALSE`, `NEGATION` and (with a witness)
+# `WITNESS` result line. The inputs below are those lines; the expected verdicts are the ones the text-based probe had.
+OK = ["PREMISES 2", "FALSE PROVED axioms=[]", "WITNESS PROVED axioms=[propext]"]
+NOT_FALSE = ["PREMISES 2", "FALSE FAILED linarith failed"]
+GAVE_UP = ["NEGATION GAVEUP 200"]
 
 
 def test_false_compiled_is_vacuous():
-    assert classify({"false": OK, "negation": (1, "error: plausible gave up")}).verdict == "VACUOUS"
+    assert classify(OK[:2] + GAVE_UP).verdict == "VACUOUS"
 
 
 def test_counterexample_is_refuted():
-    out = (1, "error: \n===================\nFound a counter-example!\nx := 3\n")
-    assert classify({"false": NOT_FALSE, "negation": out}).verdict == "REFUTED"
+    # REFUTED is plausible's `TestResult.failure` value (the callback prints its counterexample), not banner text
+    assert classify(NOT_FALSE + ["NEGATION FAILURE x := 3"]).verdict == "REFUTED"
 
 
 def test_plausible_gave_up():
-    r = classify({"false": NOT_FALSE, "negation": (1, "error: Gave up after 200 tests")})
+    r = classify(NOT_FALSE + GAVE_UP)
     assert r.verdict == "PROBE_ONLY"
 
 
 def test_probe_error_is_not_vacuous():
-    r = classify({"false": (1, "error: unknown identifier 'Foo'"), "negation": (1, "error: unknown identifier 'Foo'")})
+    r = classify_replay(ReplayResult("ERROR", "lean exited 1: error: unknown identifier 'Foo'"), ProbeSpec("M", "t"))
     assert r.verdict == "ERROR"
 
 
 def test_witness():
-    r = classify({"false": NOT_FALSE, "negation": (1, "error: Gave up"), "witness": OK})
+    r = classify(NOT_FALSE + GAVE_UP + OK[2:], witness=True)
     assert r.verdict == "WITNESSED"
 
 
 def test_render_contains_parts():
-    src = render_probes("Foo.Bar", "Foo.t", None)
-    assert "import Foo.Bar" in src["false"] and "import Mathlib" in src["false"]
-    assert "getConstInfo `«Foo».«t»" in src["false"] and "forallBoundedTelescope" in src["false"]
-    assert "example : type_of% @«Foo».«t» := by plausible" in src["negation"] and "witness" not in src
-    w = render_probes("Foo.Bar", "Foo.t", 'by exact ⟨2, "a\\"b"⟩', tag="TPx")["witness"]
-    assert '"by exact ⟨2, \\"a\\\\\\"b\\"⟩"' in w and "TPx-WITNESS PROVED" in w and 'IO.println "TPx-DONE"' in w
-    assert 'IO.println "TP-DONE"' in src["false"]
+    src = render_callback("Foo.t", None)
+    assert not any(ln.startswith("import") for ln in src.splitlines())   # the callback never imports the module
+    assert "find? `«Foo».«t»" in src and "forallBoundedTelescope" in src
+    assert "Plausible.Testable.checkIO" in src and "evalExpr (IO TelperionProbe.Outcome)" in src
+    assert "| .failure _ xs _ => .failure xs" in src and '"NEGATION FAILURE' in src and "WITNESS" not in src
+    w = render_callback("Foo.t", 'by exact ⟨2, "a\\"b"⟩')
+    assert '"by exact ⟨2, \\"a\\\\\\"b\\"⟩"' in w and "WITNESS PROVED" in w
     # round 4: the witness ranges over the FULL non-reducing telescope; the premise split checks the exact marker
-    assert "forallTelescope info.type" in w and "forallBoundedTelescope" not in w
-    assert "v.ctx == `_internal && v.imported.isAnonymous" in src["false"]
+    assert "forallTelescope info.type" in w
+    assert "v.ctx == `_internal && v.imported.isAnonymous" in src
 
 
-# Real v4.35.0 outputs: plausible's no-counterexample and no-Testable reports; a caught tactic failure.
-AESOP = (0, "TP-PREMISES 1\nTP-FALSE FAILED Tactic `aesop` failed, made no progress Initial goal: x : ℕ ⊢ False\n"
-            "TP-DONE\n")
-UNABLE = (0, "Unable to find a counter-example\nf.lean:3:0: warning: declaration uses `sorry`\n")
+# Real v4.35.0 shapes: a caught tactic failure, plausible finding nothing.
+AESOP = ["PREMISES 1", "FALSE FAILED Tactic `aesop` failed, made no progress Initial goal: x : ℕ ⊢ False"]
+UNABLE = ["NEGATION SUCCESS"]
 
 
 def test_aesop_failure_is_purpose_error():
-    assert classify({"false": AESOP, "negation": UNABLE}).verdict == "PROBE_ONLY"
+    assert classify(AESOP + UNABLE).verdict == "PROBE_ONLY"
 
 
 def test_no_testable_instance_is_probe_only():
-    neg = (1, "f.lean:3:37: error: Failed to create a `testable` instance for `∀ (x : ℝ), x * x ≥ 0`.\n")
-    r = classify({"false": AESOP, "negation": neg})
+    r = classify(AESOP + ["NEGATION NO_TESTABLE"])
     assert r.verdict == "PROBE_ONLY" and "negation probe did not run: no testable instance (e.g. ℝ)" in r.detail
 
 
 def test_incomplete_witness_is_not_witnessed():
-    w = (0, "TP-WITNESS INCOMPLETE mvars=false sorry=true\nTP-DONE\n")
-    r = classify({"false": AESOP, "negation": UNABLE, "witness": w})
+    w = ["WITNESS INCOMPLETE mvars=false sorry=true"]
+    r = classify(AESOP + UNABLE + w, witness=True)
     assert r.verdict == "PROBE_ONLY" and "probe 'witness'" in r.detail
 
 
 def test_failed_witness_is_error():
-    w = (0, "TP-WITNESS FAILED type mismatch trivial\nTP-DONE\n")
-    assert classify({"false": AESOP, "negation": UNABLE, "witness": w}).verdict == "ERROR"
+    w = ["WITNESS FAILED type mismatch trivial"]
+    assert classify(AESOP + UNABLE + w, witness=True).verdict == "ERROR"
 
 
 def test_nonzero_rc_without_message_is_error():
-    assert classify({"false": (1, "lake: something broke\n"), "negation": UNABLE}).verdict == "ERROR"
+    r = classify_replay(ReplayResult("ERROR", "lean exited 1: 'lake: something broke'"), ProbeSpec("M", "t"))
+    assert r.verdict == "ERROR"
 
 
 def test_coded_error_header_is_parsed():
-    coded = (1, "p/false.lean:5:25: error(lean.unknownConstant): Unknown constant `Foo.nope`\n")
-    r = classify({"false": coded, "negation": UNABLE})
+    coded = ReplayResult("ERROR", "lean exited 1: p/R.lean:5:25: error(lean.unknownConstant): Unknown constant `Foo.nope`")
+    r = classify_replay(coded, ProbeSpec("M", "t"))
     assert r.verdict == "ERROR" and "unknownConstant" in r.detail
 
 
 def test_missing_protocol_line_is_error():
-    r = classify({"false": (0, "TP-PREMISES 1\nTP-DONE\n"), "negation": UNABLE})
+    r = classify(["PREMISES 1"] + UNABLE)
     assert r.verdict == "ERROR" and "no TP-FALSE result line" in r.detail
 
 
 def test_protocol_tag_done_and_duplicates():
-    # a line with another tag (an imported module printing at `initialize`, say) is ignored
-    assert classify({"false": OK, "negation": UNABLE}, tag="TPab12").verdict == "ERROR"
-    # exactly one result line per probe, then exactly one DONE, nothing tagged after it
-    for out in ("TP-FALSE PROVED axioms=[]\nTP-FALSE FAILED later\nTP-DONE\n",
-                "TP-FALSE FAILED earlier\nTP-FALSE PROVED axioms=[]\nTP-DONE\n",
-                "TP-FALSE PROVED axioms=[]\n",
-                "TP-FALSE PROVED axioms=[]\nTP-DONE\nTP-DONE\n",
-                "TP-DONE\nTP-FALSE PROVED axioms=[]\n"):
-        r = classify({"false": (0, out), "negation": UNABLE})
-        assert r.verdict == "ERROR", out
-    assert classify({"false": (0, "TP-FALSE PROVED axioms=[]\nTP-DONE\n"), "negation": UNABLE}).verdict == "VACUOUS"
+    from telperion.checks.lean_replay import parse_replay_output
+    tag = "TR" + "ab" * 16
+    out = "".join(f"TR{'cd' * 16}-{ln}\n" for ln in ["REPLAY OK axioms=[]", *OK, "DONE"])
+    # a line with another tag (any other process printing protocol lines, say) is ignored
+    assert parse_replay_output(out, tag)[0] == "ERROR"
+    # exactly one result line per probe
+    for lines in (["FALSE PROVED axioms=[]", "FALSE FAILED later"], ["FALSE FAILED earlier", "FALSE PROVED axioms=[]"]):
+        r = classify(lines + UNABLE)
+        assert r.verdict == "ERROR", lines
+    # exactly one final DONE, nothing tagged after it (lean_replay's protocol around the callback lines)
+    for body in (["REPLAY OK axioms=[]", "FALSE PROVED axioms=[]"], ["REPLAY OK axioms=[]", "DONE", "DONE"],
+                 ["REPLAY OK axioms=[]", "DONE", "FALSE PROVED axioms=[]"]):
+        out = "".join(f"{tag}-{ln}\n" for ln in body)
+        assert parse_replay_output(out, tag)[0] == "ERROR", body
+    assert classify(["FALSE PROVED axioms=[]"] + UNABLE).verdict == "VACUOUS"
 
 
 def test_run_probe_nonce_is_128_bit(tmp_path):
     import re
-    from telperion.checks.negation_probe import ProbeSpec, run_probe
-    # the wrapper prints the probe source instead of running Lean: no protocol line, so ERROR naming the tag
+    from telperion.checks.negation_probe import run_probe
+    env, elan, manifest = fake_trusted_env(tmp_path / "trusted")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "Foo.olean").write_bytes(b"foo")
+    # the wrapper prints the replay script instead of running Lean: no protocol line, so ERROR
     seen = tmp_path / "seen.txt"
-    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", f'echo "$4" >> {seen}; cat "$4"', "sh"])
-    m = re.search(r"no (TP[0-9a-f]+)-FALSE result line", r.detail)
-    assert r.verdict == "ERROR" and m and len(m.group(1)) == 2 + 32, r.detail
-    # round 4: the probe dir is per run, named by the same nonce, and removed afterwards
-    assert seen.read_text().split() == [f".telperion_probe_{m.group(1)[2:]}/false.lean",
-                                        f".telperion_probe_{m.group(1)[2:]}/negation.lean"]
-    assert not list(tmp_path.glob(".telperion_probe*"))
+    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["sh", "-c", f'cat "$4" >> {seen}', "sh"],
+                  untrusted_paths=[sub], trusted_env=env, manifest=manifest, elan_home=elan)
+    assert r.verdict == "ERROR", r.detail
+    m = re.search(r'def tag : String := "(TR[0-9a-f]+)"', seen.read_text())
+    assert m and len(m.group(1)) == 2 + 32
+    # the script lives in a private temp dir: nothing is written to the project
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["seen.txt", "sub", "trusted"]
 
 
 def test_unbuilt_module_is_error():
-    out = (1, "p/false.lean:1:0: error: unknown module prefix 'Foo'\n\nNo directory 'Foo' or file 'Foo.olean' in the "
-              "search path entries:\n/x/.lake/build/lib/lean\n")
-    r = classify({"false": out, "negation": out}, module="Foo.Bar")
+    r = classify_replay(ReplayResult("FAILED", "module Foo.Bar has no .olean in the search path (build it first)"),
+                        ProbeSpec("Foo.Bar", "t"))
     assert r.verdict == "ERROR" and "build Foo.Bar first (lake build Foo.Bar)" in r.detail
 
 
 # Fix round 1: timeouts are inconclusive.
-TIMEOUT = (1, "f.lean:5:29: error: (deterministic) timeout at `isDefEq`, maximum number of heartbeats (200000) has "
-              "been reached\n\nNote: Use `set_option maxHeartbeats <num>` to set the limit.\n")
-REFUTE = (1, "f.lean:3:38: error: \n===================\nFound a counter-example!\nx := 4\n-------------------\n")
+TIMEOUT = "TIMEOUT (deterministic) timeout at `isDefEq`, maximum number of heartbeats (200000) has been reached"
+REFUTE = ["NEGATION FAILURE x := 4"]
 
 
 def test_false_timeout_is_inconclusive():
-    r = classify({"false": TIMEOUT, "negation": UNABLE})
+    r = classify(["FALSE " + TIMEOUT] + UNABLE)
     assert r.verdict == "PROBE_ONLY" and "probe 'false' timed out at maxHeartbeats 200000 (inconclusive)" in r.detail
 
 
 def test_negation_timeout_is_inconclusive():
-    r = classify({"false": AESOP, "negation": TIMEOUT})
+    r = classify(AESOP + ["NEGATION " + TIMEOUT])
     assert r.verdict == "PROBE_ONLY" and "probe 'negation' timed out at maxHeartbeats 200000 (inconclusive)" in r.detail
 
 
 def test_timeout_plus_counterexample_elsewhere_is_refuted():
-    assert classify({"false": TIMEOUT, "negation": REFUTE}).verdict == "REFUTED"
+    assert classify(["FALSE " + TIMEOUT] + REFUTE).verdict == "REFUTED"
 
 
 def test_timeout_never_gives_positive_verdict():
-    assert classify({"false": (1, OK[1] + TIMEOUT[1]), "negation": UNABLE}).verdict == "PROBE_ONLY"
-    assert classify({"false": AESOP, "negation": (1, REFUTE[1] + TIMEOUT[1])}).verdict == "PROBE_ONLY"
-    r = classify({"false": AESOP, "negation": UNABLE, "witness": TIMEOUT})
+    assert classify(OK[:2] + ["FALSE " + TIMEOUT] + UNABLE).verdict == "PROBE_ONLY"
+    assert classify(AESOP + REFUTE + ["NEGATION " + TIMEOUT]).verdict == "PROBE_ONLY"
+    r = classify(AESOP + UNABLE + ["WITNESS " + TIMEOUT], witness=True)
     assert r.verdict == "PROBE_ONLY" and "probe 'witness' timed out" in r.detail
 
 
 def test_stale_probe_dirs_do_not_wedge_later_probes(tmp_path):
-    # round 4: a SIGKILLed run leaves its own `.telperion_probe_<nonce>`; later probes use fresh dirs and never touch it
-    from telperion.checks.negation_probe import ProbeSpec, run_probe
+    # round 4: a SIGKILLed run's dir never blocks a later one; phase 2: probes write nothing to the project at all
+    from telperion.checks.negation_probe import run_probe
+    env, elan, manifest = fake_trusted_env(tmp_path / "trusted")
     for stale in (".telperion_probe", ".telperion_probe_deadbeef"):
         (tmp_path / stale).mkdir()
         (tmp_path / stale / "false.lean").write_text("stale", encoding="utf-8")
-    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["false"])
+    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=["false"], trusted_env=env, manifest=manifest,
+                  elan_home=elan)
     assert r.verdict == "ERROR" and "probe dir" not in r.detail and "exited 1" in r.detail
     assert sorted(p.name for p in tmp_path.glob(".telperion_probe*")) == [".telperion_probe", ".telperion_probe_deadbeef"]
     assert (tmp_path / ".telperion_probe_deadbeef" / "false.lean").read_text(encoding="utf-8") == "stale"
@@ -176,11 +190,11 @@ def test_cli_help_documents_built_module(capsys):
 
 # Fix round 2: anchored banner, CLI exceptions, process-group timeout, axiom audit.
 def test_counterexample_phrase_outside_banner_is_not_refuted():
-    neg = (0, "Unable to find a counter-example\nf.lean:3:0: warning: unused `s = \"Found a counter-example!\"`\n"
-              "f.lean:3:0: warning: declaration uses `sorry`\n")
-    assert classify({"false": AESOP, "negation": neg}).verdict == "PROBE_ONLY"
-    neg2 = (1, "f.lean:3:8: error: type mismatch \"Found a counter-example!\"\n")
-    assert classify({"false": AESOP, "negation": neg2}).verdict == "ERROR"
+    # no text is scanned at all: a statement or message mentioning the phrase cannot produce REFUTED
+    neg = AESOP + ['PREMISES 1 "Found a counter-example!"', "NEGATION SUCCESS"]
+    assert classify(neg).verdict == "PROBE_ONLY"
+    neg2 = ReplayResult("ERROR", 'lean exited 1: f.lean:3:8: error: type mismatch "Found a counter-example!"')
+    assert classify_replay(neg2, ProbeSpec("M", "t")).verdict == "ERROR"
 
 
 def test_cli_json_and_theorem_qualified_from_file(tmp_path, monkeypatch, capsys):
@@ -193,7 +207,7 @@ def test_cli_json_and_theorem_qualified_from_file(tmp_path, monkeypatch, capsys)
                  encoding="utf-8")
     seen = {}
 
-    def fake(spec, project, wrapper=None, timeout=0):
+    def fake(spec, project, wrapper=None, timeout=0, **kw):
         seen["spec"] = spec
         return ProbeResult("REFUTED", "x := 4")
     monkeypatch.setattr(np_, "run_probe", fake)
@@ -220,10 +234,12 @@ def test_cli_unexpected_exception_is_error(tmp_path, monkeypatch, capsys):
 
 def test_wallclock_timeout_kills_process_group(tmp_path):
     import time
-    from telperion.checks.negation_probe import ProbeSpec, run_probe
+    from telperion.checks.negation_probe import run_probe
+    env, elan, manifest = fake_trusted_env(tmp_path / "trusted")
     pidfile = tmp_path / "child.pid"
     wrapper = ["sh", "-c", f"sleep 60 & echo $! > {pidfile}; wait", "sh"]
-    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=wrapper, timeout=1)
+    r = run_probe(ProbeSpec("Foo", "Foo.t"), tmp_path, wrapper=wrapper, timeout=1, trusted_env=env,
+                  manifest=manifest, elan_home=elan)
     assert r.verdict == "ERROR" and "did not finish" in r.detail
     pid = int(pidfile.read_text().strip())
     for _ in range(50):
@@ -238,22 +254,47 @@ def test_wallclock_timeout_kills_process_group(tmp_path):
 
 
 def test_false_probe_with_nonstandard_axiom_not_counted():
-    r = classify({"false": (0, "TP-FALSE PROVED axioms=[TpBad.bad]\nTP-DONE\n"), "negation": UNABLE})
+    r = classify(["FALSE PROVED axioms=[TpBad.bad]"] + UNABLE)
     assert r.verdict == "PROBE_ONLY" and "probe 'false' used non-standard axioms ['TpBad.bad']; not counted" in r.detail
 
 
 def test_witness_with_sorryax_not_counted_and_clean_counts():
-    w = (0, "TP-WITNESS PROVED axioms=[propext, sorryAx]\nTP-DONE\n")
-    r = classify({"false": AESOP, "negation": UNABLE, "witness": w})
+    w = ["WITNESS PROVED axioms=[propext, sorryAx]"]
+    r = classify(AESOP + UNABLE + w, witness=True)
     assert r.verdict == "PROBE_ONLY" and "sorryAx" in r.detail
-    f = (0, "TP-FALSE PROVED axioms=[propext, Classical.choice, Quot.sound]\nTP-DONE\n")
-    assert classify({"false": f, "negation": UNABLE}).verdict == "VACUOUS"
+    f = ["FALSE PROVED axioms=[propext, Classical.choice, Quot.sound]"]
+    assert classify(f + UNABLE).verdict == "VACUOUS"
+
+
+# Phase 2: the value-based negation statuses, the declared-axiom note, and the olean binding.
+def test_unavailable_negation_and_declared_axioms_are_probe_only_notes():
+    r = classify(AESOP + ["NEGATION UNAVAILABLE Failed to find LCNF signature for S0.factorial"], declared=["M.ax"])
+    assert r.verdict == "PROBE_ONLY" and "could not evaluate the statement" in r.detail
+    assert "non-standard axioms ['M.ax']" in r.detail
+    assert classify(AESOP + ["NEGATION BOGUS"]).verdict == "ERROR"
+    assert classify(["MISSING"]).verdict == "ERROR"
+
+
+def test_replay_result_binds_the_olean():
+    ok = ReplayResult("OK", "modules=[M] constants=1 declared=[] axioms=[]", OK[:2] + GAVE_UP,
+                      olean_sha256={"M": "ab" * 32})
+    r = classify_replay(ok, ProbeSpec("M", "t"))
+    assert r.verdict == "VACUOUS" and r.olean_sha256 == "ab" * 32 and r.to_json()["olean_sha256"] == "ab" * 32
+    r = classify_replay(ReplayResult("FAILED", "(kernel) declaration type mismatch"), ProbeSpec("M", "t"))
+    assert r.verdict == "ERROR" and "replay refused" in r.detail and "olean_sha256" not in r.to_json()
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Lean tests: modules are compiled into the env's own build dir under unique names and removed afterwards.
+# Lean tests: modules are compiled into their own dirs `<env>/.tp_mod_<hex>/` and replayed from there (an untrusted
+# path); the trusted manifest of the env is built once per process in a temp dir.
 LEAN_ENV = os.environ.get("TELPERION_LEAN_ENV")
 lean = pytest.mark.skipif(not LEAN_ENV, reason="TELPERION_LEAN_ENV not set (built Mathlib project)")
+
+
+@pytest.fixture(autouse=True)
+def _trusted_manifest(request):
+    if LEAN_ENV and request.node.get_closest_marker("skipif") is not None:
+        session_trusted_manifest(LEAN_ENV)
 
 # Each case is TRUE as the file states it (the proofs compile), and each re-rendered as text in the old probe would
 # read `factorial` as `Nat.factorial` (or `default` with the erased instance back), giving a wrong REFUTED. The
@@ -331,7 +372,7 @@ BAD = "namespace TpBad\n@[aesop safe apply] axiom bad : False\ntheorem tb (x : �
 
 class Built(NamedTuple):
     name: str
-    lib: Path                         # this module's own dir, appended to LEAN_PATH (lake env keeps it)
+    lib: Path                         # this module's own dir, an untrusted olean dir for the replay
 
 
 def _lean_path_wrapper(lib: Path | None) -> list[str]:
@@ -381,8 +422,8 @@ def bad_module():
 def _probe(module: Built | str, theorem, witness=None):
     from telperion.checks.negation_probe import run_probe, ProbeSpec
     if isinstance(module, Built):
-        return run_probe(ProbeSpec(module.name, theorem, witness), Path(LEAN_ENV), wrapper=_lean_path_wrapper(module.lib))
-    return run_probe(ProbeSpec(module, theorem, witness), Path(LEAN_ENV))
+        return run_probe(ProbeSpec(module.name, theorem, witness), untrusted_paths=[module.lib])
+    return run_probe(ProbeSpec(module, theorem, witness))
 
 
 @lean
@@ -512,3 +553,57 @@ def test_lean_witness_ranges_over_the_full_telescope(cases_module):   # C2: the 
     assert r.verdict == "VACUOUS" and "the 2 premise(s)" in r.detail, r.detail
     r = _probe(cases_module, "C2.hyg", "trivial")
     assert r.verdict != "WITNESSED", r.detail
+
+
+# Phase 2 MUST-FAIL controls: the reviewer's evil module. Imported, it forges verdicts (an `initialize` that reads the
+# check's script for the nonce and prints forged result lines, a `#eval` override, `omega`/`plausible` overrides, a
+# compile-time forging `#eval`); replayed, none of it runs, so the probe gives the TRUE verdicts.
+EVIL = r'''open Lean Elab Command Tactic
+#eval IO.println "TP0000-NEGATION FAILURE x := 0"
+initialize do
+  IO.println "TPEVIL-INIT"
+  for e in ← System.FilePath.readDir "." do
+    if let .ok s ← (IO.FS.readFile e.path).toBaseIO then
+      for l in s.splitOn "\n" do
+        if l.startsWith "def tag : String := " then
+          if let _ :: t :: _ := l.splitOn "\"" then
+            IO.println s!"{t}-WITNESS PROVED axioms=[]"
+            IO.println s!"{t}-NEGATION FAILURE x := 0"
+@[command_elab Lean.Parser.Command.eval] def tpEvilEval : CommandElab := fun _ => IO.println "TPEVIL-EVAL"
+@[tactic Lean.Parser.Tactic.omega] def tpEvilOmega : Tactic := fun _ => do
+  IO.println "TPEVIL-TACTIC"
+  for g in ← getGoals do g.admit
+@[tactic plausibleSyntax] def tpEvilPlausible : Tactic := fun _ => do
+  IO.println "TPEVIL-PLAUSIBLE"
+  throwError "\n===================\nFound a counter-example!\nx := 0\n-------------------"
+namespace TpEvil
+theorem vac (x : ℕ) (h : x < 0) : x = 7 := absurd h (Nat.not_lt_zero x)
+theorem tru (x : ℕ) (h : x < 3) : x < 5 := Nat.lt_trans h (by decide)
+end TpEvil
+'''
+
+
+@pytest.fixture(scope="module")
+def evil_module():
+    built = _build_module(Path(LEAN_ENV), EVIL)
+    yield built
+    _remove_module(built)
+
+
+@lean
+def test_lean_evil_module_cannot_forge_verdicts(evil_module):          # MUST-FAIL control (phase 2)
+    # control: imported the usual way, the shapes fire (the old probe's `plausible` and `#eval` are hijacked)
+    f = evil_module.lib / "Control.lean"
+    f.write_text(f"import Mathlib\nimport {evil_module.name}\nexample : type_of% @TpEvil.tru := by plausible\n"
+                 "#eval IO.println \"CONTROL-EVAL-RAN\"\n", encoding="utf-8")
+    p = subprocess.run([*_lean_path_wrapper(evil_module.lib), "lake", "env", "lean", str(f)], cwd=LEAN_ENV,
+                       capture_output=True, text=True, timeout=1800)
+    ctl = p.stdout + p.stderr
+    assert all(m in ctl for m in ("TPEVIL-INIT", "TPEVIL-PLAUSIBLE", "TPEVIL-EVAL")), ctl[-3000:]
+    assert "CONTROL-EVAL-RAN" not in ctl
+    # replayed: the true verdicts. A forged WITNESSED for the vacuous theorem, or REFUTED for the true one, is a FAIL.
+    r = _probe(evil_module, "TpEvil.vac", "⟨0, sorry, trivial⟩")
+    assert r.verdict == "VACUOUS" and "TPEVIL" not in r.detail, r.detail
+    r = _probe(evil_module, "TpEvil.tru")
+    assert r.verdict == "PROBE_ONLY" and "TPEVIL" not in r.detail, r.detail
+    assert r.olean_sha256 and len(r.olean_sha256) == 64

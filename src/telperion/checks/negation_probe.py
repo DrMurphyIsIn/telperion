@@ -1,23 +1,29 @@
 """Negation probe: a cheap, one-sided sanity check on a theorem STATEMENT, run on the ELABORATED CONSTANT.
 
-The probe imports the theorem's own BUILT module (plus Mathlib, for the tactics) and takes the statement from the
-constant's type, so nothing from the source is re-elaborated. Local definitions, notation, `local`/`scoped` attributes,
-erased instances, `variable`s and namespace-first name resolution are therefore exactly as they were when the file
-was compiled: the type the probe sees is the type the kernel accepted. An earlier version re-rendered the binders and
-conclusion as TEXT in a re-created `namespace`/`open` context; in `namespace Foo; open Nat; def factorial ...` that
-text read `factorial` as `Nat.factorial` and refuted a true theorem, and no text denylist of "dangerous" commands
-could be made sound (`public def`, two commands on one line, `with_weak_namespace`, a `'"'` literal, `run_cmd`,
-`attribute [-instance]`, ...). The module must be built in the project; an unbuilt module is ERROR ("build <module>
-first").
+ISOLATION (owner decision "Replay-isolate", Ruling 9). The probe never imports the theorem's module: importing it
+would run the module's ``initialize`` blocks and let its ``command_elab``/``tactic`` overrides elaborate the probe
+itself, which a re-review used to forge verdicts. Instead, ``lean_replay.run_replay`` loads the module's constants by
+KERNEL REPLAY into a process that imports only trusted modules (Mathlib, from the pinned env), and the probe runs as a
+callback on that replayed environment. None of the module's code, extensions, instances, simp lemmas or notation is
+loaded, so the probe can only get WEAKER (a missing instance means PROBE_ONLY, never a verdict). The statement is the
+constant's type exactly as the kernel accepted it, so local definitions, `variable`s, erased instances and
+namespace-first name resolution are as they were when the file was compiled. An earlier version re-rendered the
+statement as TEXT and refuted true theorems (`open Nat` read a local `factorial` as `Nat.factorial`); no text denylist
+could be made sound. The module must be built; an unbuilt module is ERROR ("build <module> first").
 
-Three small Lean files are run with `lake env lean` in that project:
+One replay run executes three probes in the callback, each with its own budget of 200000 heartbeats:
 
-* ``false``    -- a MetaM metaprogram. It opens the constant's type with ``forallBoundedTelescope`` over its PREMISES
-  (below), runs a fixed tactic battery on a fresh goal ``False`` in that local context, kernel-checks the closed proof
-  as an auxiliary theorem and collects its axioms. VACUOUS (the hypotheses contradict each other) needs a closed proof
-  with no metavariables, no ``sorry`` and only ``comparator.CLEAN_AXIOMS``.
-* ``negation`` -- ``example : type_of% @T := by plausible``. ``type_of% @T`` elaborates to exactly the constant's type.
-  If plausible's error opens with its ``Found a counter-example!`` banner, the claim is REFUTED at a concrete point.
+* ``false``    -- opens the constant's type with ``forallBoundedTelescope`` over its PREMISES (below), runs a fixed
+  tactic battery on a fresh goal ``False`` in that local context, kernel-checks the closed proof as an auxiliary
+  theorem and collects its axioms. VACUOUS (the hypotheses contradict each other) needs a closed proof with no
+  metavariables, no ``sorry`` and only ``comparator.CLEAN_AXIOMS``.
+* ``negation`` -- plausible's API, called directly: ``Plausible.Testable.checkIO`` on the decorated type, through a
+  trusted wrapper (``TelperionProbe.runCheck``) that maps plausible's ``TestResult`` VALUE to ``success``,
+  ``gaveUp n`` or ``failure <counterexample>`` and is evaluated with ``evalExpr``. REFUTED is the ``failure``
+  constructor of that value (whose type carries a proof of ``¬ p``), never a scan of printed text: nothing a module
+  or a message prints can produce it. No ``Testable`` instance is PROBE_ONLY with a note. A statement that cannot be
+  evaluated on the replayed environment (its decidability needs compiled code for a replayed definition, which replay
+  never provides) is PROBE_ONLY with a note too.
 * ``witness``  -- only with a caller-supplied term: the ∃-closure of the FULL non-reducing ∀-telescope of the type
   (every ∀/→ binder, the conclusion's arrows included; ``¬`` and ``≠`` stay closed, as they are not ∀-binders) is
   built as an Expr, the witness is parsed and elaborated against it, kernel-checked and axiom-audited the same way.
@@ -35,79 +41,57 @@ The telescope does not reduce: `¬ P`, `a ≠ b` and `s ⊆ t` in a conclusion s
 `x + 1 ≠ 0` into the premise `x + 1 = 0`, prove False from it, and call a true theorem VACUOUS). A conclusion written
 with NAMED binders (`: ∀ (m : ℕ) (h : m < 0), False`) is read as premises.
 
-The metaprograms report through lines `<tag>-FALSE PROVED axioms=[...]`, `<tag>-FALSE FAILED <msg>`,
-`<tag>-FALSE INCOMPLETE ...` (and `-WITNESS` likewise), then a final `<tag>-DONE`, where the tag carries a 128-bit
-per-run nonce. A line with any other tag is ignored (the imported module's own `#eval`s ran at ITS compile, not here,
-and the nonce makes that structural); a probe without exactly one result line and exactly one final DONE is ERROR.
+PROTOCOL. The callback prints, through the replay's nonce'd lines, ``PREMISES n``, exactly one ``FALSE``, one
+``NEGATION`` and (with a witness) one ``WITNESS`` result line; the replay protocol around them (one REPLAY line, one
+final DONE, all under a 128-bit per-run tag) is checked by ``lean_replay``. Anything else is ERROR. Since no untrusted
+code runs in the process, nothing else can print under the tag.
 
-ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a kernel-checked proof of ``False``, a printed
-counterexample). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to find a
-counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an unbuilt
-module, an unknown constant, a witness that does not elaborate), so no verdict could be read. A maxHeartbeats timeout in
-any probe is not an ERROR: that probe is inconclusive, and the verdict falls through to PROBE_ONLY with a note.
+ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a kernel-checked proof of ``False``, a
+counterexample value). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to
+find a counterexample say nothing about truth. ERROR means a probe failed for a reason other than its purpose (an
+unbuilt module, an unknown constant, a witness that does not elaborate, a refused replay), so no verdict could be read.
+A maxHeartbeats timeout in any probe is not an ERROR: that probe is inconclusive, and the verdict falls through to
+PROBE_ONLY with a note. Axioms the module closure declares are allowed in the replay (the probe still runs) and noted;
+a proof that uses one is not counted.
 
 KNOWN LIMITATION. A `private` theorem's constant has a mangled name and is not found by its source name (ERROR).
 """
 from __future__ import annotations
 
-import os
 import re
-import secrets
-import shutil
-import signal
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..comparator import CLEAN_AXIOMS
+from . import lean_replay
+from .lean_replay import ReplayResult, default_wrapper  # noqa: F401  (default_wrapper: shared by the checks)
 
 VERDICTS = ("VACUOUS", "REFUTED", "PROBE_ONLY", "WITNESSED", "ERROR")
 
 FALSE_TACTIC = "first | (exfalso; omega) | linarith | (simp_all; done) | (norm_num at *; done) | aesop"
-PLAUSIBLE = "plausible (config := { numInst := 200 })"
-COUNTEREXAMPLE = "Found a counter-example!"
-NO_TESTABLE = "Failed to create a `testable` instance"
-PROBE_DIR = ".telperion_probe"
+NUM_INST = 200
+HEARTBEATS = 200000
 TACTIC_IMPORTS = ("Mathlib",)
 
-# Errors the `negation` probe is EXPECTED to produce when it finds nothing: plausible giving up, finding no
-# counterexample, or having no `Testable` instance for the claim (a real variable, an undecidable hypothesis). The
-# last one is raised only after the statement elaborated, so it never hides an elaboration error. The counterexample
-# itself is reported as an error too, and is the probe's purpose (matched on its banner, see `_banner`).
-NEGATION_PURPOSE_ERRORS = (
-    "Gave up",
-    "gave up",
-    "Unable to find",
-    NO_TESTABLE,
-)
-
-# The `false` and `witness` metaprograms catch their own tactic/elaboration failures and report them on protocol
-# lines, so any error Lean prints for them is unrelated to their purpose.
-PURPOSE_ERRORS = {"false": (), "negation": NEGATION_PURPOSE_ERRORS, "witness": ()}
-
-# A maxHeartbeats timeout in ANY probe makes that probe inconclusive, never an ERROR: hypotheses that are merely hard
-# for the battery must not block a grant. The metaprograms' `try`/`catch` does not catch it (a runtime exception), so
-# it surfaces as an error of the probe file. A timed-out probe is never read as proved, refuted or witnessed.
-TIMEOUT_ERROR = "maximum number of heartbeats"
-
-# Lean's report of an `import` it cannot find: the module was never built in this project.
-_UNBUILT_RE = re.compile(r"unknown module prefix|object file .* does not exist|No directory .* or file .*\.olean")
-
-# A message header: `file:line:col: error:` from lean, or a bare `error:` from lake. v4.35.0 also tags some messages
-# with a code, `error(lean.unknownIdentifier):`; missing those would let an error pass unnoticed.
-_MSG_RE = re.compile(r"(?m)^(?:\S[^\n]*?:\d+:\d+: )?(error|warning|info)(?:\([^)\n]*\))?:")
-# plausible's counterexample error opens with a rule of `=` and then the banner; the phrase anywhere else (a string
-# literal in the statement, say) is not a counterexample.
-_BANNER_RE = re.compile(r"\s*(?:=+\s*)?" + re.escape(COUNTEREXAMPLE))
+# The result statuses each probe may print. TIMEOUT (a maxHeartbeats exception) makes that probe inconclusive.
+STATUSES = {
+    "FALSE": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
+    "NEGATION": ("SUCCESS", "GAVEUP", "FAILURE", "NO_TESTABLE", "UNAVAILABLE", "TIMEOUT"),
+    "WITNESS": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
+}
 
 
 @dataclass
 class ProbeResult:
     verdict: str
     detail: str
+    olean_sha256: str | None = None   # the replayed target module's olean parts (lean_replay.olean_sha256)
 
     def to_json(self) -> dict:
-        return {"verdict": self.verdict, "detail": self.detail}
+        out = {"verdict": self.verdict, "detail": self.detail}
+        if self.olean_sha256 is not None:
+            out["olean_sha256"] = self.olean_sha256
+        return out
 
 
 @dataclass
@@ -129,10 +113,12 @@ def _lean_string(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t") + '"'
 
 
-# Shared by the `false` and `witness` metaprograms: the number of leading premise binders (module docstring).
-_PREMISES = """\
+# The callback's trusted helpers: the premise count (module docstring), plausible's result as a plain value, and a
+# per-probe heartbeat budget that reports a maxHeartbeats exception as TIMEOUT and any other exception as `err`.
+_HELPERS = """\
 namespace TelperionProbe
-open Lean in
+open Lean Meta Elab Term
+
 /-- Leading premise binders of a theorem type: up to the first explicit binder carrying the elaborator's arrow name
 `a._@._internal._hyg.*` exactly. A macro's own scoped binder (`a._@.<Module>..._hygCtx...`) is a premise. -/
 partial def premises : Expr → Nat
@@ -142,135 +128,113 @@ partial def premises : Expr → Nat
     else premises b + 1
   | .mdata _ e => premises e
   | _ => 0
+
+/-- plausible's `TestResult`, as a value with no proof in it. -/
+inductive Outcome where
+  | success
+  | gaveUp (n : Nat)
+  | failure (xs : List String)
+
+def outcome {p : Prop} : Plausible.TestResult p → Outcome
+  | .success _ => .success
+  | .gaveUp n => .gaveUp n
+  | .failure _ xs _ => .failure xs
+
+/-- Run plausible's test suite on `p` and return its result's constructor. -/
+def runCheck (p : Prop) [Plausible.Testable p] (cfg : Plausible.Configuration) : IO Outcome := do
+  return outcome (← Plausible.Testable.checkIO p cfg)
+
+/-- Run `x` with a fresh budget of __HEARTBEATS__ heartbeats. A maxHeartbeats exception prints `<kind> TIMEOUT`, any
+other exception that escapes `x` prints `<kind> <err>`. -/
+def budget (kind err : String) (x : TermElabM Unit) : TermElabM Unit :=
+  withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := __HEARTBEATS__ * 1000 }) do
+    withCurrHeartbeats do
+      tryCatchRuntimeEx x fun ex => do
+        let msg ← ex.toMessageData.toString
+        if ex.isMaxHeartbeat then TelperionReplay.line s!"{kind} TIMEOUT {msg}"
+        else TelperionReplay.line s!"{kind} {err} {msg}"
+
 end TelperionProbe
-"""
+""".replace("__HEARTBEATS__", str(HEARTBEATS))
 
 
-def render_probes(module: str, theorem: str, witness: str | None, imports: tuple[str, ...] = TACTIC_IMPORTS,
-                  tag: str = "TP") -> dict[str, str]:
-    """Lean source for each probe, keyed "false", "negation" and (with a witness) "witness"."""
-    head = "".join(f"import {m}\n" for m in (*imports, module) if m) + "\n"
-    opts = "set_option maxHeartbeats 200000 in\n"
+def render_callback(theorem: str, witness: str | None) -> str:
+    """The Lean source of the replay callback (``TelperionReplay.callback``) that runs the three probes on
+    `theorem`'s constant. Trusted code: it is elaborated against the trusted imports before the replay."""
     t = _lean_name(theorem)
-    meta = "open Lean Meta Elab Term in\n" + opts + "#eval show TermElabM Unit from do\n"
-    false_src = (
-        f"{head}{_PREMISES}\n{meta}"
-        f"  let info ← getConstInfo `{t}\n"
+    line = "TelperionReplay.line"
+    src = (
+        f"{_HELPERS}\n"
+        "open Lean Meta Elab Term in\n"
+        "def TelperionReplay.callback : TermElabM Unit := do\n"
+        f"  let some info := (← getEnv).find? `{t}\n"
+        f'    | {line} "MISSING"\n'
         f"  let n := TelperionProbe.premises info.type\n"
-        f'  IO.println s!"{tag}-PREMISES {{n}}"\n'
-        f"  forallBoundedTelescope info.type (some n) fun xs _ => do\n"
-        f"    let g ← mkFreshExprMVar (Lean.mkConst ``False) .syntheticOpaque\n"
-        f"    let msgs := (← getThe Core.State).messages\n"
-        f"    try\n"
-        f"      let tac ← `(tactic| {FALSE_TACTIC})\n"
-        f"      let rest ← Tactic.run g.mvarId! (Tactic.evalTactic tac)\n"
-        f"      synthesizeSyntheticMVarsNoPostponing\n"
-        f"      let pf ← instantiateMVars g\n"
-        f"      if !rest.isEmpty || pf.hasMVar || pf.hasSorry then\n"
-        f'        IO.println s!"{tag}-FALSE INCOMPLETE goals={{rest.length}} mvars={{pf.hasMVar}} '
-        f'sorry={{pf.hasSorry}}"\n'
-        f"      else\n"
-        f"        let ty ← mkForallFVars xs (Lean.mkConst ``False)\n"
-        f"        let val ← mkLambdaFVars xs pf\n"
-        f"        addDecl (.thmDecl {{ name := `_telperion_probe_false, levelParams := info.levelParams,\n"
-        f"                            type := ty, value := val }})\n"
-        f"        let axs ← collectAxioms `_telperion_probe_false\n"
-        f'        IO.println s!"{tag}-FALSE PROVED axioms={{axs.toList}}"\n'
-        f"    catch ex =>\n"
-        f'      IO.println s!"{tag}-FALSE FAILED {{(← ex.toMessageData.toString).replace "\\n" " "}}"\n'
-        f"    modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
-        f'  IO.println "{tag}-DONE"\n'
+        f'  {line} s!"PREMISES {{n}}"\n'
+        f'  TelperionProbe.budget "FALSE" "FAILED" do\n'
+        f"    forallBoundedTelescope info.type (some n) fun xs _ => do\n"
+        f"      let g ← mkFreshExprMVar (Lean.mkConst ``False) .syntheticOpaque\n"
+        f"      let msgs := (← getThe Core.State).messages\n"
+        f"      try\n"
+        f"        let tac ← `(tactic| {FALSE_TACTIC})\n"
+        f"        let rest ← Tactic.run g.mvarId! (Tactic.evalTactic tac)\n"
+        f"        synthesizeSyntheticMVarsNoPostponing\n"
+        f"        let pf ← instantiateMVars g\n"
+        f"        if !rest.isEmpty || pf.hasMVar || pf.hasSorry then\n"
+        f'          {line} s!"FALSE INCOMPLETE goals={{rest.length}} mvars={{pf.hasMVar}} sorry={{pf.hasSorry}}"\n'
+        f"        else\n"
+        f"          let ty ← mkForallFVars xs (Lean.mkConst ``False)\n"
+        f"          let val ← mkLambdaFVars xs pf\n"
+        f"          addDecl (.thmDecl {{ name := `_telperion_probe_false, levelParams := info.levelParams,\n"
+        f"                              type := ty, value := val }})\n"
+        f"          let axs ← collectAxioms `_telperion_probe_false\n"
+        f'          {line} s!"FALSE PROVED axioms={{axs.toList}}"\n'
+        f"      catch ex =>\n"
+        f'        {line} s!"FALSE FAILED {{← ex.toMessageData.toString}}"\n'
+        f"      modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
+        f'  TelperionProbe.budget "NEGATION" "UNAVAILABLE" do\n'
+        f"    let tgt' ← Plausible.Decorations.addDecorations info.type\n"
+        f"    let inst? ← try some <$> synthInstance (← mkAppM ``Plausible.Testable #[tgt']) catch _ => pure none\n"
+        f"    match inst? with\n"
+        f'    | none => {line} "NEGATION NO_TESTABLE"\n'
+        f"    | some inst =>\n"
+        f"      let cfg : Plausible.Configuration := {{ numInst := {NUM_INST}, quiet := true }}\n"
+        f"      let e ← mkAppOptM ``TelperionProbe.runCheck #[tgt', inst, toExpr cfg]\n"
+        f"      let act ← unsafe evalExpr (IO TelperionProbe.Outcome)\n"
+        f"        (mkApp (mkConst ``IO) (mkConst ``TelperionProbe.Outcome)) e\n"
+        f"      match ← act with\n"
+        f'      | .success => {line} "NEGATION SUCCESS"\n'
+        f'      | .gaveUp k => {line} s!"NEGATION GAVEUP {{k}}"\n'
+        f'      | .failure cs => {line} s!"NEGATION FAILURE {{"; ".intercalate cs}}"\n'
     )
-    src = {
-        "false": false_src,
-        "negation": f"{head}{opts}example : type_of% @{t} := by {PLAUSIBLE}\n",
-    }
     if witness is not None:
-        src["witness"] = (
-            f"{head}{_PREMISES}\n{meta}"
-            f"  let info ← getConstInfo `{t}\n"
-            f"  let ex ← forallTelescope info.type fun xs _ => do\n"
-            f"    let mut body := Lean.mkConst ``True\n"
-            f"    for x in xs.reverse do\n"
-            f"      body ← mkAppM ``Exists #[← mkLambdaFVars #[x] body]\n"
-            f"    pure body\n"
-            f"  let msgs := (← getThe Core.State).messages\n"
-            f"  try\n"
-            f"    let stx ← match Parser.runParserCategory (← getEnv) `term {_lean_string(witness)} with\n"
-            f"      | .ok s => pure s\n"
-            f"      | .error e => throwError e\n"
-            f"    let w ← withoutErrToSorry (elabTermEnsuringType stx (some ex))\n"
-            f"    synthesizeSyntheticMVarsNoPostponing\n"
-            f"    let w ← instantiateMVars w\n"
-            f"    if w.hasMVar || w.hasSorry then\n"
-            f'      IO.println s!"{tag}-WITNESS INCOMPLETE mvars={{w.hasMVar}} sorry={{w.hasSorry}}"\n'
-            f"    else\n"
-            f"      addDecl (.thmDecl {{ name := `_telperion_probe_witness, levelParams := info.levelParams,\n"
-            f"                          type := ex, value := w }})\n"
-            f"      let axs ← collectAxioms `_telperion_probe_witness\n"
-            f'      IO.println s!"{tag}-WITNESS PROVED axioms={{axs.toList}}"\n'
-            f"  catch e =>\n"
-            f'    IO.println s!"{tag}-WITNESS FAILED {{(← e.toMessageData.toString).replace "\\n" " "}}"\n'
-            f"  modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
-            f'  IO.println "{tag}-DONE"\n'
+        src += (
+            f'  TelperionProbe.budget "WITNESS" "FAILED" do\n'
+            f"    let ex ← forallTelescope info.type fun xs _ => do\n"
+            f"      let mut body := Lean.mkConst ``True\n"
+            f"      for x in xs.reverse do\n"
+            f"        body ← mkAppM ``Exists #[← mkLambdaFVars #[x] body]\n"
+            f"      pure body\n"
+            f"    let msgs := (← getThe Core.State).messages\n"
+            f"    try\n"
+            f"      let stx ← match Parser.runParserCategory (← getEnv) `term {_lean_string(witness)} with\n"
+            f"        | .ok s => pure s\n"
+            f"        | .error e => throwError e\n"
+            f"      let w ← withoutErrToSorry (elabTermEnsuringType stx (some ex))\n"
+            f"      synthesizeSyntheticMVarsNoPostponing\n"
+            f"      let w ← instantiateMVars w\n"
+            f"      if w.hasMVar || w.hasSorry then\n"
+            f'        {line} s!"WITNESS INCOMPLETE mvars={{w.hasMVar}} sorry={{w.hasSorry}}"\n'
+            f"      else\n"
+            f"        addDecl (.thmDecl {{ name := `_telperion_probe_witness, levelParams := info.levelParams,\n"
+            f"                            type := ex, value := w }})\n"
+            f"        let axs ← collectAxioms `_telperion_probe_witness\n"
+            f'        {line} s!"WITNESS PROVED axioms={{axs.toList}}"\n'
+            f"    catch e =>\n"
+            f'      {line} s!"WITNESS FAILED {{← e.toMessageData.toString}}"\n'
+            f"    modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
         )
     return src
-
-
-def _errors(output: str) -> list[str]:
-    """Each error message in a lean/lake output, header line plus its continuation lines."""
-    heads = list(_MSG_RE.finditer(output))
-    msgs = []
-    for k, m in enumerate(heads):
-        if m.group(1) == "error":
-            end = heads[k + 1].start() if k + 1 < len(heads) else len(output)
-            msgs.append(output[m.start():end].strip())
-    return msgs
-
-
-def _banner(err: str) -> bool:
-    """Whether error message `err` is plausible's counterexample report: its body opens with the banner."""
-    m = _MSG_RE.match(err)
-    return bool(m and _BANNER_RE.match(err, m.end()))
-
-
-def _purpose(key: str, err: str) -> bool:
-    if TIMEOUT_ERROR in err:
-        return True
-    if key == "negation" and _banner(err):
-        return True
-    return any(a in err for a in PURPOSE_ERRORS.get(key, ()))
-
-
-def _unrelated(key: str, rc: int, output: str, module: str) -> str | None:
-    """The first error in probe `key`'s output that is not one its purpose explains, or None."""
-    errs = _errors(output)
-    if rc != 0 and not errs:
-        return f"{key} probe exited {rc} with no error message: {output.strip()[-300:]!r}"
-    for e in errs:
-        if not _purpose(key, e):
-            if _UNBUILT_RE.search(e):
-                return f"build {module} first (lake build {module}): {key} probe: {e[:300]}"
-            return f"{key} probe: {e[:500]}"
-    return None
-
-
-def _timed_out(output: str) -> bool:
-    return any(TIMEOUT_ERROR in e for e in _errors(output))
-
-
-def _result_line(output: str, tag: str, kind: str) -> tuple[str, str] | str:
-    """(status, rest) of the ONE `<tag>-<kind> <status> <rest>` line, or why the protocol was broken: no result line,
-    more than one, or no single `<tag>-DONE` as the last tagged line. Only lines carrying this run's tag count."""
-    tagged = [m.group(1) for m in re.finditer(rf"(?m)^{re.escape(tag)}-(.*)$", output)]
-    results = [m for m in (re.match(rf"{kind} (PROVED|FAILED|INCOMPLETE)\b[ \t]*(.*)$", t) for t in tagged) if m]
-    if not results:
-        return f"printed no {tag}-{kind} result line"
-    if len(results) > 1:
-        return f"printed {len(results)} {tag}-{kind} result lines; refusing a duplicated protocol"
-    if tagged.count("DONE") != 1 or tagged[-1] != "DONE":
-        return f"did not end with exactly one {tag}-DONE line; refusing an incomplete or duplicated protocol"
-    return results[0].group(1), results[0].group(2)
 
 
 def _axiom_problem(key: str, rest: str) -> str | None:
@@ -283,47 +247,59 @@ def _axiom_problem(key: str, rest: str) -> str | None:
     return f"probe '{key}' used non-standard axioms {bad}; not counted" if bad else None
 
 
-def classify(outputs: dict[str, tuple[int, str]], tag: str = "TP", module: str = "<module>") -> ProbeResult:
-    """The verdict from each probe's (returncode, output): ERROR, then VACUOUS, REFUTED, WITNESSED, PROBE_ONLY."""
-    for key in ("false", "negation"):
-        if key not in outputs:
-            return ProbeResult("ERROR", f"{key} probe did not run")
-    for key, (rc, out) in outputs.items():
-        bad = _unrelated(key, rc, out, module)
-        if bad:
-            return ProbeResult("ERROR", bad)
-    timed_out = [key for key, (_rc, out) in outputs.items() if _timed_out(out)]
-    lines = {}
-    for key in ("false", "witness"):
-        if key not in outputs:
+def _results(lines: list[str], kind: str) -> list[tuple[str, str]]:
+    out = []
+    for ln in lines:
+        m = re.match(rf"{kind} ([A-Z_]+)\b[ \t]*(.*)$", ln)
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
+def classify(lines: list[str], witness: bool = False, declared=(), tag: str = "TP") -> ProbeResult:
+    """The verdict from the callback's lines (tag already stripped): ERROR, then VACUOUS, REFUTED, WITNESSED,
+    PROBE_ONLY. A probe with a TIMEOUT line is inconclusive and its other lines are not read; otherwise it must have
+    exactly one result line with a known status. `declared` are axioms the module closure declares."""
+    if "MISSING" in lines:
+        return ProbeResult("ERROR", "the constant is not in the replayed module (unknown or private name)")
+    kinds = ("FALSE", "NEGATION", "WITNESS") if witness else ("FALSE", "NEGATION")
+    got: dict[str, tuple[str, str] | None] = {}
+    timed_out = []
+    for kind in kinds:
+        res = _results(lines, kind)
+        if any(st == "TIMEOUT" for st, _ in res):
+            timed_out.append(kind.lower())
+            got[kind] = None
             continue
-        line = _result_line(outputs[key][1], tag, key.upper())
-        if isinstance(line, str):
-            if key not in timed_out:
-                return ProbeResult("ERROR", f"{key} probe {line}")
-            line = None                     # a timed-out probe is inconclusive, its protocol is not read
-        lines[key] = line
-        if line and line[0] == "FAILED" and key == "witness":
-            return ProbeResult("ERROR", f"the witness does not check: {line[1][:500]}")
-    notes = [f"probe '{key}' timed out at maxHeartbeats 200000 (inconclusive)" for key in timed_out]
-    prem = re.findall(rf"(?m)^{re.escape(tag)}-PREMISES (\d+)$", outputs["false"][1])
+        if not res:
+            return ProbeResult("ERROR", f"{kind.lower()} probe printed no {tag}-{kind} result line")
+        if len(res) > 1:
+            return ProbeResult("ERROR", f"{kind.lower()} probe printed {len(res)} {tag}-{kind} result lines; "
+                                        "refusing a duplicated protocol")
+        if res[0][0] not in STATUSES[kind]:
+            return ProbeResult("ERROR", f"{kind.lower()} probe printed an unknown status {res[0][0]!r}")
+        got[kind] = res[0]
+    if got.get("WITNESS") and got["WITNESS"][0] == "FAILED":
+        return ProbeResult("ERROR", f"the witness does not check: {got['WITNESS'][1][:500]}")
+    notes = [f"probe '{key}' timed out at maxHeartbeats {HEARTBEATS} (inconclusive)" for key in timed_out]
+    if declared:
+        notes.append(f"the module closure declares non-standard axioms {list(declared)}; a probe proof using them is "
+                     "not counted")
+    prem = [m.group(1) for m in (re.fullmatch(r"PREMISES (\d+)", ln) for ln in lines) if m]
     premises = f"the {prem[-1]} premise(s)" if prem else "the premises"
-    line = lines["false"]
-    if "false" not in timed_out and line and line[0] == "PROVED":
+    line = got["FALSE"]
+    if line and line[0] == "PROVED":
         bad = _axiom_problem("false", line[1])
         if not bad:
             return ProbeResult("VACUOUS", f"{premises} alone prove False (kernel-checked, clean axioms)")
         notes.append(bad)
     elif line and line[0] == "INCOMPLETE":
         notes.append(f"probe 'false' left goals, metavariables or sorry ({line[1]}); not counted")
-    neg = outputs["negation"][1]
-    banners = [e for e in _errors(neg) if _banner(e)]
-    if "negation" not in timed_out and banners:
-        body = banners[0][_MSG_RE.match(banners[0]).end():]
-        return ProbeResult("REFUTED", "plausible found a counterexample: "
-                           + " ".join(body.strip().lstrip("=").split("-------------------")[0].split()))
-    wline = lines.get("witness")
-    if "witness" not in timed_out and wline and wline[0] == "PROVED":
+    neg = got["NEGATION"]
+    if neg and neg[0] == "FAILURE":
+        return ProbeResult("REFUTED", f"plausible found a counterexample: {neg[1]}")
+    wline = got.get("WITNESS")
+    if wline and wline[0] == "PROVED":
         bad = _axiom_problem("witness", wline[1])
         if not bad:
             return ProbeResult("WITNESSED", f"the witness proves {premises} satisfiable (kernel-checked, clean "
@@ -331,70 +307,43 @@ def classify(outputs: dict[str, tuple[int, str]], tag: str = "TP", module: str =
         notes.append(bad)
     elif wline and wline[0] == "INCOMPLETE":
         notes.append(f"probe 'witness' left metavariables or sorry ({wline[1]}); not counted")
-    if NO_TESTABLE in neg:
+    if neg and neg[0] == "NO_TESTABLE":
         notes.append("negation probe did not run: no testable instance (e.g. ℝ), so no counterexample was searched for")
+    elif neg and neg[0] == "UNAVAILABLE":
+        notes.append("negation probe could not evaluate the statement on the replayed environment (module "
+                     f"definitions have no compiled code there): {neg[1][:300]}")
     return ProbeResult("PROBE_ONLY", "; ".join(notes + [f"no contradiction derived from {premises} and no "
                                                         "counterexample found; one-sided, not evidence the claim is "
                                                         "true"]))
 
 
-def default_wrapper() -> list[str]:
-    lock = os.path.expanduser("~/hodge-engine/leanlock.sh")
-    return ["env", "ARDA_LEAN_SLOTS=1", lock] if os.path.exists(lock) else []
+def classify_replay(r: ReplayResult, spec: ProbeSpec) -> ProbeResult:
+    """The verdict of a replay run of the probe callback."""
+    if r.status == "FAILED":
+        if "build it first" in r.detail:
+            return ProbeResult("ERROR", f"build {spec.module} first (lake build {spec.module}): {r.detail[:300]}")
+        return ProbeResult("ERROR", f"the replay refused the module: {r.detail[:500]}")
+    if r.status != "OK":
+        return ProbeResult("ERROR", f"probe did not run: {r.detail[:1500]}")
+    res = classify(r.lines, spec.witness is not None, r.declared)
+    res.olean_sha256 = r.olean_sha256.get(spec.module)
+    return res
 
 
-def _run(cmd: list[str], cwd: Path, timeout: int) -> tuple[int, str]:
-    """(returncode, stdout + stderr) of `cmd` in its own session. On the wall-clock timeout the whole process group
-    gets SIGTERM (leanlock's trap then frees its slot) and, 5 s later, SIGKILL, so no lake or lean child under the
-    wrapper outlives the probe; TimeoutExpired is then re-raised."""
-    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         start_new_session=True)
+def run_probe(spec: ProbeSpec, project: Path | None = None, wrapper: list[str] | None = None, timeout: int = 1800, *,
+              untrusted_paths=(), trusted_env=None, manifest=None, elan_home=None) -> ProbeResult:
+    """Replay `spec.module` (built in `project`'s ``.lake/build/lib/lean`` or in one of `untrusted_paths`) into the
+    pinned `trusted_env` (default ``$TELPERION_LEAN_ENV``, checked against its trusted `manifest`) and run the probes
+    as a callback; see the module docstring."""
     try:
-        out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(p.pid, sig)
-            except ProcessLookupError:
-                break
-            try:
-                p.communicate(timeout=5)
-                break
-            except subprocess.TimeoutExpired:
-                continue
-        p.wait()
-        raise
-    return p.returncode, out + err
-
-
-def run_probe(spec: ProbeSpec, project: Path, wrapper: list[str] | None = None,
-              timeout: int = 1800) -> ProbeResult:
-    """Write the probes to `<project>/.telperion_probe_<nonce>/`, run each with `lake env lean`, classify, delete the
-    dir. The dir is per run, so concurrent probes in one project never collide and a dir left by a killed run (removed
-    by hand when convenient) never blocks a later probe; an existing dir of the same name is still ERROR."""
-    project = Path(project)
-    prefix = default_wrapper() if wrapper is None else list(wrapper)
-    tag = f"TP{secrets.token_hex(16)}"     # 128-bit per-run nonce on every protocol line
-    srcs = render_probes(spec.module, spec.theorem, spec.witness, spec.imports, tag=tag)
-    pdir = project / f"{PROBE_DIR}_{tag[2:]}"     # per run: a SIGKILLed run's dir never blocks a later one
-    try:
-        pdir.mkdir()
-    except FileExistsError:
-        return ProbeResult("ERROR", f"probe dir {pdir} already exists; remove it if no other probe is running")
-    except OSError as exc:
-        return ProbeResult("ERROR", f"cannot create {pdir}: {exc}")
-    outputs: dict[str, tuple[int, str]] = {}
-    try:
-        for key, src in srcs.items():
-            f = pdir / f"{key}.lean"
-            f.write_text(src, encoding="utf-8")
-            try:
-                outputs[key] = _run([*prefix, "lake", "env", "lean", str(f.relative_to(project))], project, timeout)
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                return ProbeResult("ERROR", f"{key} probe did not finish: {exc}")
-    finally:
-        shutil.rmtree(pdir, ignore_errors=True)
-    return classify(outputs, tag=tag, module=spec.module)
+        callback = render_callback(spec.theorem, spec.witness)
+    except ValueError as exc:
+        return ProbeResult("ERROR", str(exc))
+    r = lean_replay.run_replay(spec.module, callback, project=project, untrusted_paths=untrusted_paths,
+                               trusted_imports=spec.imports, trusted_env=trusted_env, manifest=manifest,
+                               elan_home=elan_home, wrapper=wrapper, timeout=timeout, allow_axioms=True,
+                               allow_sorry=True)
+    return classify_replay(r, spec)
 
 
 def qualify(module_text: str, theorem: str) -> str:

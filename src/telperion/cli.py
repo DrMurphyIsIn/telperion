@@ -2537,11 +2537,25 @@ def cmd_kernel_policy_check(args) -> int:
     return 0
 
 
-def cmd_probe_negation(args) -> int:
-    """Negation probe of one theorem's ELABORATED constant (checks/negation_probe.py).
+def _trust_kwargs(args) -> dict:
+    """The --trusted-env / --trusted-manifest / --olean-dir options that were given, as keyword arguments."""
+    kw = {}
+    if getattr(args, "trusted_env", None):
+        kw["trusted_env"] = Path(args.trusted_env)
+    if getattr(args, "trusted_manifest", None):
+        kw["manifest"] = Path(args.trusted_manifest)
+    if getattr(args, "olean_dirs", None):
+        kw["untrusted_paths"] = [Path(d) for d in args.olean_dirs]
+    return kw
 
-    Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including an unbuilt module or
-    any unexpected failure). With --json, stdout is exactly {"verdict": ..., "detail": ...}."""
+
+def cmd_probe_negation(args) -> int:
+    """Negation probe of one theorem's ELABORATED constant (checks/negation_probe.py), run on the module's KERNEL
+    REPLAY into the pinned trusted env; the module itself is never imported.
+
+    Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including an unbuilt module, no trusted env or
+    manifest, or any unexpected failure). With --json, stdout is exactly {"verdict": ..., "detail": ...,
+    "olean_sha256": ...} (the last when the module was replayed)."""
     import json as _json
     import shlex
 
@@ -2556,7 +2570,7 @@ def cmd_probe_negation(args) -> int:
                          tuple(args.imports) if args.imports is not None else TACTIC_IMPORTS)
         res = np_.run_probe(spec, Path(args.project),
                             wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
-                            timeout=args.timeout)
+                            timeout=args.timeout, **_trust_kwargs(args))
     except Exception as exc:  # any surprise is ERROR (exit 2), never a traceback or a failing verdict
         res = ProbeResult("ERROR", f"probe-negation failed: {type(exc).__name__}: {exc}")
     if args.json:
@@ -2567,10 +2581,13 @@ def cmd_probe_negation(args) -> int:
 
 
 def cmd_fingerprint(args) -> int:
-    """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target.
+    """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target, or with
+    --json {"fingerprints": {...}, "olean_sha256": {module: sha256}}. The modules are KERNEL-REPLAYED into the pinned
+    trusted env, never imported.
 
     Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
-    env). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project's own packages."""
+    env or manifest). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project."""
+    import json as _json
     import shlex
 
     from .checks import fingerprint
@@ -2578,13 +2595,39 @@ def cmd_fingerprint(args) -> int:
     try:
         fps = fingerprint.run_fingerprint(Path(args.project), args.imports, args.targets,
                                           wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
-                                          timeout=args.timeout,
-                                          trusted_env=Path(args.trusted_env) if args.trusted_env else None)
+                                          timeout=args.timeout, **_trust_kwargs(args))
     except ValueError as exc:
-        print(f"fingerprint: {exc}")
+        if args.json:
+            print(_json.dumps({"error": str(exc)}))
+        else:
+            print(f"fingerprint: {exc}")
         return 2
+    if args.json:
+        print(_json.dumps({"fingerprints": {t: fps[t] for t in args.targets},
+                           "olean_sha256": dict(getattr(fps, "olean_sha256", {}))}))
+        return 0
     for t in args.targets:
         print(f"{t} {fps[t]}")
+    return 0
+
+
+def cmd_trusted_manifest(args) -> int:
+    """`trusted-manifest build`: write the sha256 manifest of the pinned env's trusted files (checks/lean_replay.py)
+    to --out (default: outside the env, see lean_replay.default_manifest_path). `verify`: check it. Exit 0 or 2."""
+    from .checks import lean_replay
+
+    try:
+        if args.trusted_manifest_cmd == "build":
+            path = lean_replay.build_trusted_manifest(args.env, args.out)
+            print(f"trusted manifest written: {path}")
+        else:
+            pinned = lean_replay.pinned_env(args.env)
+            path = Path(args.out) if args.out else lean_replay.default_manifest_path(pinned.root)
+            lean_replay.verify_trusted_manifest(pinned, path)
+            print(f"trusted manifest OK: {path}")
+    except (OSError, ValueError) as exc:
+        print(f"trusted-manifest: {exc}")
+        return 2
     return 0
 
 
@@ -3161,7 +3204,7 @@ def main(argv=None) -> int:
                        help="one-sided probe of a theorem's ELABORATED constant: VACUOUS (its premises "
                             "prove False), REFUTED (plausible counterexample), WITNESSED, PROBE_ONLY or ERROR")
     p.add_argument("--project", required=True,
-                   help="the Lake project (with Mathlib) in which --module is built")
+                   help="the Lake project in which --module is built (its .lake/build/lib/lean is untrusted)")
     p.add_argument("--module", required=True,
                    help="the theorem's own module, which must be BUILT in --project (lake build <module>); "
                         "the statement is the elaborated constant's type, so local definitions, notation "
@@ -3173,12 +3216,22 @@ def main(argv=None) -> int:
     p.add_argument("--witness", default=None,
                    help="a term proving `∃ <premises>, True` (the hypotheses are satisfiable)")
     p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
-                   help="tactic module imported beside --module (repeatable; default: Mathlib)")
+                   help="trusted tactic module imported before --module is replayed (repeatable; default: Mathlib)")
     p.add_argument("--wrapper", default=None,
-                   help="command prefix before `lake env lean` (default: leanlock with one slot "
+                   help="command prefix before the pinned `lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
-    p.add_argument("--timeout", type=int, default=1800, help="seconds per probe file")
-    p.add_argument("--json", action="store_true", help='print {"verdict": ..., "detail": ...} only')
+    p.add_argument("--timeout", type=int, default=1800, help="seconds for the Lean run")
+    p.add_argument("--trusted-env", default=None, metavar="DIR",
+                   help="the PINNED Lean env whose toolchain and .lake packages are trusted (default: "
+                        "$TELPERION_LEAN_ENV; exit 2 if neither is set). Nothing from --project is trusted")
+    p.add_argument("--trusted-manifest", default=None, metavar="FILE",
+                   help="the sha256 manifest of the trusted env's files, verified before every run (default: "
+                        "~/telperion-tools/trusted-manifests/<hash of the env's pins>.json; build it with "
+                        "`telperion trusted-manifest build --env DIR`)")
+    p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
+                   help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
+                        "(repeatable)")
+    p.add_argument("--json", action="store_true", help='print {"verdict": ..., "detail": ..., "olean_sha256": ...} only')
     p.set_defaults(fn=cmd_probe_negation)
 
     p = sub.add_parser("fingerprint",
@@ -3193,14 +3246,33 @@ def main(argv=None) -> int:
     p.add_argument("--target", dest="targets", action="append", required=True, metavar="THEOREM",
                    help="fully qualified theorem name (repeatable)")
     p.add_argument("--wrapper", default=None,
-                   help="command prefix before `lake env lean` (default: leanlock with one slot "
+                   help="command prefix before the pinned `lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
-    p.add_argument("--timeout", type=int, default=1800, help="seconds for the Lean run")
+    p.add_argument("--timeout", type=int, default=1800, help="seconds for each Lean run")
     p.add_argument("--trusted-env", default=None, metavar="DIR",
-                   help="the pinned Lean env whose toolchain and .lake/packages are trusted as library (default: "
-                        "$TELPERION_LEAN_ENV; exit 2 if neither is set). --project's own packages are trusted only "
-                        "when it IS this env")
+                   help="the PINNED Lean env whose toolchain and .lake packages are trusted (default: "
+                        "$TELPERION_LEAN_ENV; exit 2 if neither is set). Nothing from --project is trusted")
+    p.add_argument("--trusted-manifest", default=None, metavar="FILE",
+                   help="the sha256 manifest of the trusted env's files, verified before every run (default: "
+                        "~/telperion-tools/trusted-manifests/<hash of the env's pins>.json; build it with "
+                        "`telperion trusted-manifest build --env DIR`)")
+    p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
+                   help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
+                        "(repeatable)")
+    p.add_argument("--json", action="store_true",
+                   help='print {"fingerprints": {...}, "olean_sha256": {...}} (or {"error": ...}) only')
     p.set_defaults(fn=cmd_fingerprint)
+
+    p = sub.add_parser("trusted-manifest",
+                       help="build or verify the sha256 manifest of a pinned Lean env's trusted files (the replay "
+                            "checks refuse to run without a matching one)")
+    tm_sub = p.add_subparsers(dest="trusted_manifest_cmd", required=True)
+    for name, what in (("build", "write"), ("verify", "check")):
+        q = tm_sub.add_parser(name, help=f"{what} the manifest of --env")
+        q.add_argument("--env", required=True, metavar="DIR", help="the pinned Lean env")
+        q.add_argument("--out", default=None, metavar="FILE",
+                       help="the manifest path (default: ~/telperion-tools/trusted-manifests/<hash>.json)")
+        q.set_defaults(fn=cmd_trusted_manifest)
 
     args = ap.parse_args(argv)
     return args.fn(args)

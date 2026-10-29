@@ -1,7 +1,6 @@
-"""Run a Lean command (usually ``[wrapper..., "lake", "env", "lean", ...]``) so that nothing it spawns outlives it.
-
-The timeout logic is negation_probe._run's (copied, not imported, while that module is being rewritten; to be
-consolidated). Two differences, both so that a daemon left behind by a compiled body cannot act after the run:
+"""Run a Lean command (``[wrapper..., <pinned lean>, ...]``) so that nothing it spawns outlives it. The one runner of
+the checks (negation_probe, fingerprint, lean_replay). Two properties, both so that a daemon left behind by a compiled
+body cannot act after the run:
 
 * the process GROUP is reaped after EVERY run (SIGTERM, a short grace, SIGKILL), not only on timeout;
 * only the leader is waited for. Output goes to unnamed temporary files, not pipes, so a daemon that inherited
@@ -48,12 +47,14 @@ def reap_group(pgid: int, grace: float) -> None:
             time.sleep(0.05)
 
 
-def run_lean(cmd: list[str], cwd: Path, timeout: int, input: str | None = None) -> tuple[int, str]:
-    """(returncode, stdout + stderr) of `cmd` in its own session, with `input` on stdin if given. When the leader
-    exits, the rest of its process group is reaped (1 s grace). On the wall-clock timeout the whole group gets
-    SIGTERM (leanlock's trap then frees its slot) and, 5 s later, SIGKILL; TimeoutExpired is then re-raised."""
+def run_lean(cmd: list[str], cwd: Path, timeout: int, input: str | None = None,
+             env: dict[str, str] | None = None) -> tuple[int, str]:
+    """(returncode, stdout + stderr) of `cmd` in its own session, with `input` on stdin if given and `env` as its
+    environment if given. When the leader exits, the rest of its process group is reaped (1 s grace). On the
+    wall-clock timeout the whole group gets SIGTERM (leanlock's trap then frees its slot) and, 5 s later, SIGKILL;
+    TimeoutExpired is then re-raised."""
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-        p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
                              stdout=out, stderr=err, start_new_session=True)
         feeder = None
         if input is not None:
