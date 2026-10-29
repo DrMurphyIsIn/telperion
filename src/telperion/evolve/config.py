@@ -9,7 +9,9 @@ except ModuleNotFoundError:  # py3.9
     tomllib = None
 
 _REPO = Path(__file__).resolve().parents[3]
-_DEFAULT_LEAN = str(_REPO / "examples" / "g1_floors" / "lean")
+# A canonical example the standalone repo ships (it used to be g1_floors/lean, a BG lab island). A lab run that
+# wants its own Mathlib project sets `lean_project` in the [evolve] table.
+_DEFAULT_LEAN = str(_REPO / "examples" / "primality" / "lean")
 
 
 @dataclass(frozen=True)

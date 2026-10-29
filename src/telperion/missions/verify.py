@@ -82,8 +82,10 @@ class VerifyReport:
 
 
 def _repo_root(campaign_root: Path) -> Path:
-    """Repository root from a campaign root (`<repo>/telperion/missions/<campaign>`)."""
-    return Path(campaign_root).resolve().parents[2]
+    """Repository root (where `.github/` lives) from a campaign root, `<project>/missions/<campaign>`:
+    `<arda>/telperion/missions/<c>` -> `<arda>`, standalone `<repo>/missions/<c>` -> `<repo>`."""
+    from ..paths import repo_root
+    return repo_root(Path(campaign_root).resolve().parents[1])
 
 def _strip_lean_comments(text: str) -> str:
     """Single-pass comment stripper in Lean lexing order.

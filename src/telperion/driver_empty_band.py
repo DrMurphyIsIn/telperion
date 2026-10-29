@@ -36,9 +36,14 @@ def run_empty_band(re_lo, re_hi, im_lo, im_hi, *, winding_prec: int = 160, n_see
     * nonzero boundary winding (`N != 0`) — the box contains a zero; use the count-matching driver;
     * a boundary segment enclosure straddling 0 (edge non-vanishing failed);
     * an invalid box (sigma-range excludes 1/2, or the box reaches the pole s = 1) — via
-      `empty_band_certificate` / `choose_ball`.
+      `empty_band_certificate` / `choose_ball`;
+    * `write=True` without `out_dir` — there is no default output island (it used to be the RH lab's
+      examples/zeta_zero_localization/lean; that lab's generate.py now passes it explicitly).
 
-    Returns the emitted Lean text (written to `NoZerosInBox_<tag>.lean` unless `write=False`)."""
+    Returns the emitted Lean text (written to `out_dir/NoZerosInBox_<tag>.lean` unless `write=False`)."""
+    if write and out_dir is None:
+        raise ValueError("run_empty_band: write=True needs out_dir (the Lake project the NoZerosInBox_<tag>.lean "
+                         "file belongs to); pass write=False to only return the text")
     rl, rh, il, ih = (Fraction(v) for v in (re_lo, re_hi, im_lo, im_hi))
     box = (rl, rh, il, ih)
 
@@ -68,9 +73,7 @@ def run_empty_band(re_lo, re_hi, im_lo, im_hi, *, winding_prec: int = 160, n_see
     print(f"run_empty_band [{rl},{rh}]x[{il},{ih}]: winding N=0 (zero-free); emitted no_zeros_in_box_{tag}")
 
     if write:
-        out_dir = Path(out_dir) if out_dir is not None else (
-            Path(__file__).resolve().parents[2] / "examples" / "zeta_zero_localization" / "lean")
-        out_path = out_dir / f"NoZerosInBox_{tag}.lean"
+        out_path = Path(out_dir) / f"NoZerosInBox_{tag}.lean"
         if check:
             if not out_path.exists() or out_path.read_text(encoding="utf-8") != text:
                 print(f"DRIFT: NoZerosInBox_{tag}.lean does not match regeneration")

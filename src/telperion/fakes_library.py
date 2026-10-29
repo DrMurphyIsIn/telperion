@@ -849,7 +849,7 @@ _ROOTS = {"rh-team": ("TELPERION_RH_TEAM", "~/rh-team"), "e9-research": ("TELPER
 
 def resolve_provenance(ref: str) -> Path | None:
     """'<prefix>:<dir>/<memo>.md 3.2' -> $<PREFIX_ROOT>/<dir>/<memo>.md (section suffix dropped); the two prefixes are the keys of _ROOTS.
-    Repo-relative 'telperion/...' paths resolve against this checkout.  Returns None for free text."""
+    Arda-relative 'telperion/...' paths resolve against this project (either layout).  Returns None for free text."""
     ref = ref.split(";")[0].strip()
     if ":" in ref.split(" ")[0]:
         root, rest = ref.split(":", 1)
@@ -857,5 +857,6 @@ def resolve_provenance(ref: str) -> Path | None:
             env, default = _ROOTS[root]
             return Path(os.environ.get(env, default)).expanduser() / rest.split(" ")[0]
     if ref.startswith("telperion/"):
-        return Path(__file__).resolve().parents[3] / ref.split(" ")[0]
+        from . import paths
+        return paths.project_root() / ref.split(" ")[0][len("telperion/"):]
     return None

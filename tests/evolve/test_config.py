@@ -11,7 +11,7 @@ def test_default_config_is_sane():
     assert cfg.islands >= 1
     assert cfg.gens >= 1
     assert cfg.use_llm in (True, False)
-    assert cfg.lean_project.endswith("g1_floors/lean")
+    assert cfg.lean_project.endswith("examples/primality/lean")  # canonical, not the BG g1_floors island
     assert len(cfg.temperatures) >= 1
 
 

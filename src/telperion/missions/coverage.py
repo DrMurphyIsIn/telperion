@@ -52,6 +52,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from ..paths import project_of_repo
+
 __all__ = [
     "island_of",
     "ci_built_islands",
@@ -62,7 +64,7 @@ __all__ = [
     "CoverageParseError",
 ]
 
-#: `telperion/examples/<island>/...`
+#: `<prefix>/examples/<island>/...`, prefix `telperion/` in Arda and none standalone
 _ISLAND_RE = re.compile(r"(?:^|/)examples/([A-Za-z0-9_]+)(?:/|$)")
 
 #: a `cd` into an island inside a `run:` block
@@ -76,6 +78,16 @@ def island_of(path: Path | str) -> Optional[str]:
     """The example-island name an artifact path lives in, or None if it is not in one."""
     m = _ISLAND_RE.search(str(path).replace("\\", "/"))
     return m.group(1) if m else None
+
+
+def _examples_dir(repo_root: Path) -> Path:
+    """<repo>/telperion/examples in Arda, <repo>/examples standalone."""
+    return project_of_repo(repo_root) / "examples"
+
+
+def _examples_prefix(repo_root: Path) -> str:
+    """The examples dir as a workflow spells it, relative to the repo root."""
+    return _examples_dir(repo_root).relative_to(Path(repo_root)).as_posix()
 
 
 def _workflow_paths(repo_root: Path) -> List[Path]:
@@ -219,7 +231,7 @@ def ci_built_islands(repo_root: Path) -> Set[str]:
 def islands_with_lean(repo_root: Path) -> Set[str]:
     """Every example island that has at least one `.lean` source of its own."""
     out: Set[str] = set()
-    examples = repo_root / "telperion" / "examples"
+    examples = _examples_dir(repo_root)
     if not examples.is_dir():
         return out
     for d in examples.iterdir():
@@ -1030,7 +1042,7 @@ def artifact_coverage_error(
     if name not in built:
         return (
             f"artifact lives in example island {name!r}, which no CI workflow builds "
-            f"(no step runs `lake build` in telperion/examples/{name}/lean). A node may not be "
+            f"(no step runs `lake build` in {_examples_prefix(repo_root)}/{name}/lean). A node may not be "
             f"`proved` against Lean that nothing compiles -- wire the island into "
             f".github/workflows/ or move the artifact to one that is wired."
         )

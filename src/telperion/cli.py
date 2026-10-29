@@ -1736,8 +1736,7 @@ def cmd_mission_rejudge_record(args) -> int:
         rc = _nanoda_direct_binding_problem(camp_root, node, slug, art, text, verdict)
         if rc:
             return rc
-    nanoda_rev_path = Path(__file__).resolve().parents[3] / "telperion" / "NANODA_REV"
-    rev = nanoda_rev_path.read_text().strip()
+    rev = _nanoda_rev_path().read_text().strip()
     # Step 0b Task 1 (2026-10-28): bind the record to the artifact's WHOLE import closure,
     # not only the top-level file. The queue's header may already carry `closure_sha256=`
     # (computed by the same function, `provenance.closure_digest`); if so it must match the
@@ -1782,6 +1781,12 @@ def cmd_mission_rejudge_record(args) -> int:
         return 1
     print(f"REJUDGE PASS {slug} nanoda={rev[:8]} artifact={rec.artifact_sha256[:12]}")
     return 0
+
+
+def _nanoda_rev_path() -> Path:
+    """The pinned nanoda rev, <project>/NANODA_REV, in the Arda and the standalone layout alike."""
+    from . import paths
+    return paths.project_root() / "NANODA_REV"
 
 
 def _nanoda_direct_binding_problem(camp_root, node, slug, art, text, verdict) -> int:
