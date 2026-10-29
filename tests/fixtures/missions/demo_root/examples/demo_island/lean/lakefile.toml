@@ -1,0 +1,14 @@
+name = "DemoIsland"
+defaultTargets = ["DemoAdd", "DemoDirect", "DemoHeavy", "DemoNanoda"]
+
+[[lean_lib]]
+name = "DemoAdd"
+
+[[lean_lib]]
+name = "DemoDirect"
+
+[[lean_lib]]
+name = "DemoHeavy"
+
+[[lean_lib]]
+name = "DemoNanoda"

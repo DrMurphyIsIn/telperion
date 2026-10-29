@@ -31,6 +31,7 @@ from telperion.emit_lehmer_pair import (  # noqa: E402
 from telperion.family import GridSpec  # noqa: E402
 from telperion.lean import LeanProfile  # noqa: E402
 from telperion.lean_lint import lint_lean_text  # noqa: E402
+from _helpers.emit_lehmer_pair import _need_platt  # noqa: E402
 
 _PROFILE = LeanProfile(namespace=("LP",), imports=("Mathlib",))
 
@@ -39,14 +40,6 @@ def _emit(fam):
     report = emit(certify(fam), _PROFILE,
                   [LehmerPairEmitter()], ValidationReport(checks=(("lp", True),)))
     return next(iter(report.files.values()))
-
-
-def _need_platt():
-    """Skip (not error) where libflint lacks the Platt machinery: `flint` can
-    import while `acb_dirichlet_platt_*` is absent from the bundled library."""
-    from telperion.arb_platt import PLATT_AVAILABLE
-    if not PLATT_AVAILABLE:
-        pytest.skip("libflint with Platt machinery not found")
 
 
 def _close_pair():
@@ -122,17 +115,3 @@ def test_emitter_is_classified():
     from telperion.emitter_sensitivity import REGISTRY, unclassified_emitters
     assert "LehmerPairEmitter" in REGISTRY
     assert "LehmerPairEmitter" not in set(unclassified_emitters())
-
-
-def test_generated_example_builds():
-    _need_platt()
-    import importlib.util as _u
-    gen_path = (Path(__file__).resolve().parents[1]
-                / "examples" / "lehmer_pair" / "generate.py")
-    spec = _u.spec_from_file_location("lehmer_pair_generate", gen_path)
-    mod = _u.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    text = mod.build()
-    assert text.count("theorem lehmer_lambda_bound_wip") == 1
-    assert text.count("theorem lehmer_neg_refutes") == 1
-    assert text.count("theorem lehmer_n") >= 1

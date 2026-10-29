@@ -16,7 +16,6 @@ are the pre-CI self-checks.
 
 conjecture1_proved = False.
 """
-import importlib.util
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -42,12 +41,7 @@ from telperion.certify import emitter_for  # noqa: E402
 from telperion.emit_zero_sum_majorant import with_terms  # noqa: E402
 from telperion.lean_lint import lint_lean_text  # noqa: E402
 from telperion.workflow import WorkflowError  # noqa: E402
-
-_ROOT = Path(__file__).resolve().parents[1]
-_LEAN_DIR = _ROOT / "examples" / "rvm_bridge" / "lean"
-_PRELUDE_XI = _LEAN_DIR / "RvMBridgeXi.lean"
-_DOGFOOD_GEN = _ROOT / "examples" / "rvm_bridge" / "dogfood_zero_sum_majorant.py"
-_DOGFOOD_LEAN = _LEAN_DIR / "Probes" / "Dogfood_zero_sum_majorant.lean"
+from _helpers.emit_zero_sum_majorant import _emit_text, _fam  # noqa: E402
 
 # the dogfood sites, as the audit cites them
 _ZBOUND = dict(centre=0, h=1, c_far="9/4", num=1, den_kind="normSq", prefactor=True)
@@ -60,21 +54,6 @@ _LCTERM = dict(params=[("a", "a")], binders=[("a", "ℝ")], centre="a", h=0,
 _TAIL = dict(mode="tail_envelope", envelope_E="symbolic", rate_P="-1/4")
 
 X, W, _ = zsm_symbols()
-
-
-def _fam(spec, name="t_inst", fam_name="ZeroSumMajorantTest"):
-    return zero_sum_majorant_family(fam_name, GridSpec([("i", [0])]), lambda pt: name,
-                                    spec=lambda pt: dict(spec))
-
-
-def _emit_text(spec, name="t_inst"):
-    report = emit(
-        certify(_fam(spec, name)),
-        LeanProfile(namespace=("ZeroSumMajorantTest",), imports=("RvMBridgeXi",)),
-        [ZeroSumMajorantEmitter()],
-        ValidationReport(checks=(("zero_sum_majorant", True),)),
-    )
-    return next(iter(report.files.values()))
 
 
 def _refused(match=None, **spec):
@@ -339,15 +318,6 @@ def test_emit_zbound_strip_pins_the_certificate_proof():
         assert line in txt, line
 
 
-def test_emitted_gamma_rewrite_is_the_prelude_line_verbatim():
-    """The `normSq gamma` rewrite is RvMBridgeXi.inv_im_sq_le_majorant's own line."""
-    txt = _emit_text(_ZBOUND, "zb")
-    island = _PRELUDE_XI.read_text(encoding="utf-8")
-    assert ("rw [Complex.normSq_apply, Zeta23.WeilEF.gammaOf_re, Zeta23.WeilEF.gammaOf_im]"
-            in island)
-    assert "rw [Complex.normSq_apply, Zeta23.WeilEF.gammaOf_re, Zeta23.WeilEF.gammaOf_im]" in txt
-
-
 def test_emit_zbound_majorant_and_summable_faces():
     txt = _emit_text(_ZBOUND, "zb")
     for line in (
@@ -456,47 +426,3 @@ def test_private_strip_route_names_the_theorem_exactly():
     assert "theorem exact_name {ρ : ℂ}" in txt and "exact_name_strip" not in txt
     with pytest.raises(ValueError):
         ZeroSumMajorantEmitter()._emit_strip(zero_sum_majorant_certificate(**_TAIL), "x")
-
-
-# --- the dogfood file ---------------------------------------------------------
-
-def _load_generator():
-    spec = importlib.util.spec_from_file_location("dogfood_zero_sum_majorant", _DOGFOOD_GEN)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_dogfood_file_is_regenerable_byte_for_byte():
-    """The checked-in probe is exactly what the generator writes: banner + frozen emitter output
-    + glue + kernel cross-checks -- the emitter cannot drift from the island file."""
-    gen = _load_generator()
-    assert gen.OUT == _DOGFOOD_LEAN
-    assert _DOGFOOD_LEAN.is_file(), "run examples/rvm_bridge/dogfood_zero_sum_majorant.py"
-    assert _DOGFOOD_LEAN.read_text(encoding="utf-8") == gen.build_text()
-
-
-def test_dogfood_regenerates_the_three_sites_under_new_names():
-    txt = _DOGFOOD_LEAN.read_text(encoding="utf-8")
-    assert txt.startswith("/-\n  Dogfood_zero_sum_majorant")
-    assert "conjecture1_proved = False" in txt and "Nothing here bears on RH" in txt
-    assert ("import E6Bridge12\nimport E6Bridge15\nimport E6Bridge18\nimport E6Bridge19\n"
-            "import RvMBridgeXi") in txt
-    assert "namespace DogfoodZeroSumMajorant" in txt and "end DogfoodZeroSumMajorant" in txt
-    for nm in ("zbound_regen", "polBound_regen", "liBound_regen"):
-        for face in ("strip", "le", "summable"):
-            assert f"theorem {nm}_{face} " in txt
-            assert f"#print axioms DogfoodZeroSumMajorant.{nm}_{face}" in txt
-    for face in ("envelope", "rate"):
-        assert f"#print axioms DogfoodZeroSumMajorant.tail_regen_{face}" in txt
-    # the originals are consumed, never redefined
-    for use in ("RvMBridge19.norm_zterm_le_zbound k ρ hs", "RvMBridge18.norm_polTerm_le_majorant h hfar",
-                "RvMBridgeXi.inv_normSq_le_majorant h him", "RvMBridge12.tail_bound_window hD hlam",
-                "‖RvMBridge15.liPaired n ρ‖ ≤ RvMBridge15.liBound n ρ",
-                "Summable (RvMBridge18.polTerm s)", "Summable (RvMBridge15.liPaired n)"):
-        assert use in txt, use
-    for redefined in ("def zbound", "def polBound", "def liBound", "theorem norm_zterm_le_zbound"):
-        assert redefined not in txt
-    assert "sorry" not in txt and "admit" not in txt and "native_decide" not in txt
-    for ch in txt:
-        assert ord(ch) < 0x1F000, f"emoji {ch!r} in the dogfood file"

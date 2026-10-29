@@ -7,10 +7,12 @@ theorem -- no Comparator statement-identity step -- so every record it writes ca
 
 Every test here either calls pure functions (`classify`, `export_cmd`, `nanoda_config`,
 `verdict_of_log`) or calls `run_direct` with an INJECTED `run`: no lake, no lean4export, no
-nanoda_bin is ever invoked. `test_export_target_is_node_theorem` reads real files from the
-repo's own `AND_g2_reflected_band` node (its artifact and statement text) to prove the
-theorem-name derivation is the real grant-gate mechanism, not a guess -- but still never runs
-a tool: `run` is the same kind of stub as everywhere else in this file.
+nanoda_bin is ever invoked. `test_export_target_is_node_theorem` and the `_verify_copy` tests
+read committed fixture files (tests/fixtures/missions/demo_root: a toy campaign whose proved
+nodes live on an example island) to prove the theorem-name derivation and the registry checks
+are the real grant-gate mechanism, not a guess -- but still never run a tool: `run` is the same
+kind of stub as everywhere else in this file. Their real-registry twins are in
+test_nanoda_direct_lab.py, which stays in Arda.
 """
 from __future__ import annotations
 
@@ -38,8 +40,11 @@ from telperion.missions.schema import (  # noqa: E402
     MissionManifest, Node, Proof, RejudgeRecord, save_manifest, save_node,
 )
 from telperion.missions.statements import write_statement  # noqa: E402
+from _helpers.nanoda_direct import _stub_run  # noqa: E402
 
-TELPERION_ROOT = Path(__file__).resolve().parents[1]
+#: A miniature telperion root (tests/fixtures/missions/create_demo_root.py): campaign `demo_proved`, whose
+#: proved toy nodes live on the example island `demo_island` and carry current [rejudge] records.
+DEMO_ROOT = Path(__file__).resolve().parent / "fixtures" / "missions" / "demo_root"
 
 
 # ---------------------------------------------------------------------------
@@ -156,21 +161,6 @@ def _tmp_island_node(tmp_path: Path, *, thm_short: str = "a_thm",
     return tel, camp, node
 
 
-def _stub_run(export_out="<export bytes>\n", nanoda_out="Checked 3 declarations with no errors\n",
-              export_rc=0, nanoda_rc=0, export_err="", nanoda_err=""):
-    """Review fix round 1 (2026-10-28), item 5: `run` returns (rc, stdout, stderr) -- stdout
-    and stderr separately, so `run_direct` can write stdout-only to `export.txt` while still
-    logging stderr (where a real Lean PANIC under LEAN_ABORT_ON_PANIC=1 would land)."""
-    calls = []
-
-    def run(cmd, *, cwd):
-        calls.append((list(cmd), Path(cwd)))
-        if cmd[0] == "lake":
-            return export_rc, export_out, export_err
-        return nanoda_rc, nanoda_out, nanoda_err
-    return run, calls
-
-
 def test_log_has_route_and_header(tmp_path):
     tel, camp, node = _tmp_island_node(tmp_path)
     artifact = camp / node.proof.artifact
@@ -194,26 +184,27 @@ def test_log_has_route_and_header(tmp_path):
 
 
 def test_export_target_is_node_theorem():
-    """Real repo files (AND_g2_reflected_band's artifact + statement): the export command's
+    """Committed fixture files (demo_root's Demo_direct artifact + statement): the export command's
     LAST argument is the node's own registered theorem, resolved the grant gate's way
     (`guard_anchors.resolve_theorem`) -- never a hand-typed `MissionJudge.<slug>` guess. No
-    tool is invoked: `run` is a stub that never shells out."""
+    tool is invoked: `run` is a stub that never shells out. (Arda's lab half runs the same check
+    on a real registry node.)"""
     from telperion.missions.schema import load_node
-    camp = TELPERION_ROOT / "missions" / "anduril"
-    node = load_node(camp / "nodes" / "AND_g2_reflected_band.toml")
+    camp = DEMO_ROOT / "missions" / "demo_proved"
+    node = load_node(camp / "nodes" / "Demo_direct.toml")
     run, calls = _stub_run()
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        tools = Tools(telperion_root=TELPERION_ROOT, lean4export=Path("/tools/lean4export"),
+        tools = Tools(telperion_root=DEMO_ROOT, lean4export=Path("/tools/lean4export"),
                       nanoda=Path("/tools/nanoda_bin"), nanoda_rev="f" * 40, out_dir=Path(td))
         log_path = run_direct(camp, node, tools=tools, run=run)
         text = log_path.read_text()
     export_cmd_used = calls[0][0]
-    assert export_cmd_used == ["lake", "env", "/tools/lean4export", "ReflectedBand_t14",
-                               "--", "ReflectedBand_t14.pilot"]
-    assert "theorem=ReflectedBand_t14.pilot" in text
-    assert "module=ReflectedBand_t14" in text
-    assert "island=zeta_reflection" in text
+    assert export_cmd_used == ["lake", "env", "/tools/lean4export", "DemoDirect",
+                               "--", "demo_direct"]
+    assert "theorem=demo_direct" in text
+    assert "module=DemoDirect" in text
+    assert "island=demo_island" in text
 
 
 def test_export_target_typo_fails_setup_rather_than_exporting_wrong_constant(tmp_path):
@@ -914,36 +905,6 @@ def test_lake_workspace_off_island_returns_artifact_dir(tmp_path):
     assert lake_workspace(tmp_path, node) == tmp_path.resolve()
 
 
-def test_lake_workspace_real_registry():
-    """Real-registry check (skipped if the registry files are absent): the 4
-    zeta_zero_localization nodes this task fixes resolve to zzl_aux, the slim
-    sub-workspace CI actually builds from -- while a heavy ladder node and the
-    already-bound quasicrystal node are UNCHANGED from their island lean dir."""
-    camp_mm = TELPERION_ROOT / "missions" / "mirrormere"
-    camp_and = TELPERION_ROOT / "missions" / "anduril"
-    bragg_toml = camp_mm / "nodes" / "MM_bragg_defect_witness.toml"
-    ladder_toml = camp_and / "nodes" / "AND_ladder_h8000_kernel.toml"
-    leakage_toml = camp_mm / "nodes" / "MM_leakage_composite_zero.toml"
-    if not (bragg_toml.is_file() and ladder_toml.is_file() and leakage_toml.is_file()):
-        pytest.skip("real mission registry not present")
-
-    from telperion.missions import judge
-    from telperion.missions.rejudge import island_of_artifact
-    from telperion.missions.schema import load_node
-
-    bragg = load_node(bragg_toml)
-    ws = lake_workspace(camp_mm, bragg)
-    assert ws.name == "zzl_aux"
-
-    for camp, node_path in ((camp_and, ladder_toml), (camp_mm, leakage_toml)):
-        n = load_node(node_path)
-        artifact = (camp / n.proof.artifact).resolve()
-        troot = camp.parent.parent
-        island = island_of_artifact(troot, artifact)
-        island_dir = judge.island_dir(troot, island).resolve()
-        assert lake_workspace(camp, n) == island_dir
-
-
 # ---------------------------------------------------------------------------
 # closure_support_files follows lake_workspace (Fix 2, 2026-10-28)
 # ---------------------------------------------------------------------------
@@ -1044,40 +1005,35 @@ def test_needs_rejudge_includes_judge_via_heavy(tmp_path):
 
 
 def _verify_copy(tmp_path, campaign, islands, edit):
-    """Copy a real campaign (+ the named islands' lean sources, never .lake) under
+    """Copy a demo_root fixture campaign (+ the named islands' lean sources) under
     `<tmp>/telperion/`, apply `edit(nodes_dir)`, return verify_campaign's errors."""
     import shutil
     from telperion.missions.verify import verify_campaign
     troot = tmp_path / "telperion"
     dst = troot / "missions" / campaign
-    if not (TELPERION_ROOT / "missions" / campaign).is_dir():
-        pytest.skip("real registry absent")
-    shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
+    shutil.copytree(DEMO_ROOT / "missions" / campaign, dst)
     for isl in islands:
-        src = TELPERION_ROOT / "examples" / isl / "lean"
-        if src.is_dir():
-            shutil.copytree(src, troot / "examples" / isl / "lean",
-                            ignore=shutil.ignore_patterns(".lake"))
+        shutil.copytree(DEMO_ROOT / "examples" / isl / "lean", troot / "examples" / isl / "lean")
     edit(dst / "nodes")
     return verify_campaign(dst).errors
 
 
 def test_verify_fails_when_rejudge_deleted_from_marked_node(tmp_path):
     from telperion.missions.schema import load_node
-    slug = "MM_leakage_composite_zero"
+    slug = "Demo_direct"
 
     def edit(nd):
         p = nd / f"{slug}.toml"
         n = load_node(p)
         save_node(dataclasses.replace(n, second_kernel_route="nanoda-direct", rejudge=None), p)
-    errors = _verify_copy(tmp_path, "mirrormere", ["quasicrystal"], edit)
+    errors = _verify_copy(tmp_path, "demo_proved", ["demo_island"], edit)
     assert any(slug in e and "second_kernel_route=nanoda-direct declared but no re-judge "
                "recorded" in e for e in errors), errors
 
 
 def test_verify_fails_when_marked_route_edited(tmp_path):
     from telperion.missions.schema import load_node
-    slug = "MM_leakage_composite_zero"
+    slug = "Demo_direct"
 
     def edit(nd):
         p = nd / f"{slug}.toml"
@@ -1086,18 +1042,18 @@ def test_verify_fails_when_marked_route_edited(tmp_path):
         save_node(dataclasses.replace(n, second_kernel_route="nanoda-direct",
                                       rejudge=dataclasses.replace(n.rejudge, route="comparator")),
                   p)
-    errors = _verify_copy(tmp_path, "mirrormere", ["quasicrystal"], edit)
+    errors = _verify_copy(tmp_path, "demo_proved", ["demo_island"], edit)
     assert any(slug in e and "second_kernel_route=nanoda-direct declared but the [rejudge] "
                "record's route is 'comparator'" in e for e in errors), errors
 
 
 def test_verify_fails_h11000_style_judge_via_heavy_with_nanoda_direct_record(tmp_path):
-    """The reviewer's shape: an h11000-style node (no [comparator] record), its
+    """The reviewer's shape: a node judged via the heavy workflow (no [comparator] record), its
     heavy_certificates flag DELETED, judge_via = "heavy" kept, and a nanoda-direct record.
     Before Ruling 0b-9, needs_rejudge ignored judge_via, so the nanoda-direct record stood in
     for the Comparator re-judge Ruling 0b-4 demands."""
     from telperion.missions.schema import load_node
-    slug = "AND_ladder_h11000_kernel"
+    slug = "Demo_heavy"
 
     def edit(nd, keep_marker):
         p = nd / f"{slug}.toml"
@@ -1108,11 +1064,11 @@ def test_verify_fails_h11000_style_judge_via_heavy_with_nanoda_direct_record(tmp
             second_kernel_route=(n.second_kernel_route if keep_marker else ""),
             rejudge=dataclasses.replace(n.rejudge, route="nanoda-direct")), p)
     # marker removed too (the reviewer's pre-marker shape): judge_via alone must catch it
-    errors = _verify_copy(tmp_path / "a", "anduril", ["zeta_reflection"],
+    errors = _verify_copy(tmp_path / "a", "demo_proved", ["demo_island"],
                           lambda nd: edit(nd, keep_marker=False))
     assert any(slug in e and "nanoda-direct is not sufficient" in e for e in errors), errors
-    # marker kept (the committed registry marks h11000 "comparator"): fails on the marker too
-    errors = _verify_copy(tmp_path / "b", "anduril", ["zeta_reflection"],
+    # marker kept (the fixture marks Demo_heavy "comparator"): fails on the marker too
+    errors = _verify_copy(tmp_path / "b", "demo_proved", ["demo_island"],
                           lambda nd: edit(nd, keep_marker=True))
     assert any(slug in e and "second_kernel_route=comparator declared but the [rejudge] "
                "record's route is 'nanoda-direct'" in e for e in errors), errors
@@ -1293,17 +1249,6 @@ def test_lake_workspace_accepts_same_candidate_without_the_shadow(tmp_path):
     module to the island model's file, so it is accepted and wins on size."""
     camp, node, root_dir, sub = _shadow_island(tmp_path, shadow=False)
     assert lake_workspace(camp, node) == sub
-
-
-@pytest.mark.parametrize("slug", ["MM_bragg_defect_witness", "MM_bragg_defect_witness_sie",
-                                  "MM_offline_pairs_le_defect", "MM_recurrence_deficit_eq_excess"])
-def test_real_zzl_nodes_still_pick_zzl_aux(slug):
-    from telperion.missions.schema import load_node
-    camp = TELPERION_ROOT / "missions" / "mirrormere"
-    p = camp / "nodes" / f"{slug}.toml"
-    if not p.is_file():
-        pytest.skip("real registry absent")
-    assert lake_workspace(camp, load_node(p)).name == "zzl_aux"
 
 
 # ---------------------------------------------------------------------------

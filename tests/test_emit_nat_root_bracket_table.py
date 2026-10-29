@@ -9,11 +9,11 @@ sensitivity-registry classification and the negative-control adapter; the exampl
 byte-stability; and, Lean-gated, an end-to-end kernel check of the four example instances plus
 the two-sided negative control and the single-face `U := L` forgery.
 
+The example, CI-gate and Lean-gated checks live in test_emit_nat_root_bracket_table_lab.py, which stays in Arda.
+
 conjecture1_proved = False.
 """
-import subprocess
 import sys
-from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 
@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import telperion  # noqa: E402,F401  (loads every Emitter subclass + adapter)
-from telperion import GridSpec, LeanProfile, ValidationReport, certify, emit  # noqa: E402
+from telperion import GridSpec, certify  # noqa: E402
 from telperion.certify import emitter_for  # noqa: E402
 from telperion.emit_nat_root_bracket_table import (  # noqa: E402
     DEFAULT_BLOCK,
@@ -41,10 +41,7 @@ from telperion.emit_nat_root_bracket_table import (  # noqa: E402
     nat_root_bracket_table_family,
 )
 from telperion.lean_lint import lint_lean_text  # noqa: E402
-
-_ROOT = Path(__file__).resolve().parents[1]
-_EXAMPLE = _ROOT / "examples" / "nat_root_bracket_table"
-_ENV = _EXAMPLE / "lean"
+from _helpers.emit_nat_root_bracket_table import _emit_text  # noqa: E402
 
 
 # --- 1. exact integer arithmetic -------------------------------------------------
@@ -259,14 +256,6 @@ def test_kind_and_emitter_for():
 
 # --- 3. emitted text --------------------------------------------------------------
 
-def _emit_text(specs, names, imports=("NatRootBracket",)):
-    fam = nat_root_bracket_table_family(
-        "NatRootBracketTableTest", GridSpec([("case", list(range(len(specs))))]),
-        lambda pt: names[pt["case"]], spec=lambda pt: dict(specs[pt["case"]]))
-    report = emit(certify(fam), LeanProfile(namespace=("NatRootBracketTableTest",), imports=imports),
-                  [NatRootBracketTableEmitter()], ValidationReport(checks=(("ok", True),)))
-    return next(iter(report.files.values()))
-
 
 _TBL = dict(p=3, q=4, terms=40, scale=10 ** 10, block=20)
 _SGL_NEG = dict(base=2, p=1, q=2, scale=10 ** 6)
@@ -337,26 +326,6 @@ def test_prelude_is_attributed_mathlib_only_and_clean():
     assert "import" not in body and body.lstrip().startswith("/-")
 
 
-# --- 4. the example is byte-stable ----------------------------------------------------
-
-def test_example_files_match_the_generator():
-    assert (_ENV / "NatRootBracket.lean").read_text(encoding="utf-8") == nat_root_bracket_prelude_lean()
-    r = subprocess.run([sys.executable, str(_EXAMPLE / "generate.py"), "--check"],
-                       capture_output=True, text=True, cwd=str(_ROOT))
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert (_ENV / "lean-toolchain").read_text().strip() == "leanprover/lean4:v4.32.0"
-
-
-def test_example_shares_the_cn1_zeta_tables_block_numbers():
-    """The example's first sigma = 3/4 block is byte-for-byte the CN-1 ZetaTables zlo34_0 / zhi34_0
-    sums (independent generator, same numbers)."""
-    t = (_ENV / "NatRootBracketTable.lean").read_text(encoding="utf-8")
-    assert "sum_neg34_400_lo_0.getD n 0 = 116105226077" in t
-    assert "sum_neg34_400_hi_0.getD n 0 = 116105226275" in t
-    assert "theorem pow_1001_pos14_lo_fact : 5624818578328 ^ 4 ≤ 1001 ^ 1 * 1000000000000 ^ 4" in t
-    assert "theorem rat_64003_8_neg58_lo_fact : 3635432077 ^ 8 * 64003 ^ 5 ≤ 8 ^ 5 * 1000000000000 ^ 8" in t
-
-
 # --- 5. registry and negative-control wiring -------------------------------------------
 
 def test_emitter_is_classified_certificate_sensitive_with_adapter():
@@ -394,114 +363,3 @@ def test_adapter_twins_differ_by_one_entry_only():
     true = mpmath.fsum(mpmath.mpf(i + 1) ** (-mpmath.mpf(3) / 4) for i in range(40))
     assert mpmath.mpf(f.lo_total) / f.scale < true < mpmath.mpf(f.hi_total) / f.scale
     assert f.lo_total == t.lo_total + 1 == 66495196525
-
-
-_WF = _ROOT.parent / ".github" / "workflows" / "telperion-lean-e2e.yml"
-_FIX = Path(__file__).resolve().parent / "fixtures" / "nat_root_bracket_table"
-
-
-def _run_ci_axiom_check(tmp_path, axioms_text: str) -> int:
-    """EXECUTE the CI axiom step's run block (everything but the `lake env lean | tee` line) in a
-    directory holding the given `axioms.out`, under `bash -e` like a GitHub `run:` block."""
-    yaml = pytest.importorskip("yaml")
-    job = yaml.safe_load(_WF.read_text())["jobs"]["nat-root-bracket-table-compiles"]
-    step = [s for s in job["steps"] if s.get("name", "").startswith("Axiom guard")][0]
-    lines = [ln for ln in step["run"].splitlines() if "lake env lean" not in ln]
-    (tmp_path / "axioms.out").write_text(axioms_text, encoding="utf-8")
-    return subprocess.run(["bash", "-e", "-c", "\n".join(lines)], cwd=str(tmp_path),
-                          capture_output=True, text=True).returncode
-
-
-def _real_guard() -> str:
-    return (_FIX / "guard_real.txt").read_text(encoding="utf-8")
-
-
-def test_ci_axiom_guard_accepts_the_real_guard_output(tmp_path):
-    real = _real_guard()
-    assert real.count("depends on axioms: [propext, Classical.choice, Quot.sound]") == 10
-    assert _run_ci_axiom_check(tmp_path, real) == 0
-    # the guard file names exactly the ten anchors the step pins
-    guard = (_ENV / "AxiomGuardNatRootBracketTable.lean").read_text(encoding="utf-8")
-    assert guard.count("#print axioms ") == 10
-
-
-def test_ci_axiom_guard_accepts_ten_axiom_free_declarations(tmp_path):
-    noax = "".join(f"'NatRootBracket.l{i}' does not depend on any axioms\n" for i in range(10))
-    assert _run_ci_axiom_check(tmp_path, noax) == 0
-
-
-def test_ci_axiom_guard_rejects_real_wrapped_native_decide_output(tmp_path):
-    """REVIEW_PR766 Add.1: real v4.32.0 output wraps the list one axiom per line, so a first-line
-    check reads `[propext,` and accepts the `<thm>._native.native_decide.ax_1_1` axiom."""
-    wrapped = (_FIX / "realwrap_native_decide.txt").read_text(encoding="utf-8")
-    assert "\n Classical.choice,\n" in wrapped                 # it really is wrapped
-    assert "._native.native_decide.ax_1_1]" in wrapped
-    # eight clean anchors + the two real lines = ten anchors, so only the axiom check can reject it
-    real8 = "".join(_real_guard().splitlines(True)[:8])
-    assert _run_ci_axiom_check(tmp_path, real8 + wrapped) != 0
-
-
-def test_ci_axiom_guard_rejects_wrapped_sorry_and_look_alike(tmp_path):
-    real9 = "".join(_real_guard().splitlines(True)[:9])
-    sorry_wrapped = ("'NatRootBracketTable.z' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n"
-                     " Quot.sound]\n")
-    assert _run_ci_axiom_check(tmp_path, real9 + sorry_wrapped) != 0
-    look_alike = "'NatRootBracketTable.w' depends on axioms: [propext, ClassicalXchoice, Quot.sound]\n"
-    assert _run_ci_axiom_check(tmp_path, real9 + look_alike) != 0
-    extra = "'NatRootBracketTable.v' depends on axioms: [propext, Classical.choice, Quot.sound, myAxiom]\n"
-    assert _run_ci_axiom_check(tmp_path, real9 + extra) != 0
-
-
-def test_ci_axiom_guard_pins_the_anchor_count_and_closed_lists(tmp_path):
-    real = _real_guard().splitlines(True)
-    assert _run_ci_axiom_check(tmp_path, "".join(real[:9])) != 0            # one anchor dropped
-    assert _run_ci_axiom_check(tmp_path, "".join(real) + real[0]) != 0      # one anchor too many
-    truncated = "".join(real[:9]) + "'NatRootBracketTable.t' depends on axioms: [propext,\n"
-    assert _run_ci_axiom_check(tmp_path, truncated) != 0                    # header without a closed list
-
-
-# --- 7. Lean end to end (gated on a built env) ------------------------------------------
-
-def _env_ready():
-    from lean_env import lean_env_ready
-    olean = _ENV / ".lake" / "build" / "lib" / "lean" / "NatRootBracket.olean"
-    return lean_env_ready(_ENV) and olean.is_file()
-
-
-lean = pytest.mark.skipif(not _env_ready(),
-                          reason="nat_root_bracket_table Lean env not built -- skipped")
-
-
-@lean
-def test_lean_end_to_end_four_faces_axiom_clean():
-    from telperion.verify import verify_lean
-    t = _emit_text([_TBL, _SGL_NEG, _SGL_POS, _SGL_RAT], ["tbl", "neg", "pos", "rat"])
-    decls = [f"NatRootBracketTableTest.{n}" for n in ("tbl", "neg", "pos", "rat")]
-    r = verify_lean(t, env_dir=_ENV, decls=decls)
-    assert r.okay and r.axioms_clean, (r.summary(), r.errors[:3])
-    for d in decls:
-        assert set(r.axioms[d]) <= {"propext", "Classical.choice", "Quot.sound"}, d
-
-
-@lean
-def test_lean_negative_control_one_table_entry():
-    from telperion.negative_control_harness import (
-        generic_negative_control, registered_adapters)
-    res = generic_negative_control(registered_adapters()["NatRootBracketTableEmitter"],
-                                   env_dir=str(_ENV))
-    assert res.kernel_rejects and res.true_compiles and res.okay, res.detail
-
-
-@lean
-def test_lean_rejects_u_equals_l_on_the_single_face():
-    """The survey's control: forge U := L on a non-exact bracket (Layer 1 bypassed by replace);
-    `S^q <= U^q m^p` is then false and `decide +kernel` fails on `_hi_fact`."""
-    from telperion.negative_control import assert_kernel_rejects
-    from telperion.negative_control_harness import emit_via_single_instance_family
-    cert = nat_root_bracket_certificate(2, 1, 2, scale=10 ** 6)
-    assert cert.hi == cert.lo + 1
-    forged = replace(cert, hi=cert.lo)
-    body = emit_via_single_instance_family(
-        NatRootBracketTableEmitter(), lean_name="forged_u_eq_l", instance_kwargs={"payload": forged})
-    assert assert_kernel_rejects(f"import Mathlib\nimport NatRootBracket\n{body}\n",
-                                 "forged_u_eq_l", env_dir=_ENV)

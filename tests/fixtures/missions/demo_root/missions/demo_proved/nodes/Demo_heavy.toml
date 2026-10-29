@@ -1,0 +1,30 @@
+created = "2026-10-28"
+depends_on = []
+heavy_certificates = true
+judge_via = "heavy"
+kind = "lemma"
+name = "Demo.heavy"
+second_kernel_route = "comparator"
+statement_module = "Statements.Demo_heavy"
+status = "proved"
+title = "Demo: 3 + 3 = 6"
+updated = "2026-10-28"
+
+[proof]
+artifact = "../../examples/demo_island/lean/DemoHeavy.lean"
+artifact_kind = "lean_module"
+closure_clean = false
+via = "direct"
+
+[rejudge]
+artifact_sha256 = "8272537c8e195e40e1a20700ab39dcd0691528abd0deb77a3f0915de8c1fea3e"
+closure_files = 1
+closure_sha256 = "c83de74985b0f2c2901ec6a9e8606808f9437f6abb5c3c02997bae914c6d79c6"
+comparator_tag = "v4.32.0"
+date = "2026-10-28"
+log_sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+machine = "demo"
+nanoda_rev = "ffffffffffffffffffffffffffffffffffffffff"
+note = "synthetic fixture record (create_demo_root.py)"
+peak_rss_kb = 0
+verdict = "pass"

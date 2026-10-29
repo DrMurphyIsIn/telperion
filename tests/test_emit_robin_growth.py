@@ -124,21 +124,3 @@ def test_emitter_is_classified():
     from telperion.emitter_sensitivity import REGISTRY, unclassified_emitters
     assert "RobinGrowthEmitter" in REGISTRY
     assert "RobinGrowthEmitter" not in set(unclassified_emitters())
-
-
-def test_generated_example_builds_rungs():
-    pytest.importorskip("flint")
-    import importlib.util as _u
-    gen_path = (Path(__file__).resolve().parents[1]
-                / "examples" / "robin_growth" / "generate.py")
-    spec = _u.spec_from_file_location("robin_growth_generate", gen_path)
-    mod = _u.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    text = mod.build()
-    assert text.count("theorem robin_neg_refutes") == 1
-    # all rungs are above the threshold and each emits its own theorem
-    for n in mod.RUNGS:
-        assert n > ROBIN_THRESHOLD
-        assert f"theorem robin_n{n} " in text
-    # exactly len(RUNGS) rung theorems (exclude the refutation atom)
-    assert sum(f"theorem robin_n{n} " in text for n in mod.RUNGS) == len(mod.RUNGS)

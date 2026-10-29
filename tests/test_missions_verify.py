@@ -745,20 +745,6 @@ def test_coverage_counts_cd_inside_run(tmp_path):
     assert "viacd" in ci_built_islands(repo)
 
 
-def test_coverage_fallback_agrees_with_yaml_on_the_real_repo():
-    """The no-PyYAML fallback must not diverge from the YAML parser on this repo.
-
-    The required `unit` job has no PyYAML, so the fallback is what actually runs there.
-    """
-    import pathlib as _p
-    from telperion.missions import coverage as cov
-
-    repo = _p.Path(__file__).resolve().parents[2]
-    if not (repo / ".github" / "workflows").is_dir():
-        pytest.skip("not running inside the repo")
-    assert cov.ci_built_islands(repo) == cov._scan_islands_without_yaml(repo)
-
-
 def test_coverage_refuses_to_report_everything_uncovered(tmp_path):
     """A broken parser must raise, not flunk every node.
 
@@ -933,61 +919,6 @@ def test_mini_toml_reads_a_multiline_default_targets_array():
     assert doc["defaultTargets"] == ["A", "B", "C"]
     assert doc["lean_lib"] == [{"name": "A", "roots": ["A"]}]
     assert doc["require"][0]["path"] == "../x"
-
-
-def test_mini_toml_agrees_with_tomllib_on_every_island_lakefile():
-    """Python < 3.11 has no tomllib; the fallback must read the real lakefiles identically."""
-    import pathlib as _p
-    from telperion.missions.coverage import _mini_toml
-
-    tomllib = pytest.importorskip("tomllib")
-    repo = _p.Path(__file__).resolve().parents[2]
-    files = sorted((repo / "telperion" / "examples").glob("*/lean/**/lakefile.toml"))
-    files = [f for f in files if ".lake" not in f.parts]
-    if not files:
-        pytest.skip("not running inside the repo")
-    keys = ("name", "srcDir", "defaultTargets")
-    for f in files:
-        a, b = tomllib.loads(f.read_text()), _mini_toml(f.read_text())
-        assert {k: a.get(k) for k in keys} == {k: b.get(k) for k in keys}, f
-        for sect, fields in (("lean_lib", ("name", "roots", "globs", "srcDir")),
-                             ("require", ("name", "path"))):
-            assert [{k: x.get(k) for k in fields} for x in a.get(sect, [])] == \
-                   [{k: x.get(k) for k in fields} for x in b.get(sect, [])], (f, sect)
-
-
-def test_module_coverage_without_pyyaml_agrees_on_the_real_repo():
-    """The dependency-free workflow parser must give the same steps and the same covered files
-    as PyYAML on this repo's real workflows (the required `unit` job must not depend on it)."""
-    import pathlib as _p
-    from telperion.missions import coverage as cov
-
-    pytest.importorskip("yaml")
-    repo = _p.Path(__file__).resolve().parents[2]
-    if not (repo / ".github" / "workflows").is_dir():
-        pytest.skip("not running inside the repo")
-    a = [(s.workflow, s.job, s.workdir, s.run.strip(), s.pipefail)
-         for s in cov.ci_runnable_steps(repo)]
-    b = [(s.workflow, s.job, s.workdir, s.run.strip(), s.pipefail)
-         for s in cov.ci_runnable_steps(repo, use_yaml=False)]
-    assert a == b
-    assert set(cov.ci_covered_lean_files(repo)) == set(cov.ci_covered_lean_files(repo, use_yaml=False))
-
-
-def test_every_proved_anduril_artifact_is_module_covered_on_the_real_repo():
-    """The six zeta_reflection artifacts must be compiled by the zeta-reflection job itself."""
-    import pathlib as _p
-    from telperion.missions import coverage as cov
-
-    repo = _p.Path(__file__).resolve().parents[2]
-    lean = repo / "telperion" / "examples" / "zeta_reflection" / "lean"
-    if not lean.is_dir() or not (repo / ".github" / "workflows").is_dir():
-        pytest.skip("not running inside the repo")
-    covered = cov.ci_covered_lean_files(repo)
-    for mod in ("CheckBand", "ReflectedBand_t14", "EMZetaTail", "EMZetaComplex",
-                "ForgeFirstZeroKernel", "StirlingBinet"):
-        jobs = covered.get((lean / f"{mod}.lean").resolve(), set())
-        assert "telperion-zeta-reflection.yml:zeta-reflection-compiles" in jobs, mod
 
 
 # ---------------------------------------------------------------------------

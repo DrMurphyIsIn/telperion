@@ -206,24 +206,3 @@ def test_emitter_is_classified():
     from telperion.emitter_sensitivity import REGISTRY, unclassified_emitters
     assert "BaezDuarteEmitter" in REGISTRY
     assert "BaezDuarteEmitter" not in set(unclassified_emitters())
-
-
-def test_generated_example_names_and_monotone_bounds():
-    """The generated file has every rung's theorem plus one refutation atom, and
-    the EMITTED readable bounds U_N are non-increasing over all rungs."""
-    pytest.importorskip("mpmath")
-    import re
-    import importlib.util as _u
-    gen_path = (Path(__file__).resolve().parents[1]
-                / "examples" / "baez_duarte" / "generate.py")
-    spec = _u.spec_from_file_location("baez_duarte_generate", gen_path)
-    mod = _u.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    text = mod.build()
-    assert text.count("theorem bd_neg_refutes") == 1
-    for N in mod.RUNGS:
-        assert f"theorem bd_N{N} " in text
-    caps = [Fraction(int(a), int(b)) for a, b in re.findall(
-        r"theorem bd_N\d+ .*?: dN2 ≤ \(\((\d+) / (\d+)\) : ℝ\) :=", text)]
-    assert len(caps) == len(mod.RUNGS)
-    assert all(b < a for a, b in zip(caps, caps[1:])), [float(c) for c in caps]

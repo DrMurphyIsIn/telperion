@@ -1,0 +1,29 @@
+created = "2026-10-28"
+depends_on = []
+kind = "lemma"
+name = "Demo.direct"
+second_kernel_route = "nanoda-direct"
+statement_module = "Statements.Demo_direct"
+status = "proved"
+title = "Demo: 2 + 2 = 4"
+updated = "2026-10-28"
+
+[proof]
+artifact = "../../examples/demo_island/lean/DemoDirect.lean"
+artifact_kind = "lean_module"
+closure_clean = false
+via = "direct"
+
+[rejudge]
+artifact_sha256 = "121fa5141dfda96883d9335f98487c806c06fe557a22c1b57b8206824eca4a79"
+closure_files = 1
+closure_sha256 = "5904c9e739cf4c966c32ec823c20cd4f8d6db7511d8c37a5cc6f2d9d3946dff6"
+comparator_tag = "v4.32.0"
+date = "2026-10-28"
+log_sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+machine = "demo"
+nanoda_rev = "ffffffffffffffffffffffffffffffffffffffff"
+note = "synthetic fixture record (create_demo_root.py)"
+peak_rss_kb = 0
+route = "nanoda-direct"
+verdict = "pass"

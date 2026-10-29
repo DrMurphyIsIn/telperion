@@ -110,23 +110,6 @@ def test_refutation_atom_shape():
     assert "hi < 0" in txt
 
 
-def test_generated_ladder_has_twenty_rungs_and_refutation_atom():
-    pytest.importorskip("flint")
-    import importlib.util as _u
-    gen_path = (Path(__file__).resolve().parents[1]
-                / "examples" / "li_positivity" / "generate.py")
-    spec = _u.spec_from_file_location("li_positivity_generate", gen_path)
-    mod = _u.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    text = mod.build()
-    assert text.count("theorem li_rung_") == 20
-    assert text.count("theorem li_neg_refutes_rh") == 1
-    assert "import Lc.LiCriterion.XiOrderBridge" in text
-    assert "open LiCriterion" in text
-    # Real enclosure endpoints, not the hand-picked 1/100 placeholder:
-    assert "(1 / 100 : ℝ)" not in text
-
-
 # --- B1 throughput (2026-09-17): exact certificate conversion + bundle face -----
 
 def test_certificate_converts_fraction_exactly_not_via_nsimplify():
@@ -143,25 +126,3 @@ def test_certificate_converts_fraction_exactly_not_via_nsimplify():
 def test_certificate_refuses_float_bound():
     with pytest.raises(TypeError, match="REFUSED"):
         li_rung_certificate(0, 0.0230957)
-
-
-def test_bundle_face_packages_the_same_literals_once():
-    """The bundle face carries the SAME N bounds as one list + one hypothesis."""
-    pytest.importorskip("flint")
-    import importlib.util as _u
-    gen_path = (Path(__file__).resolve().parents[1]
-                / "examples" / "li_positivity" / "generate.py")
-    spec = _u.spec_from_file_location("li_positivity_generate", gen_path)
-    mod = _u.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    los = mod.lower_bounds(5)
-    bundle = mod.build_bundle(5, los=los)
-    ladder = mod.build(5, los=los)
-    assert bundle.count("theorem ") == 4  # length, pos, prefix, tail
-    assert "def LiBundleHyp : Prop" in bundle and "by decide" in bundle
-    assert "∀ n, n < 5 → 0 ≤ (taylorCoeff riemannXi n).re" in bundle
-    for lo in los:  # every ladder literal appears verbatim as a (num, den) row
-        assert f"({lo.numerator}, {lo.denominator})" in bundle
-        assert f"({lo.numerator} / {lo.denominator})" in ladder
-    # the 20-rung default is unchanged
-    assert mod.N_RUNGS == 20 and mod.prec_bits_for(20) == mod.PREC_BITS

@@ -12,6 +12,8 @@ independent re-check; the emitted text; the prelude single-source; the sensitivi
 classification and the negative-control adapter; and, Lean-gated, an end-to-end kernel check
 plus the two-sided negative control.
 
+The example, CI-gate and Lean-gated checks live in test_emit_quadratic_order_root_table_lab.py, which stays in Arda.
+
 conjecture1_proved = False.
 """
 import sys
@@ -24,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import telperion  # noqa: E402,F401  (loads every Emitter subclass + adapter)
-from telperion import GridSpec, LeanProfile, ValidationReport, certify, emit  # noqa: E402
+from telperion import GridSpec, certify  # noqa: E402
 from telperion.certify import emitter_for  # noqa: E402
 from telperion.emit_quadratic_order_root_table import (  # noqa: E402
     INERT,
@@ -41,8 +43,7 @@ from telperion.emit_quadratic_order_root_table import (  # noqa: E402
     verify_certificate,
 )
 from telperion.lean_lint import lint_lean_text  # noqa: E402
-
-_EX = Path(__file__).resolve().parents[1] / "examples" / "quadratic_order_root_table"
+from _helpers.emit_quadratic_order_root_table import _emit_text  # noqa: E402
 
 
 # --- 1. the exact classification -------------------------------------------------------
@@ -184,99 +185,6 @@ def test_inert_face_above_100_raises_maxRecDepth_only_there():
     assert txt.count("set_option maxRecDepth") == sum(1 for p in (7, 101, 199) if p > 100)
 
 
-_STD = "[propext, Classical.choice, Quot.sound]"
-_GUARD_ANCHORS = 24
-
-
-def _real_guard_output() -> str:
-    """The shape of the island's real guard output: 24 anchors, 20 with Mathlib's three axioms and
-    4 (the pure `decide` tables and `not_isWitness_two_two`) with `[propext]` only."""
-    names = [f"QuadraticOrderRootTable.anchor_{i}" for i in range(_GUARD_ANCHORS)]
-    return "".join(f"'{n}' depends on axioms: {'[propext]' if i % 6 == 0 else _STD}\n"
-                   for i, n in enumerate(names))
-
-
-def _padded(bad_block: str) -> str:
-    """`bad_block` plus enough standard lines to keep the anchor count at exactly 24, so a
-    rejection can only come from the allow-list, never from the count pin."""
-    k = sum(1 for line in bad_block.splitlines() if "depends on axioms" in line)
-    pad = "".join(f"'QuadraticOrderRootTable.pad_{i}' depends on axioms: {_STD}\n"
-                  for i in range(_GUARD_ANCHORS - k))
-    return pad + bad_block
-
-
-# bb's RealWrap.lean output (REVIEW_PR766 Add.1): a native_decide twin of d56_classNumber_ne_one.
-# Lean wraps the long list one axiom per line; a line-based check reads only `[propext,`.
-_REALWRAP = (
-    "'QuadraticOrderRootTable.d56_classNumber_ne_one' depends on axioms: "
-    "[propext, Classical.choice, Quot.sound]\n"
-    "'QuadraticOrderRootTable.d56_classNumber_ne_one_nd' depends on axioms: [propext,\n"
-    " Classical.choice,\n"
-    " Quot.sound,\n"
-    " QuadraticOrderRootTable.d56_classNumber_ne_one_nd._native.native_decide.ax_1_1]\n")
-_WRAPPED_SORRY = (
-    "'QuadraticOrderRootTable.d8' depends on axioms: [propext,\n"
-    " sorryAx]\n")
-_LOOKALIKE = "'QuadraticOrderRootTable.d8' depends on axioms: [propext, Classical_choice, Quot.sound]\n"
-_NO_AXIOMS = "".join(f"'QuadraticOrderRootTable.anchor_{i}' does not depend on any axioms\n"
-                     for i in range(_GUARD_ANCHORS))
-_TOO_FEW = "".join(f"'QuadraticOrderRootTable.anchor_{i}' depends on axioms: {_STD}\n"
-                   for i in range(_GUARD_ANCHORS - 1))
-
-
-def _ci_axiom_step_run() -> str:
-    yaml = pytest.importorskip("yaml")
-    wf = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "telperion-lean-e2e.yml"
-    job = yaml.safe_load(wf.read_text())["jobs"]["quadratic-order-root-table-compiles"]
-    steps = [s for s in job["steps"]
-             if "AxiomGuardQuadraticOrderRootTable" in str(s.get("run", ""))]
-    assert len(steps) == 1
-    assert "allow-list" in steps[0]["name"] and "sorryAx" not in steps[0]["name"]
-    return steps[0]["run"]
-
-
-def _run_ci_axiom_step(tmp_path, fixture: str) -> int:
-    """EXECUTE the CI step's run block with the `lake env lean` line replaced by the fixture."""
-    import shutil
-    import subprocess
-    run = _ci_axiom_step_run()
-    lines = run.splitlines()
-    idx = [i for i, l in enumerate(lines) if l.strip().startswith("lake env lean")]
-    assert len(idx) == 1, lines
-    lines[idx[0]] = 'cp "$FIXTURE" axioms.out'
-    (tmp_path / "fixture.out").write_text(fixture, encoding="utf-8")
-    (tmp_path / "step.sh").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    bash = shutil.which("bash")
-    assert bash
-    r = subprocess.run([bash, "step.sh"], cwd=tmp_path, capture_output=True, text=True,
-                       env={"PATH": "/usr/bin:/bin", "FIXTURE": str(tmp_path / "fixture.out")})
-    return r.returncode
-
-
-@pytest.mark.parametrize("label,fixture,accept", [
-    ("real guard output", _real_guard_output(), True),
-    ("bb RealWrap: wrapped native_decide aux axiom", _padded(_REALWRAP), False),
-    ("wrapped sorryAx", _padded(_WRAPPED_SORRY), False),
-    ("look-alike Classical_choice", _padded(_LOOKALIKE), False),
-    ("no axioms at all", _NO_AXIOMS, True),
-    ("one anchor missing", _TOO_FEW, False),
-])
-def test_ci_axiom_step_executed_against_fixtures(tmp_path, label, fixture, accept):
-    """REVIEW_PR766 C1 + Add.1: the CI axiom guard is an ALLOW-LIST that parses whole (possibly
-    line-wrapped) axiom lists and matches fixed strings.  The step's run block is executed, not
-    inspected: a deny-list of sorryAx / ofReduceBool, a line-based parser, or an -E pattern would
-    each accept one of the rejected fixtures."""
-    code = _run_ci_axiom_step(tmp_path, fixture)
-    assert (code == 0) == accept, (label, code)
-
-
-def test_axiom_guard_file_has_exactly_the_pinned_anchor_count():
-    guard = _EX / "lean" / "AxiomGuardQuadraticOrderRootTable.lean"
-    n = sum(1 for l in guard.read_text(encoding="utf-8").splitlines()
-            if l.startswith("#print axioms"))
-    assert n == _GUARD_ANCHORS
-
-
 def test_certify_propagates_the_refusal():
     fam = quadratic_order_root_table_family(
         "Bad", GridSpec([("i", [0])]), lambda pt: "bad",
@@ -308,20 +216,6 @@ def test_verify_rejects_every_forgery():
 
 
 # --- 5. emission --------------------------------------------------------------------
-
-def _emit_text(specs, names=None):
-    names = names or [f"q{i}" for i in range(len(specs))]
-    fam = quadratic_order_root_table_family(
-        "QuadraticOrderRootTableTest", GridSpec([("i", list(range(len(specs))))]),
-        lambda pt: names[pt["i"]], spec=lambda pt: dict(specs[pt["i"]]))
-    report = emit(
-        certify(fam),
-        LeanProfile(namespace=("QuadraticOrderRootTableTest",),
-                    imports=("Mathlib", "QuadraticOrderRoot")),
-        [QuadraticOrderRootTableEmitter()],
-        ValidationReport(checks=(("quadratic_order_root_table", True),)),
-    )
-    return next(iter(report.files.values()))
 
 
 def test_kind_and_emitter_for():
@@ -397,12 +291,6 @@ def test_prelude_is_attributed_and_clean():
         assert ord(ch) < 0x1F000, f"emoji {ch!r} in the prelude"
 
 
-def test_example_prelude_file_matches_the_generator():
-    """The island's QuadraticOrderRoot.lean is written from the SAME string (drift check)."""
-    p = _EX / "lean" / "QuadraticOrderRoot.lean"
-    assert p.read_text(encoding="utf-8") == quadratic_order_root_prelude_lean()
-
-
 # --- 6. registry and negative-control wiring ------------------------------------------
 
 def test_emitter_is_classified_certificate_sensitive_with_adapter():
@@ -427,57 +315,3 @@ def test_adapter_twins_differ_only_in_the_forged_root():
     assert diff, "the twins must differ"
     for a, b in diff:
         assert a.replace("3 0", "3 1").replace("y = 0", "y = 1") == b, (a, b)   # only y differs
-
-
-# --- 7. Lean end to end (gated on a built env) ----------------------------------------
-
-_ENV = _EX / "lean"
-
-
-def _env_ready():
-    from lean_env import lean_env_ready
-    olean = _ENV / ".lake" / "build" / "lib" / "lean" / "QuadraticOrderRoot.olean"
-    return lean_env_ready(_ENV) and olean.is_file()
-
-
-lean = pytest.mark.skipif(not _env_ready(),
-                          reason="quadratic_order_root_table Lean env not built -- skipped")
-
-
-@lean
-def test_lean_end_to_end_axiom_clean():
-    from telperion.verify import verify_lean
-    txt = _emit_text([dict(t=0, c=5, primes=[2, 3, 7]), dict(t=1, c=41, primes=[2, 7, 41, 163])],
-                     ["e20", "e163"])
-    decls = ["QuadraticOrderRootTableTest.e20", "QuadraticOrderRootTableTest.e20_classNumber_ne_one",
-             "QuadraticOrderRootTableTest.e20_root_3_kd", "QuadraticOrderRootTableTest.e163",
-             "QuadraticOrderRootTableTest.e163_noroot_7_kd",
-             "QuadraticOrderRootTableTest.e163_ram_163_kd"]
-    r = verify_lean(txt, env_dir=_ENV, decls=decls)
-    assert r.okay and r.axioms_clean, (r.summary(), r.errors[:3])
-    for d in decls:
-        assert set(r.axioms[d]) <= {"propext", "Classical.choice", "Quot.sound"}, (d, r.axioms[d])
-
-
-@lean
-def test_lean_negative_control_forged_root():
-    from telperion.negative_control_harness import (
-        generic_negative_control, registered_adapters)
-    res = generic_negative_control(registered_adapters()["QuadraticOrderRootTableEmitter"],
-                                   env_dir=str(_ENV))
-    assert res.kernel_rejects and res.true_compiles and res.okay, res.detail
-
-
-@lean
-def test_lean_rejects_a_forged_witness_at_p_eq_c():
-    """The structural control at the kernel: `IsWitness 0 2 2 0` cannot be proved (`2 ≠ 2`), and
-    `IsRootMod 0 2 2 0` CAN -- the root exists, it is the ramified double root."""
-    from telperion.negative_control import assert_kernel_rejects
-    from telperion.verify import verify_lean
-    head = "import Mathlib\nimport QuadraticOrderRoot\nopen QuadraticOrderRoot\n"
-    bad = head + ("theorem forged_w : IsWitness 0 2 2 0 :=\n"
-                  "  ⟨by norm_num, by decide, by decide, by decide, by decide⟩\n")
-    assert assert_kernel_rejects(bad, "forged_w", env_dir=_ENV)
-    good = head + "theorem root_two : IsRootMod 0 2 2 0 := by decide\n"
-    r = verify_lean(good, env_dir=_ENV, decls=["root_two"])
-    assert r.okay and r.axioms_clean, (r.summary(), r.errors[:2])

@@ -24,11 +24,10 @@ from telperion import (
     solution_module_of,
     write_challenge_config,
 )
-from telperion.provenance import EmitResult
+from _helpers.comparator import _result  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 FROZEN = HERE.parent / "examples" / "bernoulli" / "frozen" / "Bernoulli.lean"
-R7_FROZEN = HERE.parent / "examples" / "r7_starofhubs" / "frozen"
 
 _TWO = """\
 import Mathlib
@@ -45,14 +44,6 @@ theorem bernoulli_k2 (x : ℝ) (hx : 0 ≤ x) :
 
 end Bernoulli
 """
-
-
-def _result(files):
-    return EmitResult(
-        family_name="Bernoulli", input_hash="deadbeef" * 8,
-        files=files, n_theorems=sum(f.count("theorem ") for f in files.values()),
-        n_checks=2,
-    )
 
 
 def test_names_qualified_and_ordered():
@@ -199,29 +190,3 @@ def test_by_file_names_and_shard_module_edge_cases():
     from telperion.comparator import _shard_module_for
     with pytest.raises(ValueError):
         _shard_module_for("Unrelated.lean", _BASE)
-
-
-@pytest.mark.skipif(not (R7_FROZEN / "Cells.lean").exists(),
-                    reason="frozen r7 shards not present")
-def test_against_real_sharded_frozen_r7():
-    files = {p.name: p.read_text() for p in R7_FROZEN.glob("Cells*.lean")}
-    res = _result(files)
-    # mirrors examples/r7_starofhubs/family.py profile() (namespace + heartbeats option)
-    prof = LeanProfile(namespace=("R7Hyps", "StarOfHubs"),
-                       options=("set_option maxHeartbeats 1600000",))
-    base = "R7Hyps.StarOfHubs.Cells"
-    configs = sharded_challenge_configs(res, prof, module_base=base)
-    # 9 shards -> modules Cells, Cells2 .. Cells9
-    assert [c["solution_module"] for c in configs] == (
-        ["R7Hyps.StarOfHubs.Cells"]
-        + [f"R7Hyps.StarOfHubs.Cells{i}" for i in range(2, 10)]
-    )
-    total = sum(len(c["theorem_names"]) for c in configs)
-    assert total == 972  # the whole star-of-hubs discharge
-    for c in configs:
-        assert c["permitted_axioms"] == list(CLEAN_AXIOMS)
-        assert all(n.startswith("R7Hyps.StarOfHubs.") for n in c["theorem_names"])
-    # every listed theorem is DECLARED in its own solution shard (no cross-shard names)
-    scaffolds = render_sharded_challenge_scaffolds(res, prof, module_base=base)
-    assert len(scaffolds) == 9
-    assert "set_option maxHeartbeats 1600000" in scaffolds["Cells2Challenge.lean"]

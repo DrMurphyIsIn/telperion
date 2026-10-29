@@ -1,0 +1,7 @@
+description = "A synthetic campaign whose proved nodes live on an example island."
+environment_mathlib_rev = "v4.32.0"
+environment_toolchain = "leanprover/lean4:v4.32.0"
+goal_node = "Demo_add"
+name = "DemoProved.goal"
+sources = []
+title = "Demo Proved Campaign"

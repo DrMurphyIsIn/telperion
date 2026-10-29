@@ -15,35 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pytest  # noqa: E402
 
-from telperion import (  # noqa: E402
-    TwoFreqOfflineEmitter, ValidationReport, certify, emit,
-)
 from telperion.emit_twofreq_offline import (  # noqa: E402
-    gauss, inv_sqrt, neglog, rat, real_sqrt,
-    twofreq_offline_certificate, twofreq_offline_family,
+    gauss, neglog, rat, real_sqrt, twofreq_offline_certificate,
 )
-from telperion.family import GridSpec  # noqa: E402
-from telperion.lean import LeanProfile  # noqa: E402
 from telperion.lean_lint import lint_lean_text  # noqa: E402
-
-_NODE = (Path(__file__).resolve().parents[1] / "missions" / "mirrormere" / "lean"
-         / "Statements" / "MM_euler_factor_section_offline.lean")
-
-
-def _euler_spec(p, mode="displacement"):
-    return {"c1": gauss(1, 0), "c2": inv_sqrt(p, sign=-1),
-            "lam1": rat(0), "lam2": neglog(p), "p": p, "mode": mode}
-
-
-def _emit_one(spec, name="tfo_demo"):
-    fam = twofreq_offline_family("TFO", GridSpec([("_", [0])]), lambda pt: name,
-                                 spec=lambda pt: spec)
-    report = emit(certify(fam),
-                  LeanProfile(namespace=("TFO",), imports=("Mathlib", "TwoFreqRigidity"),
-                              prelude="open Quasicrystal\n"),
-                  [TwoFreqOfflineEmitter()],
-                  ValidationReport(checks=(("twofreq_offline", True),)))
-    return next(iter(report.files.values()))
+from _helpers.emit_twofreq_offline import _emit_one, _euler_spec  # noqa: E402
 
 
 # --------------------------------------------------------------------------- positive
@@ -119,20 +95,6 @@ def test_refuses_negative_rational_frequency_against_a_log():
     with pytest.raises(ValueError, match="nonnegative"):
         twofreq_offline_certificate(c1=gauss(1, 0), c2=gauss(2, 0),
                                     lam1=rat("-5"), lam2=neglog(3))
-
-
-# --------------------------------------------------------------------------- emission
-
-def test_statement_matches_mm_node():
-    """The p = 2 theorem must be byte-identical (modulo the missions normalizer) to the
-    registry's MM_euler_factor_section_offline statement."""
-    from telperion.missions.verify import normalize_lean
-
-    text = _emit_one(_euler_spec(2), name="euler_factor_section_offline")
-    node_body = "\n".join(
-        ln for ln in _NODE.read_text(encoding="utf-8").splitlines()[1:]
-        if not ln.strip().startswith(("import ", "open ")))
-    assert normalize_lean(node_body) in normalize_lean(text)
 
 
 def test_emit_is_lint_clean_and_deterministic():

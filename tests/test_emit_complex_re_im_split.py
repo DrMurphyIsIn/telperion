@@ -46,34 +46,13 @@ from telperion.emit_complex_re_im_split import (  # noqa: E402
     simp_set_for,
 )
 from telperion.lean_lint import lint_lean_text  # noqa: E402
-
-_ROOT = Path(__file__).resolve().parents[1]
-_GEN = _ROOT / "examples" / "complex_re_im_split" / "generate.py"
-_ISLAND = _ROOT / "examples" / "rvm_bridge" / "lean"
-_E6B28 = _ISLAND / "E6Bridge28.lean"
-_E6B7 = _ISLAND / "E6Bridge7.lean"
-_DOGFOOD = _ISLAND / "Probes" / "Dogfood_complex_re_im_split.lean"
+from _helpers.emit_complex_re_im_split import _cert  # noqa: E402
 
 z = sp.Symbol("z")
 c, lam = sp.symbols("c lam", real=True)
 a, b = sp.symbols("a b", real=True)
 x, y = RE_SYM, IM_SYM
 EXPO = -(2 * lam) * (z - c) ** 2
-
-
-def _gen():
-    """Import the dogfood generator as a module (it is a script, not a package)."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("gen_complex_re_im_split", _GEN)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _cert(p, mode, **kw):
-    cert, _n = complex_re_im_split_certificate(p, mode=mode, **kw)
-    return cert
 
 
 def _emit_text(specs: dict, **profile_kw):
@@ -291,36 +270,6 @@ def test_statement_rendering_pins():
     assert "((1 / 2) : ℝ) : ℂ)" in render_statement(cert)[0]
 
 
-def test_li_face_statements_are_byte_identical_to_the_hand_lemmas():
-    """The E6Bridge28 statements render EXACTLY as the hand lemmas (modulo `I` for
-    `Complex.I` under the island's `open Complex` and the outer type ascription), which is
-    what makes the tie gates `example : <stmt> := RvMBridge28.re_pow_N` meaningful."""
-    src = " ".join(_E6B28.read_text(encoding="utf-8").split())
-    gen = _gen()
-    for n, name in ((2, "two"), (3, "three"), (4, "four"), (5, "five")):
-        spec = gen.SPECS[f"e6b28_re_pow_{name}"]
-        cert = _cert(spec["p"], spec["mode"], params=spec["params"], claim=spec["claim"])
-        prop = render_statement(cert)[2]
-        hand = prop.replace("Complex.I", "I").replace(" : ℂ).re", ").re")
-        assert f"lemma re_pow_{name} (a b : ℝ) : {hand} := by" in src, (n, hand)
-
-
-def test_gauss_haves_are_reproduced_from_e6bridge7():
-    """The E6Bridge7 `have` statements are local (no exported name); pin that the
-    regenerated claims are ring-equal to the hand right-hand sides read from the source."""
-    src = _E6B7.read_text(encoding="utf-8")
-    assert "have hw2re : ((z - c) ^ 2).re = (z.re - c) ^ 2 - z.im ^ 2" in src
-    assert "have hw2im : ((z - c) ^ 2).im = 2 * (z.re - c) * z.im" in src
-    assert "have hEim : (-(2 * (lam : ℂ)) * (z - c) ^ 2).im = -(4 * lam * (z.re - c) * z.im)" in src
-    gen = _gen()
-    for name, rhs in (("e6b7_hw2re", (x - c) ** 2 - y ** 2),
-                      ("e6b7_hw2im", 2 * (x - c) * y),
-                      ("e6b7_heim", -(4 * lam * (x - c) * y))):
-        spec = gen.SPECS[name]
-        cert = _cert(spec["p"], spec["mode"], z=spec["z"], params=spec["params"], claim=spec["claim"])
-        assert sp.expand(cert.claim - rhs) == 0
-
-
 def test_emit_is_lint_clean_and_deterministic():
     specs = {
         "t_re": dict(p=EXPO, mode="re", z=z, params=(c, lam),
@@ -415,59 +364,6 @@ def test_no_emoji_in_emitted_lean():
     txt = _emit_text({"t2": dict(p=(a + b * sp.I) ** 2, mode="re", params=(a, b))})
     for ch in txt:
         assert ord(ch) < 0x1F000, f"emoji {ch!r} in emitted Lean"
-
-
-# --- the dogfood -------------------------------------------------------------
-
-def test_dogfood_regenerates_byte_for_byte():
-    """The frozen probe on the rvm island IS the generator's output (the drift gate)."""
-    gen = _gen()
-    text = gen.build()
-    assert _DOGFOOD.is_file(), "dogfood probe missing; run examples/complex_re_im_split/generate.py"
-    assert _DOGFOOD.read_text(encoding="utf-8") == text
-    assert ("import E6Bridge5\nimport E6Bridge7\nimport E6Bridge11\nimport E6Bridge14\n"
-            "import E6Bridge28") in text
-    assert "15 theorems" in text
-    for nm in gen.NAMES:
-        assert f"theorem {nm} " in text
-        # every emitted theorem is axiom-printed at the end of the file
-        assert f"#print axioms DogfoodComplexReImSplit.{nm}\n" in text
-    assert text.count(":= RvMBridge28.re_pow_") == 4
-    assert text.startswith(gen.BANNER) and "conjecture1_proved = False" in gen.BANNER
-    errs = [i for i in lint_lean_text(text) if i.severity == "error"]
-    assert errs == []
-    assert not re.search(r"\bsorry\b", text)
-
-
-def test_dogfood_consumer_gates_retire_the_e6bridge7_hand_haves():
-    """The E6Bridge7 sites are local `have`s, so they carry no tie gate.  Their analogue is
-    the CONSUMER gate: the probe (a) pins each hand lemma's statement by ascribing it to the
-    hand lemma, and (b) re-proves it from the emitted splits alone.  Pin both, pin that the
-    footer is declared hand-written (it is NOT emitter output), and pin that the only glue is
-    `neg_mul` plus `ring` reshapings -- no search tactic."""
-    gen = _gen()
-    text = gen.build()
-    assert gen.CONSUMER_GATES in text and text.endswith(gen.CONSUMER_GATES + gen.AXIOM_PRINTS)
-    foot = gen.CONSUMER_GATES
-    # (a) the statement pins: the restated goal IS the hand lemma
-    assert ":= RvMBridge7.norm_gaussTest" in foot
-    assert "RvMBridge7.re_gaussTest" in foot
-    # (b) the re-proofs consume the emitted theorems and nothing else from the island
-    assert "rw [norm_mul, Complex.norm_pow, neg_mul, e6b7_hexp, e6b7_hsq," in foot
-    assert ("rw [neg_mul, Complex.mul_re, Complex.exp_re, Complex.exp_im, e6b7_hre, "
-            "e6b7_heim,") in foot
-    for nm in ("e6b7_hsq", "e6b7_hexp", "e6b7_hre", "e6b7_heim", "e6b7_hw2re", "e6b7_hw2im"):
-        assert nm in foot, nm
-    # honesty: the footer declares itself hand-written and names the residual glue
-    assert "hand-written" in foot and "Nothing here is emitter output" in foot
-    assert "conjecture1_proved = False" in foot
-    # determinism: only rw / ring / unfold / show, no search tactic
-    for forbidden in ("nlinarith", "linarith", "polyrith", "aesop", "decide", "simp",
-                      "exact?", "norm_num"):
-        assert forbidden not in foot, forbidden
-    assert not re.search(r"\bsorry\b", foot)
-    for ch in foot:
-        assert ord(ch) < 0x1F000, f"emoji {ch!r} in the consumer gates"
 
 
 # --- the audit's OTHER cited instances: what the family reaches, and what it refuses ------
@@ -724,50 +620,3 @@ def test_tie_to_must_be_a_lean_identifier():
     with pytest.raises(ValueError, match="REFUSED.*Lean identifier"):
         _cert((a + b * sp.I) ** 2, "re", params=(a, b), tie_to="RvMBridge28.re_pow_two; x")
     _cert((a + b * sp.I) ** 2, "re", params=(a, b), tie_to="RvMBridge28.re_pow_two")
-
-
-# The hand statements of the five B D7 cast sites, whitespace-normalised, exactly as the
-# island writes them (the probe's instantiation gates restate them verbatim).
-_CAST_SITES = {
-    "E6Bridge5.lean": [
-        "(WeilExplicit.zeroMult ρ : ℂ) * ((‖paperFT g ρ.im‖ : ℂ)) ^ 2 = "
-        "(((WeilExplicit.zeroMult ρ : ℝ) * ‖paperFT g ρ.im‖ ^ 2 : ℝ) : ℂ)",
-    ],
-    "E6Bridge7.lean": [
-        "(2 * (WeilExplicit.zeroMult ρ₁ : ℂ) * ((gaussTest c lam (gammaOf ρ₁)).re : ℂ)) = "
-        "((2 * (WeilExplicit.zeroMult ρ₁ : ℝ) * (gaussTest c lam (gammaOf ρ₁)).re : ℝ) : ℂ)",
-        "(2 * (WeilExplicit.zeroMult ρ₁ : ℂ) * ((gaussTest c lam (gammaOf ρ₁)).re : ℂ)).re = "
-        "2 * (WeilExplicit.zeroMult ρ₁ : ℝ) * (gaussTest c lam (gammaOf ρ₁)).re",
-    ],
-    "E6Bridge11.lean": [
-        "(gaussA lam : ℂ) * (Real.log Real.pi : ℂ) = ((gaussA lam * Real.log Real.pi : ℝ) : ℂ)",
-    ],
-    "E6Bridge14.lean": [
-        "((WeilExplicit.zeroMult ρ : ℂ) * ((-((1 / 2 - ρ.re) ^ 2) * Real.exp (2 * lam * "
-        "(1 / 2 - ρ.re) ^ 2) : ℝ) : ℂ)) = (((WeilExplicit.zeroMult ρ : ℝ) * (-((1 / 2 - ρ.re) "
-        "^ 2) * Real.exp (2 * lam * (1 / 2 - ρ.re) ^ 2)) : ℝ) : ℂ)",
-    ],
-}
-
-
-def test_cast_site_gates_restate_the_island_verbatim():
-    """Each instantiation gate in the probe footer states the hand `have` EXACTLY as the
-    island writes it (whitespace aside), so the kernel's acceptance of
-    `<emitted theorem> <island atoms>` at that type says the hand statement IS an instance of
-    the emitted one.  A drift in the island source turns this test red before the probe's
-    compile does."""
-    gen = _gen()
-    foot = " ".join(gen.CONSUMER_GATES.split())
-    for fname, stmts in _CAST_SITES.items():
-        src = " ".join((_ISLAND / fname).read_text(encoding="utf-8").split())
-        for stmt in stmts:
-            assert stmt in src, (fname, stmt)
-            assert stmt in foot, (fname, stmt)
-    # E6Bridge11 writes the same `show` twice (re_archSide_ge and the large-c theorem)
-    src11 = " ".join((_ISLAND / "E6Bridge11.lean").read_text(encoding="utf-8").split())
-    assert src11.count(_CAST_SITES["E6Bridge11.lean"][0]) == 2
-    # each gate is closed by the emitted theorem itself, applied to the island atoms
-    for nm in ("e6b5_hcast", "e6b7_pair_hcast", "e6b7_pair_hre", "e6b11_arch_hcast",
-               "e6b14_centre_hcast"):
-        assert f"\n  {nm} " in gen.CONSUMER_GATES, nm
-        assert gen.SPECS[nm]["mode"] in ("cast", "cast_re")

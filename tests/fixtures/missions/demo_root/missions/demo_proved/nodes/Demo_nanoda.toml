@@ -1,0 +1,20 @@
+created = "2026-10-28"
+depends_on = []
+kind = "lemma"
+name = "Demo.nanoda"
+statement_module = "Statements.Demo_nanoda"
+status = "proved"
+title = "Demo: 4 + 4 = 8"
+updated = "2026-10-28"
+
+[comparator]
+artifact_sha256 = "096c4beefd02fa347cb4c576c9aabfd632f0d1010928c2f6363b548786b47083"
+date = "2026-10-28"
+run_id = "1"
+theorem = "demo_nanoda"
+
+[proof]
+artifact = "../../examples/demo_island/lean/DemoNanoda.lean"
+artifact_kind = "lean_module"
+closure_clean = false
+via = "direct"

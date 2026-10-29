@@ -26,7 +26,9 @@ from telperion.missions.rejudge import parse_comparator_log, parse_rejudge_heade
 from telperion.missions.statements import write_statement  # noqa: E402
 from telperion.missions.verify import GateError, grant_status, verify_campaign  # noqa: E402
 
-TELPERION_ROOT = Path(__file__).resolve().parents[1]
+#: A miniature telperion root (tests/fixtures/missions/create_demo_root.py): campaign `demo_proved`, whose
+#: proved toy nodes live on the example island `demo_island` and carry current [rejudge] records.
+DEMO_ROOT = Path(__file__).resolve().parent / "fixtures" / "missions" / "demo_root"
 
 PASS_LOG = ("Lean default kernel accepts the solution\n"
             "Nanoda kernel accepts the solution\nYour solution is okay!\n")
@@ -305,39 +307,31 @@ def test_cli_non_proved_node_exit2_no_record(tmp_path, one_part, capsys):
 # ---------------------------------------------------------------------------
 
 def _verify_copy_without_rejudge(tmp_path, campaign, slug):
-    """Copy a real campaign, drop one node's [rejudge] record, run verify_campaign on the copy.
+    """Copy a demo_root fixture campaign, drop one node's [rejudge] record, run verify_campaign on
+    the copy.
 
     The copy is rooted at ``tmp_path/telperion/missions/<campaign>``, mirroring the real
-    ``<repo>/telperion/missions/<campaign>`` layout, rather than at ``tmp_path/<campaign>``: a
-    campaign root two levels too shallow breaks two things verify_campaign needs. (1)
-    `_repo_root` walks up three parents from the campaign root looking for
-    `.github/workflows`; a shallow root makes it resolve outside tmp_path into the real
-    filesystem. (2) several anduril nodes' `proof.artifact` is a path like
-    `../../examples/zeta_reflection/lean/Arb4_h8000.lean`, relative to the campaign root; a
-    shallow root makes that resolve to a nonexistent file, and verify_campaign reports the
-    generic "artifact does not exist" and `continue`s past the node WITHOUT ever reaching the
-    re-judge check for it. The real `examples/zeta_reflection/lean` tree (the only subtree
-    anduril's nodes reference) is copied alongside the campaign so those artifact paths
-    resolve to real files instead.
+    ``<repo>/telperion/missions/<campaign>`` layout, with the island the nodes' artifacts point at
+    (``../../examples/demo_island/lean/...``) copied alongside: a shallow root makes those paths
+    resolve to nonexistent files, and verify_campaign then reports the generic "artifact does not
+    exist" and `continue`s past the node WITHOUT ever reaching the re-judge check for it.
     """
     import shutil
     from telperion.missions.schema import load_node, save_node
     from telperion.missions.verify import verify_campaign
     troot = tmp_path / "telperion"
     dst = troot / "missions" / campaign
-    shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
-    examples_lean = TELPERION_ROOT / "examples" / "zeta_reflection" / "lean"
-    if examples_lean.is_dir():
-        shutil.copytree(examples_lean, troot / "examples" / "zeta_reflection" / "lean",
-                        ignore=shutil.ignore_patterns(".lake"))   # sources only: .lake is ~12 GB
+    shutil.copytree(DEMO_ROOT / "missions" / campaign, dst)
+    shutil.copytree(DEMO_ROOT / "examples" / "demo_island" / "lean",
+                    troot / "examples" / "demo_island" / "lean")
     p = dst / "nodes" / f"{slug}.toml"
     save_node(dataclasses.replace(load_node(p), rejudge=None), p)
     return verify_campaign(dst).errors
 
 
 def test_verify_rejects_proved_heavy_node_without_rejudge(tmp_path):
-    errors = _verify_copy_without_rejudge(tmp_path, "anduril", "AND_ladder_h8000_kernel")
-    assert any("AND_ladder_h8000_kernel" in e and "re-judge" in e for e in errors)
+    errors = _verify_copy_without_rejudge(tmp_path, "demo_proved", "Demo_heavy")
+    assert any("Demo_heavy" in e and "re-judge" in e for e in errors)
 
 
 def test_grant_status_refuses_heavy_node_without_rejudge(tmp_path):
@@ -525,22 +519,19 @@ def test_non_heavy_nanoda_node_unaffected(tmp_path):
 
 
 def _verify_copy(tmp_path, campaign, edit):
-    """Copy a real campaign (laid out as `_verify_copy_without_rejudge` explains), apply
-    `edit(nodes_dir)`, and return verify_campaign's errors on the copy."""
+    """Copy a demo_root fixture campaign (laid out as `_verify_copy_without_rejudge` explains),
+    apply `edit(nodes_dir)`, and return verify_campaign's errors on the copy."""
     import shutil
     troot = tmp_path / "telperion"
     dst = troot / "missions" / campaign
-    shutil.copytree(TELPERION_ROOT / "missions" / campaign, dst)
-    for isl in ("zeta_reflection", "rvm_bridge"):
-        src = TELPERION_ROOT / "examples" / isl / "lean"
-        if src.is_dir():
-            shutil.copytree(src, troot / "examples" / isl / "lean",
-                            ignore=shutil.ignore_patterns(".lake"))   # .lake is 9-12 GB
+    shutil.copytree(DEMO_ROOT / "missions" / campaign, dst)
+    shutil.copytree(DEMO_ROOT / "examples" / "demo_island" / "lean",
+                    troot / "examples" / "demo_island" / "lean")
     edit(dst / "nodes")
     return verify_campaign(dst).errors
 
 
-_FLAGLESS = "MM_weil_positivity_prime_free_window"   # proved, per-PR, second_kernel = none
+_FLAGLESS = "Demo_add"   # proved, second_kernel = none, no heavy_certificates flag
 
 
 def test_verify_rejects_flagless_lean_only_node_without_rejudge(tmp_path):
@@ -549,7 +540,7 @@ def test_verify_rejects_flagless_lean_only_node_without_rejudge(tmp_path):
         n = load_node(p)
         assert n.comparator.second_kernel.startswith("none")
         save_node(dataclasses.replace(n, heavy_certificates=False, rejudge=None), p)
-    errors = _verify_copy(tmp_path, "mirrormere", edit)
+    errors = _verify_copy(tmp_path, "demo_proved", edit)
     assert any(_FLAGLESS in e and "re-judge" in e for e in errors), errors
 
 
@@ -559,7 +550,7 @@ def test_verify_accepts_flagless_lean_only_node_with_current_rejudge(tmp_path):
         n = load_node(p)
         assert n.rejudge is not None and n.rejudge.verdict == "pass"
         save_node(dataclasses.replace(n, heavy_certificates=False), p)
-    errors = _verify_copy(tmp_path, "mirrormere", edit)
+    errors = _verify_copy(tmp_path, "demo_proved", edit)
     assert not any(_FLAGLESS in e and "re-judge" in e for e in errors), errors
 
 
@@ -573,8 +564,8 @@ def test_verify_normal_nanoda_node_needs_no_rejudge(tmp_path):
             if (n.status == "proved" and not n.heavy_certificates and n.rejudge is None
                     and n.comparator is not None and n.comparator.second_kernel == "nanoda"):
                 picked.append(p.stem)
-        assert picked, "mirrormere has no proved nanoda-judged node to check"
-    errors = _verify_copy(tmp_path, "mirrormere", edit)
+        assert picked, "demo_proved has no proved nanoda-judged node to check"
+    errors = _verify_copy(tmp_path, "demo_proved", edit)
     assert not any("re-judge" in e for e in errors), errors
 
 
@@ -668,13 +659,6 @@ def test_wrong_part_count_or_shape_fails():
     assert rejudge_log_verdict(_parts_log(["X"]), []) == "fail"            # zero expected parts
 
 
-def test_expected_part_slugs_renders_real_h8000_as_nine_parts():
-    from telperion.missions.rejudge import expected_part_slugs
-    camp = TELPERION_ROOT / "missions" / "anduril"
-    n = load_node(camp / "nodes" / "AND_ladder_h8000_kernel.toml")
-    assert expected_part_slugs(camp, n, "AND_ladder_h8000_kernel") == H8000
-
-
 def test_expected_part_slugs_missing_island_raises(tmp_path):
     from telperion.missions.rejudge import RejudgeSetupError, expected_part_slugs
     mroot = _campaign(tmp_path)
@@ -707,36 +691,6 @@ def test_cli_partial_multipart_log_records_fail(tmp_path, monkeypatch, capsys):
              "--comparator-tag", "v4.32.0")
     assert rc == 1
     assert load_node(mroot / "demo" / "nodes" / "Demo_hv.toml").rejudge.verdict == "fail"
-
-
-REAL_REJUDGE = Path.home() / "telperion-tools" / "rejudge"
-if not REAL_REJUDGE.is_dir():                     # tests run as root; the logs are the owner's
-    REAL_REJUDGE = Path("/Users/peterwmurphy/telperion-tools/rejudge")
-REAL_NODES = [("mirrormere", "MM_weil_positivity_prime_free_window"),
-              ("mirrormere", "MM_weil_positivity_window_two_fifths"),
-              ("mirrormere", "MM_hodge1_window5493"),
-              ("mirrormere", "MM_hodge1_rh_reduction"),
-              ("mirrormere", "MM_hodge1_window45"),
-              ("anduril", "AND_ladder_h8000_kernel"),
-              ("anduril", "AND_ladder_h11000_kernel")]
-
-
-@pytest.mark.parametrize("camp,slug", REAL_NODES)
-def test_real_rejudge_logs_still_pass(camp, slug):
-    """Regression: the 7 logs behind the committed [rejudge] records still read as PASS
-    under the per-part rule, against the part count their bundles render today, and their
-    bytes are the ones each record's log_sha256 names."""
-    from telperion.missions.rejudge import expected_part_slugs, rejudge_log_verdict
-    log = REAL_REJUDGE / slug / "rejudge.log"
-    if not log.is_file():
-        pytest.skip(f"{log} absent")
-    croot = TELPERION_ROOT / "missions" / camp
-    node = load_node(croot / "nodes" / f"{slug}.toml")
-    raw = log.read_bytes()
-    assert hashlib.sha256(raw).hexdigest() == node.rejudge.log_sha256
-    slugs = expected_part_slugs(croot, node, slug)
-    assert len(slugs) == (9 if slug == "AND_ladder_h8000_kernel" else 1)
-    assert rejudge_log_verdict(raw.decode(errors="replace"), slugs) == "pass"
 
 
 # ---------------------------------------------------------------------------
@@ -961,31 +915,6 @@ def test_import_matching_no_manifest_package_raises(tmp_path):
     )
     with pytest.raises(ClosureError, match="Ghost"):
         closure_files(camp, node)
-
-
-@pytest.mark.parametrize("slug,filename", [
-    ("AND_ladder_h8000_kernel", "ZetaZeroConfinement.lean"),
-    ("AND_ladder_h8000_kernel", "DlvpZetaZeroFree.lean"),
-    ("AND_ladder_h11000_kernel", "ZetaZeroConfinement.lean"),
-    ("AND_ladder_h11000_kernel", "DlvpZetaZeroFree.lean"),
-    ("AND_g2_reflected_band", "XiLineZeros.lean"),
-])
-def test_real_closures_complete(slug, filename):
-    """Controller Ruling 0b-2: on the REAL registry, the srcDir fix must actually
-    recover the modules the first cut dropped. `ZetaZeroConfinement.lean` and
-    `DlvpZetaZeroFree.lean` are reached from the h8000/h11000 ladders only through
-    zzl_core's `srcDir = ".."` remap (and zzl_core's own require of zero_free_bridge);
-    `XiLineZeros.lean` is reached from AND_g2_reflected_band's artifact through
-    CheckBand.lean the same way."""
-    from telperion.missions.provenance import closure_files
-    from telperion.missions.registry import load_campaign
-    anduril = TELPERION_ROOT / "missions" / "anduril"
-    if not anduril.is_dir():
-        pytest.skip("real repo layout absent")
-    camp = load_campaign(anduril)
-    node = camp.nodes[slug]
-    files = closure_files(anduril, node)
-    assert any(f.name == filename for f in files), (slug, filename, sorted(f.name for f in files))
 
 
 def test_record_without_digest_is_a_problem(tmp_path):

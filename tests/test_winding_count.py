@@ -405,24 +405,3 @@ def test_enclose_lambda_segments_wider_than_points_winding_test():
         b_w = pt_b[0][1] - pt_b[0][0]
         assert seg_w >= a_w
         assert seg_w >= b_w
-
-
-def test_winding_count_lean_no_drift():
-    """The frozen WindingCount.lean matches regeneration byte-for-byte (drift net).
-
-    Skipped if python-flint (the Arb enclosure backend for the Lambda instance) is
-    unavailable in the test environment."""
-    pytest.importorskip("flint")
-    import importlib.util
-
-    gen_path = (
-        Path(__file__).resolve().parents[1]
-        / "examples" / "zeta_zero_localization" / "generate.py"
-    )
-    spec = importlib.util.spec_from_file_location("_zzl_generate", gen_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    text = mod.build_winding()
-    frozen = mod._OUT_WINDING
-    assert frozen.exists(), "WindingCount.lean not generated yet"
-    assert frozen.read_text(encoding="utf-8") == text, "WindingCount.lean drifted from generate.py"

@@ -1,6 +1,6 @@
 """Tests for telperion.missions.judge: Comparator challenges from registered statements.
 
-Pins, on a synthetic island and on the live registry:
+Pins, on a synthetic island:
 
   * the bridge module's TYPE is the registered statement (binders and conclusion verbatim,
     binders lifted into a `forall`), its PROOF is the artifact's fully qualified theorem, it
@@ -22,8 +22,6 @@ Pins, on a synthetic island and on the live registry:
     of the island stanza; with no proved node its bundle is empty, not an error;
   * `--pending` (default off, scratch `--out` only, never `--check`) also renders draft/open nodes
     and says so in each bridge and in MANIFEST.json;
-  * the live dbn, rvm_bridge, zeta_reflection, li_positivity, quasicrystal, bg and oai_qrh_bridge
-    bundles are committed and in sync with the registry.
 
 conjecture1_proved = False.
 """
@@ -494,38 +492,6 @@ def test_in_tree_island_keeps_examples_require_path(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# live registry
-# ---------------------------------------------------------------------------
-
-def _live() -> bool:
-    return (TELPERION / "missions" / "rh" / "mission.toml").exists()
-
-
-@pytest.mark.parametrize("island", ["dbn", "rvm_bridge", "zeta_reflection", "li_positivity", "quasicrystal", "bg", "oai_qrh_bridge"])
-def test_live_committed_bundle_is_in_sync(island):
-    """The committed challenges ARE the registry statements; CI runs the same check."""
-    if not _live():
-        pytest.skip("live registry not present")
-    b = judge.build_bundle(TELPERION, island)
-    # zeta_reflection: AND_g2_reflected_band declares a namespace in its statement;
-    # quasicrystal: MM_leakage_composite_zero declares local defs (both reported, not skipped)
-    assert len(b.skipped) == (1 if island in ("zeta_reflection", "quasicrystal") else 0)
-    assert judge.check_bundle(b, judge.default_out(TELPERION, island)) == []
-
-
-@pytest.mark.parametrize("island,expected", [("dbn", 3), ("rvm_bridge", 52), ("zeta_reflection", 9), ("li_positivity", 24),
-                                             ("quasicrystal", 7), ("bg", 9)])
-def test_live_islands_render(island, expected):
-    if not _live():
-        pytest.skip("live registry not present")
-    b = judge.build_bundle(TELPERION, island)
-    assert len(b.challenges) >= expected
-    for c in b.challenges:
-        assert f":=\n  {c.theorem}\n" in c.challenge_text
-        assert c.config["theorem_names"] == [c.bridge_theorem]
-
-
-# ---------------------------------------------------------------------------
 # materialized-root islands (oai_qrh_bridge) and the --pending opt-in
 # ---------------------------------------------------------------------------
 
@@ -723,29 +689,3 @@ def test_judge_materialize_script_installs_once(tmp_path, monkeypatch):
     (ws / "lean-toolchain").write_text("leanprover/lean4:v4.34.0\n")
     r = subprocess.run(["bash", str(script), str(bundle), str(ws)], capture_output=True, text=True)
     assert r.returncode == 1 and "toolchain mismatch" in r.stderr
-
-
-def test_live_oai_qrh_bridge_bundle():
-    """The committed oai_qrh_bridge bundle is in sync and, pre-grant, EMPTY (its two nodes are
-    draft). The pending render pins the bridge theorems the reviewing session built at OpenAI's
-    pin: the 7/8 half-plane from ArdaQRHBridge and Lambda <= 9/32 from ArdaDBNUnconditional."""
-    if not _live():
-        pytest.skip("live registry not present")
-    b = judge.build_bundle(TELPERION, "oai_qrh_bridge")
-    assert judge.check_bundle(b, judge.default_out(TELPERION, "oai_qrh_bridge")) == []
-    assert b.comparator_tag == "v4.34.0" and b.toolchain == "leanprover/lean4:v4.34.1"
-    p = judge.build_bundle(TELPERION, "oai_qrh_bridge", pending=True)
-    by = {c.slug: c for c in p.challenges}
-    if "RH_zeta_zero_free_seven_eighths" in by:
-        c = by["RH_zeta_zero_free_seven_eighths"]
-        assert c.solution_module == "ArdaQRHBridge" and c.theorem == "qrh_seven_eighths"
-        assert "∀ s : ℂ, (7 / 8 : ℝ) < s.re → riemannZeta s ≠ 0 :=\n  qrh_seven_eighths\n" in c.challenge_text
-    if "RH_dbn_real_zeros_nine_thirtyseconds" in by:
-        c = by["RH_dbn_real_zeros_nine_thirtyseconds"]
-        assert c.solution_module == "ArdaDBNUnconditional"
-        assert ("∀ t : ℝ, 9 / 32 ≤ t → ∀ z : ℂ, DBN.H t z = 0 → z.im = 0 :=\n"
-                "  dbn_real_zeros_of_qrh_unconditional\n") in c.challenge_text
-    for c in p.challenges:
-        assert "import AxiomGuardDBNUnconditional\nimport AxiomGuardQRHBridge\n" in c.challenge_text
-    # every rendered node is either proved (then also in the committed bundle) or listed pending
-    assert len(p.challenges) == len(b.challenges) + len(p.pending)

@@ -14,7 +14,6 @@ pre-CI self-checks.
 
 conjecture1_proved = False.
 """
-import importlib.util
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -37,12 +36,7 @@ from telperion import (  # noqa: E402
 )
 from telperion.certify import emitter_for  # noqa: E402
 from telperion.lean_lint import lint_lean_text  # noqa: E402
-
-_ROOT = Path(__file__).resolve().parents[1]
-_E6B7 = _ROOT / "examples" / "rvm_bridge" / "lean" / "E6Bridge7.lean"
-_E6B14 = _ROOT / "examples" / "rvm_bridge" / "lean" / "E6Bridge14.lean"
-_DOGFOOD_GEN = _ROOT / "examples" / "rvm_bridge" / "dogfood_exp_threshold.py"
-_DOGFOOD_LEAN = _ROOT / "examples" / "rvm_bridge" / "lean" / "Probes" / "Dogfood_exp_threshold.lean"
+from _helpers.emit_exp_threshold import _emit_text, _fam  # noqa: E402
 
 # the two dogfood sites, as the audit cites them
 _E6B7_BUNDLE = dict(mode="linear", guard=True, steps=[
@@ -54,21 +48,6 @@ _E6B14_BUNDLE = dict(mode="log", guard=True, steps=[
     dict(Q="Q1", a="a1", scale=2),
     dict(Q="Q2", a="a2", scale=2),
 ])
-
-
-def _fam(spec, name="t_inst", fam_name="ExpThresholdTest"):
-    return exp_threshold_family(fam_name, GridSpec([("i", [0])]), lambda pt: name,
-                                spec=lambda pt: dict(spec))
-
-
-def _emit_text(spec, name="t_inst"):
-    report = emit(
-        certify(_fam(spec, name)),
-        LeanProfile(namespace=("ExpThresholdTest",), imports=("Mathlib",)),
-        [ExpThresholdEmitter()],
-        ValidationReport(checks=(("exp_threshold", True),)),
-    )
-    return next(iter(report.files.values()))
 
 
 def _sym(*names):
@@ -345,45 +324,6 @@ def test_emit_e6bridge7_bundle_pins_the_hand_proof_skeleton():
     assert txt.count("Real.add_one_le_exp _") == 2
 
 
-def test_e6bridge7_skeleton_lines_are_verbatim_island_lines():
-    """The emitted step blocks are the island's hexpeta / hexpM blocks with eta spelled out:
-    every tactic line that does not mention the extracted-threshold name appears verbatim in
-    E6Bridge7.lean (the audit's 'mirror the hand proof' contract, pinned to the source)."""
-    src = _E6B7.read_text(encoding="utf-8")
-    txt = _emit_text(_E6B7_BUNDLE).replace("eta", "η")
-    for line in (
-        "      rw [div_le_iff₀ hK0]",
-        "    have h2 : 2 * lam * η + 1 ≤ Real.exp (2 * lam * η) := Real.add_one_le_exp _",
-        "    have h3 : A / K ≤ Real.exp (2 * lam * η) := by linarith",
-        "    rwa [div_le_iff₀ hK0, mul_comm] at h3",
-        "    have h2 : 2 * lam * M + 1 ≤ Real.exp (2 * lam * M) := Real.add_one_le_exp _",
-        "    have h3 : B / K < Real.exp (2 * lam * M) := by linarith",
-        "    rwa [div_lt_iff₀ hK0, mul_comm] at h3",
-        "max 1 (max (A / (2 * η * K)) (B / (2 * M * K)))",
-    ):
-        assert line in txt, f"emitted text lacks {line!r}"
-        assert line in src, f"E6Bridge7.lean lacks {line!r}"
-
-
-def test_emit_e6bridge14_log_step_is_the_island_lemma_verbatim():
-    """le_exp_of_log_le: statement and every proof line appear verbatim in E6Bridge14.lean."""
-    src = _E6B14.read_text(encoding="utf-8")
-    txt = _emit_text(_E6B14_LOG, name="le_exp_of_log_le")
-    for line in (
-        "(h : Real.log (max 1 Q) / (2 * a) ≤ lam) :",
-        "    Q ≤ Real.exp (2 * lam * a) := by",
-        "  have hmax : 0 < max 1 Q := lt_max_of_lt_left one_pos",
-        "  have h1 : Real.log (max 1 Q) ≤ 2 * lam * a := by",
-        "    have := (div_le_iff₀ (by positivity : (0 : ℝ) < 2 * a)).mp h",
-        "    linarith",
-        "  calc Q ≤ max 1 Q := le_max_right _ _",
-        "    _ = Real.exp (Real.log (max 1 Q)) := (Real.exp_log hmax).symm",
-        "    _ ≤ Real.exp (2 * lam * a) := Real.exp_le_exp.mpr h1",
-    ):
-        assert line in txt, f"emitted text lacks {line!r}"
-        assert line in src, f"E6Bridge14.lean lacks {line!r}"
-
-
 def test_emit_effective_threshold_bundle():
     txt = _emit_text(_E6B14_BUNDLE, name="effectiveThreshold_consequences")
     assert ("(h : max 1 (max (Real.log (max 1 Q1) / (2 * a1)) (Real.log (max 1 Q2) / (2 * a2))) "
@@ -433,14 +373,6 @@ def test_emit_product_atom_both_faces():
     assert txt.count("linarith [Real.add_one_le_exp y]") == 2
 
 
-def test_product_atom_lines_are_verbatim_island_lines():
-    """bumpR_le (E6Bridge11.lean:910-925) and hexpkappa (E6Bridge12.lean:311-316)."""
-    e11 = (_ROOT / "examples" / "rvm_bridge" / "lean" / "E6Bridge11.lean").read_text(encoding="utf-8")
-    e12 = (_ROOT / "examples" / "rvm_bridge" / "lean" / "E6Bridge12.lean").read_text(encoding="utf-8")
-    assert "rw [Real.exp_neg, ← div_eq_mul_inv, div_le_one (Real.exp_pos _)]" in e11
-    assert "rw [Real.exp_neg, inv_mul_le_iff₀ (Real.exp_pos _), mul_one]" in e12
-
-
 def test_emit_inv_atom_both_faces():
     txt = _emit_text(dict(mode="inv"))
     assert "theorem t_inst (x : ℝ) (hx0 : 0 < x) : Real.exp (-x) ≤ 1 / x := by" in txt
@@ -481,40 +413,3 @@ def test_theorem_counts():
     report = emit(certify(fam), LeanProfile(namespace=("Counts",)), [ExpThresholdEmitter()],
                   ValidationReport(checks=(("x", True),)))
     assert report.n_theorems == 4  # product emits both faces
-
-
-# --- the dogfood file ---------------------------------------------------------
-
-def _load_generator():
-    spec = importlib.util.spec_from_file_location("dogfood_exp_threshold", _DOGFOOD_GEN)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_dogfood_file_is_regenerable_byte_for_byte():
-    """The checked-in probe is exactly what the generator writes: banner + frozen emitter
-    output + the kernel cross-checks -- the emitter cannot drift from the island file."""
-    gen = _load_generator()
-    assert gen.OUT == _DOGFOOD_LEAN
-    assert _DOGFOOD_LEAN.is_file(), "run examples/rvm_bridge/dogfood_exp_threshold.py"
-    assert _DOGFOOD_LEAN.read_text(encoding="utf-8") == gen.build_text()
-
-
-def test_dogfood_file_regenerates_the_two_sites_under_new_names():
-    txt = _DOGFOOD_LEAN.read_text(encoding="utf-8")
-    assert txt.startswith("/-\n  Dogfood_exp_threshold")
-    assert "conjecture1_proved = False" in txt and "Nothing here bears on RH" in txt
-    assert "import E6Bridge7\nimport E6Bridge14" in txt
-    assert "namespace DogfoodExpThreshold" in txt and "end DogfoodExpThreshold" in txt
-    for nm in ("gaussian_dominance_thresholds", "le_exp_of_log_le_regen",
-               "effectiveThreshold_consequences"):
-        assert f"theorem {nm} " in txt
-        assert f"#print axioms DogfoodExpThreshold.{nm}" in txt
-    # the originals are consumed, never redefined
-    assert "RvMBridge14.le_exp_of_log_le ha0 h" in txt
-    assert "RvMBridge14.effectiveThreshold y0 xmin N B D ≤ lam" in txt
-    assert "theorem le_exp_of_log_le " not in txt
-    assert "sorry" not in txt and "admit" not in txt
-    for ch in txt:
-        assert ord(ch) < 0x1F000, f"emoji {ch!r} in the dogfood file"

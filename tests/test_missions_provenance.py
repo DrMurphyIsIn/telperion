@@ -692,29 +692,6 @@ def test_independence_of_rules():
         prov.independence_of(a, "A@X", "s2")
 
 
-# ---------------------------------------------------------------------------
-# the live registry
-# ---------------------------------------------------------------------------
-
-def _live_missions() -> Path | None:
-    root = Path(__file__).resolve().parents[1] / "missions"
-    return root if (root / "rh" / "mission.toml").exists() else None
-
-
-def test_live_registry_every_readback_is_labelled_and_no_grant_digest_is_stale():
-    root = _live_missions()
-    if root is None:
-        pytest.skip("live registry not present")
-    for camp_dir in sorted(d for d in root.iterdir() if (d / "mission.toml").exists()):
-        camp = load_campaign(camp_dir)
-        for sl, node in camp.nodes.items():
-            if node.readback is not None:
-                assert node.readback.independence in ("unverified", "independent"), \
-                    f"{camp_dir.name}/{sl}: read-back has no independence label (run provenance-migrate)"
-            assert not prov.readback_is_self_audit(node), f"{camp_dir.name}/{sl} is a self-audit"
-            assert prov.grant_digest_errors(camp_dir, node) == [], f"{camp_dir.name}/{sl}"
-
-
 def test_comparator_record_refuses_rather_than_skipping_the_check_silently(tmp_path, capsys,
                                                                           monkeypatch):
     """Without a log and without --no-verify, the command must NOT quietly record.

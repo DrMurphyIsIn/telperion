@@ -9,8 +9,7 @@ clean, the theorem of every proved registry node on the island".  These tests pi
     guillemets in names;
   * failure modes: a missing anchor, an extra axiom, sorryAx, a statement that drifted from
     its artifact, and an island with no proved nodes (must not pass vacuously);
-  * parity of the standalone Lean normaliser with telperion.missions.verify;
-  * the live registry: every proved node on the four wired islands resolves.
+  * parity of the standalone Lean normaliser with telperion.missions.verify.
 
 conjecture1_proved = False.
 """
@@ -240,52 +239,6 @@ def test_normaliser_parity_with_verify(src):
 
 
 # ---------------------------------------------------------------------------
-# the live registry
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("island,minimum", [
-    ("rvm_bridge", 52), ("li_positivity", 24), ("zero_free_bridge", 1), ("dbn", 3),
-])
-def test_live_registry_resolves(island, minimum):
-    anchors = ga.load_anchors(TELPERION, island)
-    assert len(anchors) >= minimum
-    assert len({a.node for a in anchors}) == len(anchors)
-
-
-def test_live_registry_c1_anchors():
-    got = {a.node: a.theorem for a in ga.load_anchors(TELPERION, "li_positivity")}
-    assert got["RH_zero_free_polylog"] == "ZeroFreeBridge.riemannZeta_zero_free_polylog"
-    assert got["RH_zero_free_gamma5"] == "ZeroFreeBridge.riemannZeta_zero_free_poly"
-
-
-@pytest.mark.parametrize("island,guards,heavy", [
-    # The two halves of the rvm_bridge split, as CI runs them: AxiomGuardRvMBridge with
-    # --exclude-heavy, Hodge1_Guard (rvm-bridge-hodge1-heavy) with --only-heavy.
-    ("rvm_bridge", ["AxiomGuardRvMBridge.lean"], False),
-    ("rvm_bridge", ["Hodge1_Guard.lean"], True),
-    ("li_positivity", ["AxiomGuardLiPositivity.lean", "AxiomGuardZeroFree.lean"], None),
-    ("zero_free_bridge", ["AxiomGuardRH.lean", "AxiomGuardDlvp.lean", "AxiomGuardPolylog.lean"],
-     None),
-    ("dbn", ["AxiomGuardDBN.lean"], None),
-])
-def test_live_guard_sources_print_every_anchor(island, guards, heavy):
-    """Static pre-check: each anchor has a `#print axioms <name>` line in the guards CI runs.
-
-    Not a substitute for the Lean run (a printed line could still report sorryAx), but it
-    fails fast, without Lean, when a new proved node is not added to its island's guard.
-    """
-    import re
-    lean = TELPERION / "examples" / island / "lean"
-    printed = set()
-    for g in guards:
-        code = ga.strip_lean_comments((lean / g).read_text())
-        printed |= {ga._canon(m) for m in re.findall(r"#print\s+axioms\s+(\S+)", code)}
-    missing = [a.theorem for a in ga.load_anchors(TELPERION, island, heavy=heavy)
-               if ga._canon(a.theorem) not in printed]
-    assert missing == []
-
-
-# ---------------------------------------------------------------------------
 # judge_via = "heavy": --exclude-heavy / --only-heavy (2026-10-13)
 # ---------------------------------------------------------------------------
 
@@ -367,51 +320,3 @@ def test_heavy_flags_are_mutually_exclusive(registry, tmp_path):
     with pytest.raises(SystemExit):
         ga.main(["--telperion", str(registry), "--island", "isle", "--only-heavy",
                  "--exclude-heavy", "--list"])
-
-
-def test_ci_wires_the_rvm_bridge_split():
-    """The ordinary rvm_bridge job excludes heavy nodes; the HODGE-1 heavy job checks only them;
-    no other island's call changes (zeta_reflection, the only other island with a heavy node,
-    has no guard_anchors call: its ladder is gated by requires_ci_job)."""
-    yaml = pytest.importorskip("yaml")
-    wf = TELPERION.parent / ".github" / "workflows" / "telperion-lean-e2e.yml"
-    jobs = yaml.safe_load(wf.read_text())["jobs"]
-    calls = {}
-    for name, job in jobs.items():
-        for st in job.get("steps", []):
-            run = st.get("run", "") or ""
-            if "scripts/guard_anchors.py" in run:
-                calls.setdefault(name, []).append(" ".join(run.split()))
-    rvm = [c for c in calls["rvm-bridge-compiles"]]
-    assert rvm == ["python ../../../scripts/guard_anchors.py --island rvm_bridge --exclude-heavy "
-                   "axioms.out"]
-    assert calls["rvm-bridge-hodge1-heavy"] == [
-        "python ../../../scripts/guard_anchors.py --island rvm_bridge --only-heavy "
-        "hodge1_axioms.out"]
-    others = [c for n, cs in calls.items() if n not in ("rvm-bridge-compiles",
-                                                        "rvm-bridge-hodge1-heavy") for c in cs]
-    assert others and not any("heavy" in c for c in others)
-    import tomllib
-    heavy_islands = set()
-    for t in (TELPERION / "missions").glob("*/nodes/*.toml"):
-        d = tomllib.loads(t.read_text())
-        art = (d.get("proof") or {}).get("artifact")
-        if ga.is_heavy(d) and art:
-            heavy_islands.add(ga.island_of((t.parent.parent / art).resolve()))
-    for isl in heavy_islands - {"rvm_bridge"}:
-        assert not any(f"--island {isl}" in c for c in others), isl
-
-
-def test_hodge1_reg_modules_are_wired():
-    lean = TELPERION / "examples" / "rvm_bridge" / "lean"
-    order = (lean / "hodge1_heavy_modules.txt").read_text().split()
-    for dep, reg in [("Hodge1_Window45", "Hodge1_RegWindow45"),
-                     ("Hodge1_Window5493", "Hodge1_RegWindow5493"),
-                     ("Hodge1_RHReduction", "Hodge1_RegRH")]:
-        assert order.index(reg) > order.index(dep)
-        assert f'"{reg}"' in (lean / "lakefile.toml").read_text()
-    guard = ga.strip_lean_comments((lean / "Hodge1_Guard.lean").read_text())
-    for thm in ("weil_positivity_poleFree_window45", "weil_positivity_poleFree_window5493",
-                "rh_iff_poleFree_outside_window5493"):
-        assert f"#print axioms {thm}\n" in guard
-    assert guard.count("#print axioms") == 41

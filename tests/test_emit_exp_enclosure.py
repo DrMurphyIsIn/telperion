@@ -36,9 +36,6 @@ from telperion import (  # noqa: E402
 )
 from telperion.certify import emitter_for  # noqa: E402
 from telperion.lean_lint import lint_lean_text  # noqa: E402
-
-# BraggDefect.lean:68-69 -- the Arb enclosure of e^(1/10) that `hexp` carries.
-_BD = Path(__file__).resolve().parents[1] / "examples" / "zeta_zero_localization" / "lean" / "BraggDefect.lean"
 _EXP_LO = sp.Rational(442068367230259049924676660787771898883,
                       400000000000000000000000000000000000000)
 _EXP_HI = sp.Rational(11051709180756476248117094953514706601127,
@@ -109,15 +106,6 @@ def test_least_order_selection():
         fits = (Fraction(int(_EXP_LO.p), int(_EXP_LO.q)) <= lo_box
                 and hi_box <= Fraction(int(_EXP_HI.p), int(_EXP_HI.q)))
         assert not fits, f"order {n} already fits -- {cert.n} is not least"
-
-
-def test_reads_bragg_defect_literals_verbatim():
-    """The instance (i) bracket is BraggDefect's expLo/expHi, read from the island source."""
-    src = _BD.read_text(encoding="utf-8")
-    assert f"noncomputable def expLo : ℝ := ({_EXP_LO.p} / {_EXP_LO.q} : ℝ)" in src
-    assert f"noncomputable def expHi : ℝ := ({_EXP_HI.p} / {_EXP_HI.q} : ℝ)" in src
-    cert = exp_enclosure_certificate(x="1/10", lo=_EXP_LO, hi=_EXP_HI)
-    assert cert.lo == _EXP_LO and cert.hi == _EXP_HI
 
 
 def test_deficit_mode_matches_bragg_defect_constants():

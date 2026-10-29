@@ -15,7 +15,6 @@ the built li_positivity island: `TELPERION_PM_KERNEL=1` (run under the machine's
 
 conjecture1_proved = False.
 """
-import os
 import sys
 from pathlib import Path
 
@@ -35,19 +34,7 @@ from telperion.emitter_sensitivity import (  # noqa: E402
     NEG_CONTROL_ADAPTER,
     REGISTRY,
 )
-from telperion.negative_control_harness import (  # noqa: E402
-    generic_negative_control,
-    registered_adapters,
-)
-from lean_env import lean_env_ready  # noqa: E402
-
-_LI = Path(__file__).resolve().parents[1] / "examples" / "li_positivity" / "lean"
-
-
-def _adapter():
-    ad = registered_adapters().get("PreorderingMultiplierEmitter")
-    assert ad is not None, "no adapter registered for PreorderingMultiplierEmitter"
-    return ad
+from _helpers.negctrl_preordering_multiplier import _adapter  # noqa: E402
 
 
 def _layer_one(cert, **kw):
@@ -131,16 +118,3 @@ def test_false_twin_states_the_false_theorem_verbatim():
     # the load-bearing step the kernel cannot discharge
     assert "  have key : x - x ^ 2 - 2 * y ^ 2 = d - B := by" in txt
     assert txt.rstrip().endswith("rw [key]\n  positivity")
-
-
-_KERNEL = os.environ.get("TELPERION_PM_KERNEL") == "1" and lean_env_ready(_LI)
-
-
-@pytest.mark.skipif(not _KERNEL, reason="opt-in kernel check (TELPERION_PM_KERNEL=1 and a built "
-                                        "li_positivity island)")
-def test_generic_negative_control_holds_on_the_li_island():
-    """The two-sided kernel control: forged FALSE rejected AND the TRUE twin compiles clean."""
-    res = generic_negative_control(_adapter(), env_dir=str(_LI))
-    assert res.kernel_rejects is True, res.detail
-    assert res.true_compiles is True, res.detail
-    assert res.okay is True, res.detail

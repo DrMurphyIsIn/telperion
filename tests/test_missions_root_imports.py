@@ -11,9 +11,7 @@ import line, so fifteen registered statements (eleven rh, four mirrormere, most 
   * `regen_diff` reports a statement the root does not import (staleness of the
     import list, not just of the file body);
   * `verify_campaign` fails on an un-imported statement, on a statement without the
-    standard import header, and on a root import with no file behind it;
-  * the four live campaigns pass (see test_missions_campaigns.py, which runs the
-    whole battery against them).
+    standard import header, and on a root import with no file behind it.
 """
 from __future__ import annotations
 
@@ -43,9 +41,6 @@ from telperion.missions.statements import (  # noqa: E402
 from telperion.missions.verify import verify_campaign  # noqa: E402
 
 from test_missions_cli import make_demo_root  # noqa: E402
-
-MISSIONS = Path(__file__).resolve().parents[1] / "missions"
-LIVE_CAMPAIGNS = sorted(p.name for p in MISSIONS.iterdir() if (p / "mission.toml").exists())
 
 
 def _manifest() -> MissionManifest:
@@ -295,15 +290,3 @@ def test_regenerate_statement_with_prepended_imports_changes_hash(tmp_path):
     assert regen_diff(root, node, _manifest()) == ""
     text = statement_path(root, node).read_text().split("\n")
     assert text[1:3] == ["import Mathlib", "import Statements.DemoDefs"]
-# ---------------------------------------------------------------------------
-# the live campaigns: every registered statement is in its root's import list
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("campaign", LIVE_CAMPAIGNS)
-def test_live_campaign_root_imports_every_statement(campaign):
-    root = MISSIONS / campaign
-    camp = load_campaign(root)
-    assert missing_root_imports(root, camp.nodes.values()) == []
-    bad = {sl: import_header_error(root, n) for sl, n in camp.nodes.items()}
-    assert not {k: v for k, v in bad.items() if v}
-    assert root_is_sorted(root), "re-sort lean/Statements.lean (sort_root_imports); never union-merge it"

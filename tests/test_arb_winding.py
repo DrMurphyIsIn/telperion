@@ -4,11 +4,9 @@ Regression tests for the independent AI audit of 2026-10-14: the old node-sampli
 count (now arb_dh.winding_number_sampled_heuristic) can return a WRONG integer; the segment method must not.
 conjecture1_proved = False.
 """
-import json
 import random
 import warnings
 from fractions import Fraction as F
-from pathlib import Path
 
 import pytest
 
@@ -22,8 +20,6 @@ from telperion.arb_winding import (  # noqa: E402
 )
 
 _needs_ctypes_dh = pytest.mark.skipif(not arb_dh.DH_AVAILABLE, reason="libflint ctypes shim not found")
-
-_DH_ZEROS = Path(__file__).resolve().parents[1] / "examples/quasicrystal/zoo_data/dh_zeros.json"
 
 
 def _q(x):
@@ -214,27 +210,6 @@ def test_dh_fifth_offline_zero_certified():
 
 def test_dh_dominant_term_right_halfplane():
     assert arb_dh.dh_right_halfplane_nonvanishing(2)["certified"]
-
-
-def test_dh_inventory_records_rigorous_method():
-    d = json.loads(_DH_ZEROS.read_text())
-    assert d["method"] == METHOD
-    assert d["on_line_count"] == 204 and d["off_line_count"] == 5 and d["total_count"] == 209
-    assert all(z["winding"] == 1 for z in d["zeros"])
-    new = [z for z in d["zeros"] if z.get("source", "").startswith("off-line scan")]
-    assert len(new) == 1 and abs(new[0]["gamma_approx"] - 240.405) < 0.01   # the zero the seed list missed
-    za, ab = new[0]["zero_approx"], new[0]["audit_box"]
-    rho = (F(za["beta"]), F(za["gamma"]))
-    assert abs(rho[0] - F("0.8695305796")) < F(1, 10**9) and abs(rho[1] - F("240.4046723514")) < F(1, 10**9)
-    for b in (new[0], new[0]["localised_box"], ab):     # rho strictly inside every recorded box
-        assert F(b["re"][0]) < rho[0] < F(b["re"][1]) and F(b["im"][0]) < rho[1] < F(b["im"][1])
-    assert ab["winding"] == 1 and ab["re"] == ["35610821/40960000", "1782031077/2048000000"]
-    assert new[0]["beta"] == "0.8695305796" and new[0]["gamma"] == "240.4046723514"
-    assert "float" in new[0]["beta_gamma_kind"] and "not certified" in new[0]["beta_gamma_kind"].lower()
-    c = d["completeness"]
-    assert c["total_winding"] == 214 == d["on_line_count"] + 2 * d["off_line_count"]
-    assert c["complete"] and c["low_box"]["winding"] == 1
-    assert d["off_line_scan"]["total"] == d["off_line_count"]
 
 
 def test_dh_completeness_to_300():

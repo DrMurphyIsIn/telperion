@@ -346,18 +346,3 @@ def test_resolve_provenance_uses_env(monkeypatch, tmp_path):
     p = L.resolve_provenance("rh-team:memo/S.md 3.2")
     assert p == tmp_path / "memo/S.md"
     assert L.resolve_provenance("independent review") is None
-
-
-def test_repo_provenance_paths_exist():
-    """Every repo-relative provenance path (telperion/...) points at a committed file; rh-team / e9-research paths
-    are checked only when that checkout is present."""
-    for e in L.REGISTRY.values():
-        for v in e.provenance.values():
-            for part in v.split(";"):
-                p = L.resolve_provenance(part.strip())
-                if p is None:
-                    continue
-                prefix = part.strip().split(":", 1)[0]
-                root = L.resolve_provenance(prefix + ":.") if prefix in ("rh-team", "e9-research") else None
-                if part.strip().startswith("telperion/") or (root is not None and root.is_dir()):
-                    assert p.exists(), (e.name, part)

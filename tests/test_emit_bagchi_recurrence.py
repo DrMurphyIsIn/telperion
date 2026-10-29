@@ -103,16 +103,3 @@ def test_emitter_is_classified():
     from telperion.emitter_sensitivity import REGISTRY, unclassified_emitters
     assert "BagchiRecurrenceEmitter" in REGISTRY
     assert "BagchiRecurrenceEmitter" not in set(unclassified_emitters())
-
-
-def test_generated_example_builds():
-    pytest.importorskip("flint")
-    import importlib.util as _u
-    gen_path = (Path(__file__).resolve().parents[1]
-                / "examples" / "bagchi_recurrence" / "generate.py")
-    spec = _u.spec_from_file_location("bagchi_recurrence_generate", gen_path)
-    mod = _u.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    text = mod.build()
-    assert text.count("theorem bagchi_recurrence_refutes") == 1
-    assert text.count("theorem bagchi_tau") >= 1
