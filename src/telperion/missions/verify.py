@@ -30,7 +30,7 @@ from .coverage import (
     ci_covered_lean_files,
     islands_with_lean,
 )
-from .process import freeze_grant_problem, freeze_problems
+from .process import deviations_grant_problem, freeze_grant_problem, freeze_problems
 from .provenance import (
     CHECKS_CUTOFF,
     ProvenanceError,
@@ -605,6 +605,14 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
         fz = freeze_grant_problem(campaign.root, node)
         if fz:
             raise GateError(f"Node {slug!r}: {fz}")
+
+    # Step 5 Task 3: a post-cutoff node may not be granted `proved` until the campaign has
+    # a valid DEVIATIONS.md ledger (spec 7.3) -- same post-cutoff predicate and the same
+    # "proved only" scoping as the freeze check just above.
+    if new_status == "proved":
+        dv = deviations_grant_problem(campaign.root, node)
+        if dv:
+            raise GateError(f"Node {slug!r}: {dv}")
 
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":

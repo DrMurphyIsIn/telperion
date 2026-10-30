@@ -19,9 +19,9 @@ from telperion.missions.schema import (  # noqa: E402
 from telperion.missions.statements import statement_body, write_statement  # noqa: E402
 from telperion.missions.verify import GateError, grant_status  # noqa: E402
 from telperion.missions.process import (  # noqa: E402
-    _dump_freeze, _load_freeze, crosscheck_axioms, freeze, freeze_grant_problem,
-    freeze_history_problems, freeze_path, freeze_problems, parse_print_axioms,
-    render_audit_file, unfreeze,
+    DEVIATIONS_TEMPLATE, _dump_freeze, _load_freeze, crosscheck_axioms, deviations_grant_problem,
+    deviations_path, freeze, freeze_grant_problem, freeze_history_problems, freeze_path,
+    freeze_problems, parse_deviations, parse_print_axioms, render_audit_file, unfreeze,
 )
 from telperion.cli import main  # noqa: E402
 
@@ -571,6 +571,7 @@ def test_post_cutoff_grant_passes_with_clean_committed_freeze(tmp_path):
     _git_init(root)
     freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
     _git_commit(root, "initial freeze")
+    deviations_path(root).write_text(DEVIATIONS_TEMPLATE)  # Step 5 Task 3's ledger gate
 
     node = load_node(root / "nodes" / "Demo_ck.toml")
     _with_checks(root, _rec(_art_sha(root, node)))
@@ -734,6 +735,7 @@ def _post_cutoff_frozen_grant_campaign(parent: Path, campaign: str = "campaign")
     _git_init(root)
     freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
     _git_commit(root, "initial freeze")
+    deviations_path(root).write_text(DEVIATIONS_TEMPLATE)  # Step 5 Task 3's ledger gate
     return root
 
 
@@ -1655,3 +1657,152 @@ def test_process_runs_git_only_through_the_sanitised_helper():
     visit(tree, False)
     assert offenders == []
     assert any(isinstance(n, ast.FunctionDef) and n.name == "_git" for n in tree.body)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 3: the deviation ledger (DEVIATIONS.md)
+# ---------------------------------------------------------------------------
+
+def test_none_spellings():
+    for ok in ("none", "None", "NONE."):
+        assert parse_deviations(f"<!-- header -->\n{ok}\n") == []
+    for bad in ("N/A", "n/a"):
+        with pytest.raises(ValueError, match="write `none`"):
+            parse_deviations(f"<!-- header -->\n{bad}\n")
+    with pytest.raises(ValueError, match="write `none`"):
+        parse_deviations("<!-- header -->\n")
+
+
+def test_entries_parse():
+    text = (
+        "<!-- header -->\n"
+        "\n"
+        "- 2026-10-28 | statement drops the finite-support hypothesis | implied by the "
+        "proof's own domain restriction\n"
+        "- 2026-10-29 | renamed the bound variable | matches the paper's notation\n"
+    )
+    assert parse_deviations(text) == [
+        {"date": "2026-10-28", "what": "statement drops the finite-support hypothesis",
+         "why": "implied by the proof's own domain restriction"},
+        {"date": "2026-10-29", "what": "renamed the bound variable",
+         "why": "matches the paper's notation"},
+    ]
+
+
+def test_bad_entry_line_number():
+    text = (
+        "<!-- header -->\n"
+        "- 2026-10-28 | ok | ok reason\n"
+        "- not-a-date | bad | bad\n"
+    )
+    with pytest.raises(ValueError, match="DEVIATIONS.md:3"):
+        parse_deviations(text)
+
+
+def test_invalid_calendar_date_raises():
+    with pytest.raises(ValueError, match="DEVIATIONS.md:2"):
+        parse_deviations("<!-- header -->\n- 2026-02-30 | bad date | reason\n")
+
+
+@pytest.mark.parametrize("entry", [
+    "- 2026-10-28 |  | reason\n",
+    "- 2026-10-28 | what |  \n",
+])
+def test_empty_what_or_why_raises(entry):
+    with pytest.raises(ValueError, match="DEVIATIONS.md:2"):
+        parse_deviations("<!-- header -->\n" + entry)
+
+
+def test_unterminated_header_comment_raises():
+    with pytest.raises(ValueError, match="DEVIATIONS.md:1"):
+        parse_deviations("<!-- never closed\nnone\n")
+
+
+def test_template_parses_as_none():
+    assert parse_deviations(DEVIATIONS_TEMPLATE) == []
+
+
+def test_post_cutoff_grant_requires_ledger(tmp_path):
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node)))
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+
+    with pytest.raises(GateError, match="DEVIATIONS.md"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+    assert "DEVIATIONS.md" in deviations_grant_problem(root, node)
+
+    deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
+
+    granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                           session="gate-session")
+    assert granted.status == "proved"
+
+
+def test_deviations_symlink_refused_as_clean_problem(tmp_path):
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node)))
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+    deviations_path(root).symlink_to("mission.toml")
+
+    assert "symlink" in deviations_grant_problem(root, node)
+    with pytest.raises(GateError, match="symlink"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_cli_grant_non_utf8_deviations_is_clean_error(tmp_path, capsys):
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    mroot = tmp_path / "missions"
+    root = _grant_campaign(mroot, created="2026-10-29", campaign="demo")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node)))
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+    deviations_path(root).write_bytes(b"\xff\xfe\xfd")
+
+    rc = main(["mission", "--missions-root", str(mroot), "grant", "Demo_ck",
+              "--campaign", "demo", "--identity", "gate@test", "--session", "gate-session"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "DEVIATIONS.md" in out and "Traceback" not in out
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_cli_freeze_writes_deviations_template_when_missing(tmp_path):
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo")
+
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo",
+              "--identity", "alice@example.com", "--session", "s1"])
+    assert rc == 0
+    dpath = deviations_path(mroot / "demo")
+    assert dpath.exists()
+    assert parse_deviations(dpath.read_text()) == []
+
+
+def test_cli_freeze_does_not_overwrite_existing_deviations(tmp_path):
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo")
+    dpath = deviations_path(mroot / "demo")
+    dpath.parent.mkdir(parents=True, exist_ok=True)
+    dpath.write_text("- 2026-10-01 | custom | already written\n")
+
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo",
+              "--identity", "alice@example.com", "--session", "s1"])
+    assert rc == 0
+    assert "custom" in dpath.read_text()

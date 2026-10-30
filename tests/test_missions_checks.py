@@ -22,7 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion.cli import main  # noqa: E402
 from telperion.closure_audit import AuditResult, TargetInfo  # noqa: E402
-from telperion.missions.process import freeze, freeze_path  # noqa: E402
+from telperion.missions.process import (  # noqa: E402
+    DEVIATIONS_TEMPLATE, deviations_path, freeze, freeze_path,
+)
 from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
     ChecksRecord, MissionManifest, Node, Proof, Readback, SchemaError,
@@ -238,6 +240,11 @@ def _grant(root: Path) -> Node:
              "test fixture: initial freeze"],
             check=True, capture_output=True, text=True,
         )
+    # Step 5 Task 3: a post-cutoff grant also needs a DEVIATIONS.md ledger
+    # (deviations_grant_problem); write the "none" template here, same as freezing above,
+    # unless a test already put one in place.
+    if not deviations_path(root).exists():
+        deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
     return grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
                         session="gate-session")
 

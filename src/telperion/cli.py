@@ -1499,7 +1499,7 @@ def cmd_mission_grant(args) -> int:
 def cmd_mission_freeze(args) -> int:
     from datetime import date as _date
 
-    from .missions.process import freeze
+    from .missions.process import freeze, write_deviations_template_if_missing
     from .missions.provenance import ProvenanceError, git_identity, session_id
     from .missions.schema import SchemaError
 
@@ -1522,6 +1522,13 @@ def cmd_mission_freeze(args) -> int:
     print(f"commit {args.campaign}/FREEZE.toml now: an uncommitted freeze has no git "
           "history to verify version bumps and unfreeze entries against, and "
           "`mission verify` reports that as a problem once this campaign is post-cutoff.")
+
+    # Step 5 Task 3: a freshly frozen campaign otherwise has no DEVIATIONS.md at all, and
+    # every post-cutoff grant afterwards would be refused on "no DEVIATIONS.md" until
+    # someone writes one by hand.
+    if write_deviations_template_if_missing(camp_root):
+        print(f"{args.campaign}/DEVIATIONS.md: wrote the template (no deviations recorded "
+              "yet; edit it, or leave it as `none`).")
     return 0
 
 

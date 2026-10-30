@@ -88,6 +88,7 @@ use of `provenance` below is therefore a lazy, in-function import.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import os
 import re
@@ -1345,3 +1346,239 @@ def crosscheck_axioms(print_axioms: Dict[str, Set[str]],
             parts.append(f"the closure audit only has {only_closure}")
         problems.append(f"{name!r}: axiom sets differ ({'; '.join(parts)}).")
     return problems
+
+
+# ---------------------------------------------------------------------------
+# The deviation ledger (step 5 Task 3): DEVIATIONS.md
+#
+# Spec 7.3: DEVIATIONS.md records every departure of a node's formal statement from its
+# informal source, each with a reason and a date. A grant requires the ledger to be
+# present and read back (`deviations_grant_problem`, called from `verify.grant_status`
+# next to `freeze_grant_problem`, scoped by the same post-cutoff predicate,
+# `provenance.checks_required`). An empty ledger must say so explicitly -- `none` -- rather
+# than being silently absent or carrying a non-answer like `N/A`.
+# ---------------------------------------------------------------------------
+
+#: Name of the campaign-level deviation ledger, at the campaign root (next to `mission.toml`).
+DEVIATIONS_FILENAME = "DEVIATIONS.md"
+
+#: Upper bound on DEVIATIONS.md, the same rationale as `FREEZE_MAX_BYTES`: a real ledger is
+#: a handful of one-line entries, and refusing anything this large before decoding keeps a
+#: hostile file from costing more than a stat.
+DEVIATIONS_MAX_BYTES = 1 << 20
+
+#: `mission freeze` writes this when `<root>/DEVIATIONS.md` does not exist yet
+#: (`write_deviations_template_if_missing`): a header comment explaining the format, and a
+#: body of exactly `none` -- itself a valid ledger (`test_template_parses_as_none`), so a
+#: freshly frozen campaign with no deviations recorded yet can still be granted.
+DEVIATIONS_TEMPLATE = (
+    "<!-- DEVIATIONS.md records every departure of a node's formal statement from its\n"
+    "     informal source (spec 7.3), each with a reason and a date. Below, either:\n"
+    "       - the single word `none`, if there are no deviations; or\n"
+    "       - one or more lines `- YYYY-MM-DD | what departs | why`.\n"
+    "     A grant requires this file to be present and read back; write `none` rather\n"
+    "     than deleting it or leaving it empty. -->\n"
+    "none\n"
+)
+
+
+def deviations_path(root: Path) -> Path:
+    """`<root>/DEVIATIONS.md`, the campaign-level deviation ledger."""
+    return Path(root) / DEVIATIONS_FILENAME
+
+
+#: A line that is nothing but `none`, case-insensitively, with an optional trailing `.`
+#: (`test_none_spellings`: `none`, `None`, `NONE.` are all the same answer).
+_DEVIATIONS_NONE_RE = re.compile(r"^none\.?$", re.IGNORECASE)
+
+#: `N/A` is explicitly NOT an accepted spelling of "no deviations" -- it reads as "this
+#: question does not apply", not as "I checked and there are none" -- so it gets a
+#: dedicated hint rather than falling into the generic "malformed line" message.
+_DEVIATIONS_NA_RE = re.compile(r"^n/a\.?$", re.IGNORECASE)
+
+#: One dated entry: `- YYYY-MM-DD | what | why`. `what` is matched non-greedily so the
+#: first ` | ` is the one that ends it even if `why` itself contains ` | `; `why` is
+#: matched greedily to end-of-line so it may contain one freely.
+_DEVIATIONS_ENTRY_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}) \| (.+?) \| (.+)$")
+
+#: The hint appended whenever a line reads as a non-answer rather than a real entry.
+_DEVIATIONS_NONE_HINT = "write `none` if there are no deviations to record."
+
+
+def _is_real_date(text: str) -> bool:
+    try:
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _strip_deviations_header(lines: List[str]) -> List[Tuple[int, str]]:
+    """*lines* (1-indexed against the ORIGINAL text by the caller), with the header HTML
+    comment block -- the first run of lines from one starting with `<!--` through one
+    containing `-->` -- and every blank line removed; every remaining line keeps its
+    original 1-based line number, so a later error can point straight at it.
+
+    Raises `ValueError` if a `<!--` is ever opened and never closed: an unterminated
+    comment is malformed, not silently "the rest of the file is a comment" (the rule this
+    task's brief states explicitly)."""
+    body: List[Tuple[int, str]] = []
+    seen_comment = False
+    in_comment = False
+    comment_start = 0
+    for lineno, line in enumerate(lines, start=1):
+        if in_comment:
+            if "-->" in line:
+                in_comment = False
+            continue
+        if not line.strip():
+            continue
+        if not seen_comment and line.lstrip().startswith("<!--"):
+            seen_comment = True
+            comment_start = lineno
+            in_comment = "-->" not in line
+            continue
+        body.append((lineno, line))
+    if in_comment:
+        raise ValueError(
+            f"{DEVIATIONS_FILENAME}:{comment_start}: unterminated '<!--' comment (no "
+            "closing '-->' before end of file)."
+        )
+    return body
+
+
+def parse_deviations(text: str) -> List[dict]:
+    """*text* (`DEVIATIONS.md`'s content) parsed into a list of deviation entries, each
+    `{"date": ..., "what": ..., "why": ...}`, in file order; `[]` for a ledger that says
+    `none`. Raises `ValueError`, naming the offending line number, on anything else.
+
+    After `_strip_deviations_header` removes the header comment and blank lines, what is
+    left must be either exactly one line reading `none` (case-insensitively, a trailing
+    `.` allowed), or one or more lines matching `_DEVIATIONS_ENTRY_RE`, each with a real
+    calendar date and a non-empty `what` and `why` once stripped. Everything else raises;
+    a bare `N/A` or a wholly empty body (no content lines at all) gets a dedicated hint to
+    write `none` instead, rather than the generic malformed-line message."""
+    body = _strip_deviations_header(text.splitlines())
+
+    if not body:
+        raise ValueError(f"{DEVIATIONS_FILENAME}: body is empty; {_DEVIATIONS_NONE_HINT}")
+
+    if len(body) == 1 and _DEVIATIONS_NONE_RE.match(body[0][1].strip()):
+        return []
+
+    entries: List[dict] = []
+    for lineno, line in body:
+        m = _DEVIATIONS_ENTRY_RE.match(line)
+        if m:
+            raw_date, what, why = m.groups()
+            if not _is_real_date(raw_date):
+                raise ValueError(
+                    f"{DEVIATIONS_FILENAME}:{lineno}: {raw_date!r} is not a real calendar "
+                    "date."
+                )
+            what, why = what.strip(), why.strip()
+            if not what or not why:
+                raise ValueError(
+                    f"{DEVIATIONS_FILENAME}:{lineno}: empty 'what' or 'why' in {line!r}."
+                )
+            entries.append({"date": raw_date, "what": what, "why": why})
+            continue
+        if _DEVIATIONS_NA_RE.match(line.strip()):
+            raise ValueError(
+                f"{DEVIATIONS_FILENAME}:{lineno}: {line.strip()!r} is not an answer; "
+                f"{_DEVIATIONS_NONE_HINT}"
+            )
+        raise ValueError(
+            f"{DEVIATIONS_FILENAME}:{lineno}: malformed line (expected `none` or "
+            f"`- YYYY-MM-DD | what | why`): {line!r}"
+        )
+    return entries
+
+
+def _load_deviations_safe(root: Path) -> Tuple[Optional[str], Optional[str]]:
+    """The guarded reader of the working-tree DEVIATIONS.md, the same shape and the same
+    refusals as `_load_freeze_safe` (Controller Ruling 8), minus the TOML/shape parsing --
+    this module only ever hands the raw text to `parse_deviations`. Returns `(text,
+    None)`; `(None, None)` if the campaign has no ledger yet; or `(None, problem)` when the
+    path exists but cannot be trusted: a symlink (refused before anything is read through
+    it -- the same injection this guards against for FREEZE.toml), anything else that is
+    not a regular file, a file over `DEVIATIONS_MAX_BYTES`, or content that is not valid
+    UTF-8. Never raises."""
+    path = deviations_path(root)
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"{DEVIATIONS_FILENAME} could not be read ({exc.strerror or exc})."
+    if stat.S_ISLNK(st.st_mode):
+        return None, (f"{DEVIATIONS_FILENAME} is a symlink in the working tree; refusing "
+                      "to trust it.")
+    if not stat.S_ISREG(st.st_mode):
+        return None, (f"{DEVIATIONS_FILENAME} in the working tree is not a regular file "
+                      "(a directory, e.g. a submodule checkout, or a special file); "
+                      "refusing to trust it.")
+    if st.st_size > DEVIATIONS_MAX_BYTES:
+        return None, (f"{DEVIATIONS_FILENAME} is larger than {DEVIATIONS_MAX_BYTES} bytes; "
+                      "refusing to trust it.")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None, (f"{DEVIATIONS_FILENAME} changed while being read; refusing "
+                              "to trust it.")
+            data = fh.read(DEVIATIONS_MAX_BYTES + 1)
+    except OSError as exc:
+        return None, f"{DEVIATIONS_FILENAME} could not be read ({exc.strerror or exc})."
+    if len(data) > DEVIATIONS_MAX_BYTES:
+        return None, (f"{DEVIATIONS_FILENAME} is larger than {DEVIATIONS_MAX_BYTES} bytes; "
+                      "refusing to trust it.")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, f"{DEVIATIONS_FILENAME} is not valid UTF-8; refusing to trust it."
+    return text, None
+
+
+def write_deviations_template_if_missing(root: Path) -> bool:
+    """Writes `DEVIATIONS_TEMPLATE` to `<root>/DEVIATIONS.md` if nothing at all is there
+    yet (not even a dangling symlink), and returns whether it wrote. Called from `mission
+    freeze` (Task 3): without this, a freshly frozen campaign has no ledger at all, and
+    every post-cutoff grant afterwards would be refused on "no DEVIATIONS.md" until
+    someone writes one by hand. A file already there, valid or not, is left alone --
+    writing a template over a ledger someone actually filled in would silently discard it."""
+    root = Path(root)
+    path = deviations_path(root)
+    if path.exists() or path.is_symlink():
+        return False
+    atomic_write_text(path, DEVIATIONS_TEMPLATE)
+    return True
+
+
+def deviations_grant_problem(root: Path, node) -> str:
+    """"" unless *node* is post-cutoff (`provenance.checks_required`, the same predicate
+    `freeze_grant_problem` uses); else why the grant gate must refuse it: no
+    DEVIATIONS.md at the campaign root, the file cannot be trusted (`_load_deviations_safe`),
+    or its content does not parse (`parse_deviations`). Spec 7.3's "present and read back"
+    rule: a grant must not merely see the file exists, but actually read and validate it."""
+    from .provenance import checks_required
+
+    if not checks_required(node):
+        return ""
+    root = Path(root)
+    text, problem = _load_deviations_safe(root)
+    if problem:
+        return problem
+    if text is None:
+        return (
+            f"no {DEVIATIONS_FILENAME} at the campaign root; a post-cutoff node may not be "
+            "granted until the deviation ledger is recorded (write `none` if there are "
+            "none)."
+        )
+    try:
+        parse_deviations(text)
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
