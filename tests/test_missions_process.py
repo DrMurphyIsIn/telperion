@@ -14,13 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
-    MissionManifest, Node, load_node, save_manifest, save_node,
+    MissionManifest, Node, Proof, load_node, save_manifest, save_node,
 )
 from telperion.missions.statements import statement_body, write_statement  # noqa: E402
 from telperion.missions.verify import GateError, grant_status  # noqa: E402
 from telperion.missions.process import (  # noqa: E402
-    _dump_freeze, _load_freeze, freeze, freeze_grant_problem, freeze_history_problems,
-    freeze_path, freeze_problems, unfreeze,
+    _dump_freeze, _load_freeze, crosscheck_axioms, freeze, freeze_grant_problem,
+    freeze_history_problems, freeze_path, freeze_problems, parse_print_axioms,
+    render_audit_file, unfreeze,
 )
 from telperion.cli import main  # noqa: E402
 
@@ -1183,6 +1184,200 @@ def test_pre_cutoff_campaign_not_penalised_for_grafts(tmp_path):
     (root / ".git" / "info").mkdir(exist_ok=True)
     (root / ".git" / "info" / "grafts").write_text("")
     assert freeze_problems(root) == []
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 2: Audit.lean generation and its #print-axioms vs closure-audit cross-check
+# ---------------------------------------------------------------------------
+
+def _proved_node(root: Path, manifest: MissionManifest, name: str, *, stmt_suffix: str = "True"
+                 ) -> Node:
+    """A PROVED node with a statement and a matching artifact -- the same shape as
+    `test_missions_checks._grant_campaign`'s `Demo_ck`: the artifact text is the statement
+    text immediately followed by a proof body, so `guard_anchors.resolve_theorem` binds
+    `thm_<name>` to it cleanly."""
+    stmt_text = f"theorem thm_{name} : {stmt_suffix}"
+    node = Node(name=name, title=f"title of {name}", kind="lemma", status="proved",
+               depends_on=(), statement_module=f"Statements.{name}",
+               proof=Proof(artifact=f"proof/{name}.lean", artifact_kind="lean_module",
+                          via="direct"))
+    save_node(node, root / "nodes" / f"{name}.toml")
+    write_statement(root, node, stmt_text, manifest)
+    art = root / "proof" / f"{name}.lean"
+    art.parent.mkdir(parents=True, exist_ok=True)
+    art.write_text(f"{stmt_text} := trivial\n")
+    return node
+
+
+def _audit_campaign(root: Path) -> MissionManifest:
+    """Two PROVED nodes (Node_A, Node_B) and one DRAFT node (Node_C, no proof/statement
+    matching needed) -- enough to check `render_audit_file` lists proved nodes only."""
+    manifest = MissionManifest(
+        name="Demo.goal", title="Demo Campaign", description="synthetic",
+        goal_node="Node_A", environment_toolchain="leanprover/lean4:v4.32.0",
+        environment_mathlib_rev="v4.32.0", sources=(),
+    )
+    (root / "nodes").mkdir(parents=True, exist_ok=True)
+    save_manifest(manifest, root / "mission.toml")
+    _proved_node(root, manifest, "Node_A")
+    _proved_node(root, manifest, "Node_B")
+    draft = Node(name="Node_C", title="still open", kind="lemma", status="draft",
+                depends_on=(), statement_module="Statements.Node_C")
+    save_node(draft, root / "nodes" / "Node_C.toml")
+    write_statement(root, draft, "theorem thm_Node_C : True", manifest)
+    return manifest
+
+
+def test_render_lists_proved_only(tmp_path):
+    root = tmp_path / "demo"
+    _audit_campaign(root)
+
+    text = render_audit_file(root)
+
+    # Generated-file header.
+    assert "GENERATED" in text.splitlines()[0] and "DO NOT EDIT" in text
+
+    # Both proved nodes' theorems are printed, sorted by slug (Node_A before Node_B).
+    idx_a = text.index("#print axioms thm_Node_A")
+    idx_b = text.index("#print axioms thm_Node_B")
+    assert idx_a < idx_b
+
+    # One import per distinct artifact module, de-duplicated and sorted; off-island
+    # fixtures resolve to the artifact's own file stem (Node_A.lean -> Node_A).
+    assert "import Node_A" in text
+    assert "import Node_B" in text
+
+    # The draft node's theorem is not printed at all.
+    assert "thm_Node_C" not in text
+
+
+def test_render_audit_file_sorted_and_deduplicated_imports(tmp_path):
+    root = tmp_path / "demo"
+    _audit_campaign(root)
+
+    text = render_audit_file(root)
+    imports = [ln for ln in text.splitlines() if ln.startswith("import ")]
+    assert imports == sorted(set(imports))
+
+
+def test_parse_single_line():
+    out = "'T' depends on axioms: [propext, Classical.choice, Quot.sound]\n"
+    assert parse_print_axioms(out) == {
+        "T": {"propext", "Classical.choice", "Quot.sound"},
+    }
+
+
+def test_wrapped_axioms():
+    out = (
+        "'T' depends on axioms: [propext,\n"
+        " Classical.choice,\n"
+        " Quot.sound]\n"
+    )
+    assert parse_print_axioms(out) == {
+        "T": {"propext", "Classical.choice", "Quot.sound"},
+    }
+
+
+def test_no_axioms():
+    out = "'T' does not depend on any axioms\n"
+    assert parse_print_axioms(out) == {"T": set()}
+
+
+def test_parse_print_axioms_dotted_and_guillemet_names():
+    out = (
+        "'Foo.bar' depends on axioms: [propext]\n"
+        "'Foo.«bar baz».qux' does not depend on any axioms\n"
+    )
+    parsed = parse_print_axioms(out)
+    assert parsed["Foo.bar"] == {"propext"}
+    assert parsed["Foo.«bar baz».qux"] == set()
+
+
+def test_parse_print_axioms_duplicate_conflicting_sets_raises():
+    out = (
+        "'T' depends on axioms: [propext]\n"
+        "'T' depends on axioms: [propext, sorryAx]\n"
+    )
+    with pytest.raises(ValueError, match="T"):
+        parse_print_axioms(out)
+
+
+def test_parse_print_axioms_duplicate_same_set_ok():
+    out = (
+        "'T' depends on axioms: [propext]\n"
+        "'T' depends on axioms: [propext]\n"
+    )
+    assert parse_print_axioms(out) == {"T": {"propext"}}
+
+
+def test_crosscheck_flags_stale_cache_case():
+    print_axioms = {"T": {"propext"}}
+    closure_axioms = {"T": ["propext", "sorryAx"]}
+
+    problems = crosscheck_axioms(print_axioms, closure_axioms)
+
+    assert len(problems) == 1
+    assert "T" in problems[0] and "sorryAx" in problems[0]
+
+
+def test_crosscheck_equal_ok():
+    print_axioms = {"T": {"propext", "Classical.choice"}}
+    closure_axioms = {"T": ["propext", "Classical.choice"]}
+
+    assert crosscheck_axioms(print_axioms, closure_axioms) == []
+
+
+def test_crosscheck_missing_from_one_side_is_a_problem():
+    only_print = crosscheck_axioms({"T": {"propext"}}, {})
+    assert len(only_print) == 1 and "T" in only_print[0]
+
+    only_closure = crosscheck_axioms({}, {"T": ["propext"]})
+    assert len(only_closure) == 1 and "T" in only_closure[0]
+
+
+# ---------------------------------------------------------------------------
+# CLI: `mission audit-file` / `mission audit-crosscheck`
+# ---------------------------------------------------------------------------
+
+def test_cli_audit_file_writes_lean_file(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    _audit_campaign(mroot / "demo")
+
+    rc = main(["mission", "--missions-root", str(mroot), "audit-file", "demo"])
+    assert rc == 0
+    out_path = mroot / "demo" / "lean" / "Audit.lean"
+    assert out_path.exists()
+    text = out_path.read_text()
+    assert "#print axioms thm_Node_A" in text
+    assert "#print axioms thm_Node_B" in text
+
+
+def test_cli_audit_crosscheck_ok_and_mismatch(tmp_path, capsys):
+    import json
+
+    print_axioms_out = tmp_path / "print_axioms.txt"
+    print_axioms_out.write_text("'T' depends on axioms: [propext]\n")
+    closure_json = tmp_path / "closure.json"
+    closure_json.write_text(json.dumps({
+        "verdict": "PASS", "ok": True,
+        "targets": [{"name": "T", "kind": "theorem", "statement": "", "axioms": ["propext"]}],
+    }))
+
+    rc = main(["mission", "audit-crosscheck",
+              "--print-axioms-out", str(print_axioms_out),
+              "--closure-json", str(closure_json)])
+    assert rc == 0
+
+    closure_json.write_text(json.dumps({
+        "verdict": "PASS", "ok": True,
+        "targets": [{"name": "T", "kind": "theorem", "statement": "",
+                    "axioms": ["propext", "sorryAx"]}],
+    }))
+    rc = main(["mission", "audit-crosscheck",
+              "--print-axioms-out", str(print_axioms_out),
+              "--closure-json", str(closure_json)])
+    assert rc == 1
+    assert "sorryAx" in capsys.readouterr().out
 
 
 def test_process_runs_git_only_through_the_sanitised_helper():

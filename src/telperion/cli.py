@@ -1550,6 +1550,68 @@ def cmd_mission_unfreeze(args) -> int:
     return 0
 
 
+def cmd_mission_audit_file(args) -> int:
+    from .missions.process import render_audit_file
+    from .missions.schema import SchemaError
+
+    camp_root = _missions_root(args) / args.campaign
+    if not camp_root.is_dir():
+        print(f"Campaign {args.campaign!r} not found at {camp_root}")
+        return 1
+
+    try:
+        text = render_audit_file(camp_root)
+    except (SchemaError, ValueError, OSError) as exc:
+        print(str(exc))
+        return 1
+
+    out_path = camp_root / "lean" / "Audit.lean"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text, encoding="utf-8")
+    print(f"{args.campaign}: wrote {out_path}")
+    return 0
+
+
+def cmd_mission_audit_crosscheck(args) -> int:
+    import json as _json
+
+    from .missions.process import crosscheck_axioms, parse_print_axioms
+
+    try:
+        output = args.print_axioms_out.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {args.print_axioms_out}: {exc}")
+        return 2
+    try:
+        print_axioms = parse_print_axioms(output)
+    except ValueError as exc:
+        print(f"cannot parse {args.print_axioms_out}'s #print axioms output: {exc}")
+        return 2
+
+    try:
+        closure = _json.loads(args.closure_json.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError) as exc:
+        print(f"cannot read {args.closure_json}: {exc}")
+        return 2
+    targets = closure.get("targets") if isinstance(closure, dict) else None
+    if not isinstance(targets, list):
+        print(f"{args.closure_json}: not `audit-closure --json` output (no \"targets\" list)")
+        return 2
+    closure_axioms = {
+        t["name"]: t.get("axioms", [])
+        for t in targets if isinstance(t, dict) and isinstance(t.get("name"), str)
+    }
+
+    problems = crosscheck_axioms(print_axioms, closure_axioms)
+    if problems:
+        for p in problems:
+            print(f"MISMATCH: {p}")
+        return 1
+    print(f"OK: {len(print_axioms)} theorem(s) agree between #print axioms and the closure "
+          "audit")
+    return 0
+
+
 def cmd_mission_provenance_report(args) -> int:
     from .missions.provenance import render_provenance_report
     from .missions.registry import load_campaign
@@ -3412,6 +3474,24 @@ def main(argv=None) -> int:
                    help="an INDEPENDENT identity (not --author) that read back the new "
                         "hashes before this was recorded; refused if it equals --author")
     p.set_defaults(mission_fn=cmd_mission_unfreeze)
+
+    # audit-file CAMPAIGN
+    p = msub.add_parser("audit-file",
+                        help="generate <root>/lean/Audit.lean: one `import` per proved "
+                             "node's artifact module, then one `#print axioms <theorem>` "
+                             "per proved node")
+    p.add_argument("campaign")
+    p.set_defaults(mission_fn=cmd_mission_audit_file)
+
+    # audit-crosscheck --print-axioms-out F --closure-json F
+    p = msub.add_parser("audit-crosscheck",
+                        help="cross-check `lake env lean Audit.lean`'s captured output "
+                             "against a closure audit's per-target axiom lists")
+    p.add_argument("--print-axioms-out", required=True, type=Path, dest="print_axioms_out",
+                   help="captured stdout of `lake env lean Audit.lean`")
+    p.add_argument("--closure-json", required=True, type=Path, dest="closure_json",
+                   help="the file `telperion audit-closure --json FILE` wrote")
+    p.set_defaults(mission_fn=cmd_mission_audit_crosscheck)
 
     # provenance-report [CAMPAIGN] [--strict]
     p = msub.add_parser("provenance-report",
