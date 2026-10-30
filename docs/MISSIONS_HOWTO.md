@@ -401,6 +401,11 @@ These are real, and you should know them before you rely on a `[checks]` record.
     artifact's OWN module (`--module` / `--import`), not on a module that merely imports it.
   - The owner accepted this gap for this merge (2026-10-30); porting the closure audit to a replay callback is step-5
     work. Run all three on the same build.
+- **The theorem tie is syntactic.** `checks-record` and the gate find the node's own theorem with the gate's syntactic
+  resolver (`guard_anchors.resolve_theorem`), so an honest artifact cannot pass a helper lemma's checks. An
+  adversarial artifact still has known ways to fool that resolver, all of which predate step 4: `s!`-interpolated
+  strings, quotes inside `«»` names, declaration text inside `«»`, `#exit`, and `(command| ...)` quotations. The sound
+  fix, tying the target's statement fingerprint to the node's statement file, is step-5 work.
 - **The node file can be hand-edited.** The cutoff keys on `created`, and nothing guards that field while a node is
   still unproved: a node back-dated to before 2026-10-28 before its first grant is granted without checks. Deleting
   `checks_required` from a `[grant]` together with back-dating `created` is the same class of hand edit, with the same

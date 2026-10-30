@@ -882,7 +882,8 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     - the sign-off is free text in the note, written by whoever runs `checks-record`; nothing
       checks that the reviewer is independent of the author. A later step could require a
       sign-off identity distinct from the `[author]`, as the read-back rule does;
-    - the closure audit is tied to the probe and fingerprint by the theorem NAME only:
+    - the closure audit is tied to the probe and fingerprint by the theorem name and the interim
+      axiom cross-check:
       `audit-closure` still IMPORTS the submission rather than replaying it, so its JSON carries
       no olean digest and an imported module could forge it. The interim cross-check (final
       review I3): the record carries the REPLAY's axiom list, which the probe and fingerprint
@@ -891,7 +892,12 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       the closure audit to a replay callback is step-5 work;
     - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
       declaration the grant gate matched) and of the Comparator record's theorem when there is
-      one (final review I1), so a helper lemma's checks never pass for the node;
+      one (final review I1). The resolver is the gate's SYNTACTIC one, so a non-adversarial
+      artifact cannot pass a helper lemma's checks; an adversarial artifact still has known
+      ways to fool the resolver, all of which predate step 4: `s!`-interpolated strings, quotes
+      inside `«»` names, declaration text inside `«»`, `#exit`, and `(command| ...)`
+      quotations. The sound fix, tying the target's statement fingerprint to the node's
+      statement file, is step 5;
     - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
       of the statement and of each forall-body, but a vacuous sub-proposition under any other
       conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
