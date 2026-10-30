@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion.cli import main  # noqa: E402
 from telperion.closure_audit import AuditResult, TargetInfo  # noqa: E402
+from telperion.missions.process import freeze, freeze_path  # noqa: E402
 from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
     ChecksRecord, MissionManifest, Node, Proof, Readback, SchemaError,
@@ -216,6 +217,12 @@ def _with_checks(root: Path, rec: ChecksRecord) -> None:
 
 
 def _grant(root: Path) -> Node:
+    # Step 5 Task 1: a post-cutoff node is granted only once the campaign is frozen
+    # (freeze_grant_problem). These fixtures predate the freeze gate, so grant once here,
+    # same as a real session would run `mission freeze` before `mission grant`; a campaign
+    # already frozen (e.g. a re-grant in the same test) is left alone.
+    if not freeze_path(root).exists():
+        freeze(root, identity="gate@test", session="gate-session", date="2026-10-29")
     return grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
                         session="gate-session")
 

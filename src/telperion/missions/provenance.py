@@ -34,6 +34,7 @@ from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from .process import CUTOFF as CHECKS_CUTOFF
 from .schema import Author, ComparatorRecord, Grant, Node, Readback, SchemaError, load_node, save_node
 from .statements import statement_path
 
@@ -839,7 +840,11 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
 
 #: Nodes created on or after this date are granted `proved` only with a passing `[checks]`
 #: record (spec 5.2 grant rule, step 4 Task 4). Earlier nodes are "pre-process".
-CHECKS_CUTOFF = "2026-10-28"
+#:
+#: Controller Ruling 1 (step 5 Task 1, 2026-10-30): `process.CUTOFF` is now the single
+#: source of truth for this date (imported at the top of this file as `CHECKS_CUTOFF`,
+#: kept under its old name so every existing caller, and the field name in [grant], is
+#: unchanged).
 
 
 def checks_required(node: Node) -> bool:

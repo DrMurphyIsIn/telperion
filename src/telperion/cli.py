@@ -1491,6 +1491,57 @@ def cmd_mission_grant(args) -> int:
     return 0
 
 
+def cmd_mission_freeze(args) -> int:
+    from datetime import date as _date
+
+    from .missions.process import freeze
+    from .missions.provenance import ProvenanceError, git_identity, session_id
+    from .missions.schema import SchemaError
+
+    camp_root = _missions_root(args) / args.campaign
+    if not camp_root.is_dir():
+        print(f"Campaign {args.campaign!r} not found at {camp_root}")
+        return 1
+
+    identity = (getattr(args, "identity", None) or "").strip() or git_identity(camp_root)
+    session = session_id(getattr(args, "session", None))
+    try:
+        doc = freeze(camp_root, identity=identity, session=session,
+                    date=_date.today().isoformat())
+    except (ProvenanceError, SchemaError, ValueError) as exc:
+        print(str(exc))
+        return 1
+
+    print(f"{args.campaign}: frozen {doc['frozen']} by {doc['identity']} "
+          f"(session {doc['session']}); {len(doc['statements'])} statement(s) recorded")
+    return 0
+
+
+def cmd_mission_unfreeze(args) -> int:
+    from datetime import date as _date
+
+    from .missions.process import unfreeze
+    from .missions.schema import SchemaError
+
+    camp_root = _missions_root(args) / args.campaign
+    if not camp_root.is_dir():
+        print(f"Campaign {args.campaign!r} not found at {camp_root}")
+        return 1
+
+    try:
+        doc = unfreeze(camp_root, author=args.author, reason=args.reason,
+                       readback_identity=args.readback_identity,
+                       date=_date.today().isoformat())
+    except (SchemaError, ValueError) as exc:
+        print(str(exc))
+        return 1
+
+    print(f"{args.campaign}: unfrozen to version {doc['version']} by {args.author} "
+          f"(read back by {args.readback_identity}); {len(doc['statements'])} statement(s) "
+          "re-recorded")
+    return 0
+
+
 def cmd_mission_provenance_report(args) -> int:
     from .missions.provenance import render_provenance_report
     from .missions.registry import load_campaign
@@ -3317,6 +3368,34 @@ def main(argv=None) -> int:
     p.add_argument("--identity", default=None,
                    help="granting identity (default: `git config user.email`); recorded in [grant]")
     p.set_defaults(mission_fn=cmd_mission_grant)
+
+    # freeze CAMPAIGN [--session S] [--identity I]
+    p = msub.add_parser("freeze",
+                        help="record a campaign-level statement freeze (FREEZE.toml); "
+                             "a post-cutoff node may not be granted until its campaign is "
+                             "frozen")
+    p.add_argument("campaign")
+    p.add_argument("--session", default=None,
+                   help="freezing session id (default: $CLAUDE_SESSION_ID); recorded in "
+                        "FREEZE.toml")
+    p.add_argument("--identity", default=None,
+                   help="freezing identity (default: `git config user.email`); recorded in "
+                        "FREEZE.toml")
+    p.set_defaults(mission_fn=cmd_mission_freeze)
+
+    # unfreeze CAMPAIGN --author A --reason R --readback-identity I
+    p = msub.add_parser("unfreeze",
+                        help="bump a campaign's freeze with a recorded, independently "
+                             "read-back reason, and re-hash every current statement")
+    p.add_argument("campaign")
+    p.add_argument("--author", required=True,
+                   help="who is making this change")
+    p.add_argument("--reason", required=True,
+                   help="why the freeze needs to move (e.g. which statement changed)")
+    p.add_argument("--readback-identity", required=True, dest="readback_identity",
+                   help="an INDEPENDENT identity (not --author) that read back the new "
+                        "hashes before this was recorded; refused if it equals --author")
+    p.set_defaults(mission_fn=cmd_mission_unfreeze)
 
     # provenance-report [CAMPAIGN] [--strict]
     p = msub.add_parser("provenance-report",

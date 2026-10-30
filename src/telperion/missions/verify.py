@@ -30,6 +30,7 @@ from .coverage import (
     ci_covered_lean_files,
     islands_with_lean,
 )
+from .process import freeze_grant_problem, freeze_problems
 from .provenance import (
     CHECKS_CUTOFF,
     ProvenanceError,
@@ -597,6 +598,14 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
                 f"Node {slug!r}: [checks] required (created {node.created or '(empty)'}, "
                 f"cutoff {CHECKS_CUTOFF}): {ck}")
 
+    # Step 5 Task 1: a post-cutoff node may not be granted `proved` until the campaign has
+    # a FREEZE.toml recording this node's statement. Scoped to `proved` like the checks and
+    # re-judge gates above -- a refutation does not rest on the frozen statement's hash.
+    if new_status == "proved":
+        fz = freeze_grant_problem(campaign.root, node)
+        if fz:
+            raise GateError(f"Node {slug!r}: {fz}")
+
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":
         from .registry import parse_dep
@@ -904,6 +913,11 @@ def verify_campaign(
                 f"Claim on non-open node {claim_slug!r} "
                 f"(status: {node.status!r})."
             )
+
+    # 4b. Campaign statement freeze (step 5 Task 1): drift, nodes added since the freeze,
+    # an incomplete unfreeze history, and self-read-back unfreezes. A missing FREEZE.toml is
+    # only reported when a PROVED post-cutoff node exists to require one.
+    errors.extend(freeze_problems(root))
 
     # 5. Attempts ledger (if it exists)
     ledger_path = root / "attempts.jsonl"
