@@ -91,52 +91,20 @@ def _repo_root(campaign_root: Path) -> Path:
     return repo_root(Path(campaign_root).resolve().parents[1])
 
 def _strip_lean_comments(text: str) -> str:
-    """Single-pass comment stripper in Lean lexing order.
+    """Single-pass comment stripper in Lean lexing order: `scripts/guard_anchors.strip_lean_comments`, the ONE shared
+    lexer (the final re-review found the copies here and there drifting on raw strings and char literals).
 
     Handles `--` line comments, NESTED `/- ... -/` block comments (Lean 4
     block comments nest — and `/--` doc comments open a block, so stripping
     line comments first would mutilate the opener and leave prose residue;
     that exact bug broke containment on the 2026-09-16 grant pre-flight),
-    and double-quoted string literals (comment markers inside strings are
-    inert). An unterminated block comment swallows the rest of the text,
-    matching Lean's own lexer.
+    and string, raw-string (`r#"..."#`) and char (`'"'`) literals (comment
+    markers inside them are inert, and a quote inside a char literal or a raw
+    string opens nothing). An unterminated block comment swallows the rest of
+    the text, matching Lean's own lexer.
     """
-    out = []
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if ch == "-" and text[i:i + 2] == "--":
-            while i < n and text[i] != "\n":
-                i += 1
-        elif ch == "/" and text[i:i + 2] == "/-":
-            depth = 1
-            i += 2
-            while i < n and depth:
-                if text[i:i + 2] == "/-":
-                    depth += 1
-                    i += 2
-                elif text[i:i + 2] == "-/":
-                    depth -= 1
-                    i += 2
-                else:
-                    i += 1
-        elif ch == '"':
-            out.append(ch)
-            i += 1
-            while i < n:
-                out.append(text[i])
-                if text[i] == "\\" and i + 1 < n:
-                    out.append(text[i + 1])
-                    i += 2
-                    continue
-                if text[i] == '"':
-                    i += 1
-                    break
-                i += 1
-        else:
-            out.append(ch)
-            i += 1
-    return "".join(out)
+    from .judge import _guard_anchors
+    return _guard_anchors().strip_lean_comments(text)
 
 
 def normalize_lean(text: str) -> str:
@@ -266,13 +234,15 @@ _PROOF_BODY_RE = re.compile(r"^\s*(:=|by\b)")
 
 
 def _strip_string_literals(text: str) -> str:
-    """Blank the contents of double-quoted literals.
+    """Blank the contents of string and raw-string literals (`scripts/guard_anchors.strip_string_literals`, the shared
+    lexer).
 
     `_strip_lean_comments` preserves them on purpose (comment markers inside a string are
     inert), but for CONTAINMENT they are attacker-controlled text: audit 2026-09-19 granted
     a node whose statement appeared only inside a `String` literal in the artifact.
     """
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    from .judge import _guard_anchors
+    return _guard_anchors().strip_string_literals(text)
 
 
 def statement_matches(artifact_text: str, node_statement: str) -> bool:

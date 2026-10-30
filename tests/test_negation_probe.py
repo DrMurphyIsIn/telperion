@@ -346,6 +346,19 @@ def test_c2_classify_not_a_theorem_and_no_antecedent():
     assert r.verdict == "PROBE_ONLY" and "nothing to witness" in r.detail
 
 
+def test_n1_witness_string_uses_only_lean_escapes():
+    from telperion.checks.negation_probe import _lean_string
+    assert _lean_string('a"b\\c\nd\te\rf') == '"a\\"b\\\\c\\nd\\te\\rf"'
+    assert _lean_string("\b\f\x01\x7f") == '"\\x08\\x0c\\x01\\x7f"'          # never JSON's \b or \f
+    assert _lean_string("⟨2, trivial⟩") == '"⟨2, trivial⟩"'
+
+
+def test_n2_unfold_fuel_exhausted_is_error():
+    assert "let some ty := TelperionProbe.unfoldHeads (← getEnv) 1000 info.type" in render_callback("Foo.t", None)
+    r = classify(["UNFOLD_EXHAUSTED"])
+    assert r.verdict == "ERROR" and "did not unfold within 1000 steps" in r.detail
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Lean tests: modules are compiled into their own dirs `<env>/.tp_mod_<hex>/` and replayed from there (an untrusted
 # path); the trusted manifest of the env is built once per process in a temp dir.
@@ -694,6 +707,7 @@ def TpVac : Prop := ∀ n : ℕ, n < 0 → n = 7
 theorem TpVac.foo : TpVac := fun n h => absurd h (Nat.not_lt_zero n)
 theorem TpVac.triv : True := trivial
 theorem TpVac.conj : 1 = 1 ∧ 2 = 2 := ⟨rfl, rfl⟩
+theorem TpVac.pad (m : ℕ) (h : m = m) : TpVac := fun n hn => absurd hn (Nat.not_lt_zero n)
 """
 
 
@@ -735,3 +749,12 @@ def test_lean_m1_kernel_rejected_witness_is_error(cases_module):          # MUST
     r = _probe(cases_module, "Controls.tru", w)
     assert r.verdict == "ERROR", r.detail
     print(f"M1 kernel-rejected witness: {r.verdict} -- {r.detail}")
+
+
+@lean
+def test_lean_n3_padded_def_wrapped_vacuous_is_never_witnessed(c2_module):   # MUST-FAIL control (re-review N3)
+    # without unfoldHeads the telescope would stop at `TpVac` after the satisfiable pad (m, h : m = m), and
+    # ⟨0, rfl, trivial⟩ would witness it; unfolded, the witness must also cover `n < 0`, so it does not check
+    r = _probe(c2_module, "TpVac.pad", "⟨0, rfl, trivial⟩")
+    assert r.verdict != "WITNESSED", r.detail
+    print(f"N3 padded def-wrapped: {r.verdict} -- {r.detail}")

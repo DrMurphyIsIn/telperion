@@ -43,8 +43,10 @@ Exit 0 iff every anchor is printed clean; 1 otherwise (each miss is an `::error:
 island with no proved nodes -- a typo'd island must not pass vacuously).
 
 Standalone on purpose: stdlib only (Python >= 3.11 for tomllib), so it runs in CI jobs that
-never install the telperion package. The Lean comment stripper and normalizer below mirror
-`telperion.missions.verify`; `tests/test_guard_anchors.py` pins them against the originals.
+never install the telperion package. The Lean lexer below (`lean_segments`, with `strip_lean_comments`,
+`strip_string_literals`, `normalize_lean` and `blank_lean_code` on top) is the ONE shared implementation:
+`telperion.missions.verify` and `telperion.checks.negation_probe` load this file and call it, and
+`tests/test_guard_anchors.py` pins the parity.
 
 conjecture1_proved = False.
 """
@@ -63,47 +65,76 @@ _SENTINEL = "DO NOT EDIT BY HAND"
 
 
 # ---------------------------------------------------------------------------
-# Lean text normalisation (mirrors telperion.missions.verify; parity-tested)
+# Lean text lexing and normalisation: the ONE shared implementation. telperion.missions.verify and
+# telperion.checks.negation_probe load and call these (they used to carry copies, which drifted).
 # ---------------------------------------------------------------------------
 
-def strip_lean_comments(text: str) -> str:
-    """Remove `--` and nested `/- -/` comments; keep string literals intact (Lean lex order)."""
-    out = []
+#: A char literal: `'x'`, `'\\n'`, `'\\x41'`, `'\\u{3b1}'` (Lean's escapes). Only where a char literal can start,
+#: i.e. not after an identifier character (`h'` is a name, not the start of a literal).
+_CHAR_LIT_RE = re.compile(r"'(?:\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\.|[^\\'\n])'")
+_RAW_OPEN_RE = re.compile(r'r(#*)"')
+
+
+def _ident_char(ch: str) -> bool:
+    return ch.isalnum() or ch in "_'!?.\u00bb"
+
+
+def lean_segments(text: str) -> List[Tuple[str, str]]:
+    """Split Lean source into (kind, text) segments in Lean's own lexing order, one left-to-right pass:
+    `comment` (`--` to the end of the line, or a NESTED `/- -/` block, doc comments included; an unterminated block
+    swallows the rest, as in Lean), `string` (`"..."` with backslash escapes; an unterminated one runs to the end),
+    `raw` (`r"..."`, `r#"..."#`, closed only by the same number of `#`), `char` (`'"'`, `'\\''`, ...), and `code`
+    (everything else). Comment markers inside strings, raw strings and char literals are inert, and a `"` inside a
+    char literal or a raw string does not open a string (the desync the final re-review demonstrated with
+    `r"\\" ++ "`). Concatenating every segment gives back `text`."""
+    segs: List[Tuple[str, str]] = []
+    code: List[str] = []
     i, n = 0, len(text)
+
+    def push(kind: str, j: int) -> int:
+        if code:
+            segs.append(("code", "".join(code)))
+            code.clear()
+        segs.append((kind, text[i:j]))
+        return j
     while i < n:
         ch = text[i]
-        if ch == "-" and text[i:i + 2] == "--":
-            while i < n and text[i] != "\n":
-                i += 1
-        elif ch == "/" and text[i:i + 2] == "/-":
-            depth = 1
-            i += 2
-            while i < n and depth:
-                if text[i:i + 2] == "/-":
-                    depth += 1
-                    i += 2
-                elif text[i:i + 2] == "-/":
-                    depth -= 1
-                    i += 2
+        prev = text[i - 1] if i else " "
+        if text.startswith("--", i):
+            j = text.find("\n", i)
+            i = push("comment", n if j < 0 else j)
+        elif text.startswith("/-", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/-", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("-/", j):
+                    depth, j = depth - 1, j + 2
                 else:
-                    i += 1
+                    j += 1
+            i = push("comment", j)
+        elif ch == "r" and not _ident_char(prev) and _RAW_OPEN_RE.match(text, i):
+            hashes = _RAW_OPEN_RE.match(text, i).group(1)
+            close = text.find('"' + hashes, i + 2 + len(hashes))
+            i = push("raw", n if close < 0 else close + 1 + len(hashes))
         elif ch == '"':
-            out.append(ch)
-            i += 1
-            while i < n:
-                out.append(text[i])
-                if text[i] == "\\" and i + 1 < n:
-                    out.append(text[i + 1])
-                    i += 2
-                    continue
-                if text[i] == '"':
-                    i += 1
-                    break
-                i += 1
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            i = push("string", min(n, j + 1))
+        elif ch == "'" and not _ident_char(prev) and _CHAR_LIT_RE.match(text, i):
+            i = push("char", _CHAR_LIT_RE.match(text, i).end())
         else:
-            out.append(ch)
+            code.append(ch)
             i += 1
-    return "".join(out)
+    if code:
+        segs.append(("code", "".join(code)))
+    return segs
+
+
+def strip_lean_comments(text: str) -> str:
+    """Remove `--` and nested `/- -/` comments; keep string, raw-string and char literals intact (Lean lex order)."""
+    return "".join(t for k, t in lean_segments(text) if k != "comment")
 
 
 def normalize_lean(text: str) -> str:
@@ -115,7 +146,20 @@ def normalize_lean(text: str) -> str:
 
 
 def strip_string_literals(text: str) -> str:
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    """Blank string and raw-string literals to `""` (char literals and comments are kept as they are). For
+    containment the contents are attacker-controlled text: a statement inside a string is not a declaration."""
+    return "".join('""' if k in ("string", "raw") else t for k, t in lean_segments(text))
+
+
+def blank_lean_code(text: str) -> str:
+    """Code only: comments dropped, string and raw-string literals replaced by `""` and char literals by `' '`, each
+    followed by the newlines it contained, so a line start in the result is a line start in the source (for
+    `^namespace` / `^theorem` scans)."""
+    out = []
+    for k, t in lean_segments(text):
+        nl = "\n" * t.count("\n")
+        out.append(t if k == "code" else ('""' if k in ("string", "raw") else "' '" if k == "char" else "") + nl)
+    return "".join(out)
 
 
 _PROOF_BODY_RE = re.compile(r"^\s*(:=|by\b)")

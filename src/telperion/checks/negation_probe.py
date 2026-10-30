@@ -154,8 +154,20 @@ def _lean_name_expr(name: str) -> str:
 
 
 def _lean_string(s: str) -> str:
-    """A Lean string literal for `s` (JSON escaping is a subset of Lean's string escapes)."""
-    return json.dumps(s, ensure_ascii=False)
+    """A Lean string literal for `s`, using only escapes Lean's parser accepts (`\\\\`, `\\"`, `\\n`, `\\t`, `\\r`,
+    `\\xHH`). JSON escaping is NOT a subset of Lean's: JSON writes U+0008 and U+000C as `\\b` and `\\f`, which Lean
+    rejects (`isQuotableCharDefault`, Parser/Basic.lean), so every other control character goes out as `\\xHH`."""
+    out = []
+    for ch in s:
+        if ch in '"\\':
+            out.append("\\" + ch)
+        elif ch in "\n\t\r":
+            out.append({"\n": "\\n", "\t": "\\t", "\r": "\\r"}[ch])
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\x{ord(ch):02x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
 
 
 # The callback's trusted helpers: the premise count (module docstring), plausible's result as a plain value, and a
@@ -183,19 +195,23 @@ def isLib (env : Environment) (n : Name) : Bool :=
   | none => false
 
 /-- The statement with every NON-library definition at its head, and at the head of every ∀-body, delta-expanded
-(at most `fuel` steps). A replayed definition has no module index, so it is never library and always unfolds. -/
-partial def unfoldHeads (env : Environment) (fuel : Nat) : Expr → Expr
-  | .forallE n t b bi => .forallE n t (unfoldHeads env fuel b) bi
+(at most `fuel` steps along any path). A replayed definition has no module index, so it is never library and always
+unfolds. `none` when the fuel runs out at a non-library definition head: the probe then refuses (fail closed) rather
+than stop the telescope early. -/
+partial def unfoldHeads (env : Environment) (fuel : Nat) : Expr → Option Expr
+  | .forallE n t b bi => do return .forallE n t (← unfoldHeads env fuel b) bi
   | .mdata _ e => unfoldHeads env fuel e
   | e =>
-    match fuel, e.getAppFn with
-    | fuel + 1, .const c us =>
+    match e.getAppFn with
+    | .const c us =>
       match env.find? c with
       | some (.defnInfo d) =>
-        if isLib env c then e
-        else unfoldHeads env fuel ((d.value.instantiateLevelParams d.levelParams us).beta e.getAppArgs)
-      | _ => e
-    | _, _ => e
+        if isLib env c then some e
+        else match fuel with
+          | 0 => none
+          | fuel + 1 => unfoldHeads env fuel ((d.value.instantiateLevelParams d.levelParams us).beta e.getAppArgs)
+      | _ => some e
+    | _ => some e
 
 def kind : ConstantInfo → String
   | .axiomInfo _ => "axiom" | .defnInfo _ => "def" | .thmInfo _ => "theorem" | .opaqueInfo _ => "opaque"
@@ -247,7 +263,8 @@ def render_callback(theorem: str, witness: str | None) -> str:
         f"  unless info matches .thmInfo _ do\n"
         f'    {line} s!"NOTTHEOREM {{TelperionProbe.kind info}}"\n'
         f"    return\n"
-        f"  let ty := TelperionProbe.unfoldHeads (← getEnv) 1000 info.type\n"
+        f"  let some ty := TelperionProbe.unfoldHeads (← getEnv) 1000 info.type\n"
+        f'    | {line} "UNFOLD_EXHAUSTED"\n'
         f"  let n := TelperionProbe.premises ty\n"
         f'  {line} s!"PREMISES {{n}}"\n'
         f'  TelperionProbe.budget "FALSE" "FAILED" do\n'
@@ -347,6 +364,9 @@ def classify(lines: list[str], witness: bool = False) -> ProbeResult:
     exactly one result line with a known status."""
     if "MISSING" in lines:
         return ProbeResult("ERROR", "the constant is not in the replayed module (unknown or private name)")
+    if "UNFOLD_EXHAUSTED" in lines:
+        return ProbeResult("ERROR", "the statement's non-library definitions did not unfold within 1000 steps; "
+                                    "refusing (an early stop could hide antecedents from the witness)")
     nothm = [ln for ln in lines if ln.startswith("NOTTHEOREM")]
     if nothm:
         return ProbeResult("ERROR", f"the target is a {nothm[0][len('NOTTHEOREM '):]}, not a theorem; probe the "
@@ -439,57 +459,6 @@ def run_probe(spec: ProbeSpec, project: Path | None = None, wrapper: list[str] |
     return classify_replay(r, spec)
 
 
-def _code_only(text: str) -> str:
-    """Lean source with comments and string/char literals blanked (newlines kept, so line starts stay line starts).
-    One left-to-right pass in Lean's lexing order: `--` and nested `/- -/` comments, `"..."` with escapes, raw strings
-    `r#*"..."#*`, and char literals `'x'` / `'\\x'` (so `'"'` does not open a string)."""
-    out, i, n = [], 0, len(text)
-
-    def blank(seg: str) -> str:
-        return "".join("\n" if ch == "\n" else " " for ch in seg)
-    while i < n:
-        ch = text[i]
-        prev = text[i - 1] if i else " "
-        ident_prev = prev.isalnum() or prev in "_'!?.»"
-        if text.startswith("--", i):
-            j = text.find("\n", i)
-            j = n if j < 0 else j
-            out.append(blank(text[i:j]))
-            i = j
-        elif text.startswith("/-", i):
-            depth, j = 1, i + 2
-            while j < n and depth:
-                if text.startswith("/-", j):
-                    depth, j = depth + 1, j + 2
-                elif text.startswith("-/", j):
-                    depth, j = depth - 1, j + 2
-                else:
-                    j += 1
-            out.append(blank(text[i:j]))
-            i = j
-        elif ch == "r" and not ident_prev and re.match(r'r#*"', text[i:]):
-            hashes = re.match(r"r(#*)", text[i:]).group(1)
-            start = i + 1 + len(hashes) + 1
-            end = text.find('"' + hashes, start)
-            j = n if end < 0 else end + 1 + len(hashes)
-            out.append('""' + blank(text[start:max(start, j - 1 - len(hashes))]))
-            i = j
-        elif ch == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            out.append('""' + blank(text[i + 1:j]))
-            i = j + 1
-        elif ch == "'" and not ident_prev and re.match(r"'(?:\\.|\\u\{[0-9a-fA-F]+\}|[^\\'])'", text[i:]):
-            m = re.match(r"'(?:\\.|\\u\{[0-9a-fA-F]+\}|[^\\'])'", text[i:])
-            out.append("' '")
-            i += m.end()
-        else:
-            out.append(ch)
-            i += 1
-    return "".join(out)
-
-
 def qualify(module_text: str, theorem: str) -> str:
     """`theorem` qualified by the namespace the file declares it in, when the file declares exactly one theorem/lemma
     of that (short) name; otherwise `theorem` unchanged. Only LOCATES the constant: the statement itself is always
@@ -500,7 +469,7 @@ def qualify(module_text: str, theorem: str) -> str:
 
     ga = judge._guard_anchors()
     name_components(theorem)
-    code = _code_only(module_text)
+    code = ga.blank_lean_code(module_text)       # the shared lexer: comments and string/char literals blanked
     pat = re.compile(r"(?<![\w.'])(?:theorem|lemma)\s+" + re.escape(theorem) + r"(?![\w.'])")
     names = {".".join([*ga._namespace_at(code, m.start()), theorem]) for m in pat.finditer(code)}
     out = names.pop() if len(names) == 1 else theorem
