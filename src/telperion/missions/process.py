@@ -1956,6 +1956,40 @@ def _walk_lean_files(root: Path) -> List[Path]:
     return sorted(found)
 
 
+def _walk_symlinked_dirs(root: Path) -> List[Path]:
+    """Every directory the walk meets that is ITSELF a symlink, ABSOLUTE paths, sorted
+    -- the directory analogue of a symlinked `.lean` FILE (fix round 1). `os.walk`'s
+    own `followlinks=False` already means `_walk_lean_files` never descends into one,
+    but it used to do so SILENTLY: a `.lean` file reachable only through a symlinked
+    directory (to a location inside the campaign, or -- Controller Ruling 15's repro --
+    entirely outside it) was never walked into and so never seen at all, by either the
+    auto-detection scan or this unconditional symlink check -- a `.lean`-level check
+    alone could not catch it, because the ported file hiding behind it is never even
+    offered to that check.
+
+    Excludes a symlinked directory NAMED in `_SKIP_DIR_NAMES` (`.git`, `.lake`,
+    `build`, `_build`) at the point it is found, and -- because the walk never
+    descends into a skip-listed name at all, symlinked or not -- anything nested
+    underneath one either: `.lake` in particular is routinely itself a symlink (a
+    shared build cache between campaigns), and a symlinked directory living inside
+    `.git/` or `.lake/` is neither interesting to this lint nor ever reached by it."""
+    root = Path(root)
+    found: List[Path] = []
+    for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
+        kept: List[str] = []
+        for name in dirnames:
+            if name in _SKIP_DIR_NAMES:
+                continue  # never descended into, never reported (same as the file walk)
+            full = Path(dirpath) / name
+            if full.is_symlink():
+                found.append(full)
+                continue  # never descended into (os.walk's own followlinks=False);
+                          # reported here instead of silently vanishing
+            kept.append(name)
+        dirnames[:] = kept
+    return sorted(found)
+
+
 def _safe_ported_relpath(root: Path, raw: str) -> Tuple[Optional[Path], Optional[str]]:
     """*raw* (one `PORTED.toml` `files` entry) as a `Path` relative to *root*, or
     `(None, reason)` if it is not safely INSIDE the campaign: not a non-empty string, an
@@ -2091,6 +2125,13 @@ def provenance_problems(root: Path) -> List[str]:
       harmless (the file genuinely cannot be read either way) and is left alone rather
       than suppressed, so the two passes never need to coordinate about which one
       "owns" reporting a given file;
+    - every directory the walk meets that is ITSELF a symlink, excluding one named in
+      `_SKIP_DIR_NAMES` (and anything nested under one) -- also UNCONDITIONAL (fix
+      round 2, Controller Ruling 15): the walk already never follows one
+      (`_walk_lean_files`'s `followlinks=False`), but it used to do so SILENTLY, which
+      reopened the exact bypass fix round 1 closed for files one level up -- a `.lean`
+      file reachable only through a symlinked directory is never walked into at all,
+      so it can never even reach the symlinked-FILE check above;
     - `<root>/PORTED.toml` itself unreadable, untrustworthy or malformed
       (`_load_ported_toml_safe`);
     - each PORTED.toml entry that is not a safe path inside *root* (absolute, `..`, or
@@ -2116,6 +2157,12 @@ def provenance_problems(root: Path) -> List[str]:
                 f"{lean_path.relative_to(root).as_posix()}: symlinked .lean file; "
                 "replace it with a regular file."
             )
+
+    for dir_path in _walk_symlinked_dirs(root):
+        problems.append(
+            f"{dir_path.relative_to(root).as_posix()}/: symlinked directory; the lint "
+            "does not follow it, replace it with a real directory."
+        )
 
     entries, toml_problem = _load_ported_toml_safe(root)
     if toml_problem:

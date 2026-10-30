@@ -2340,3 +2340,70 @@ def test_crlf_header_with_trailing_whitespace_accepted(tmp_path):
     )
     (root / "Foo.lean").write_bytes(content.encode("utf-8"))
     assert provenance_problems(root) == []
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 4, fix round 2 (Controller Ruling 15, review of commit 99fbf20).
+#
+# Fix round 1 closed the symlinked-FILE bypass, but the same evasion still works one
+# level up: `_walk_lean_files` never follows a symlinked DIRECTORY (`os.walk`'s own
+# `followlinks=False`), but it did so SILENTLY -- a `.lean` file reachable only through
+# one was simply never walked into at all, so it never even reached the symlinked-FILE
+# check fix round 1 added. `provenance_problems` now reports every symlinked directory
+# the walk meets too, excluding `.git/`, `.lake/`, build dirs (and anything nested
+# under one, since the walk never descends into those at all either way).
+# ---------------------------------------------------------------------------
+
+def test_symlinked_directory_outside_root_flagged(tmp_path):
+    """The lead's exact repro: a `.lean` file hidden behind a symlinked DIRECTORY
+    pointing OUTSIDE the campaign root, not declared in PORTED.toml. The directory
+    symlink itself must be flagged; the file behind it, never walked into, is not
+    (and cannot be) separately named."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path / "campaign"
+    root.mkdir()
+    outside = tmp_path / "out"
+    outside.mkdir()
+    (outside / "Vendor.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "theorem v : True := trivial\n"
+    )
+    (root / "vendor").symlink_to(outside, target_is_directory=True)
+
+    problems = provenance_problems(root)
+    hits = [p for p in problems if p.startswith("vendor/")]
+    assert len(hits) == 1
+    assert "symlinked directory" in hits[0]
+    assert not any("Vendor.lean" in p for p in problems)
+
+
+def test_symlinked_directory_inside_root_flagged(tmp_path):
+    """The same report applies to a directory symlink whose target stays INSIDE the
+    campaign root -- the walk still never follows it, so it is flagged the same way."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "real_dir").mkdir()
+    (root / "real_dir" / "Foo.lean").write_text("theorem foo : True := trivial\n")
+    (root / "alias_dir").symlink_to(root / "real_dir", target_is_directory=True)
+
+    problems = provenance_problems(root)
+    hits = [p for p in problems if p.startswith("alias_dir/")]
+    assert len(hits) == 1
+    assert "symlinked directory" in hits[0]
+
+
+def test_symlinked_directory_under_lake_not_reported(tmp_path):
+    """A symlinked directory nested under `.lake/` must stay silent -- the walk never
+    descends into `.lake/` at all, skip-listed or not, so it never even sees it."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / ".lake").mkdir()
+    outside = tmp_path / "cache"
+    outside.mkdir()
+    (root / ".lake" / "vendor").symlink_to(outside, target_is_directory=True)
+
+    problems = provenance_problems(root)
+    assert not any("vendor" in p for p in problems)
