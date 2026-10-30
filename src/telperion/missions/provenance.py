@@ -892,6 +892,12 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
       declaration the grant gate matched) and of the Comparator record's theorem when there is
       one (final review I1), so a helper lemma's checks never pass for the node;
+    - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
+      of the statement and of each forall-body, but a vacuous sub-proposition under any other
+      conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
+      e.g. `forall m, m = m -> id (forall n, n < 0 -> n = 7)`) is invisible to it, and a
+      satisfiable pad can still reach WITNESSED without a sign-off. Witnessing over a reducing
+      telescope is a step-5 decision;
     - hand-editing the node file is out of reach of this check: deleting `checks_required`
       from `[grant]`, like back-dating `created` before the first grant, removes the
       requirement. Both are the same documented limitation class (a CI diff check, step 5);

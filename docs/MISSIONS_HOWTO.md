@@ -120,7 +120,8 @@ verifier.
      once (the ∃-closure of the full ∀-telescope of the unfolded type, conclusion arrows included). If it elaborates,
      the KERNEL accepts it (checked before the result is printed) and it uses only the standard axioms:
      **WITNESSED**. A statement with no Prop-typed antecedent at all (`True`, a bare conjunction) has nothing to
-     witness, and gives PROBE_ONLY with a note instead.
+     witness, and gives PROBE_ONLY with a note instead. A vacuous part nested under any other conclusion head (`id`,
+     `∧`, `¬`, a local structure, ...) is NOT seen by the witness; see the limitations below.
    - The witness is TRUSTED input: it is elaborated with the full elaborator inside the check process, so a term like
      `by run_tac ...` can do arbitrary IO there and forge result lines. Write it yourself, and never paste one from a
      submission unread.
@@ -401,8 +402,16 @@ These are real, and you should know them before you rely on a `[checks]` record.
 - **A conclusion with NAMED ∀ binders reads as premises.** `theorem t : ∀ (m : ℕ) (h : m < 0), False` is probed as if
   `m` and `h` were hypotheses, so the false probe proves `False` from `h` and reports VACUOUS for what is really a
   true statement about the conclusion. That fails closed (VACUOUS blocks the grant), but it blocks a good node. The
-  workaround: write the conclusion with arrows (`∀ m : ℕ, m < 0 → False`), or restate the binders as hypotheses of the
-  theorem.
+  workaround: write the conclusion with arrows (`∀ m : ℕ, m < 0 → False`). The premise split then stops at the arrow,
+  so `m < 0` stays in the conclusion. (Restating the binders as hypotheses, `(m : ℕ) (h : m < 0) : False`, does NOT
+  help: they are then premises by construction, and the probe reads exactly the same thing. Use that form only for
+  binders that really are meant as hypotheses.)
+- **Vacuity nested under a closed head is not seen by the witness.** The probe unfolds only NON-library definitions,
+  and only at the head of the statement and of each ∀-body. Under any other conclusion head, the ∃-closure the
+  witness must prove stops: a library definition such as `id`, a local `structure`, `∧`, `↔`, `¬`, a beta-redex or a
+  `let`. So `∀ m : ℕ, m = m → id (∀ n : ℕ, n < 0 → n = 7)` is vacuously true, yet the witness `⟨0, rfl, trivial⟩`
+  satisfies the pad `m = m` and gives WITNESSED, without a sign-off. Read the conclusion of any WITNESSED statement
+  for a hidden vacuous part. Witnessing over a reducing telescope instead is a step-5 decision.
 
 ### In CI
 
