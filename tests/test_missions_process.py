@@ -371,6 +371,140 @@ def test_freeze_history_never_committed_post_cutoff_flagged(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# freeze_history_problems hardening (fix round 3, Controller Ruling 7)
+#
+# NEW-3 (rename sandwich): the walk used to look up every candidate SHA by TODAY's path
+# (`git show <sha>:FREEZE.toml`), silently skipping any commit where that lookup failed --
+# which is exactly what happens while the file sits at a different path. NEW-2 (shallow
+# clone): CI's typical default truncates history by construction, which the walk did not
+# detect at all. Both let an illegitimate edit hide; see the module docstring for NEW-1
+# (history rewrite), which is documented rather than fixed -- it is inherent to local git.
+# ---------------------------------------------------------------------------
+
+def test_freeze_history_rename_sandwich_detected(tmp_path):
+    """The reviewer's exact repro: c1 freezes (v1, H1); c2 renames FREEZE.toml away; c3,
+    still renamed, is a LEGITIMATE v1->v2 bump (H1->H2, a real [[unfreeze]] entry); c4,
+    still renamed, is an ILLEGITIMATE second edit with version left at 2 (H2->H3, no new
+    entry) -- the same shape as the original C1 tamper, laundered underneath c3's
+    legitimate bump; c5 renames the file back. Comparing only c1 (v1, H1) to c5 (v2, H3) --
+    what a lookup-by-today's-path walk sees -- makes this look like one clean bump. Walking
+    every commit and refusing to continue past the one where the path disappears (c2) is
+    what catches it."""
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+
+    doc1 = freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "c1: initial freeze (v1)")
+
+    subprocess.run(["git", "-C", str(root), "mv", "FREEZE.toml", "FREEZE2.toml"],
+                  check=True, capture_output=True, text=True)
+    _git_commit(root, "c2: rename FREEZE.toml away")
+
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "theorem thm_Node_A : 11 = 11", manifest)
+    h2 = hashlib.sha256(
+        statement_body(root, load_campaign(root).nodes["Node_A"]).encode("utf-8")
+    ).hexdigest()
+    doc2 = dict(doc1)
+    doc2["version"] = 2
+    doc2["statements"] = dict(doc1["statements"], Node_A=h2)
+    doc2["unfreeze"] = [{"version": 2, "date": "2026-10-29", "author": "alice@example.com",
+                         "reason": "legitimate revision", "readback_identity": "bob@example.com"}]
+    (root / "FREEZE2.toml").write_text(_dump_freeze(doc2))
+    _git_commit(root, "c3: legitimate v1 -> v2 bump while renamed")
+
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "theorem thm_Node_A : 22 = 22", manifest)
+    h3 = hashlib.sha256(
+        statement_body(root, load_campaign(root).nodes["Node_A"]).encode("utf-8")
+    ).hexdigest()
+    doc3 = dict(doc2)
+    doc3["statements"] = dict(doc2["statements"], Node_A=h3)
+    # version left at 2; no new [[unfreeze]] entry -- the illegitimate edit.
+    (root / "FREEZE2.toml").write_text(_dump_freeze(doc3))
+    _git_commit(root, "c4: illegitimate edit, version left at 2")
+
+    subprocess.run(["git", "-C", str(root), "mv", "FREEZE2.toml", "FREEZE.toml"],
+                  check=True, capture_output=True, text=True)
+    _git_commit(root, "c5: rename back")
+
+    problems = freeze_problems(root)
+    assert any("deleted or moved in history" in p for p in problems)
+
+
+def test_freeze_history_symlink_in_past_commit_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    doc1 = freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "c1: initial freeze")
+
+    freeze_path(root).unlink()
+    freeze_path(root).symlink_to("mission.toml")
+    _git_commit(root, "c2: FREEZE.toml recorded as a symlink")
+
+    # Restored to an ordinary file (same content) so the CURRENT working tree is NOT a
+    # symlink -- isolating the history walk's own mode check from the separately tested
+    # working-tree check below.
+    freeze_path(root).unlink()
+    freeze_path(root).write_text(_dump_freeze(doc1))
+    _git_commit(root, "c3: restored to an ordinary file")
+
+    problems = freeze_problems(root)
+    assert any("symlink" in p and "mode 120000" in p for p in problems)
+
+
+def test_freeze_history_symlink_in_working_tree_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")  # post-cutoff
+    freeze_path(root).unlink()
+    freeze_path(root).symlink_to("mission.toml")
+
+    problems = freeze_problems(root)
+    assert any("is a symlink in the working tree" in p for p in problems)
+
+
+def test_freeze_history_symlink_in_working_tree_flagged_even_pre_cutoff(tmp_path):
+    """Unlike every other freeze_history_problems check, a working-tree symlink is NOT
+    gated by cutoff: `_load_freeze` reads through it, so even the `frozen` field every
+    other check relies on to decide whether it applies cannot be trusted here."""
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")  # pre-cutoff
+    freeze_path(root).unlink()
+    freeze_path(root).symlink_to("mission.toml")
+
+    problems = freeze_problems(root)
+    assert any("is a symlink in the working tree" in p for p in problems)
+
+
+def test_freeze_history_shallow_clone_flagged(tmp_path):
+    src = tmp_path / "source"
+    manifest = _campaign(src)
+    _git_init(src)
+    freeze(src, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(src, "c1: initial freeze")
+
+    write_statement(src, load_campaign(src).nodes["Node_A"],
+                    "theorem thm_Node_A : 7 = 7", manifest)
+    unfreeze(src, author="alice@example.com", reason="revision",
+             readback_identity="bob@example.com", date="2026-10-29")
+    _git_commit(src, "c2: unfreeze to v2")
+
+    dest = tmp_path / "clone"
+    r = subprocess.run(
+        ["git", "clone", "--quiet", "--depth", "1", f"file://{src}", str(dest)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+
+    problems = freeze_problems(dest)
+    assert any("shallow clone" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
 # the grant gate
 # ---------------------------------------------------------------------------
 

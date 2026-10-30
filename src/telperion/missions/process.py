@@ -18,16 +18,38 @@ Controller Ruling 5 (fix round 1, 2026-10-30): the checks above compare the CURR
 `FREEZE.toml` against the CURRENT statement files and against itself -- none of them notice
 a statement edited and the recorded hash hand-rewritten to match, in the same commit, while
 `version` is left unchanged. `freeze_history_problems` closes that hole by walking
-`FREEZE.toml`'s git history (every commit that touched it, plus the working tree as the
-final state) and checking, between every consecutive pair of states: version never
-decreases; at an unchanged version, `[statements]` is identical except that new node keys
-may be added; on any removed or changed hash, version is exactly +1 with a matching
+`FREEZE.toml`'s git history and checking, between every consecutive DISTINCT state: version
+never decreases; at an unchanged version, `[statements]` is identical except that new node
+keys may be added; on any removed or changed hash, version is exactly +1 with a matching
 `[[unfreeze]]` entry for the new version; and every earlier `[[unfreeze]]` entry is
-byte-identical to what it was before (append-only). `freeze_problems` calls it. Outside a
-git repository, or for a `FREEZE.toml` that has never been committed, this can check
-nothing at all -- fail-closed: a POST-CUTOFF campaign (`FREEZE.toml`'s own `frozen` date
->= `CUTOFF`) is reported as a problem in either case; a pre-cutoff one, where freezing at
-all is optional, is not.
+byte-identical to what it was before (append-only). `freeze_problems` calls it.
+
+Controller Ruling 7 (fix round 3, 2026-10-30), hardening the walk itself after a re-review
+found three ways to defeat it: the walk no longer trusts `git log --follow` plus a lookup
+by TODAY's path (a file renamed away and back hid every commit in between -- NEW-3); it now
+walks EVERY commit on the first-parent chain from the file's first appearance to HEAD,
+confirms at each one (via `ls-tree`, not a full `show`, to stay fast) that the path still
+resolves to an ordinary file, and stops the moment it does not, rather than silently
+skipping a commit it cannot resolve at the expected path. It also refuses a SHALLOW clone
+(NEW-2 -- CI's typical default, which truncates history by construction and needs no
+adversarial action to reproduce the same blind spot) and a FREEZE.toml that is, or ever
+was, a symlink (its target can move independently of the history being walked). All of
+this fails closed ONLY for a post-cutoff campaign, the same as Ruling 5.
+
+What it still cannot see (NEW-1, documented rather than coded -- inherent to local git, not
+fixable by walking harder): a history REWRITE that replaces the whole committed history
+with one internally self-consistent fabrication (`git commit --amend` on the sole commit,
+or an equivalent rebase/force-push) looks identical to an honest history, because there is
+nothing else to compare it against. For a node that has already been GRANTED, this is not
+actually a hole: the grant records its own `statement_sha256` (`provenance.build_grant`)
+against the artifact the gate saw at grant time, independent of FREEZE.toml, so a later
+rewrite cannot make a granted node's statement look unchanged to `mission verify`. For an
+UNGRANTED node, an amended first freeze -- before anyone else has
+fetched it -- is genuinely indistinguishable from an honest one by anything running only
+against a local checkout. The intended anchor is organizational, not computational: a
+protected remote branch (no force-push) with `mission verify` run in CI against the FULL
+history of that branch (hence the shallow-clone refusal above), not against whatever a
+local, possibly-rewritten clone happens to contain.
 
 `CUTOFF` is the single source of truth for the post-process cutoff date (Controller Ruling
 1, 2026-10-30): `provenance.CHECKS_CUTOFF` is an alias of it, kept for back-compat. This
@@ -354,54 +376,160 @@ def _git_toplevel(root: Path) -> Optional[Path]:
     return Path(out.stdout.strip())
 
 
-def _freeze_commit_history(root: Path) -> List[Tuple[str, dict]]:
-    """`[(commit sha, parsed FREEZE.toml doc), ...]`, oldest first, for every commit that
-    touched FREEZE.toml (`git log --follow`); `[]` if it has never been committed (or git,
-    or the parse of some blob, fails -- treated the same as "no history" by the caller,
-    which fails closed on an empty result for a post-cutoff campaign)."""
+def _is_shallow_repo(root: Path) -> bool:
     try:
-        log = subprocess.run(
-            ["git", "-C", str(root), "log", "--format=%H", "--follow", "--", FREEZE_FILENAME],
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
+def _first_parent_chain(root: Path) -> List[str]:
+    """Every commit on HEAD's first-parent chain, oldest first (`git log --first-parent
+    --reverse`). First-parent, not every ancestor of every merge, so a merge commit does
+    not pull a side branch's unrelated history into the walk below."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "log", "--first-parent", "--reverse", "--format=%H"],
             capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return []
-    if log.returncode != 0:
+    if out.returncode != 0:
         return []
-    shas = [s for s in log.stdout.split() if s]
-    if not shas:
-        return []
-    shas.reverse()  # git log is newest-first; walk oldest to newest
+    return [s for s in out.stdout.split() if s]
 
-    toplevel = _git_toplevel(root)
-    if toplevel is None:
-        return []
+
+def _first_commit_with_path(root: Path, relpath: str) -> Optional[str]:
+    """The oldest first-parent commit at which *relpath* exists at all -- found via a
+    path-filtered log (cheap: this is only to locate where the exhaustive walk below
+    should START, never to decide which commits that walk visits; every commit from here
+    to HEAD is visited whether or not it touches *relpath*, specifically so a window where
+    the file sat at a different path is not silently skipped -- fix round 3, NEW-3)."""
     try:
-        relpath = freeze_path(root).resolve().relative_to(toplevel.resolve())
-    except ValueError:
-        return []
+        out = subprocess.run(
+            ["git", "-C", str(root), "log", "--first-parent", "--reverse",
+             "--format=%H", "--", relpath],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    shas = [s for s in out.stdout.split() if s]
+    return shas[0] if shas else None
 
+
+def _ls_tree_entry(root: Path, sha: str, relpath: str) -> Optional[Tuple[str, str]]:
+    """`(mode, blob)` for *relpath* as recorded AT *sha* -- not at today's path, at this
+    commit's own tree -- or `None` if it is absent there or the lookup itself fails.
+    `ls-tree` is a cheap, content-free lookup (no blob is fetched), so this can run for
+    every commit in a long walk without `git show`'s cost."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-tree", sha, "--", relpath],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    line = out.stdout.strip()
+    if not line:
+        return None
+    meta, sep, _path = line.partition("\t")
+    if not sep:
+        return None
+    fields = meta.split()
+    if len(fields) != 3:
+        return None
+    mode, _obj_type, blob = fields
+    return mode, blob
+
+
+def _load_blob_toml(root: Path, blob: str) -> Optional[dict]:
+    try:
+        show = subprocess.run(
+            ["git", "-C", str(root), "show", blob],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if show.returncode != 0:
+        return None
     try:
         import tomllib
     except ModuleNotFoundError:
         import tomli as tomllib  # type: ignore[no-redef]
+    try:
+        return tomllib.loads(show.stdout)
+    except Exception:
+        return None
+
+
+def _walk_freeze_blobs(root: Path, chain: List[str], relpath: str
+                       ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    """Confirm *relpath* exists as an ordinary (non-symlink) blob at EVERY commit in
+    *chain*, oldest first -- not only the ones a path-filtered log would show, so a window
+    where the file was absent (renamed away, deleted) cannot hide between two commits where
+    it happens to exist again (fix round 3, NEW-3). Stops, and returns a problem string, at
+    the first commit that fails this -- the caller must never look past it (the point of
+    the check is exactly that nothing downstream of a break in the chain can be trusted).
+
+    Returns `([(sha, blob), ...], None)` on success: one entry per run of consecutive
+    IDENTICAL blobs (keyed by the sha where that blob first appears in the walk), since
+    re-reading and re-parsing an unchanged blob at every commit that merely didn't touch it
+    buys nothing (fix round 3's own "stay fast" note) -- the existence/mode check above
+    still ran for every commit regardless, which is the part that must not be skipped.
+    """
+    entries: List[Tuple[str, str]] = []
+    last_blob: Optional[str] = None
+    for sha in chain:
+        got = _ls_tree_entry(root, sha, relpath)
+        if got is None:
+            return entries, f"{FREEZE_FILENAME} deleted or moved in history at {sha[:12]}."
+        mode, blob = got
+        if mode == "120000":
+            return entries, (
+                f"{FREEZE_FILENAME} was recorded as a symlink (mode {mode}) in history at "
+                f"{sha[:12]}; refusing to trust it."
+            )
+        if blob != last_blob:
+            entries.append((sha, blob))
+            last_blob = blob
+    return entries, None
+
+
+def _freeze_commit_history(root: Path, relpath: str) -> Tuple[List[Tuple[str, dict]], Optional[str]]:
+    """`([(commit sha, parsed FREEZE.toml doc), ...], None)`, oldest first, for the DISTINCT
+    states *relpath* held across every commit from its first appearance to HEAD on the
+    first-parent chain; or `([], None)` if it has never been committed; or `([], problem)`
+    if the walk hit an absence, a symlink, or an unreadable blob partway through (fix round
+    3) -- the caller must surface `problem` itself rather than silently falling back to
+    "never committed", which would under-report what actually happened."""
+    chain = _first_parent_chain(root)
+    if not chain:
+        return [], None
+
+    first = _first_commit_with_path(root, relpath)
+    if first is None or first not in chain:
+        return [], None
+
+    walk = chain[chain.index(first):]
+    distinct, problem = _walk_freeze_blobs(root, walk, relpath)
+    if problem:
+        return [], problem
 
     history: List[Tuple[str, dict]] = []
-    for sha in shas:
-        try:
-            show = subprocess.run(
-                ["git", "-C", str(root), "show", f"{sha}:{relpath.as_posix()}"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except (OSError, subprocess.SubprocessError):
-            continue
-        if show.returncode != 0:
-            continue
-        try:
-            history.append((sha, tomllib.loads(show.stdout)))
-        except Exception:
-            continue
-    return history
+    for sha, blob in distinct:
+        doc = _load_blob_toml(root, blob)
+        if doc is None:
+            return [], f"{FREEZE_FILENAME} could not be read at commit {sha[:12]}."
+        history.append((sha, doc))
+    return history, None
 
 
 def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
@@ -458,18 +586,65 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
 
 
 def freeze_history_problems(root: Path) -> List[str]:
-    """Walk FREEZE.toml's git history (every commit that touched it, oldest first, plus the
+    """Walk FREEZE.toml's git history (every commit on the first-parent chain from the
+    file's first appearance to HEAD, not only the ones that touch its path, plus the
     working tree as the final state) and check the invariants `_freeze_transition_problems`
-    describes between every consecutive pair.
+    describes between every consecutive DISTINCT state.
 
-    Fails closed only where it genuinely cannot check anything, and only when a post-cutoff
-    campaign (FREEZE.toml's own `frozen` date >= `CUTOFF`) needs the guarantee: outside a
-    git repository, or for a FREEZE.toml that exists but has never been committed (the first
-    freeze must be committed before it counts -- an uncommitted first freeze is exactly the
-    history-less state this check cannot see past). A pre-cutoff campaign, for which
-    freezing at all is optional, is not penalised for either.
+    One check is UNCONDITIONAL, never gated by cutoff: FREEZE.toml being a symlink in the
+    working tree. Reading it (`_load_freeze`) follows the symlink, so even the `frozen`
+    date every other check below relies on to decide whether it applies cannot be trusted
+    once the path itself is a symlink -- there is nothing left to gate on. A symlink
+    recorded in HISTORY (git mode 120000) rather than in the working tree is a different
+    code path (the history walk itself, which does have a trustworthy `frozen` field to
+    gate on) and remains cutoff-gated like everything below.
+
+    Everything else fails closed only where it genuinely cannot check anything, and only
+    when a post-cutoff campaign (FREEZE.toml's own `frozen` date >= `CUTOFF`) needs the
+    guarantee; a pre-cutoff campaign, for which freezing at all is optional, is not
+    penalised for any of these:
+
+    - a symlink recorded at any point in history (git mode 120000) -- a symlink's target
+      can change independently of the history being walked, so content comparisons through
+      it prove nothing (fix round 3);
+    - the campaign root is not inside a git repository;
+    - the repository is a SHALLOW clone (`git rev-parse --is-shallow-repository`) -- the
+      history this would walk is truncated by construction, which operationally reproduces
+      "no history" even though commits are present (fix round 3, NEW-2: this is also CI's
+      typical default, so it needs no adversarial action to trigger);
+    - the walk hits an absence or a symlink partway through history -- the file was deleted
+      or moved away and back (fix round 3, NEW-3: `_freeze_commit_history` stops AT that
+      commit and reports it, rather than silently continuing with whatever commits still
+      happen to resolve, which is what let a rename sandwich launder an unauthorized change
+      underneath one legitimate version bump);
+    - FREEZE.toml exists but has never been committed at all (the first freeze must be
+      committed before it counts -- an uncommitted first freeze is exactly the history-less
+      state this check cannot see past).
+
+    NOT covered, by design (fix round 3, NEW-1; documented, not coded): a history REWRITE
+    that replaces the whole committed history with one internally self-consistent
+    fabrication (`git commit --amend` on the sole commit, or an equivalent rebase/force-
+    push) is invisible to a check that can only compare what it can currently see. This is
+    inherent to local git, not a gap specific to this implementation. For a node that has
+    already been GRANTED, a later statement change is still caught independently -- the
+    grant records its own `statement_sha256` (`provenance.build_grant`) against the
+    artifact the gate actually saw, so a rewritten FREEZE.toml cannot retroactively make a
+    granted node's statement look unchanged. For an
+    UNGRANTED node, an amended first freeze (before anyone else has fetched it) is
+    genuinely indistinguishable from an honest first freeze; the anchor this check rests on
+    is a protected remote branch history (no force-push) with `mission verify` run in CI
+    against the FULL history of that branch, not a local, possibly-rewritten clone.
     """
     root = Path(root)
+
+    # Checked BEFORE loading anything, and reported UNCONDITIONALLY (not gated by
+    # post-cutoff like every other check below): `_load_freeze` reads straight through a
+    # symlink, so a symlinked FREEZE.toml poisons even the `frozen` field this function
+    # would otherwise use to decide whether it cares -- there is no field left that can be
+    # trusted enough to decide anything else, including whether to decide anything at all.
+    if freeze_path(root).is_symlink():
+        return [f"{FREEZE_FILENAME} is a symlink in the working tree; refusing to trust it."]
+
     doc = _load_freeze(root)
     if doc is None:
         return []
@@ -485,7 +660,33 @@ def freeze_history_problems(root: Path) -> List[str]:
             ]
         return []
 
-    history = _freeze_commit_history(root)
+    if _is_shallow_repo(root):
+        if post_cutoff:
+            return [
+                f"{FREEZE_FILENAME}: shallow clone: freeze history incomplete; fetch full "
+                "history (fetch-depth: 0)."
+            ]
+        return []
+
+    toplevel = _git_toplevel(root)
+    relpath = None
+    if toplevel is not None:
+        try:
+            relpath = freeze_path(root).resolve().relative_to(toplevel.resolve()).as_posix()
+        except ValueError:
+            relpath = None
+    if relpath is None:
+        if post_cutoff:
+            return [
+                f"{FREEZE_FILENAME}: freeze history unavailable (could not resolve its path "
+                "relative to the repository root); version bumps and the unfreeze history "
+                "cannot be verified."
+            ]
+        return []
+
+    history, hist_problem = _freeze_commit_history(root, relpath)
+    if hist_problem:
+        return [hist_problem] if post_cutoff else []
     if not history:
         if post_cutoff:
             return [
