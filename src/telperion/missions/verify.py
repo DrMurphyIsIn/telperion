@@ -598,6 +598,22 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
                 f"Node {slug!r}: [checks] required (created {node.created or '(empty)'}, "
                 f"cutoff {CHECKS_CUTOFF}): {ck}")
 
+    # Fix round 2 (Ruling 13): a post-cutoff node with no [author] block silently defeats
+    # BOTH independent-read-back checks -- the node-level one just above
+    # (`readback_is_self_audit` returns False, "undecidable", when `node.author is None`)
+    # and `deviations_grant_problem`'s own auditor check below -- letting a single identity
+    # write a read-back and perform the grant with no refusal at all. `mission add` always
+    # writes [author] through the governed path, so a post-cutoff node missing it can only
+    # mean a hand edit; refuse outright rather than silently skip the independence check it
+    # disables. Scoped like the checks/freeze/deviations gates: `proved` only, post-cutoff
+    # only (a refutation does not rest on who read anything back).
+    if new_status == "proved" and checks_required(node) and node.author is None:
+        raise GateError(
+            f"Node {slug!r}: no [author] block on record; a post-cutoff node must have "
+            "one so its read-back's independence can be checked (`mission add` always "
+            "writes one; this node's record appears to have been edited by hand)."
+        )
+
     # Step 5 Task 1: a post-cutoff node may not be granted `proved` until the campaign has
     # a FREEZE.toml recording this node's statement. Scoped to `proved` like the checks and
     # re-judge gates above -- a refutation does not rest on the frozen statement's hash.

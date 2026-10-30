@@ -1713,16 +1713,21 @@ def deviations_grant_problem(root: Path, node) -> str:
     """"" unless *node* is post-cutoff (`provenance.checks_required`, the same predicate
     `freeze_grant_problem` uses); else why the grant gate must refuse it.
 
-    Three layers, in order: (1) DEVIATIONS.md must exist, be trustworthy
+    Four layers, in order: (1) DEVIATIONS.md must exist, be trustworthy
     (`_load_deviations_safe`), and parse (`parse_deviations`); (2) spec 7.3 also says
     "read back" -- which parsing alone does NOT satisfy (fix round 1, reviewer-found
     Important: the original docstring here claimed otherwise) -- so
     DEVIATIONS.readback.toml must exist, be trustworthy, and record the sha256 of the
-    ledger's CURRENT content, not a stale one; (3) its auditor must not be the node's own
-    author (`provenance._auditor_matches`, the exact comparison
+    ledger's CURRENT content, not a stale one; (3) the node must carry an `[author]` block
+    at all (fix round 2, Ruling 13: `readback_is_self_audit` treats a missing `[author]`
+    as merely "undecidable" and skips its own check rather than refusing -- reasonable for
+    a legacy, pre-2026-09-23 node, but a POST-CUTOFF node with none can only mean a hand
+    edit removed it, since `mission add` always writes one; left as a skip here, the same
+    identity could write the read-back and perform the grant with no refusal at all, which
+    a reviewer reproduced live as an actual bypass of layer (4) below); (4) its auditor
+    must not be the node's own author (`provenance._auditor_matches`, the exact comparison
     `readback_is_self_audit` uses for a node's own `[readback]` block, reused rather than
-    re-implemented so the two self-audit checks can never drift apart) -- undecidable, and
-    so not checked, when the node carries no `[author]` block at all."""
+    re-implemented so the two self-audit checks can never drift apart)."""
     from .provenance import _auditor_matches, checks_required
 
     if not checks_required(node):
@@ -1759,9 +1764,14 @@ def deviations_grant_problem(root: Path, node) -> str:
             f"{current_sha[:16]}...); read it back again (`mission deviations-readback`)."
         )
     author = node.author
-    if author is not None and _auditor_matches(
-            readback["auditor_identity"], readback["auditor_session"],
-            author.identity, author.session):
+    if author is None:
+        return (
+            "node has no [author] block; a post-cutoff grant needs one to check "
+            f"{DEVIATIONS_READBACK_FILENAME}'s read-back independence (`mission add` "
+            "always writes one; this node's record appears to have been edited by hand)."
+        )
+    if _auditor_matches(readback["auditor_identity"], readback["auditor_session"],
+                        author.identity, author.session):
         return (
             f"{DEVIATIONS_READBACK_FILENAME}: its auditor (identity "
             f"{readback['auditor_identity']!r}, session {readback['auditor_session']!r}) "

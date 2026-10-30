@@ -28,7 +28,7 @@ from telperion.missions.process import (  # noqa: E402
 )
 from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
-    ChecksRecord, MissionManifest, Node, Proof, Readback, SchemaError,
+    Author, ChecksRecord, MissionManifest, Node, Proof, Readback, SchemaError,
     load_node, save_manifest, save_node,
 )
 from telperion.missions.statements import write_statement  # noqa: E402
@@ -205,6 +205,12 @@ def _grant_campaign(tmp_path: Path, *, created: str, campaign: str = "campaign")
         readback=Readback(text="read-back of Demo.ck, rendering the formal statement in "
                                "the auditor's own words at length", auditor="test-auditor",
                           date="2026-10-29"),
+        # Fix round 2 (Ruling 13): a post-cutoff grant now refuses outright when [author]
+        # is absent (it used to silently defeat the read-back independence checks), so
+        # this fixture carries one unconditionally; harmless for a pre-cutoff node, which
+        # the new check does not even look at (`checks_required` gates it).
+        author=Author(identity="demo-author@example.com", session="demo-author-session",
+                      date=created or "2026-10-01"),
         created=created, updated=created,
     )
     save_node(node, root / "nodes" / "Demo_ck.toml")

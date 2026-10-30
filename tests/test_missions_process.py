@@ -8,7 +8,7 @@ import hashlib
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Sequence
 
 import pytest
 
@@ -1853,18 +1853,27 @@ def test_content_before_comment_opener_parses():
 # gate requires it, current, and from an auditor who is not the node's own author.
 # ---------------------------------------------------------------------------
 
-def _ready_for_deviations_readback(tmp_path: Path, *, author: Optional[Author] = None) -> Path:
+#: Distinguishes "no *author* argument given" (keep `_grant_campaign`'s own default
+#: `[author]`) from "*author* explicitly passed as `None`" (strip it off entirely, for the
+#: fix-round-2 "no [author] at all" repro) -- a plain `None` default could not tell the two
+#: apart, since both would look identical to the function.
+_AUTHOR_UNSET = object()
+
+
+def _ready_for_deviations_readback(tmp_path: Path, *, author=_AUTHOR_UNSET) -> Path:
     """A post-cutoff Demo_ck: passing [checks], a clean committed freeze, and a
     DEVIATIONS.md template on disk -- grantable except for fix round 1's new
-    DEVIATIONS.readback.toml requirement, which every test below exercises. *author*, if
-    given, replaces the node's (absent-by-default) [author] block, so the self-read-back
-    refusal has something to compare the auditor against."""
+    DEVIATIONS.readback.toml requirement, which every test below exercises.
+    `_grant_campaign` already gives the node an `[author]` block by default (fix round
+    2); passing *author* here overrides it with a specific one (so a self-read-back check
+    has something chosen to compare against), and passing `author=None` explicitly strips
+    it off entirely (fix round 2's own "no [author] at all" repro)."""
     from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
 
     root = _grant_campaign(tmp_path, created="2026-10-29")
     p = root / "nodes" / "Demo_ck.toml"
     node = load_node(p)
-    if author is not None:
+    if author is not _AUTHOR_UNSET:
         node = dataclasses.replace(node, author=author)
         save_node(node, p)
     _with_checks(root, _rec(_art_sha(root, node)))
@@ -1985,3 +1994,40 @@ def test_entry_dated_today_is_allowed():
                             today=datetime.date(2026, 10, 30)) == [
         {"date": "2026-10-30", "what": "today's thing", "why": "why"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 3, fix round 2 (Ruling 13): a post-cutoff node with no [author] block
+# silently defeats BOTH independent-read-back checks (the node-level
+# `readback_is_self_audit` and `deviations_grant_problem`'s own auditor check) -- refuse
+# the grant outright instead.
+# ---------------------------------------------------------------------------
+
+def test_post_cutoff_grant_without_author_refused(tmp_path):
+    """The reviewer's exact repro: with no [author] block at all, a single identity can
+    write the read-back AND perform the grant, and neither self-audit check has anything
+    to compare it against -- so, before this fix, nothing refused it."""
+    root = _ready_for_deviations_readback(tmp_path, author=None)
+    write_deviations_readback(root, identity="solo@example.com", session="solo-session",
+                              date="2026-10-29")
+
+    with pytest.raises(GateError, match=r"\[author\]"):
+        grant_status(load_campaign(root), "Demo_ck", identity="solo@example.com",
+                     session="solo-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+    assert "[author]" in deviations_grant_problem(root, load_node(root / "nodes" / "Demo_ck.toml"))
+
+
+def test_pre_cutoff_grant_without_author_unchanged(tmp_path):
+    """The new [author]-required check is scoped to post-cutoff nodes only
+    (`checks_required`); a pre-cutoff node with no [author] block must grant exactly as it
+    always has."""
+    from test_missions_checks import _grant_campaign
+
+    root = _grant_campaign(tmp_path, created="2026-10-01")  # pre-cutoff
+    p = root / "nodes" / "Demo_ck.toml"
+    save_node(dataclasses.replace(load_node(p), author=None), p)
+
+    granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                           session="gate-session")
+    assert granted.status == "proved"
