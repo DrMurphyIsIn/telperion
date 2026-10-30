@@ -215,7 +215,7 @@ and from then on the node requires them whatever its `created` says (Ruling 13: 
 `gate_version`, because every new grant carries the new version, pre-cutoff nodes included). `mission verify` re-checks
 the record on every proved node the rule covers, and `GATE_VERSION` is `2026-10-29.1` (Ruling 11). Known limitations
 recorded by Rulings 11 and 12: the sign-off is free text; the closure audit, which imports rather than replays, is tied
-to the other two checks by the theorem name only; and a `created` back-dated before a node's first grant is not caught.
+to the other two checks by the theorem name and the interim axiom cross-check; and a `created` back-dated before a node's first grant is not caught.
 
 **Amendment (2026-10-30; step 4 Ruling 9 and the caveat recorded with the fingerprint re-review). These checks are NOT A
 SANDBOX.** Replay isolation keeps the submission's code out of the check's process, and nothing more. Building the

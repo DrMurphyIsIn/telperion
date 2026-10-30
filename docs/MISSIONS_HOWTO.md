@@ -389,10 +389,18 @@ These are real, and you should know them before you rely on a `[checks]` record.
 - **The closure audit still imports the submission.** The probe and the fingerprint are bound to each other by
   `olean_sha256`, but `audit-closure` imports rather than replays, so an imported module could forge its output, and
   its JSON carries no olean digest. Its ties to the other two are the theorem name and the interim axiom cross-check:
-  its axioms for the target must be among the REPLAY's axioms, which must be standard. A forged closure PASS can then
-  no longer hide a non-standard axiom, but it can still hide a forbidden constant that is not an axiom. The owner accepted
-  this gap for this merge (2026-10-30); porting the closure audit to a replay callback is step-5 work. Run all three on
-  the same build.
+  its axioms for the target must be among the REPLAY's axioms, which must be standard.
+  - What the cross-check buys: a forged closure PASS can no longer hide a non-standard axiom. That holds only while the
+    code `audit-closure` imports cannot write the probe and fingerprint JSONs or the node file, i.e. under a sandbox or
+    when the audit runs as a different user. Outside a sandbox the imported code runs as YOU and can rewrite those
+    files too.
+  - What it does not buy: a forged PASS can still hide a forbidden constant that is not an axiom, and a forbidden
+    module prefix.
+  - It bounds the target's axioms only when the target is a constant of the module the probe and the fingerprint
+    replayed (their axiom list covers that module's constants). So run the probe and the fingerprint on the
+    artifact's OWN module (`--module` / `--import`), not on a module that merely imports it.
+  - The owner accepted this gap for this merge (2026-10-30); porting the closure audit to a replay callback is step-5
+    work. Run all three on the same build.
 - **The node file can be hand-edited.** The cutoff keys on `created`, and nothing guards that field while a node is
   still unproved: a node back-dated to before 2026-10-28 before its first grant is granted without checks. Deleting
   `checks_required` from a `[grant]` together with back-dating `created` is the same class of hand edit, with the same
