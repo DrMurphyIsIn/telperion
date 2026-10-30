@@ -6,12 +6,28 @@ This module is the home for step 5's shared pieces -- the campaign-level stateme
 Freeze. `FREEZE.toml` at the campaign root records the sha256 of every node's statement
 BODY (`statements.statement_body`) at the moment the campaign was frozen: who froze it,
 when, and the hash each statement had. `freeze_problems` re-derives those hashes from the
-statement files on disk and reports drift, nodes added since the freeze, and an incomplete
-or self-read-back unfreeze history. Unfreezing -- the only way to make a frozen campaign's
-hashes current again -- is destructive to the freeze's truth-claim, so every version bump
-demands a recorded reason AND an independent read-back of the new hashes
+statement files on disk and reports drift, nodes added since the freeze, a statement file
+that went missing, duplicate or self-read-back `[[unfreeze]]` entries, and an incomplete
+unfreeze history. Unfreezing -- the only way to make a frozen campaign's hashes current
+again -- is destructive to the freeze's truth-claim, so every version bump demands a
+recorded reason AND an independent read-back of the new hashes
 (`docs/AUDIT_INDEPENDENCE_2026-09-23.md`'s independence rule, applied here to the freeze
 record rather than to a node's statement).
+
+Controller Ruling 5 (fix round 1, 2026-10-30): the checks above compare the CURRENT
+`FREEZE.toml` against the CURRENT statement files and against itself -- none of them notice
+a statement edited and the recorded hash hand-rewritten to match, in the same commit, while
+`version` is left unchanged. `freeze_history_problems` closes that hole by walking
+`FREEZE.toml`'s git history (every commit that touched it, plus the working tree as the
+final state) and checking, between every consecutive pair of states: version never
+decreases; at an unchanged version, `[statements]` is identical except that new node keys
+may be added; on any removed or changed hash, version is exactly +1 with a matching
+`[[unfreeze]]` entry for the new version; and every earlier `[[unfreeze]]` entry is
+byte-identical to what it was before (append-only). `freeze_problems` calls it. Outside a
+git repository, or for a `FREEZE.toml` that has never been committed, this can check
+nothing at all -- fail-closed: a POST-CUTOFF campaign (`FREEZE.toml`'s own `frozen` date
+>= `CUTOFF`) is reported as a problem in either case; a pre-cutoff one, where freezing at
+all is optional, is not.
 
 `CUTOFF` is the single source of truth for the post-process cutoff date (Controller Ruling
 1, 2026-10-30): `provenance.CHECKS_CUTOFF` is an alias of it, kept for back-compat. This
@@ -22,8 +38,9 @@ use of `provenance` below is therefore a lazy, in-function import.
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .schema import atomic_write_text, slug_of
 from .statements import statement_body, statement_path
@@ -198,10 +215,22 @@ def freeze_problems(root: Path) -> List[str]:
     - "statement drift" on any node whose current statement hash differs from the one
       recorded in FREEZE.toml;
     - any node with a statement file that was added since the freeze (not recorded at all);
+    - a node recorded in FREEZE.toml whose statement file no longer exists (fix round 1,
+      finding C2: deleting the file used to silently drop the node from every check here);
     - any `version > 1` missing a matching `[[unfreeze]]` entry for 2..version (a
-      hand-rewritten FREEZE.toml, since `unfreeze` itself always appends one);
-    - any `[[unfreeze]]` entry that is a self-read-back (same check `unfreeze` itself
-      refuses at write time, re-applied here against whatever is actually on disk).
+      hand-rewritten FREEZE.toml, since `unfreeze` itself always appends exactly one per
+      call);
+    - more than one `[[unfreeze]]` entry for the same version (fix round 1, finding I:
+      `unfreeze` never writes two, so two can only mean a hand-edit, and checking only the
+      last one per version -- the previous behaviour -- let a self-read-back hide behind a
+      later, clean duplicate);
+    - any `[[unfreeze]]` entry that is a self-read-back, checked on EVERY entry rather than
+      only the one `version` happens to point at (same reason as the previous bullet);
+    - `freeze_history_problems(root)` (fix round 1, Controller Ruling 5): everything above
+      compares FREEZE.toml against itself and against the statement files as they are RIGHT
+      NOW, so a statement edited and the recorded hash hand-rewritten to match -- in the same
+      commit, with `version` left unchanged -- passes every check above. Only the file's git
+      history can catch that.
 
     A missing FREEZE.toml is not a problem unless a post-cutoff node is already PROVED.
     `freeze_grant_problem` already refuses to grant such a node without one, so a proved,
@@ -233,13 +262,20 @@ def freeze_problems(root: Path) -> List[str]:
 
     statements = doc.get("statements") or {}
     for slug, node in sorted(campaign.nodes.items()):
-        if not statement_path(root, node).exists():
-            continue
+        sp = statement_path(root, node)
         recorded = statements.get(slug)
         if recorded is None:
+            if sp.exists():
+                problems.append(
+                    f"node {slug!r} has a statement file but is not recorded in "
+                    f"{FREEZE_FILENAME} (added since the freeze, or removed from the record "
+                    "by hand)."
+                )
+            continue
+        if not sp.exists():
             problems.append(
-                f"node {slug!r} was added since the freeze and is not recorded in "
-                f"{FREEZE_FILENAME}."
+                f"node {slug!r} is recorded in {FREEZE_FILENAME} but its statement file no "
+                "longer exists."
             )
             continue
         current = _hash_statement(root, node)
@@ -250,27 +286,220 @@ def freeze_problems(root: Path) -> List[str]:
             )
 
     version = int(doc.get("version", 1))
-    by_version = {}
-    for entry in (doc.get("unfreeze") or []):
-        try:
-            by_version[int(entry.get("version", -1))] = entry
-        except (TypeError, ValueError):
-            continue
-    for v in range(2, version + 1):
-        entry = by_version.get(v)
-        if entry is None:
-            problems.append(
-                f"{FREEZE_FILENAME} version is {version} but has no [[unfreeze]] entry for "
-                f"version {v}."
-            )
-            continue
+    entries = doc.get("unfreeze") or []
+
+    # Self-read-back: checked on every entry, not only the last one recorded for its
+    # version -- a forged self-read-back could otherwise hide behind a later, clean
+    # duplicate entry for the same version (fix round 1, finding I).
+    for entry in entries:
         author = str(entry.get("author", ""))
         readback_identity = str(entry.get("readback_identity", ""))
         if author.strip().lower() == readback_identity.strip().lower():
             problems.append(
-                f"{FREEZE_FILENAME} [[unfreeze]] entry for version {v} is a self-read-back "
-                f"(readback_identity {readback_identity!r} matches author {author!r})."
+                f"{FREEZE_FILENAME} [[unfreeze]] entry for version "
+                f"{entry.get('version', '?')!r} is a self-read-back (readback_identity "
+                f"{readback_identity!r} matches author {author!r})."
             )
+
+    counts: Dict[int, int] = {}
+    for entry in entries:
+        try:
+            v = int(entry.get("version", -1))
+        except (TypeError, ValueError):
+            continue
+        counts[v] = counts.get(v, 0) + 1
+    for v, n in sorted(counts.items()):
+        if n > 1:
+            problems.append(
+                f"{FREEZE_FILENAME} has {n} [[unfreeze]] entries for version {v}; "
+                "unfreeze() never writes more than one."
+            )
+
+    for v in range(2, version + 1):
+        if v not in counts:
+            problems.append(
+                f"{FREEZE_FILENAME} version is {version} but has no [[unfreeze]] entry for "
+                f"version {v}."
+            )
+
+    problems.extend(freeze_history_problems(root))
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# freeze_history_problems (fix round 1, Controller Ruling 5)
+# ---------------------------------------------------------------------------
+
+def _is_git_repo(root: Path) -> bool:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
+def _git_toplevel(root: Path) -> Optional[Path]:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    return Path(out.stdout.strip())
+
+
+def _freeze_commit_history(root: Path) -> List[Tuple[str, dict]]:
+    """`[(commit sha, parsed FREEZE.toml doc), ...]`, oldest first, for every commit that
+    touched FREEZE.toml (`git log --follow`); `[]` if it has never been committed (or git,
+    or the parse of some blob, fails -- treated the same as "no history" by the caller,
+    which fails closed on an empty result for a post-cutoff campaign)."""
+    try:
+        log = subprocess.run(
+            ["git", "-C", str(root), "log", "--format=%H", "--follow", "--", FREEZE_FILENAME],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if log.returncode != 0:
+        return []
+    shas = [s for s in log.stdout.split() if s]
+    if not shas:
+        return []
+    shas.reverse()  # git log is newest-first; walk oldest to newest
+
+    toplevel = _git_toplevel(root)
+    if toplevel is None:
+        return []
+    try:
+        relpath = freeze_path(root).resolve().relative_to(toplevel.resolve())
+    except ValueError:
+        return []
+
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    history: List[Tuple[str, dict]] = []
+    for sha in shas:
+        try:
+            show = subprocess.run(
+                ["git", "-C", str(root), "show", f"{sha}:{relpath.as_posix()}"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if show.returncode != 0:
+            continue
+        try:
+            history.append((sha, tomllib.loads(show.stdout)))
+        except Exception:
+            continue
+    return history
+
+
+def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
+    """Problems between two consecutive FREEZE.toml states (`prev` then `cur`, `label`
+    naming `cur`): version going backwards; an earlier `[[unfreeze]]` entry edited or
+    removed (append-only); at an unchanged version, an existing statement hash changed or
+    removed; or, on a version change, anything other than exactly +1 with a matching new
+    `[[unfreeze]]` entry."""
+    problems: List[str] = []
+    prev_version = int(prev.get("version", 1))
+    cur_version = int(cur.get("version", 1))
+    prev_entries = list(prev.get("unfreeze") or [])
+    cur_entries = list(cur.get("unfreeze") or [])
+
+    if cur_version < prev_version:
+        problems.append(
+            f"{FREEZE_FILENAME} at {label}: version went backwards ({prev_version} -> "
+            f"{cur_version})."
+        )
+        return problems  # comparisons below assume a sane version; stop here
+
+    if cur_entries[:len(prev_entries)] != prev_entries:
+        problems.append(
+            f"{FREEZE_FILENAME} at {label}: an earlier [[unfreeze]] entry was edited or "
+            "removed; the unfreeze history must be append-only."
+        )
+
+    prev_statements = prev.get("statements") or {}
+    cur_statements = cur.get("statements") or {}
+
+    if cur_version == prev_version:
+        removed = set(prev_statements) - set(cur_statements)
+        changed = {slug for slug in prev_statements
+                  if slug in cur_statements and cur_statements[slug] != prev_statements[slug]}
+        if removed or changed:
+            problems.append(
+                f"{FREEZE_FILENAME} at {label}: statement(s) "
+                f"{', '.join(sorted(removed | changed))!r} changed or were removed without a "
+                "version bump."
+            )
+    elif cur_version != prev_version + 1:
+        problems.append(
+            f"{FREEZE_FILENAME} at {label}: version jumped from {prev_version} to "
+            f"{cur_version} (expected exactly +1)."
+        )
+    else:
+        new_entries = cur_entries[len(prev_entries):]
+        if not any(int(e.get("version", -1)) == cur_version for e in new_entries):
+            problems.append(
+                f"{FREEZE_FILENAME} at {label}: version is {cur_version} but no new "
+                f"[[unfreeze]] entry for version {cur_version} was appended."
+            )
+    return problems
+
+
+def freeze_history_problems(root: Path) -> List[str]:
+    """Walk FREEZE.toml's git history (every commit that touched it, oldest first, plus the
+    working tree as the final state) and check the invariants `_freeze_transition_problems`
+    describes between every consecutive pair.
+
+    Fails closed only where it genuinely cannot check anything, and only when a post-cutoff
+    campaign (FREEZE.toml's own `frozen` date >= `CUTOFF`) needs the guarantee: outside a
+    git repository, or for a FREEZE.toml that exists but has never been committed (the first
+    freeze must be committed before it counts -- an uncommitted first freeze is exactly the
+    history-less state this check cannot see past). A pre-cutoff campaign, for which
+    freezing at all is optional, is not penalised for either.
+    """
+    root = Path(root)
+    doc = _load_freeze(root)
+    if doc is None:
+        return []
+
+    post_cutoff = str(doc.get("frozen", "")) >= CUTOFF
+
+    if not _is_git_repo(root):
+        if post_cutoff:
+            return [
+                f"{FREEZE_FILENAME}: freeze history unavailable (the campaign root is not "
+                "inside a git repository); version bumps and the unfreeze history cannot be "
+                "verified."
+            ]
+        return []
+
+    history = _freeze_commit_history(root)
+    if not history:
+        if post_cutoff:
+            return [
+                f"{FREEZE_FILENAME} exists but has never been committed; commit the first "
+                "freeze (`git add` + `git commit`) before it counts."
+            ]
+        return []
+
+    states = [(f"commit {sha[:12]}", hdoc) for sha, hdoc in history]
+    states.append(("the working tree", doc))
+
+    problems: List[str] = []
+    for (_prev_label, prev_doc), (cur_label, cur_doc) in zip(states, states[1:]):
+        problems.extend(_freeze_transition_problems(prev_doc, cur_doc, cur_label))
     return problems
 
 

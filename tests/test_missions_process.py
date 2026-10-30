@@ -3,8 +3,10 @@ and the drift check (`freeze_problems`)."""
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import sys
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
@@ -17,9 +19,41 @@ from telperion.missions.schema import (  # noqa: E402
 from telperion.missions.statements import statement_body, write_statement  # noqa: E402
 from telperion.missions.verify import GateError, grant_status  # noqa: E402
 from telperion.missions.process import (  # noqa: E402
-    freeze, freeze_grant_problem, freeze_path, freeze_problems, unfreeze,
+    _dump_freeze, _load_freeze, freeze, freeze_grant_problem, freeze_history_problems,
+    freeze_path, freeze_problems, unfreeze,
 )
 from telperion.cli import main  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# git fixture helpers (fix round 1, Controller Ruling 5)
+# ---------------------------------------------------------------------------
+
+def _git_init(root: Path) -> None:
+    r = subprocess.run(["git", "-C", str(root), "init", "-q"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def _git_commit(root: Path, message: str, *, add: Sequence[str] = (".",)) -> None:
+    """Stage and commit under a LOCAL test identity (`-c user.name=...`), never the
+    global/system git config."""
+    r = subprocess.run(["git", "-C", str(root), "add", *add], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    r = subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=Test User",
+         "-c", "user.email=test@example.com", "commit", "-q", "-m", message],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+
+
+def _hand_edit_freeze(root: Path, mutate) -> None:
+    """Load FREEZE.toml, let `mutate` change the parsed dict in place, write it back --
+    simulates a hand-edit of the record (the same threat model `freeze_problems` and
+    `freeze_history_problems` exist to catch)."""
+    doc = _load_freeze(root)
+    mutate(doc)
+    freeze_path(root).write_text(_dump_freeze(doc))
 
 
 def _campaign(root: Path, names=("Node_A", "Node_B")) -> MissionManifest:
@@ -46,12 +80,15 @@ def _campaign(root: Path, names=("Node_A", "Node_B")) -> MissionManifest:
 # ---------------------------------------------------------------------------
 
 def test_freeze_records_hashes(tmp_path):
+    # Pre-cutoff `frozen` date: this test is about the hash bookkeeping, not the git-history
+    # policy (freeze_history_problems fails closed on a post-cutoff FREEZE.toml with no git
+    # repo backing it -- see the dedicated tests below).
     root = tmp_path / "demo"
     _campaign(root)
-    doc = freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    doc = freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
 
     assert doc["version"] == 1
-    assert doc["frozen"] == "2026-10-28"
+    assert doc["frozen"] == "2026-10-01"
     assert doc["identity"] == "alice@example.com"
     assert doc["session"] == "s1"
     campaign = load_campaign(root)
@@ -97,6 +134,47 @@ def test_statement_drift_detected(tmp_path):
     assert any("statement drift" in p and "Node_A" in p for p in problems)
 
 
+def test_deleted_statement_file_flagged(tmp_path):
+    """Fix round 1, finding C2: a node recorded in FREEZE.toml whose statement file has
+    since been deleted used to be silently skipped by every check (`if not
+    statement_path(...).exists(): continue`) -- exactly the node an attacker would most
+    want to erase evidence for."""
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+
+    node = load_campaign(root).nodes["Node_A"]
+    from telperion.missions.statements import statement_path
+    statement_path(root, node).unlink()
+
+    problems = freeze_problems(root)
+    assert any("Node_A" in p and "no longer exists" in p for p in problems)
+
+
+def test_duplicate_unfreeze_entries_with_hidden_self_readback_flagged(tmp_path):
+    """Fix round 1, finding I: two [[unfreeze]] entries for the same version used to be
+    resolved last-wins, so a forged self-read-back could hide behind a later, clean
+    duplicate for the same version."""
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+
+    def _rewrite(doc):
+        doc["version"] = 2
+        doc["unfreeze"] = [
+            {"version": 2, "date": "2026-10-29", "author": "alice@example.com",
+             "reason": "self-serve", "readback_identity": "alice@example.com"},
+            {"version": 2, "date": "2026-10-29", "author": "alice@example.com",
+             "reason": "cleaned up", "readback_identity": "bob@example.com"},
+        ]
+
+    _hand_edit_freeze(root, _rewrite)
+
+    problems = freeze_problems(root)
+    assert any("self-read-back" in p for p in problems)
+    assert any("2 [[unfreeze]] entries for version 2" in p for p in problems)
+
+
 # ---------------------------------------------------------------------------
 # unfreeze
 # ---------------------------------------------------------------------------
@@ -104,7 +182,7 @@ def test_statement_drift_detected(tmp_path):
 def test_unfreeze_bumps_and_clears_drift(tmp_path):
     root = tmp_path / "demo"
     manifest = _campaign(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")  # pre-cutoff
 
     node = load_campaign(root).nodes["Node_A"]
     write_statement(root, node, "theorem thm_Node_A : 99 = 99", manifest)
@@ -137,7 +215,7 @@ def test_unfreeze_without_freeze_fails(tmp_path):
 def test_self_readback_rejected(tmp_path):
     root = tmp_path / "demo"
     _campaign(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")  # pre-cutoff
 
     # Case-folded comparison, same as provenance.independence_of.
     with pytest.raises(ValueError):
@@ -148,17 +226,148 @@ def test_self_readback_rejected(tmp_path):
 
 
 def test_rewritten_freeze_without_unfreeze_fails(tmp_path):
+    """The brief's literal adversarial scenario: hand-edit FREEZE.toml to `version = 2`
+    WITH NEW HASHES (as if the statements had genuinely changed) and no `[[unfreeze]]`
+    entry -- a materially stronger case than merely bumping the version string while
+    leaving the (still-accurate) hashes alone."""
     root = tmp_path / "demo"
     _campaign(root)
     freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
 
-    # Hand-edit: bump the version without adding a matching [[unfreeze]] entry.
-    path = freeze_path(root)
-    text = path.read_text().replace("version = 1", "version = 2", 1)
-    path.write_text(text)
+    def _rewrite(doc):
+        doc["version"] = 2
+        doc["statements"] = {slug: "f" * 64 for slug in doc["statements"]}
+
+    _hand_edit_freeze(root, _rewrite)
 
     problems = freeze_problems(root)
     assert any("version 2" in p and "unfreeze" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# freeze_history_problems (fix round 1, Controller Ruling 5)
+#
+# C1: a statement edited via the normal tool, then FREEZE.toml hand-rewritten to match,
+# with `version` left unchanged, defeats every check above (none of them compare against
+# anything but the current statement files and the current FREEZE.toml). Only the file's
+# git history can catch that.
+# ---------------------------------------------------------------------------
+
+def test_freeze_history_hash_rewrite_at_unchanged_version_committed_flagged(tmp_path):
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "initial freeze")
+
+    node = load_campaign(root).nodes["Node_A"]
+    write_statement(root, node, "theorem thm_Node_A : 99 = 99", manifest)
+    new_hash = hashlib.sha256(statement_body(root, node).encode("utf-8")).hexdigest()
+    _hand_edit_freeze(root, lambda d: d["statements"].__setitem__("Node_A", new_hash))
+    _git_commit(root, "rewrite the recorded hash to hide the edit")
+
+    problems = freeze_problems(root)
+    assert any("without a version bump" in p for p in problems)
+
+
+def test_freeze_history_hash_rewrite_at_unchanged_version_uncommitted_flagged(tmp_path):
+    """The same tamper as above, left uncommitted: the working tree is itself the final
+    state the history walk compares against the last commit, so this is caught the same
+    way -- committing is not what makes the drift visible."""
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "initial freeze")
+
+    node = load_campaign(root).nodes["Node_A"]
+    write_statement(root, node, "theorem thm_Node_A : 99 = 99", manifest)
+    new_hash = hashlib.sha256(statement_body(root, node).encode("utf-8")).hexdigest()
+    _hand_edit_freeze(root, lambda d: d["statements"].__setitem__("Node_A", new_hash))
+    # left uncommitted on purpose
+
+    problems = freeze_problems(root)
+    assert any("without a version bump" in p for p in problems)
+
+
+def test_freeze_history_version_jump_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "initial freeze")
+
+    _hand_edit_freeze(root, lambda d: d.update(version=3))
+    _git_commit(root, "jump straight to version 3")
+
+    problems = freeze_problems(root)
+    assert any("jumped from 1 to 3" in p for p in problems)
+
+
+def test_freeze_history_edited_earlier_unfreeze_entry_flagged(tmp_path):
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "initial freeze")
+
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "theorem thm_Node_A : 99 = 99", manifest)
+    unfreeze(root, author="alice@example.com", reason="first revision",
+             readback_identity="bob@example.com", date="2026-10-29")
+    _git_commit(root, "legitimate unfreeze to v2")
+
+    # Tamper with the ALREADY-COMMITTED v2 entry's reason text; version stays at 2.
+    _hand_edit_freeze(root, lambda d: d["unfreeze"][0].__setitem__("reason", "rewritten"))
+    _git_commit(root, "quietly edit the v2 unfreeze entry")
+
+    problems = freeze_problems(root)
+    assert any("append-only" in p for p in problems)
+
+
+def test_freeze_history_legitimate_unfreeze_committed_clean(tmp_path):
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-28")
+    _git_commit(root, "initial freeze")
+
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "theorem thm_Node_A : 99 = 99", manifest)
+    unfreeze(root, author="alice@example.com", reason="statement revised",
+             readback_identity="bob@example.com", date="2026-10-29")
+    _git_commit(root, "legitimate unfreeze")
+
+    assert freeze_problems(root) == []
+    assert freeze_history_problems(root) == []
+
+
+def test_freeze_history_not_a_git_repo_post_cutoff_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")  # >= CUTOFF
+
+    problems = freeze_problems(root)
+    assert any("not inside a git repository" in p for p in problems)
+
+
+def test_freeze_history_not_a_git_repo_pre_cutoff_ok(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")  # < CUTOFF
+
+    assert freeze_history_problems(root) == []
+
+
+def test_freeze_history_never_committed_post_cutoff_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")  # >= CUTOFF
+    # FREEZE.toml exists on disk but no commit has ever touched it.
+
+    problems = freeze_problems(root)
+    assert any("never been committed" in p for p in problems)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +444,10 @@ def test_cli_freeze_then_unfreeze(tmp_path, capsys):
               "--identity", "alice@example.com", "--session", "s1"])
     assert rc == 0
     assert freeze_path(mroot / "demo").exists()
-    capsys.readouterr()
+    # Fix round 1, Ruling 5: the CLI tells the user to commit the freeze (an uncommitted
+    # FREEZE.toml has no git history for freeze_history_problems to check).
+    assert "commit" in capsys.readouterr().out
+
 
     rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo",
               "--identity", "alice@example.com", "--session", "s1"])

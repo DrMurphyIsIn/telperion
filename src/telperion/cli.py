@@ -1514,6 +1514,9 @@ def cmd_mission_freeze(args) -> int:
 
     print(f"{args.campaign}: frozen {doc['frozen']} by {doc['identity']} "
           f"(session {doc['session']}); {len(doc['statements'])} statement(s) recorded")
+    print(f"commit {args.campaign}/FREEZE.toml now: an uncommitted freeze has no git "
+          "history to verify version bumps and unfreeze entries against, and "
+          "`mission verify` reports that as a problem once this campaign is post-cutoff.")
     return 0
 
 
