@@ -34,10 +34,12 @@ FPRINT = "e" * 64
 
 
 def _rec(art_sha: str, *, probe: str = "WITNESSED", closure: str = "PASS",
-         note: str = "") -> ChecksRecord:
+         note: str = "", theorem: str = "lemma_ck", axioms=("propext",)) -> ChecksRecord:
+    # final review I1/I3: the record is of the node's registered theorem (the campaign fixtures'
+    # `lemma_ck`) and carries the replay's axiom list
     return ChecksRecord(date="2026-10-29", artifact_sha256=art_sha, olean_sha256=OLEAN,
                         probe_verdict=probe, closure_verdict=closure,
-                        statement_fingerprint=FPRINT, theorem="t", note=note)
+                        statement_fingerprint=FPRINT, theorem=theorem, note=note, axioms=axioms)
 
 
 def _art_sha(root: Path, node: Node) -> str:
@@ -94,11 +96,22 @@ def test_probe_verdicts_match_negation_probe():
     assert set(PROBE_VERDICTS) == set(VERDICTS)
 
 
+def _statement_for(root: Path, node: Node) -> None:
+    """The node's statement file, so `checks_problem` can resolve its registered theorem (final review I1):
+    `minimal_proved_node`'s artifact declares `theorem t : True`."""
+    from telperion.missions.statements import statement_path
+    p = statement_path(root, node)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("theorem t : True\n")
+
+
 def test_checks_current_record_has_no_problem(tmp_path):
     from telperion.missions.provenance import checks_problem
     from missions_fixtures import minimal_proved_node
     node = minimal_proved_node(tmp_path, heavy=False)
-    assert checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node)))) == ""
+    _statement_for(tmp_path, node)
+    assert checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node),
+                                                                          theorem="t"))) == ""
 
 
 def test_checks_missing_record_is_a_problem(tmp_path):
@@ -136,7 +149,8 @@ def test_probe_only_needs_signoff(tmp_path):
         problem = checks_problem(tmp_path, dataclasses.replace(
             node, checks=_rec(sha, probe="PROBE_ONLY", note=note)))
         assert "PROBE_ONLY" in problem and "signoff:" in problem, note
-    ok = _rec(sha, probe="PROBE_ONLY", note="probe could not run; signoff: bb 2026-10-29")
+    _statement_for(tmp_path, node)
+    ok = _rec(sha, probe="PROBE_ONLY", note="probe could not run; signoff: bb 2026-10-29", theorem="t")
     assert checks_problem(tmp_path, dataclasses.replace(node, checks=ok)) == ""
 
 
@@ -287,7 +301,8 @@ _SAME = object()
 def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "PASS",
                  probe_olean: str = OLEAN, fp_olean: str = OLEAN,
                  fingerprints=None, targets=("lemma_ck",), lean_exit_code=0,
-                 probe_theorem="lemma_ck", fp_theorem=_SAME, probe_src=CUR, fp_src=CUR):
+                 probe_theorem="lemma_ck", fp_theorem=_SAME, probe_src=CUR, fp_src=CUR,
+                 probe_axioms=("propext",), fp_axioms=("propext",), closure_axioms=("propext",), stale=None):
     """The three JSONs in the exact shapes the checks print: `probe-negation --json`
     (ProbeResult.to_json plus module/theorem/source_sha256, cmd_probe_negation),
     `fingerprint --json` (cmd_fingerprint) and `audit-closure --json` (AuditResult.to_json,
@@ -301,6 +316,10 @@ def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "
     probe = {"verdict": verdict, "detail": "synthetic"}
     if probe_olean is not None:
         probe.update(olean_sha256=probe_olean, olean_closure=closure_list)
+    if probe_axioms is not None:
+        probe["axioms"] = list(probe_axioms)
+    if stale is not None:
+        probe["stale"] = stale
     probe["module"] = "Demo.Proof"
     if probe_theorem is not None:
         probe["theorem"] = probe_theorem
@@ -310,9 +329,11 @@ def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "
           "module": "Demo.Proof", "theorem": fp_theorem}
     if fp_src is not None:
         fp["source_sha256"] = cur if fp_src is CUR else fp_src
+    if fp_axioms is not None:
+        fp["axioms"] = list(fp_axioms)
     audit = AuditResult(verdict=closure, lean_exit_code=lean_exit_code,
-                        targets=[TargetInfo(name=t, kind="theorem", statement="1 + 1 = 2")
-                                 for t in targets])
+                        targets=[TargetInfo(name=t, kind="theorem", statement="1 + 1 = 2",
+                                            axioms=list(closure_axioms)) for t in targets])
     paths = {}
     for name, body in (("probe", json.dumps(probe)), ("fp", json.dumps(fp)),
                        ("closure", audit.to_json())):
@@ -402,16 +423,21 @@ def test_cli_unknown_probe_verdict_refused(tmp_path):
 
 
 def test_cli_several_fingerprints_need_target(tmp_path):
+    # final review I1: the target is the node's registered theorem (lemma_ck), with or without
+    # --target, so several fingerprints are no longer ambiguous and a helper's are refused
     mroot = _cli_campaign(tmp_path)
     paths = _write_jsons(tmp_path, fingerprints={"lemma_ck": FPRINT, "other": "a" * 64},
                          targets=("lemma_ck", "other"))
-    assert _record(mroot, paths) == 2
+    assert _record(mroot, paths, "--target", "other") == 2      # not the registered theorem
     assert _node(mroot).checks is None
-    assert _record(mroot, paths, "--target", "other") == 2      # the probe was of lemma_ck
     paths = _write_jsons(tmp_path, fingerprints={"lemma_ck": FPRINT, "other": "a" * 64},
                          targets=("lemma_ck", "other"), probe_theorem="other")
-    assert _record(mroot, paths, "--target", "other") == 0
-    assert _node(mroot).checks.statement_fingerprint == "a" * 64
+    assert _record(mroot, paths, "--target", "other") == 2      # a helper lemma's checks
+    assert _node(mroot).checks is None
+    paths = _write_jsons(tmp_path, fingerprints={"lemma_ck": FPRINT, "other": "a" * 64},
+                         targets=("lemma_ck", "other"))
+    assert _record(mroot, paths) == 0
+    assert _node(mroot).checks.statement_fingerprint == FPRINT
 
 
 def test_cli_fingerprint_target_must_be_closure_audited(tmp_path):
@@ -557,26 +583,27 @@ def test_unknown_checks_key_rejected(tmp_path):
 def test_cli_stale_source_sha_refused(tmp_path, which, capsys):
     mroot = _cli_campaign(tmp_path)
     paths = _write_jsons(tmp_path, **{which: "0" * 64})
-    assert _record(mroot, paths, "--allow-missing-source") == 2   # a WRONG value is never allowed
+    assert _record(mroot, paths) == 2                             # a WRONG value is never allowed
     assert _node(mroot).checks is None
     assert "source_sha256" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("kw", [dict(probe_src=None), dict(fp_src=None), dict(probe_theorem=None)])
-def test_cli_missing_source_or_theorem_needs_flag(tmp_path, kw):
+def test_cli_missing_source_or_theorem_needs_flag(tmp_path, kw, capsys):
+    # final review I2: --allow-missing-source is gone; an absent value is always refused
     mroot = _cli_campaign(tmp_path)
     paths = _write_jsons(tmp_path, **kw)
     assert _record(mroot, paths) == 2
     assert _node(mroot).checks is None
-    assert _record(mroot, paths, "--allow-missing-source", "--note", "older JSONs") == 0
-    note = _node(mroot).checks.note
-    assert note.startswith("older JSONs") and "--allow-missing-source" in note
+    assert "--file" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        _record(mroot, paths, "--allow-missing-source")
 
 
 @pytest.mark.parametrize("kw", [dict(probe_theorem="other"), dict(fp_theorem="other")])
 def test_cli_theorem_must_agree(tmp_path, kw, capsys):
     mroot = _cli_campaign(tmp_path)
-    assert _record(mroot, _write_jsons(tmp_path, **kw), "--allow-missing-source") == 2
+    assert _record(mroot, _write_jsons(tmp_path, **kw)) == 2
     assert _node(mroot).checks is None
     assert "theorem" in capsys.readouterr().err
 
@@ -606,3 +633,126 @@ def test_cli_fingerprint_json_carries_module_theorem_source(tmp_path, monkeypatc
                  "--target", "foo", "--target", "bar", "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert (out["module"], out["theorem"], out["source_sha256"]) == (None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Final review: I1 (the node's own theorem), I3 (the replay's axioms), I4 (stale builds)
+# ---------------------------------------------------------------------------
+
+def test_helper_lemma_record_refused_by_the_gate(tmp_path):
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    art = root / "proof" / "Demo_ck.lean"
+    art.write_text(art.read_text() + "theorem helper : True := trivial\n")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node), theorem="helper"))
+    with pytest.raises(GateError, match="registered theorem is 'lemma_ck'"):
+        _grant(root)
+    _with_checks(root, _rec(_art_sha(root, node)))
+    assert _grant(root).status == "proved"
+
+
+def test_helper_lemma_record_refused_by_checks_record(tmp_path, capsys):
+    mroot = _cli_campaign(tmp_path)
+    art = mroot / "demo" / "proof" / "Demo_ck.lean"
+    art.write_text(art.read_text() + "theorem helper : True := trivial\n")
+    paths = _write_jsons(tmp_path, fingerprints={"helper": FPRINT}, targets=("helper",),
+                         probe_theorem="helper")
+    assert _record(mroot, paths) == 2
+    assert _node(mroot).checks is None
+    assert "registered theorem" in capsys.readouterr().err
+
+
+def test_record_of_another_theorem_than_the_comparator_record_fails(tmp_path):
+    from telperion.missions.provenance import checks_problem
+    from telperion.missions.schema import ComparatorRecord
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    p = root / "nodes" / "Demo_ck.toml"
+    node = load_node(p)
+    node = dataclasses.replace(node, checks=_rec(_art_sha(root, node)))
+    assert checks_problem(root, node) == ""
+    comp = ComparatorRecord(run_id="1", date="2026-10-29", artifact_sha256=_art_sha(root, node),
+                            theorem="other_thm")
+    assert "Comparator record" in checks_problem(root, dataclasses.replace(node, comparator=comp))
+
+
+@pytest.mark.parametrize("axioms,why", [(None, "no replay axiom list"),
+                                        (("propext", "TpBad.bad"), "non-standard axioms")])
+def test_checks_problem_needs_clean_replay_axioms(tmp_path, axioms, why):
+    from telperion.missions.provenance import checks_problem
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    assert why in checks_problem(root, dataclasses.replace(node, checks=_rec(_art_sha(root, node), axioms=axioms)))
+
+
+@pytest.mark.parametrize("kw,why", [
+    (dict(probe_axioms=None), "axioms"),
+    (dict(fp_axioms=None), "axioms"),
+    (dict(fp_axioms=("propext", "Quot.sound")), "differ"),
+    (dict(probe_axioms=("propext", "Lean.ofReduceBool"), fp_axioms=("propext", "Lean.ofReduceBool")),
+     "non-standard"),
+    (dict(closure_axioms=("propext", "Classical.choice")), "closure audit's axioms"),
+])
+def test_cli_replay_axioms_cross_check(tmp_path, kw, why, capsys):
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path, **kw)) == 2
+    assert _node(mroot).checks is None
+    assert why in capsys.readouterr().err
+
+
+def test_cli_records_the_replay_axioms(tmp_path):
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path, probe_axioms=("propext", "Quot.sound"),
+                                       fp_axioms=("Quot.sound", "propext"))) == 0
+    assert _node(mroot).checks.axioms == ("Quot.sound", "propext")
+
+
+def test_cli_stale_json_refused(tmp_path, capsys):
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path, stale=True)) == 2
+    assert "stale" in capsys.readouterr().err
+
+
+def _stale_project(tmp_path: Path, newer_source: bool) -> tuple[Path, Path]:
+    import os
+    proj = tmp_path / "proj"
+    olean = proj / ".lake" / "build" / "lib" / "lean" / "M.olean"
+    olean.parent.mkdir(parents=True)
+    olean.write_bytes(b"olean")
+    src = proj / "M.lean"
+    src.write_text("theorem foo : True := trivial\n")
+    t = olean.stat().st_mtime
+    os.utime(src, (t + 100, t + 100) if newer_source else (t - 100, t - 100))
+    return proj, src
+
+
+def test_cli_probe_refuses_a_stale_build(tmp_path, monkeypatch, capsys):
+    from telperion.checks import negation_probe as np_
+    from telperion.checks.negation_probe import ProbeResult
+    ran = []
+    monkeypatch.setattr(np_, "run_probe", lambda spec, project, **kw: ran.append(1) or ProbeResult("WITNESSED", "ok"))
+    proj, src = _stale_project(tmp_path, newer_source=True)
+    assert main(["probe-negation", "--project", str(proj), "--module", "M", "--theorem", "foo",
+                 "--file", str(src), "--json"]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["verdict"] == "ERROR" and "stale" in out["detail"] and out["stale"] is True and not ran
+    assert out["source_mtime"] > out["olean_mtime"]
+    proj2, src2 = _stale_project(tmp_path / "fresh", newer_source=False)
+    assert main(["probe-negation", "--project", str(proj2), "--module", "M", "--theorem", "foo",
+                 "--file", str(src2), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stale"] is False and ran
+
+
+def test_cli_fingerprint_refuses_a_stale_build(tmp_path, monkeypatch, capsys):
+    from telperion.checks import fingerprint as fp_
+    monkeypatch.setattr(fp_, "run_fingerprint", lambda project, imports, targets, **kw:
+                        fp_.Fingerprints({t: "a" * 64 for t in targets}, "b" * 64, [], ["propext"]))
+    proj, src = _stale_project(tmp_path, newer_source=True)
+    assert main(["fingerprint", "--project", str(proj), "--import", "M", "--target", "foo",
+                 "--file", str(src), "--json"]) == 2
+    assert "stale" in json.loads(capsys.readouterr().out)["error"]
+    proj2, src2 = _stale_project(tmp_path / "fresh", newer_source=False)
+    assert main(["fingerprint", "--project", str(proj2), "--import", "M", "--target", "foo",
+                 "--file", str(src2), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["axioms"] == ["propext"] and out["stale"] is False

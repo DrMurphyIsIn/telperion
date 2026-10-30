@@ -883,8 +883,18 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       checks that the reviewer is independent of the author. A later step could require a
       sign-off identity distinct from the `[author]`, as the read-back rule does;
     - the closure audit is tied to the probe and fingerprint by the theorem NAME only:
-      `audit-closure` imports rather than replays, so its JSON carries no olean digest. A
-      later step could have it emit the replayed closure's `olean_sha256` too;
+      `audit-closure` still IMPORTS the submission rather than replaying it, so its JSON carries
+      no olean digest and an imported module could forge it. The interim cross-check (final
+      review I3): the record carries the REPLAY's axiom list, which the probe and fingerprint
+      must agree on, which must be a subset of CLEAN_AXIOMS, and which must include the closure
+      audit's per-target axioms. Porting the closure audit to a replay callback is a tracked
+      step-5 follow-up, pending the owner's explicit acceptance;
+    - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
+      declaration the grant gate matched) and of the Comparator record's theorem when there is
+      one (final review I1), so a helper lemma's checks never pass for the node;
+    - hand-editing the node file is out of reach of this check: deleting `checks_required`
+      from `[grant]`, like back-dating `created` before the first grant, removes the
+      requirement. Both are the same documented limitation class (a CI diff check, step 5);
     - the cutoff keys on `created`, which nothing protects before a node's first grant: a
       node back-dated to before 2026-10-28 while still unproved is granted without checks.
       Once a gate has granted it with `checks_required = true` in the `[grant]`, the
@@ -910,6 +920,29 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     if cur != k.artifact_sha256:
         return (f"[checks] of {k.date} were on artifact sha256 {k.artifact_sha256[:12]}..., but "
                 f"the artifact on disk is {cur[:12]}...; re-run the checks on the current artifact")
+    # Final review I3 (interim): the replay's own axiom list, which no imported module can forge.
+    from ..comparator import CLEAN_AXIOMS
+    if k.axioms is None:
+        return ("[checks] record has no replay axiom list (an older record); re-run "
+                "`mission checks-record` with the current probe and fingerprint JSONs")
+    bad = [a for a in k.axioms if a not in CLEAN_AXIOMS]
+    if bad:
+        return f"the replayed module uses non-standard axioms {bad} (recorded {k.date})"
+    # Final review I1: the record must be of the node's OWN theorem, the declaration the grant
+    # gate matched in the artifact, and of the Comparator record's theorem once there is one.
+    from .judge import _guard_anchors
+    ga = _guard_anchors()
+    try:
+        want = ga.resolve_theorem(art.read_text(encoding="utf-8"),
+                                  statement_path(Path(campaign_root), node).read_text(encoding="utf-8"))
+    except (OSError, ga.RegistryError) as exc:
+        return f"cannot resolve the node's registered theorem ({exc})"
+    if k.theorem != want:
+        return (f"[checks] are of theorem {k.theorem!r}, but the node's registered theorem is "
+                f"{want!r}; a helper lemma's checks do not cover the node")
+    if node.comparator is not None and node.comparator.theorem and node.comparator.theorem != k.theorem:
+        return (f"[checks] are of theorem {k.theorem!r}, but the Comparator record is of "
+                f"{node.comparator.theorem!r}")
     return ""
 
 

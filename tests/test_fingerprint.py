@@ -322,6 +322,21 @@ def test_run_lean_timeout_kills_grandchild(tmp_path):
     pytest.fail(f"grandchild {pid} outlived the timeout")
 
 
+def test_run_lean_output_is_bounded(tmp_path):
+    # final review M4: more than max_output bytes on a stream is OutputLimitExceeded (an OSError: ERROR for callers)
+    from telperion.checks.lean_run import OutputLimitExceeded, run_lean
+    assert run_lean(["sh", "-c", "echo hi"], tmp_path, 10, max_output=10) == (0, "hi\n")
+    with pytest.raises(OutputLimitExceeded):                     # caught at the end of a short run
+        run_lean(["sh", "-c", "head -c 2000000 /dev/zero"], tmp_path, 30, max_output=1_000_000)
+    with pytest.raises(OutputLimitExceeded):                     # on stderr too
+        run_lean(["sh", "-c", "head -c 2000000 /dev/zero >&2"], tmp_path, 30, max_output=1_000_000)
+    start = time.monotonic()
+    with pytest.raises(OutputLimitExceeded):                     # an endless writer is killed while it runs
+        run_lean(["sh", "-c", "yes"], tmp_path, 120, max_output=1_000_000)
+    assert time.monotonic() - start < 30
+    assert issubclass(OutputLimitExceeded, OSError)
+
+
 @pytest.mark.parametrize("redirect", [" >/dev/null 2>&1", ""])      # "" : the daemon also holds the pipes
 def test_run_lean_reaps_daemon_after_normal_exit(tmp_path, redirect):
     # I-A: a body compile that leaves `sleep 3; touch MARKER` behind and exits 0 must not get to touch MARKER
@@ -523,12 +538,13 @@ def test_cli_json_includes_olean_sha256(monkeypatch, capsys):
     from telperion.checks import fingerprint as fp_
 
     def ok(project, imports, targets, wrapper=None, timeout=0, **kw):
-        return fp_.Fingerprints({t: "a" * 64 for t in targets}, "b" * 64, [["M", "olean", "c" * 64]])
+        return fp_.Fingerprints({t: "a" * 64 for t in targets}, "b" * 64, [["M", "olean", "c" * 64]], ["propext"])
     monkeypatch.setattr(fp_, "run_fingerprint", ok)
     assert cli.main(["fingerprint", "--project", ".", "--import", "M", "--target", "foo", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {"fingerprints": {"foo": "a" * 64}, "olean_sha256": "b" * 64,
                                                    "olean_closure": [["M", "olean", "c" * 64]],
-                                                   "module": "M", "theorem": "foo", "source_sha256": None}
+                                                   "module": "M", "theorem": "foo", "source_sha256": None,
+                                                   "axioms": ["propext"]}      # final review I3: the replay's axioms
 
 
 def test_cli_trusted_manifest_build_verify(tmp_path, monkeypatch, capsys):

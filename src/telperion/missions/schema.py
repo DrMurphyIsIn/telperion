@@ -455,6 +455,10 @@ class ChecksRecord:
     #: The constant the fingerprint (and the closure audit) is of.
     theorem: str = ""
     note: str = ""
+    #: The replay's axiom list (`collectAxioms` over the target module's constants), which the probe and the
+    #: fingerprint JSONs must both carry and agree on (final review I3). None: an older record, which
+    #: `provenance.checks_problem` refuses.
+    axioms: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self):
         if not str(self.date).strip():
@@ -469,6 +473,9 @@ class ChecksRecord:
         if self.closure_verdict not in ("PASS", "FAIL"):
             raise SchemaError(f"checks.closure_verdict must be 'PASS' or 'FAIL', "
                               f"not {self.closure_verdict!r}")
+        if self.axioms is not None and (not isinstance(self.axioms, tuple)
+                                        or not all(isinstance(a, str) and a for a in self.axioms)):
+            raise SchemaError(f"checks.axioms must be a list of axiom names, not {self.axioms!r}")
 
 
 #: The keys a `[checks]` table may carry (one per ChecksRecord field).
@@ -771,6 +778,8 @@ def _node_to_doc(node: Node) -> dict:
             doc["checks"]["theorem"] = k.theorem
         if k.note:
             doc["checks"]["note"] = k.note
+        if k.axioms is not None:
+            doc["checks"]["axioms"] = list(k.axioms)
     return doc
 
 
@@ -860,7 +869,8 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 olean_sha256=k["olean_sha256"], probe_verdict=k["probe_verdict"],
                 closure_verdict=k["closure_verdict"],
                 statement_fingerprint=k["statement_fingerprint"],
-                theorem=k.get("theorem", ""), note=k.get("note", ""))
+                theorem=k.get("theorem", ""), note=k.get("note", ""),
+                axioms=tuple(k["axioms"]) if isinstance(k.get("axioms"), list) else k.get("axioms"))
         compose = None
         if "compose" in doc:
             c = doc["compose"]

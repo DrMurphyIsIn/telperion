@@ -309,10 +309,11 @@ def _precheck(project: Path, library_roots: tuple[str, ...]) -> None:
 class Fingerprints(dict):
     """target -> sha256 of its serialized statement; ``olean_sha256``/``olean_closure`` bind the replayed closure."""
 
-    def __init__(self, fps=(), olean_sha256=None, olean_closure=()):
+    def __init__(self, fps=(), olean_sha256=None, olean_closure=(), axioms=None):
         super().__init__(fps)
         self.olean_sha256: str | None = olean_sha256
         self.olean_closure: list = [list(e) for e in olean_closure]
+        self.axioms: list | None = list(axioms) if axioms is not None else None
 
 
 def _compile_body(body: str, module: str, cdir: Path, search: list[str], prefix: list[str], lean: str,
@@ -388,7 +389,7 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
     absent = [t for t, k in keys.items() if k not in fps]
     if absent:
         raise ValueError(f"no fingerprint printed for {', '.join(absent)}:\n{r.output[-4000:]}")
-    return Fingerprints({t: fps[k] for t, k in keys.items()}, r.olean_sha256, r.olean_closure)
+    return Fingerprints({t: fps[k] for t, k in keys.items()}, r.olean_sha256, r.olean_closure, r.axioms)
 
 
 def _escaped(target: str) -> str:

@@ -47,6 +47,8 @@ jobs:
       # request has (the PR's base branch); a push (e.g. a merge to main) has nothing
       # to diff against, so it just re-checks the floor + exception consistency.
       - if: github.event_name == 'pull_request'
-        run: telperion kernel-policy check --base "origin/${{ github.base_ref }}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: telperion kernel-policy check --base "origin/$BASE_REF"
       - if: github.event_name != 'pull_request'
         run: telperion kernel-policy check
