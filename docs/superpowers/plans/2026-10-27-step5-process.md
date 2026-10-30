@@ -240,3 +240,83 @@ This step adds:
 - [ ] **Step 2:** Run it (GREEN, since every piece already exists from Tasks 1-4 and step 4).
 - [ ] **Step 3:** Write the docs section.
 - [ ] **Step 4: Commit** with the message `process: end-to-end dry-run mission test; MISSIONS_HOWTO statement-first section`.
+
+---
+
+## Amendment, 2026-10-30: step 4 carry-overs (Tasks 6 and 7)
+
+The step 4 final review (ledger `.superpowers/sdd/2026-10-27-step4-checks/progress.md`, Rulings 16-18) left two
+security items for this step. Both tie into the freeze, so they belong here. The owner accepted the closure-audit gap
+for the step 4 merge only "until step 5" (decision of 2026-10-30).
+
+### Task 6: The semantic statement tie (frozen statement fingerprints)
+
+**Why.** Step 4 ties a `[checks]` record to the node's theorem by NAME, through the gate's syntactic resolver
+(`guard_anchors.resolve_theorem`). Five known evasions predate step 4: `s!`-interpolated strings, a quote inside a
+`«»` name, declaration text inside `«»`, `#exit`, and `(command| ...)` quotations. The sound fix is semantic. The
+fingerprint of the checked theorem's TYPE must equal the frozen fingerprint of the node's `def … : Prop` statement,
+which spec 7 already asks `mission freeze` to record.
+
+**Files:**
+- Modify: `src/telperion/checks/fingerprint.py`. Add a `value` mode that fingerprints a `def`'s VALUE instead of its
+  type, with the same unfolding and the same library roots. A `theorem foo : Stmt` then fingerprints (type mode) to the
+  same string as `Stmt` (value mode), because `Stmt` is a non-library constant and is unfolded.
+- Modify: `src/telperion/missions/process.py`, adding `freeze --fingerprints`. When a Lean env is available, `freeze`
+  and `unfreeze` record `[fingerprints] "<node>" = "<fp>"` beside `[statements]`, computed from the replayed statement
+  module in value mode. Without one they record nothing, and the gate then refuses post-cutoff grants with "statement
+  fingerprint not frozen".
+- Modify: `src/telperion/missions/provenance.py` (`checks_problem`) and `cli.py` (`checks-record`). For post-cutoff
+  nodes, the fingerprint JSON's fingerprint for the target must equal the frozen fingerprint. The name tie stays as a
+  readable cross-check, but the fingerprint equality is what makes it sound. Update the `checks_problem` docstring and
+  the HOWTO "theorem tie is syntactic" bullet: post-freeze, the tie is semantic.
+
+**Interfaces:**
+- `run_fingerprint(..., mode: Literal["type", "value"] = "type")`
+- `process.frozen_fingerprint(root, node) -> str | None`
+
+**Tests:**
+- pure: the gate refuses a mismatched fingerprint, refuses a missing frozen fingerprint for a post-cutoff node, and
+  passes on equality;
+- Lean env:
+  - `def S : Prop := ∀ n : ℕ, n + 0 = n` with `theorem t : S` gives equal fingerprints;
+  - `theorem t' : ∀ n : ℕ, n + 0 = n` (the statement inlined) gives equal fingerprints too;
+  - a helper with a different type gives a different fingerprint;
+  - each of the five evasion artifacts from step 4's final re-review (`final-rereview.md`), with a decoy helper, is
+    REFUSED at checks-record, because the fingerprints differ.
+
+**Commit:** `missions: [checks] tied to the frozen statement fingerprint (semantic theorem tie)`
+
+### Task 7: The closure audit as a replay callback
+
+**Why.** `audit-closure` runs `lake env lean` on a script that imports the submission. That executes the submission's
+initializers and elaborators, and also its `lakefile`. Its PASS can therefore be forged. This contradicts the owner's
+"Replay-isolate" rule, and it is the gap the owner accepted until step 5.
+
+**Files:**
+- Modify: `src/telperion/closure_audit.py`. Add `render_audit_callback(spec, nonce) -> str`: the same closure walk
+  (`closureOf`, scan patterns, absent constants and module prefixes, allowed axioms, recursors) written as a
+  `TelperionReplay.callback`, emitting the same nonce-tagged lines. Add
+  `run_closure_audit_replayed(spec, project, *, trusted_env, manifest, wrapper, timeout, memory_mb) -> AuditResult`.
+  It goes through `lean_replay`, so it gets the trusted imports only, the private closure copies, the kernel replay,
+  refused untrusted axioms, the olean sha binding and no lake.
+- Modify: `cli.py`. `audit-closure` uses the replayed path by default. The old import path stays only behind
+  `--legacy-import`, which prints a NOT-ISOLATED warning and is refused by `checks-record` for post-cutoff nodes.
+- Modify: `checks-record` and `checks_problem`. The closure JSON must carry `olean_sha256` equal to the probe's and the
+  fingerprint's. The three checks then run on ONE replayed closure. The interim I3 axiom cross-check stays, as a second
+  line.
+- Docs: remove the "closure audit imports the submission" limitation, the owner-accepted gap, from the HOWTO and the spec
+  amendment, and record that it was closed in step 5.
+
+**Tests:**
+- pure: render, parse and gate wiring;
+- Lean env:
+  - parity: on a clean module, the replayed audit agrees with the legacy audit, with the same closure and axioms;
+  - the step 4 evil modules (initialize / command_elab / tactic override) cannot change the replayed audit's verdict;
+  - a module whose PASS the legacy path could forge is caught by the replayed path, so it must FAIL;
+  - `sorryAx` and an untrusted axiom are refused.
+
+**Commit:** `closure audit: run as a kernel-replay callback (no import of the submission)`
+
+**Ordering.** Do Tasks 1-5 as written, then Task 7, then Task 6. Task 6 needs the freeze, and it is easiest to test
+once all three checks run on one replayed closure. The owner's open step 5 decision on witnessing over a reducing
+telescope (step 4's C2 residual) is NOT in this plan. Raise it at the final review.
