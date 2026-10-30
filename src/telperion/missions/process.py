@@ -503,10 +503,19 @@ def freeze_history_problems(root: Path) -> List[str]:
     return problems
 
 
+#: How many of `freeze_problems`' entries `freeze_grant_problem` quotes in a refusal.
+_GRANT_PROBLEM_PREVIEW = 3
+
+
 def freeze_grant_problem(root: Path, node) -> str:
-    """"" unless *node* is post-cutoff (`provenance.checks_required`) and either no
-    FREEZE.toml exists for its campaign or its statement is not recorded in one; else why
-    the grant gate must refuse it."""
+    """"" unless *node* is post-cutoff (`provenance.checks_required`); else why the grant
+    gate must refuse it: no FREEZE.toml exists for the campaign, its statement is not
+    recorded in one, or (Controller Ruling 6, fix round 2) `freeze_problems(root)` reports
+    ANY problem at all -- not only ones about this node. A post-cutoff grant rests on the
+    campaign's freeze being trustworthy as a whole (the C1 tamper `freeze_history_problems`
+    catches is a campaign-level fact, not a per-node one: hiding a hand-rewritten hash
+    behind an unchanged version on a DIFFERENT node's statement is exactly the kind of
+    forgery this must not let a clean-looking node slip past)."""
     from .provenance import checks_required
 
     if not checks_required(node):
@@ -524,5 +533,13 @@ def freeze_grant_problem(root: Path, node) -> str:
         return (
             f"node {slug!r} is not recorded in {FREEZE_FILENAME}; the campaign must be frozen "
             "or unfrozen to include it before this node can be granted."
+        )
+    problems = freeze_problems(root)
+    if problems:
+        shown = problems[:_GRANT_PROBLEM_PREVIEW]
+        more = (f" (+{len(problems) - _GRANT_PROBLEM_PREVIEW} more)"
+               if len(problems) > _GRANT_PROBLEM_PREVIEW else "")
+        return (
+            f"the campaign's freeze has unresolved problem(s){more}: " + "; ".join(shown)
         )
     return ""

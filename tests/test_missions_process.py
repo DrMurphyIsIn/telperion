@@ -389,6 +389,76 @@ def test_post_cutoff_node_needs_freeze_to_grant(tmp_path):
     assert freeze_grant_problem(root, node) != ""
 
 
+def test_post_cutoff_grant_refused_by_tampered_freeze_history(tmp_path):
+    """Controller Ruling 6 (fix round 2): a post-cutoff node may not be granted while ANY
+    `freeze_problems(root)` problem exists -- even one about a DIFFERENT node in the same
+    campaign, and even when the node actually being granted has passing checks of its own.
+    The reviewer's C1 tamper (a statement edited, FREEZE.toml's recorded hash hand-rewritten
+    to match, version left unchanged), committed, on the UNGRANTED node Extra -- the grant
+    of Demo_ck, which is otherwise clean, must still be refused."""
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    manifest = load_campaign(root).manifest
+    extra = Node(name="Extra", title="an extra node", kind="lemma", status="draft",
+                depends_on=(), statement_module="Statements.Extra")
+    save_node(extra, root / "nodes" / "Extra.toml")
+    write_statement(root, extra, "theorem thm_extra : True", manifest)
+
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+
+    write_statement(root, load_campaign(root).nodes["Extra"],
+                    "theorem thm_extra : False", manifest)
+    new_hash = hashlib.sha256(
+        statement_body(root, load_campaign(root).nodes["Extra"]).encode("utf-8")
+    ).hexdigest()
+    _hand_edit_freeze(root, lambda d: d["statements"].__setitem__("Extra", new_hash))
+    _git_commit(root, "tamper with Extra's recorded hash to hide the edit")
+
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node)))  # Demo_ck's own checks pass cleanly
+
+    with pytest.raises(GateError, match="freeze") as exc_info:
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert "without a version bump" in str(exc_info.value)
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_post_cutoff_grant_passes_with_clean_committed_freeze(tmp_path):
+    """The converse of the tamper test above: a post-cutoff node in a campaign that is
+    frozen, committed, and untampered is granted normally."""
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node)))
+
+    granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                           session="gate-session")
+    assert granted.status == "proved"
+
+
+def test_freeze_problems_clean_for_post_cutoff_committed_freeze(tmp_path):
+    """The post-cutoff happy path, pinned: a freeze dated on/after CUTOFF, in a git
+    repository, with the freeze itself committed, is clean -- freeze_history_problems'
+    fail-closed checks (no git repo / never committed) are about absence of evidence, not
+    about a post-cutoff date by itself."""
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")  # >= CUTOFF
+    _git_commit(root, "initial freeze")
+
+    assert freeze_problems(root) == []
+
+
 def test_pre_cutoff_campaign_without_freeze_ok(tmp_path):
     from test_missions_checks import _grant_campaign
 

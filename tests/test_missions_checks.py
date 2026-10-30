@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -218,11 +219,25 @@ def _with_checks(root: Path, rec: ChecksRecord) -> None:
 
 def _grant(root: Path) -> Node:
     # Step 5 Task 1: a post-cutoff node is granted only once the campaign is frozen
-    # (freeze_grant_problem). These fixtures predate the freeze gate, so grant once here,
-    # same as a real session would run `mission freeze` before `mission grant`; a campaign
-    # already frozen (e.g. a re-grant in the same test) is left alone.
+    # (freeze_grant_problem). Fix round 2 (Controller Ruling 6): freeze_grant_problem also
+    # refuses on any freeze_problems(root) problem, history included, and
+    # freeze_history_problems fails closed on a post-cutoff FREEZE.toml with no git history
+    # -- so a real grant now also needs the freeze committed. These fixtures predate all of
+    # that, so freeze AND commit once here, same as a real session would run `mission
+    # freeze` + `git commit` before `mission grant`; a campaign already frozen (e.g. a
+    # re-grant in the same test) is left alone.
     if not freeze_path(root).exists():
         freeze(root, identity="gate@test", session="gate-session", date="2026-10-29")
+        subprocess.run(["git", "-C", str(root), "init", "-q"],
+                       check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(root), "add", "."],
+                       check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.name=Test User",
+             "-c", "user.email=test@example.com", "commit", "-q", "-m",
+             "test fixture: initial freeze"],
+            check=True, capture_output=True, text=True,
+        )
     return grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
                         session="gate-session")
 
