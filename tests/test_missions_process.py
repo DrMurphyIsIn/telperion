@@ -1088,3 +1088,125 @@ def test_freeze_history_campaign_in_a_subdirectory_of_the_repo(tmp_path):
     _tamper_hash(root, manifest, "theorem thm_Node_A : 3 = 3")
     _git_commit(repo, "c2: tamper")
     assert any("without a version bump" in p for p in freeze_problems(root))
+
+
+# ---------------------------------------------------------------------------
+# Fix round 5 (Controller Ruling 9): every git call through one sanitised helper -- no
+# replace objects, no inherited GIT_* environment -- and grafts/alternates refused
+# ---------------------------------------------------------------------------
+
+def _frozen_then_tampered(root: Path) -> str:
+    """c1: an honest freeze; c2: the C1 tamper (hash rewritten, no version bump). Returns
+    c1's sha. Baseline: freeze_problems flags c2."""
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: honest freeze")
+    c1 = _git(root, "rev-parse", "HEAD").strip()
+    _tamper_hash(root, manifest, "theorem thm_Node_A : 12 = 12")
+    _git_commit(root, "c2: tamper, no version bump")
+    assert any("without a version bump" in p for p in freeze_problems(root))
+    return c1
+
+
+def test_freeze_history_ignores_git_replace_refs(tmp_path):
+    """Re-review 3: `git replace <c1> <fabricated root with c2's tree>` made the genesis
+    LOOK like it always had the tampered hash, and freeze_problems returned []."""
+    root = tmp_path / "demo"
+    c1 = _frozen_then_tampered(root)
+    tree = _git(root, "rev-parse", "HEAD^{tree}").strip()
+    fake = _git(root, "commit-tree", tree, "-m", "fabricated genesis").strip()
+    _git(root, "replace", c1, fake)
+    assert "fabricated genesis" in _git(root, "log", "--format=%s")  # the replace is live
+
+    assert any("without a version bump" in p for p in freeze_problems(root))
+
+
+def test_freeze_history_ignores_inherited_git_dir(tmp_path, monkeypatch):
+    """Re-review 3: GIT_DIR in the environment pointed the history walk at a decoy repo
+    whose only commit already carries the tampered hash, while the working-tree read saw the
+    real file -- freeze_problems returned []."""
+    import shutil
+
+    root = tmp_path / "demo"
+    _frozen_then_tampered(root)
+    decoy = tmp_path / "decoy"
+    shutil.copytree(root, decoy, ignore=shutil.ignore_patterns(".git"))
+    _git_init(decoy)
+    _git_commit(decoy, "decoy: the tampered state as an honest genesis")
+    assert freeze_problems(decoy) == []  # the decoy is self-consistent on its own
+
+    for var, value in (("GIT_DIR", str(decoy / ".git")),
+                       ("GIT_OBJECT_DIRECTORY", str(decoy / ".git" / "objects")),
+                       ("GIT_INDEX_FILE", str(tmp_path / "nowhere"))):
+        monkeypatch.setenv(var, value)
+    assert any("without a version bump" in p for p in freeze_problems(root))
+
+
+def test_freeze_history_refuses_grafts(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: honest freeze")
+    (root / ".git" / "info").mkdir(exist_ok=True)
+    (root / ".git" / "info" / "grafts").write_text("")
+
+    problems = freeze_problems(root)
+    assert any("info/grafts" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("name", ["alternates", "http-alternates"])
+def test_freeze_history_refuses_alternates(tmp_path, name):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: honest freeze")
+    other = tmp_path / "other"
+    other.mkdir()
+    _git_init(other)
+    info = root / ".git" / "objects" / "info"
+    info.mkdir(parents=True, exist_ok=True)
+    (info / name).write_text(str(other / ".git" / "objects") + "\n")
+
+    problems = freeze_problems(root)
+    assert any(f"objects/info/{name}" in p for p in problems), problems
+
+
+def test_pre_cutoff_campaign_not_penalised_for_grafts(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    _git_commit(root, "c1: honest freeze")
+    (root / ".git" / "info").mkdir(exist_ok=True)
+    (root / ".git" / "info" / "grafts").write_text("")
+    assert freeze_problems(root) == []
+
+
+def test_process_runs_git_only_through_the_sanitised_helper():
+    """Structural (Ruling 9): no subprocess call in process.py outside `_git`, so no git
+    invocation can skip --no-replace-objects or the sanitised environment."""
+    import ast
+
+    import telperion.missions.process as process_mod
+
+    tree = ast.parse(Path(process_mod.__file__).read_text())
+    offenders = []
+
+    def visit(node, inside_git):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inside_git = node.name == "_git"
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in ("subprocess", "os") and not inside_git
+                and node.func.attr in ("run", "Popen", "call", "check_call", "check_output",
+                                       "system", "popen", "spawnv", "execv", "execvp")):
+            offenders.append(node.lineno)
+        for child in ast.iter_child_nodes(node):
+            visit(child, inside_git)
+
+    visit(tree, False)
+    assert offenders == []
+    assert any(isinstance(n, ast.FunctionDef) and n.name == "_git" for n in tree.body)

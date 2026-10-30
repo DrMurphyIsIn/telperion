@@ -65,6 +65,21 @@ protected remote branch (no force-push) with `mission verify` run in CI against 
 history of that branch (hence the shallow-clone refusal above), not against whatever a
 local, possibly-rewritten clone happens to contain.
 
+The same goes for everything else in the local `.git` directory (Controller Ruling 9, fix
+round 5): replace refs, config, hooks, grafts and alternates are in the same trust class
+as rewriting history. Anyone who can write them can rewrite history outright. The guards
+here stop accidental and casual tampering:
+- every git call goes through `_git`: `--no-replace-objects`, and an environment with no
+  inherited `GIT_*` variables (re-review 3 bypassed the walk with a `git replace` ref, and
+  separately with `GIT_DIR` aimed at a decoy repository);
+- the user's config cannot change what the walk reads, because every behaviour it depends
+  on is pinned by an explicit flag;
+- a repository with `info/grafts` or `objects/info/(http-)alternates` is refused for a
+  post-cutoff campaign.
+
+They are not a defence against a determined owner of the clone. That anchor is still a
+fresh full clone of a protected branch, verified in CI.
+
 `CUTOFF` is the single source of truth for the post-process cutoff date (Controller Ruling
 1, 2026-10-30): `provenance.CHECKS_CUTOFF` is an alias of it, kept for back-compat. This
 module must NOT import `provenance` or `verify` at module level -- both of those already
@@ -78,7 +93,7 @@ import os
 import stat
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .schema import atomic_write_text, slug_of
 from .statements import statement_body, statement_path
@@ -481,39 +496,80 @@ def freeze_problems(root: Path) -> List[str]:
 # freeze_history_problems (fix round 1, Controller Ruling 5)
 # ---------------------------------------------------------------------------
 
-def _is_git_repo(root: Path) -> bool:
+def _git_env() -> Dict[str, str]:
+    """The environment every git call runs in (Controller Ruling 9, fix round 5): the
+    caller's, minus EVERY `GIT_*` variable -- re-review 3 pointed the whole walk at a decoy
+    repository with nothing but `GIT_DIR` set, while the working-tree read still saw the
+    real file -- plus no system config, no prompts, the C locale, and no replace objects.
+    HOME and PATH are kept: git needs them to run at all, and the user's global config is
+    defeated where it matters by the explicit flags each call pins."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0", LC_ALL="C",
+               GIT_NO_REPLACE_OBJECTS="1")
+    return env
+
+
+def _git(args: Sequence[str], cwd: Path, *, stdin: Optional[bytes] = None,
+         timeout: int = 10) -> Optional["subprocess.CompletedProcess[bytes]"]:
+    """THE way this module runs git (Controller Ruling 9, fix round 5; a structural test
+    holds every other subprocess call out of process.py): `git --no-replace-objects -C
+    <cwd> <args>` in `_git_env()`, output as bytes. `--no-replace-objects` because a
+    `git replace` ref made the genesis commit look like the tampered one and the walk
+    returned [] (re-review 3). Returns None if git cannot be run or times out."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True, text=True, timeout=10,
+        return subprocess.run(
+            ["git", "--no-replace-objects", "-C", str(cwd), *args],
+            input=stdin, capture_output=True, timeout=timeout, env=_git_env(),
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return out.returncode == 0 and out.stdout.strip() == "true"
+        return None
+
+
+def _git_line(args: Sequence[str], cwd: Path) -> Optional[str]:
+    """Stripped stdout of a successful `_git` call, or None."""
+    out = _git(args, cwd)
+    if out is None or out.returncode != 0:
+        return None
+    return os.fsdecode(out.stdout).strip()
+
+
+def _is_git_repo(root: Path) -> bool:
+    return _git_line(["rev-parse", "--is-inside-work-tree"], root) == "true"
 
 
 def _git_toplevel(root: Path) -> Optional[Path]:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0 or not out.stdout.strip():
-        return None
-    return Path(out.stdout.strip())
+    top = _git_line(["rev-parse", "--show-toplevel"], root)
+    return Path(top) if top else None
 
 
 def _is_shallow_repo(root: Path) -> bool:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return out.returncode == 0 and out.stdout.strip() == "true"
+    return _git_line(["rev-parse", "--is-shallow-repository"], root) == "true"
+
+
+#: Files in a git directory that make its object store or its parentage say something
+#: other than the commits themselves: grafts rewrite parents, alternates borrow objects
+#: from another repository the walk cannot vouch for (Controller Ruling 9).
+_UNTRUSTED_GIT_FILES = ("info/grafts", "objects/info/alternates",
+                        "objects/info/http-alternates")
+
+
+def _untrusted_git_file(root: Path) -> Optional[str]:
+    """A problem naming the first `_UNTRUSTED_GIT_FILES` entry present in the repository's
+    git directory or common directory (a linked worktree has both), or None. Fails closed:
+    if git cannot say where its directory is, that is a problem too."""
+    out = _git_line(["rev-parse", "--git-dir", "--git-common-dir"], root)
+    dirs = out.splitlines() if out else []
+    if len(dirs) != 2:
+        return (f"{FREEZE_FILENAME}: freeze history unavailable (could not locate the git "
+                "directory).")
+    for gitdir in dict.fromkeys(dirs):
+        base = Path(gitdir) if Path(gitdir).is_absolute() else Path(root) / gitdir
+        for name in _UNTRUSTED_GIT_FILES:
+            if os.path.lexists(base / name):
+                return (f"{FREEZE_FILENAME}: freeze history untrusted: the repository has "
+                        f"{base / name}; remove it (or use a fresh full clone) so the "
+                        "history walked is the repository's own.")
+    return None
 
 
 #: Commit header in `_freeze_path_log`'s `git log` output. Raw diff lines start with ':', and
@@ -530,14 +586,7 @@ _PathChange = Tuple[str, List[Tuple[bytes, str, str]]]
 
 
 def _git_head_exists(root: Path) -> bool:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return out.returncode == 0
+    return _git_line(["rev-parse", "-q", "--verify", "HEAD^{commit}"], root) is not None
 
 
 def _freeze_path_log(repo: Path, relpath: str) -> Tuple[Optional[List[_PathChange]], Optional[str]]:
@@ -560,8 +609,8 @@ def _freeze_path_log(repo: Path, relpath: str) -> Tuple[Optional[List[_PathChang
     `--no-renames`), rename detection, submodule hiding, signatures, colour.
     `--literal-pathspecs`, so a campaign directory named with glob characters means itself.
     `-z`, so the path is never quoted."""
-    argv = [
-        "git", "-C", str(repo), "--literal-pathspecs", "-c", "log.follow=false",
+    args = [
+        "--literal-pathspecs", "-c", "log.follow=false",
         "log", "--first-parent", "--diff-merges=first-parent", "--root", "--raw",
         "--no-abbrev", "--no-renames", "--ignore-submodules=none", "--no-color",
         "--no-show-signature", "-z", "--reverse", f"--format={_LOG_MARKER}%H",
@@ -569,9 +618,8 @@ def _freeze_path_log(repo: Path, relpath: str) -> Tuple[Optional[List[_PathChang
     ]
     unreadable = (f"{FREEZE_FILENAME}: freeze history could not be read (`git log` failed "
                   "or printed something unexpected).")
-    try:
-        out = subprocess.run(argv, capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
+    out = _git(args, repo, timeout=60)
+    if out is None:
         return None, unreadable
     if out.returncode != 0:
         return ([], None) if not _git_head_exists(repo) else (None, unreadable)
@@ -661,15 +709,9 @@ def _cat_file_blobs(repo: Path, blobs: List[str]) -> Tuple[Dict[str, bytes], Opt
     unique = list(dict.fromkeys(blobs))
 
     def run(mode: str, names: List[str]):
-        try:
-            out = subprocess.run(
-                ["git", "-C", str(repo), "cat-file", mode],
-                input="".join(n + "\n" for n in names).encode("ascii"),
-                capture_output=True, timeout=60,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return out.stdout if out.returncode == 0 else None
+        out = _git(["cat-file", mode], repo, timeout=60,
+                   stdin="".join(n + "\n" for n in names).encode("ascii"))
+        return out.stdout if out is not None and out.returncode == 0 else None
 
     checked = run("--batch-check", unique)
     if checked is None:
@@ -829,6 +871,9 @@ def freeze_history_problems(root: Path) -> List[str]:
       commit and reports it, rather than silently continuing with whatever commits still
       happen to resolve, which is what let a rename sandwich launder an unauthorized change
       underneath one legitimate version bump);
+    - the repository has `info/grafts` or `objects/info/(http-)alternates` (fix round 5,
+      Ruling 9): grafts rewrite parentage and alternates borrow objects from a repository
+      the walk cannot vouch for, so the history read would not be this repository's own;
     - FREEZE.toml exists but has never been committed at all (the first freeze must be
       committed before it counts -- an uncommitted first freeze is exactly the history-less
       state this check cannot see past).
@@ -877,6 +922,10 @@ def freeze_history_problems(root: Path) -> List[str]:
                 "history (fetch-depth: 0)."
             ]
         return []
+
+    untrusted = _untrusted_git_file(root)
+    if untrusted:
+        return [untrusted] if post_cutoff else []
 
     toplevel = _git_toplevel(root)
     relpath = None
