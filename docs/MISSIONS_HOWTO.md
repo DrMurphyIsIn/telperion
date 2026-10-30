@@ -386,9 +386,9 @@ These are real, and you should know them before you rely on a `[checks]` record.
   `olean_sha256`, but `audit-closure` imports rather than replays, so an imported module could forge its output, and
   its JSON carries no olean digest. Its ties to the other two are the theorem name and the interim axiom cross-check:
   its axioms for the target must be among the REPLAY's axioms, which must be standard. A forged closure PASS can then
-  no longer hide a non-standard axiom, but it can still hide a forbidden constant that is not an axiom. Porting the
-  closure audit to a replay callback is a tracked step-5 follow-up, pending the owner's explicit acceptance. Run all
-  three on the same build.
+  no longer hide a non-standard axiom, but it can still hide a forbidden constant that is not an axiom. The owner accepted
+  this gap for this merge (2026-10-30); porting the closure audit to a replay callback is step-5 work. Run all three on
+  the same build.
 - **The node file can be hand-edited.** The cutoff keys on `created`, and nothing guards that field while a node is
   still unproved: a node back-dated to before 2026-10-28 before its first grant is granted without checks. Deleting
   `checks_required` from a `[grant]` together with back-dating `created` is the same class of hand edit, with the same

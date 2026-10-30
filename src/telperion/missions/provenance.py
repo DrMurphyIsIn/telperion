@@ -887,8 +887,8 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       no olean digest and an imported module could forge it. The interim cross-check (final
       review I3): the record carries the REPLAY's axiom list, which the probe and fingerprint
       must agree on, which must be a subset of CLEAN_AXIOMS, and which must include the closure
-      audit's per-target axioms. Porting the closure audit to a replay callback is a tracked
-      step-5 follow-up, pending the owner's explicit acceptance;
+      audit's per-target axioms. The owner accepted this gap for this merge (2026-10-30); porting
+      the closure audit to a replay callback is step-5 work;
     - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
       declaration the grant gate matched) and of the Comparator record's theorem when there is
       one (final review I1), so a helper lemma's checks never pass for the node;
