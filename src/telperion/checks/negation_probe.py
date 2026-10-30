@@ -11,11 +11,22 @@ namespace-first name resolution are as they were when the file was compiled. An 
 statement as TEXT and refuted true theorems (`open Nat` read a local `factorial` as `Nat.factorial`); no text denylist
 could be made sound. The module must be built; an unbuilt module is ERROR ("build <module> first").
 
+THE TARGET AND ITS STATEMENT (final review C1, C2). The theorem name reaches the generated Lean only as DATA: its
+components are validated as plain identifiers and passed as JSON-escaped string literals to `Name.mkStr`, so no text
+from a submission is ever spliced into the callback's source as syntax (`qualify` reads the artifact with comments and
+string/char literals blanked, and refuses a namespace that is not a plain identifier). The target must be a theorem
+(`thmInfo`); anything else is ERROR. Its type is then taken with every NON-library definition at its head, and at the
+head of every ∀-body, delta-expanded (`unfoldHeads`; library = imported from a module under the fingerprint's roots, so
+a replayed definition always unfolds): `theorem foo : Stmt` with `def Stmt : Prop := ∀ n, n < 0 → n = 7` is probed as
+the ∀-statement, not as an opaque `Stmt` with nothing to probe. This deliberately narrows Ruling 8 ("do not reduce")
+for non-library heads only: `¬`, `≠`, `⊆` and every other library head still stay closed.
+
 One replay run executes three probes in the callback, each with its own budget of 200000 heartbeats:
 
-* ``false``    -- opens the constant's type with ``forallBoundedTelescope`` over its PREMISES (below), runs a fixed
-  tactic battery on a fresh goal ``False`` in that local context, kernel-checks the closed proof as an auxiliary
-  theorem and collects its axioms. VACUOUS (the hypotheses contradict each other) needs a closed proof with no
+* ``false``    -- opens the (head-unfolded) type with ``forallBoundedTelescope`` over its PREMISES (below), runs a
+  fixed tactic battery on a fresh goal ``False`` in that local context, kernel-checks the closed proof as an auxiliary
+  theorem (synchronously: ``Elab.async`` off, so FALSE PROVED is printed only after the kernel accepted it) and
+  collects its axioms. VACUOUS (the hypotheses contradict each other) needs a closed proof with no
   metavariables, no ``sorry`` and only ``comparator.CLEAN_AXIOMS``.
 * ``negation`` -- plausible's API, called directly: ``Plausible.Testable.checkIO`` on the decorated type, through a
   trusted wrapper (``TelperionProbe.runCheck``) that maps plausible's ``TestResult`` VALUE to ``success``,
@@ -25,12 +36,16 @@ One replay run executes three probes in the callback, each with its own budget o
   evaluated on the replayed environment (its decidability needs compiled code for a replayed definition, which replay
   never provides) is PROBE_ONLY with a note too. plausible's seed is fixed (``PLAUSIBLE_SEED``, named in a REFUTED's
   detail), so a REFUTED is reproducible.
-* ``witness``  -- only with a caller-supplied term: the ∃-closure of the FULL non-reducing ∀-telescope of the type
+* ``witness``  -- only with a caller-supplied term: the ∃-closure of the FULL ∀-telescope of the head-unfolded type
   (every ∀/→ binder, the conclusion's arrows included; ``¬`` and ``≠`` stay closed, as they are not ∀-binders) is
-  built as an Expr, the witness is parsed and elaborated against it, kernel-checked and axiom-audited the same way.
-  WITNESSED says every antecedent is jointly satisfiable. It does NOT use the premise split below, which the author
-  controls (`theorem arrow (n) : n < 0 → n = 7` with ⟨0, trivial⟩ would otherwise be WITNESSED). A witness that does
-  not elaborate is ERROR.
+  built as an Expr, the witness is parsed and elaborated against it, kernel-checked (synchronously, as above) and
+  axiom-audited the same way. WITNESSED says every antecedent is jointly satisfiable, so it needs at least one
+  Prop-typed binder in that telescope: with none (`True`, a bare conjunction) there is nothing to witness, and it is
+  ``WITNESS NOANTECEDENT``, PROBE_ONLY with a note. It does NOT use the premise split below, which the author controls
+  (`theorem arrow (n) : n < 0 → n = 7` with ⟨0, trivial⟩ would otherwise be WITNESSED). A witness that does not
+  elaborate, or that the kernel rejects, is ERROR. The witness is TRUSTED input: it is elaborated with the full
+  elaborator in the check process (`by run_tac ...` can do arbitrary IO there), so it must never be pasted from a
+  submission unread.
 
 PREMISES. In an elaborated type a binder `(h : P)` and an arrow `P → Q` in the conclusion are both ∀-binders; the
 elaborator names an arrow's binder `a._@._internal._hyg.N`: in v4.35.0's `MacroScopesView`, name `a`, ctx exactly
@@ -63,10 +78,12 @@ KNOWN LIMITATION. A `private` theorem's constant has a mangled name and is not f
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..closure_audit import DEFAULT_LIBRARY_ROOTS, lean_name_literal
 from ..comparator import CLEAN_AXIOMS
 from . import lean_replay
 from .lean_replay import ReplayResult, default_wrapper  # noqa: F401  (default_wrapper: shared by the checks)
@@ -83,7 +100,7 @@ TACTIC_IMPORTS = ("Mathlib",)
 STATUSES = {
     "FALSE": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
     "NEGATION": ("SUCCESS", "GAVEUP", "FAILURE", "NO_TESTABLE", "UNAVAILABLE", "TIMEOUT"),
-    "WITNESS": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
+    "WITNESS": ("PROVED", "FAILED", "INCOMPLETE", "NOANTECEDENT", "TIMEOUT"),
 }
 
 
@@ -93,12 +110,14 @@ class ProbeResult:
     detail: str
     olean_sha256: str | None = None   # lean_replay.closure_digest of the whole replayed untrusted closure
     olean_closure: list | None = None  # its sorted [module, part, sha256] list
+    axioms: list | None = None         # the replay's collectAxioms over the target module's constants
 
     def to_json(self) -> dict:
         out = {"verdict": self.verdict, "detail": self.detail}
         if self.olean_sha256 is not None:
             out["olean_sha256"] = self.olean_sha256
             out["olean_closure"] = self.olean_closure
+            out["axioms"] = self.axioms
         return out
 
 
@@ -110,15 +129,33 @@ class ProbeSpec:
     imports: tuple[str, ...] = field(default=TACTIC_IMPORTS)
 
 
-def _lean_name(name: str) -> str:
-    """`name` with every component in «», so any component spelling is a valid identifier."""
-    if "«" in name:
-        return name
-    return ".".join(f"«{c}»" for c in name.split("."))
+# A Lean identifier component as the probe accepts it: a letter-like first character (letters, `_`, the Greek and
+# letterlike-symbol ranges Lean allows; not λ, Π, Σ) and then letters, digits, `_`, `'`, `!`, `?` or subscripts.
+# Anything else, including a «»-quoted component, is refused: the name only ever reaches Lean as DATA (string
+# literals fed to `Name.mkStr`), but a component that is not a plain identifier never came from a real declaration.
+_IDENT_START = r"[^\W\d]|[\u2100-\u214F\u1D00-\u1DBF]"
+_IDENT_REST = r"[\w'!?\u2080-\u209C\u2100-\u214F\u1D00-\u1DBF]"
+_IDENT_RE = re.compile(rf"(?:{_IDENT_START})(?:{_IDENT_REST})*")
+
+
+def name_components(name: str) -> list[str]:
+    """The components of a dotted Lean name, each validated as a plain identifier; ValueError otherwise."""
+    parts = name.split(".")
+    for c in parts:
+        if not _IDENT_RE.fullmatch(c) or any(ch in c for ch in "λΠΣ"):
+            raise ValueError(f"not a plain Lean name: {name!r} (component {c!r}); refusing it")
+    return parts
+
+
+def _lean_name_expr(name: str) -> str:
+    """Lean source for the `Name` `name`, built from JSON-escaped string literals: data, never syntax."""
+    comps = ", ".join(json.dumps(c, ensure_ascii=False) for c in name_components(name))
+    return f"(([{comps}] : List String).foldl Lean.Name.mkStr Lean.Name.anonymous)"
 
 
 def _lean_string(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t") + '"'
+    """A Lean string literal for `s` (JSON escaping is a subset of Lean's string escapes)."""
+    return json.dumps(s, ensure_ascii=False)
 
 
 # The callback's trusted helpers: the premise count (module docstring), plausible's result as a plain value, and a
@@ -136,6 +173,33 @@ partial def premises : Expr → Nat
     else premises b + 1
   | .mdata _ e => premises e
   | _ => 0
+
+/-- The library roots (the fingerprint's): a constant is library iff it was imported from a module under one. -/
+def roots : List Name := __ROOTS__
+
+def isLib (env : Environment) (n : Name) : Bool :=
+  match env.getModuleIdxFor? n with
+  | some idx => roots.any (·.isPrefixOf (env.header.moduleNames[idx.toNat]!))
+  | none => false
+
+/-- The statement with every NON-library definition at its head, and at the head of every ∀-body, delta-expanded
+(at most `fuel` steps). A replayed definition has no module index, so it is never library and always unfolds. -/
+partial def unfoldHeads (env : Environment) (fuel : Nat) : Expr → Expr
+  | .forallE n t b bi => .forallE n t (unfoldHeads env fuel b) bi
+  | .mdata _ e => unfoldHeads env fuel e
+  | e =>
+    match fuel, e.getAppFn with
+    | fuel + 1, .const c us =>
+      match env.find? c with
+      | some (.defnInfo d) =>
+        if isLib env c then e
+        else unfoldHeads env fuel ((d.value.instantiateLevelParams d.levelParams us).beta e.getAppArgs)
+      | _ => e
+    | _, _ => e
+
+def kind : ConstantInfo → String
+  | .axiomInfo _ => "axiom" | .defnInfo _ => "def" | .thmInfo _ => "theorem" | .opaqueInfo _ => "opaque"
+  | .quotInfo _ => "quot" | .inductInfo _ => "inductive" | .ctorInfo _ => "constructor" | .recInfo _ => "recursor"
 
 /-- plausible's `TestResult`, as a value with no proof in it. -/
 inductive Outcome where
@@ -163,24 +227,31 @@ def budget (kind err : String) (x : TermElabM Unit) : TermElabM Unit :=
         else TelperionReplay.line s!"{kind} {err} {msg}"
 
 end TelperionProbe
-""".replace("__HEARTBEATS__", str(HEARTBEATS))
+""".replace("__HEARTBEATS__", str(HEARTBEATS)).replace(
+    "__ROOTS__", "[" + ", ".join(lean_name_literal(r) for r in DEFAULT_LIBRARY_ROOTS) + "]")
 
 
 def render_callback(theorem: str, witness: str | None) -> str:
     """The Lean source of the replay callback (``TelperionReplay.callback``) that runs the three probes on
     `theorem`'s constant. Trusted code: it is elaborated against the trusted imports before the replay."""
-    t = _lean_name(theorem)
+    target = _lean_name_expr(theorem)
     line = "TelperionReplay.line"
+    sync = "withOptions (fun o => Elab.async.set o false) do"      # kernel-check BEFORE printing PROVED
     src = (
         f"{_HELPERS}\n"
+        f"def TelperionProbe.target : Lean.Name := {target}\n\n"
         "open Lean Meta Elab Term in\n"
         "def TelperionReplay.callback : TermElabM Unit := do\n"
-        f"  let some info := (← getEnv).find? `{t}\n"
+        f"  let some info := (← getEnv).find? TelperionProbe.target\n"
         f'    | {line} "MISSING"\n'
-        f"  let n := TelperionProbe.premises info.type\n"
+        f"  unless info matches .thmInfo _ do\n"
+        f'    {line} s!"NOTTHEOREM {{TelperionProbe.kind info}}"\n'
+        f"    return\n"
+        f"  let ty := TelperionProbe.unfoldHeads (← getEnv) 1000 info.type\n"
+        f"  let n := TelperionProbe.premises ty\n"
         f'  {line} s!"PREMISES {{n}}"\n'
         f'  TelperionProbe.budget "FALSE" "FAILED" do\n'
-        f"    forallBoundedTelescope info.type (some n) fun xs _ => do\n"
+        f"    forallBoundedTelescope ty (some n) fun xs _ => do\n"
         f"      let g ← mkFreshExprMVar (Lean.mkConst ``False) .syntheticOpaque\n"
         f"      let msgs := (← getThe Core.State).messages\n"
         f"      try\n"
@@ -193,15 +264,16 @@ def render_callback(theorem: str, witness: str | None) -> str:
         f"        else\n"
         f"          let ty ← mkForallFVars xs (Lean.mkConst ``False)\n"
         f"          let val ← mkLambdaFVars xs pf\n"
-        f"          addDecl (.thmDecl {{ name := `_telperion_probe_false, levelParams := info.levelParams,\n"
-        f"                              type := ty, value := val }})\n"
+        f"          {sync}\n"
+        f"            addDecl (.thmDecl {{ name := `_telperion_probe_false, levelParams := info.levelParams,\n"
+        f"                                type := ty, value := val }})\n"
         f"          let axs ← collectAxioms `_telperion_probe_false\n"
         f'          {line} s!"FALSE PROVED axioms={{axs.toList}}"\n'
         f"      catch ex =>\n"
         f'        {line} s!"FALSE FAILED {{← ex.toMessageData.toString}}"\n'
         f"      modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
         f'  TelperionProbe.budget "NEGATION" "UNAVAILABLE" do\n'
-        f"    let tgt' ← Plausible.Decorations.addDecorations info.type\n"
+        f"    let tgt' ← Plausible.Decorations.addDecorations ty\n"
         f"    let inst? ← try some <$> synthInstance (← mkAppM ``Plausible.Testable #[tgt']) catch _ => pure none\n"
         f"    match inst? with\n"
         f'    | none => {line} "NEGATION NO_TESTABLE"\n'
@@ -219,11 +291,14 @@ def render_callback(theorem: str, witness: str | None) -> str:
     if witness is not None:
         src += (
             f'  TelperionProbe.budget "WITNESS" "FAILED" do\n'
-            f"    let ex ← forallTelescope info.type fun xs _ => do\n"
+            f"    let (ex, anyProp) ← forallTelescope ty fun xs _ => do\n"
             f"      let mut body := Lean.mkConst ``True\n"
             f"      for x in xs.reverse do\n"
             f"        body ← mkAppM ``Exists #[← mkLambdaFVars #[x] body]\n"
-            f"      pure body\n"
+            f"      pure (body, ← xs.anyM fun x => do isProp (← inferType x))\n"
+            f"    unless anyProp do\n"
+            f'      {line} "WITNESS NOANTECEDENT"\n'
+            f"      return\n"
             f"    let msgs := (← getThe Core.State).messages\n"
             f"    try\n"
             f"      let stx ← match Parser.runParserCategory (← getEnv) `term {_lean_string(witness)} with\n"
@@ -235,8 +310,9 @@ def render_callback(theorem: str, witness: str | None) -> str:
             f"      if w.hasMVar || w.hasSorry then\n"
             f'        {line} s!"WITNESS INCOMPLETE mvars={{w.hasMVar}} sorry={{w.hasSorry}}"\n'
             f"      else\n"
-            f"        addDecl (.thmDecl {{ name := `_telperion_probe_witness, levelParams := info.levelParams,\n"
-            f"                            type := ex, value := w }})\n"
+            f"        {sync}\n"
+            f"          addDecl (.thmDecl {{ name := `_telperion_probe_witness, levelParams := info.levelParams,\n"
+            f"                              type := ex, value := w }})\n"
             f"        let axs ← collectAxioms `_telperion_probe_witness\n"
             f'        {line} s!"WITNESS PROVED axioms={{axs.toList}}"\n'
             f"    catch e =>\n"
@@ -271,6 +347,10 @@ def classify(lines: list[str], witness: bool = False) -> ProbeResult:
     exactly one result line with a known status."""
     if "MISSING" in lines:
         return ProbeResult("ERROR", "the constant is not in the replayed module (unknown or private name)")
+    nothm = [ln for ln in lines if ln.startswith("NOTTHEOREM")]
+    if nothm:
+        return ProbeResult("ERROR", f"the target is a {nothm[0][len('NOTTHEOREM '):]}, not a theorem; probe the "
+                                    "theorem that states it")
     kinds = ("FALSE", "NEGATION", "WITNESS") if witness else ("FALSE", "NEGATION")
     got: dict[str, tuple[str, str] | None] = {}
     timed_out = []
@@ -313,6 +393,9 @@ def classify(lines: list[str], witness: bool = False) -> ProbeResult:
         notes.append(bad)
     elif wline and wline[0] == "INCOMPLETE":
         notes.append(f"probe 'witness' left metavariables or sorry ({wline[1]}); not counted")
+    elif wline and wline[0] == "NOANTECEDENT":
+        notes.append("probe 'witness' had nothing to witness: the statement (with its non-library definitions "
+                     "unfolded) has no Prop-typed antecedent; not counted")
     if neg and neg[0] == "NO_TESTABLE":
         notes.append("negation probe did not run: no testable instance (e.g. ℝ), so no counterexample was searched for")
     elif neg and neg[0] == "UNAVAILABLE":
@@ -335,7 +418,7 @@ def classify_replay(r: ReplayResult, spec: ProbeSpec) -> ProbeResult:
     if r.status != "OK":
         return ProbeResult("ERROR", f"probe did not run: {r.detail[:1500]}")
     res = classify(r.lines, spec.witness is not None)
-    res.olean_sha256, res.olean_closure = r.olean_sha256, r.olean_closure
+    res.olean_sha256, res.olean_closure, res.axioms = r.olean_sha256, r.olean_closure, r.axioms
     return res
 
 
@@ -356,14 +439,70 @@ def run_probe(spec: ProbeSpec, project: Path | None = None, wrapper: list[str] |
     return classify_replay(r, spec)
 
 
+def _code_only(text: str) -> str:
+    """Lean source with comments and string/char literals blanked (newlines kept, so line starts stay line starts).
+    One left-to-right pass in Lean's lexing order: `--` and nested `/- -/` comments, `"..."` with escapes, raw strings
+    `r#*"..."#*`, and char literals `'x'` / `'\\x'` (so `'"'` does not open a string)."""
+    out, i, n = [], 0, len(text)
+
+    def blank(seg: str) -> str:
+        return "".join("\n" if ch == "\n" else " " for ch in seg)
+    while i < n:
+        ch = text[i]
+        prev = text[i - 1] if i else " "
+        ident_prev = prev.isalnum() or prev in "_'!?.»"
+        if text.startswith("--", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(blank(text[i:j]))
+            i = j
+        elif text.startswith("/-", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/-", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("-/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            out.append(blank(text[i:j]))
+            i = j
+        elif ch == "r" and not ident_prev and re.match(r'r#*"', text[i:]):
+            hashes = re.match(r"r(#*)", text[i:]).group(1)
+            start = i + 1 + len(hashes) + 1
+            end = text.find('"' + hashes, start)
+            j = n if end < 0 else end + 1 + len(hashes)
+            out.append('""' + blank(text[start:max(start, j - 1 - len(hashes))]))
+            i = j
+        elif ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append('""' + blank(text[i + 1:j]))
+            i = j + 1
+        elif ch == "'" and not ident_prev and re.match(r"'(?:\\.|\\u\{[0-9a-fA-F]+\}|[^\\'])'", text[i:]):
+            m = re.match(r"'(?:\\.|\\u\{[0-9a-fA-F]+\}|[^\\'])'", text[i:])
+            out.append("' '")
+            i += m.end()
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def qualify(module_text: str, theorem: str) -> str:
     """`theorem` qualified by the namespace the file declares it in, when the file declares exactly one theorem/lemma
     of that (short) name; otherwise `theorem` unchanged. Only LOCATES the constant: the statement itself is always
-    read from the elaborated constant, never from this text."""
+    read from the elaborated constant, never from this text. The text is read with its comments AND string/char
+    literals blanked (a `namespace` line inside a string is not a command), and the result must be a plain dotted
+    identifier (ValueError otherwise): untrusted text never reaches the callback's source as syntax."""
     from ..missions import judge
 
     ga = judge._guard_anchors()
-    code = ga.strip_lean_comments(module_text)
+    name_components(theorem)
+    code = _code_only(module_text)
     pat = re.compile(r"(?<![\w.'])(?:theorem|lemma)\s+" + re.escape(theorem) + r"(?![\w.'])")
     names = {".".join([*ga._namespace_at(code, m.start()), theorem]) for m in pat.finditer(code)}
-    return names.pop() if len(names) == 1 else theorem
+    out = names.pop() if len(names) == 1 else theorem
+    name_components(out)
+    return out

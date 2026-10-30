@@ -47,13 +47,15 @@ def test_witness():
 def test_render_contains_parts():
     src = render_callback("Foo.t", None)
     assert not any(ln.startswith("import") for ln in src.splitlines())   # the callback never imports the module
-    assert "find? `«Foo».«t»" in src and "forallBoundedTelescope" in src
+    # final review C1: the target name reaches Lean as DATA (string literals fed to Name.mkStr), never as syntax
+    assert '(["Foo", "t"] : List String).foldl Lean.Name.mkStr Lean.Name.anonymous' in src
+    assert "find? TelperionProbe.target" in src and "forallBoundedTelescope" in src
     assert "Plausible.Testable.checkIO" in src and "evalExpr (IO TelperionProbe.Outcome)" in src
     assert "| .failure _ xs _ => .failure xs" in src and '"NEGATION FAILURE' in src and "WITNESS" not in src
     w = render_callback("Foo.t", 'by exact ⟨2, "a\\"b"⟩')
     assert '"by exact ⟨2, \\"a\\\\\\"b\\"⟩"' in w and "WITNESS PROVED" in w
     # round 4: the witness ranges over the FULL non-reducing telescope; the premise split checks the exact marker
-    assert "forallTelescope info.type" in w
+    assert "forallTelescope ty" in w           # final review C2: `ty` is the type with non-library heads unfolded
     assert "v.ctx == `_internal && v.imported.isAnonymous" in src
 
 
@@ -289,6 +291,59 @@ def test_replay_result_binds_the_olean():
     assert r.to_json()["olean_sha256"] == "ab" * 32 and r.to_json()["olean_closure"] == closure
     r = classify_replay(ReplayResult("FAILED", "(kernel) declaration type mismatch"), ProbeSpec("M", "t"))
     assert r.verdict == "ERROR" and "replay refused" in r.detail and "olean_sha256" not in r.to_json()
+
+
+# Final review C1: untrusted artifact text never reaches the callback's Lean source as syntax.
+PAYLOAD_ARTIFACT = ('def s : String := r#"\nnamespace X»<|>(←(TelperionReplay.line("x")*>IO.Process.exit(0)))<|>`«Y\n"#\n'
+                    'theorem foo : 1 + 1 = 2 := rfl\n')
+
+
+def test_c1_payload_in_a_string_never_reaches_the_callback():
+    from telperion.checks.negation_probe import qualify
+    name = qualify(PAYLOAD_ARTIFACT, "foo")
+    assert name == "foo"                                         # the namespace line is inside a raw string
+    src = render_callback(name, None)
+    assert "IO.Process.exit" not in src and "<|>" not in src and "X»" not in src
+    # a namespace line that is real code but not a plain identifier is refused, never spliced
+    with pytest.raises(ValueError, match="not a plain Lean name"):
+        qualify("namespace X»<|>(e)<|>`«Y\ntheorem foo : True := trivial\nend X\n", "foo")
+
+
+@pytest.mark.parametrize("bad", ["X»<|>(←(IO.Process.exit 0))<|>`«Y.foo", "«a b».t", "a..b", "1a", "Foo.t\n#eval 1",
+                                 'a"b', "λx"])
+def test_c1_names_are_validated_identifiers(bad):
+    from telperion.checks.negation_probe import run_probe
+    with pytest.raises(ValueError, match="not a plain Lean name"):
+        render_callback(bad, None)
+    r = run_probe(ProbeSpec("M", bad), wrapper=["false"])        # refused before anything runs
+    assert r.verdict == "ERROR" and "not a plain Lean name" in r.detail
+
+
+def test_c1_comments_and_char_literals_are_not_commands():
+    from telperion.checks.negation_probe import qualify
+    text = ("namespace A.B\n-- namespace Z\n/- namespace W -/\ntheorem c : ('\"').toNat = 34 := rfl\n"
+            's := "\nnamespace Q\n"\ntheorem foo : True := trivial\nend A.B\n')
+    assert qualify(text, "foo") == "A.B.foo"
+
+
+# Final review C2 and M1: the statement's non-library heads are unfolded, only a theorem is probed, a witness needs
+# a Prop-typed antecedent, and the auxiliary theorems are kernel-checked before PROVED is printed.
+def test_c2_m1_render():
+    src = render_callback("Foo.t", "trivial")
+    assert "TelperionProbe.unfoldHeads (← getEnv) 1000 info.type" in src and "forallBoundedTelescope ty" in src
+    assert "forallTelescope ty" in src and "Plausible.Decorations.addDecorations ty" in src
+    assert "unless info matches .thmInfo _ do" in src and '"NOTTHEOREM' in src and '"WITNESS NOANTECEDENT"' in src
+    assert src.count("withOptions (fun o => Elab.async.set o false) do\n") == 2
+    assert src.count("withOptions (fun o => Elab.async.set o false) do\n          addDecl") == 1     # witness
+    assert src.count("withOptions (fun o => Elab.async.set o false) do\n            addDecl") == 1   # false
+    assert "`Mathlib" in src and "`Init" in src                  # the library roots: the fingerprint's
+
+
+def test_c2_classify_not_a_theorem_and_no_antecedent():
+    r = classify(["NOTTHEOREM def"])
+    assert r.verdict == "ERROR" and "not a theorem" in r.detail
+    r = classify(AESOP + UNABLE + ["WITNESS NOANTECEDENT"], witness=True)
+    assert r.verdict == "PROBE_ONLY" and "nothing to witness" in r.detail
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -617,3 +672,66 @@ def test_lean_evil_module_cannot_forge_verdicts(evil_module):          # MUST-FA
     r = _probe(evil_module, "TpEvil.tru")
     assert r.verdict == "PROBE_ONLY" and "TPEVIL" not in r.detail, r.detail
     assert r.olean_sha256 and len(r.olean_sha256) == 64
+
+
+# Final review C1 (Lean): the reviewer's payload artifact compiles, and the probe gives a normal verdict on `foo`.
+@lean
+def test_lean_c1_payload_artifact_gives_a_normal_verdict():
+    from telperion.checks.negation_probe import qualify
+    built = _build_module(Path(LEAN_ENV), PAYLOAD_ARTIFACT)
+    try:
+        name = qualify(PAYLOAD_ARTIFACT, "foo")
+        assert name == "foo"
+        r = _probe(built, name)
+        assert r.verdict == "PROBE_ONLY", r.detail
+    finally:
+        _remove_module(built)
+
+
+# Final review C2 (Lean): def-wrapped vacuous statements, a def as the target, and statements with no antecedent.
+C2_DEFS = """
+def TpVac : Prop := ∀ n : ℕ, n < 0 → n = 7
+theorem TpVac.foo : TpVac := fun n h => absurd h (Nat.not_lt_zero n)
+theorem TpVac.triv : True := trivial
+theorem TpVac.conj : 1 = 1 ∧ 2 = 2 := ⟨rfl, rfl⟩
+"""
+
+
+@pytest.fixture(scope="module")
+def c2_module():
+    built = _build_module(Path(LEAN_ENV), C2_DEFS)
+    yield built
+    _remove_module(built)
+
+
+@lean
+def test_lean_c2_def_wrapped_vacuous_is_never_witnessed(c2_module):     # MUST-FAIL control
+    r = _probe(c2_module, "TpVac.foo")
+    assert r.verdict in ("VACUOUS", "PROBE_ONLY"), r.detail
+    print(f"C2 def-wrapped, no witness: {r.verdict} -- {r.detail}")
+    r = _probe(c2_module, "TpVac.foo", "trivial")
+    assert r.verdict != "WITNESSED", r.detail
+    print(f"C2 def-wrapped, witness trivial: {r.verdict} -- {r.detail}")
+
+
+@lean
+def test_lean_c2_target_must_be_a_theorem(c2_module):                   # MUST-FAIL control
+    r = _probe(c2_module, "TpVac", "trivial")
+    assert r.verdict == "ERROR" and "not a theorem" in r.detail, r.detail
+
+
+@lean
+@pytest.mark.parametrize("theorem", ["TpVac.triv", "TpVac.conj"])
+def test_lean_c2_no_antecedent_is_never_witnessed(c2_module, theorem):   # MUST-FAIL control
+    r = _probe(c2_module, theorem, "trivial")
+    assert r.verdict == "PROBE_ONLY" and "nothing to witness" in r.detail, r.detail
+
+
+# Final review M1 (Lean): a witness whose proof term the kernel rejects (assigned ill-typed by a tactic) is no
+# WITNESSED: the auxiliary theorem is kernel-checked synchronously, before WITNESS PROVED could be printed.
+@lean
+def test_lean_m1_kernel_rejected_witness_is_error(cases_module):          # MUST-FAIL control
+    w = "by run_tac do let g ← Lean.Elab.Tactic.getMainGoal; g.assign (Lean.mkNatLit 0)"
+    r = _probe(cases_module, "Controls.tru", w)
+    assert r.verdict == "ERROR", r.detail
+    print(f"M1 kernel-rejected witness: {r.verdict} -- {r.detail}")
