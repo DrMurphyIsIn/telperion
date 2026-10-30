@@ -1828,16 +1828,32 @@ _SKIP_DIR_NAMES = frozenset({".git", ".lake", "build", "_build"})
 #: `(?i)\b(ported|adapted|copied) from\b`, scanned only against the comment-only text
 #: of a file's first `_PORTED_HEAD_LINES` lines (`_lean_head_comment_text`) -- a mention
 #: inside a string literal or in ordinary code is masked out before this ever runs.
+#:
+#: KNOWN LIMITATION (fix round 1, review of commit 7a7df30, Minor): this is a literal
+#: ASCII match, exactly spec 7.4's own wording. A Unicode homoglyph -- a Cyrillic `а`
+#: (U+0430) in place of the Latin `a` in "from", e.g. -- defeats it entirely: the file
+#: is never classified as ported, so no header is ever required of it. Not a bug
+#: relative to the brief, which defines "ported" by this exact regex, but a real, cheap
+#: way to dodge the control deliberately (or by copy-pasting from a source whose own
+#: header already carries one); documented here rather than left to be rediscovered.
 _PORTED_MENTION_RE = re.compile(r"(?i)\b(ported|adapted|copied) from\b")
 
-#: The header LINE's shape, matched whole (`^...$`, `re.MULTILINE`) against the same
-#: comment-only text: `repo=` and `file=` tokens are anything non-whitespace, same as
-#: the brief's regex; the commit token is captured un-anchored here so a short or
-#: non-hex commit still matches the LINE (letting `provenance_problems` report it with
-#: a specific "not 40 lowercase hex" message) rather than falling through to the
-#: generic "no header at all" one.
+#: The header LINE's shape, matched against the same comment-only text (`re.MULTILINE`,
+#: one match per line via `finditer`, not `search` -- `provenance_problems` needs every
+#: match, not just the first, to detect more than one): `repo=` and `file=` tokens are
+#: anything non-whitespace, same as the brief's regex; the commit token is captured
+#: lazily (`\S+?`) and un-anchored to hex here so a short or non-hex commit still
+#: matches the LINE (letting `provenance_problems` report it with a specific "not 40
+#: lowercase hex" message) rather than falling through to the generic "no header at
+#: all" one. `[ \t\r]*` before the `$` (fix round 1, Minor: CRLF files and trailing
+#: whitespace used to fail CLOSED, reported as "no header", because a trailing `\r`
+#: sits between the commit token and the `\n` a plain `$` anchors on) absorbs a
+#: trailing `\r` (a CRLF line ending -- Lean's own lexer, and `_lean_head_comment_text`
+#: built on it, treat `\r` as part of the preceding comment's text, not a line
+#: terminator) or ordinary trailing spaces/tabs before the line truly ends, without
+#: ever becoming part of the captured commit token itself.
 _PROVENANCE_LINE_RE = re.compile(
-    r"^-- Provenance: repo=(\S+) file=(\S+) commit=(\S+)$", re.MULTILINE)
+    r"^-- Provenance: repo=(\S+) file=(\S+) commit=(\S+?)[ \t\r]*$", re.MULTILINE)
 
 #: The commit token's own required shape (spec 7.4's exact regex: `[0-9a-f]{40}`).
 _PROVENANCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -2061,20 +2077,45 @@ def provenance_problems(root: Path) -> List[str]:
     """Spec 7.4: every ported file names its source repository, file and commit.
     Reports, in this order:
 
+    - every `.lean` file the walk (`_walk_lean_files`) finds that is ITSELF a symlink
+      -- UNCONDITIONALLY, whether or not it turns out to be "ported" at all (fix round
+      1, Controller Ruling 14, Critical). `_read_lean_head_safe` refuses to follow one,
+      so `ported_files`'s auto-detection scan cannot tell whether a symlinked file
+      mentions "ported from" -- before this, such a file that was not ALSO declared in
+      PORTED.toml was simply never added to `found`, and so never visited by anything
+      below either: a ported file hidden behind a symlink (to another file inside the
+      campaign, or -- the reviewer's exploit -- to one entirely outside it) evaded the
+      lint completely, with zero diagnostic anywhere. A symlink that stays inside
+      *root* and IS declared in PORTED.toml still also gets its own "is a symlink;
+      refusing to read it" message from the per-file loop further down; that overlap is
+      harmless (the file genuinely cannot be read either way) and is left alone rather
+      than suppressed, so the two passes never need to coordinate about which one
+      "owns" reporting a given file;
     - `<root>/PORTED.toml` itself unreadable, untrustworthy or malformed
       (`_load_ported_toml_safe`);
     - each PORTED.toml entry that is not a safe path inside *root* (absolute, `..`, or
-      resolving outside it -- `_safe_ported_relpath`);
+      resolving outside it, including through a symlinked directory COMPONENT of the
+      path -- `_safe_ported_relpath`);
     - each otherwise-safe PORTED.toml entry whose file does not exist on disk;
     - for every file `ported_files(root)` returns that DOES exist: unreadable (a
-      symlink, not valid UTF-8, ...) via `_read_lean_head_safe`; no line matching the
-      provenance header's shape in its first 30 lines; or a header whose commit is not
-      exactly 40 lowercase hex digits.
+      symlink, not valid UTF-8, ...) via `_read_lean_head_safe`; more than one line
+      matching the provenance header's shape in its first 30 lines (fix round 1,
+      Minor: a second, different header -- even one that is itself malformed -- must
+      not be silently ignored just because `finditer` would otherwise report only
+      drift on the first); no such line at all; or (when there is exactly one) a header
+      whose commit is not exactly 40 lowercase hex digits.
 
     Sorted; islands included, same as everything else `_walk_lean_files` reaches, since
     nothing here is scoped to a particular subdirectory of the campaign."""
     root = Path(root)
     problems: List[str] = []
+
+    for lean_path in _walk_lean_files(root):
+        if lean_path.is_symlink():
+            problems.append(
+                f"{lean_path.relative_to(root).as_posix()}: symlinked .lean file; "
+                "replace it with a regular file."
+            )
 
     entries, toml_problem = _load_ported_toml_safe(root)
     if toml_problem:
@@ -2098,15 +2139,21 @@ def provenance_problems(root: Path) -> List[str]:
             problems.append(f"{rel.as_posix()}: {problem}.")
             continue
         masked = _lean_head_comment_text(text)
-        m = _PROVENANCE_LINE_RE.search(masked)
-        if m is None:
+        matches = list(_PROVENANCE_LINE_RE.finditer(masked))
+        if not matches:
             problems.append(
                 f"{rel.as_posix()}: ported file has no provenance header "
                 "(`-- Provenance: repo=<repo> file=<file> commit=<40 lowercase hex>`) "
                 f"in its first {_PORTED_HEAD_LINES} lines."
             )
             continue
-        commit = m.group(3)
+        if len(matches) > 1:
+            problems.append(
+                f"{rel.as_posix()}: multiple provenance headers in its first "
+                f"{_PORTED_HEAD_LINES} lines; exactly one is required."
+            )
+            continue
+        commit = matches[0].group(3)
         if not _PROVENANCE_COMMIT_RE.match(commit):
             problems.append(
                 f"{rel.as_posix()}: Provenance header's commit {commit!r} is not "

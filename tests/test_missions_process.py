@@ -2167,3 +2167,176 @@ def test_verify_campaign_excludes_provenance_problems_pre_cutoff(tmp_path):
     )
     report = verify_campaign(root)
     assert not any("Bad.lean" in e for e in report.errors)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 4, fix round 1 (Controller Ruling 14, review of commit 7a7df30).
+#
+# Critical: a `.lean` file reachable only through a symlink -- to a file inside the
+# campaign root or (the reviewer's exploit) entirely outside it -- that is NOT declared
+# in PORTED.toml used to be completely invisible to the lint: `_read_lean_head_safe`
+# refuses to follow it, so the auto-detection scan in `ported_files` simply `continue`d
+# past it, and since it was never added to `found`, `provenance_problems`'s own loop
+# never visited it either. `provenance_problems` now reports EVERY `.lean` symlink the
+# walk meets, unconditionally, whether or not it turns out to be "ported" at all.
+#
+# Minors (same round): multiple provenance-header-shaped lines in the leading block;
+# `lint-provenance` on a missing/non-directory path; PORTED.toml's escape rejections,
+# each exercised directly rather than only by inspection; CRLF line endings and
+# trailing whitespace on an otherwise-valid header.
+# ---------------------------------------------------------------------------
+
+def test_symlinked_lean_file_outside_root_flagged(tmp_path):
+    """The reviewer's exact repro. A `.lean` file only the auto-scan would ever see,
+    reached through a symlink pointing OUTSIDE the campaign root and never declared in
+    PORTED.toml, must be flagged -- and flagged exactly once, regardless of what its
+    (unreadable) content actually is."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path / "campaign"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "Vendor.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "theorem v : True := trivial\n"
+    )
+    (root / "VendorAlias.lean").symlink_to(outside / "Vendor.lean")
+
+    problems = provenance_problems(root)
+    hits = [p for p in problems if "VendorAlias.lean" in p]
+    assert len(hits) == 1
+    assert "symlink" in hits[0]
+
+
+def test_symlinked_lean_file_inside_root_also_flagged(tmp_path):
+    """The same unconditional report applies to a `.lean` symlink whose target stays
+    INSIDE the campaign root -- the auto-scan still cannot read through it to decide
+    whether it is ported, so it is flagged the same way."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "Real.lean").write_text("theorem r : True := trivial\n")
+    (root / "Alias.lean").symlink_to(root / "Real.lean")
+
+    problems = provenance_problems(root)
+    hits = [p for p in problems if "Alias.lean" in p]
+    assert len(hits) == 1
+    assert "symlink" in hits[0]
+
+
+def test_multiple_provenance_headers_flagged(tmp_path):
+    """Two provenance-header-shaped lines in the same leading block are a problem even
+    when one of them is individually valid: spec 7.4 asks for exactly one, and
+    accepting the first (or any) while silently ignoring a second, different header
+    would mask a confusing or contradictory pair from a human reviewer."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "Foo.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "-- Provenance: repo=upstream file=Bar.lean commit=" + "a" * 40 + "\n"
+        "-- Provenance: repo=evil file=Evil.lean commit=short1234\n"
+        "theorem foo : True := trivial\n"
+    )
+    problems = provenance_problems(root)
+    assert any("multiple provenance headers" in p for p in problems)
+
+
+def test_cli_lint_provenance_missing_dir_exit_2(tmp_path, capsys):
+    missing = tmp_path / "does-not-exist"
+    rc = main(["lint-provenance", str(missing)])
+    assert rc == 2
+    assert str(missing) in capsys.readouterr().out
+
+
+def test_cli_lint_provenance_not_a_directory_exit_2(tmp_path, capsys):
+    plain_file = tmp_path / "plain.txt"
+    plain_file.write_text("not a directory\n")
+    rc = main(["lint-provenance", str(plain_file)])
+    assert rc == 2
+    assert str(plain_file) in capsys.readouterr().out
+
+
+def test_ported_toml_rejects_dotdot(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "PORTED.toml").write_text('files = ["../x.lean"]\n')
+    problems = provenance_problems(root)
+    assert any("../x.lean" in p and "contains" in p for p in problems)
+
+
+def test_ported_toml_rejects_absolute_path(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "PORTED.toml").write_text('files = ["/etc/passwd"]\n')
+    problems = provenance_problems(root)
+    assert any("/etc/passwd" in p and "absolute" in p for p in problems)
+
+
+def test_ported_toml_rejects_symlink_out_via_file(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path / "campaign"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "Secret.lean").write_text("theorem s : True := trivial\n")
+    (root / "link.lean").symlink_to(outside / "Secret.lean")
+    (root / "PORTED.toml").write_text('files = ["link.lean"]\n')
+
+    problems = provenance_problems(root)
+    assert any("link.lean" in p and "outside" in p for p in problems)
+
+
+def test_ported_toml_rejects_symlink_out_via_dir_component(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path / "campaign"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "X.lean").write_text("theorem x : True := trivial\n")
+    (root / "vendored").symlink_to(outside)
+    (root / "PORTED.toml").write_text('files = ["vendored/X.lean"]\n')
+
+    problems = provenance_problems(root)
+    assert any("vendored/X.lean" in p and "outside" in p for p in problems)
+
+
+def test_ported_toml_duplicate_entry_deduped(tmp_path):
+    from telperion.missions.process import ported_files, provenance_problems
+
+    root = tmp_path
+    (root / "Foo.lean").write_text("theorem foo : True := trivial\n")
+    (root / "PORTED.toml").write_text('files = ["Foo.lean", "Foo.lean"]\n')
+
+    assert ported_files(root) == [Path("Foo.lean")]
+    problems = provenance_problems(root)
+    assert sum(1 for p in problems if "Foo.lean" in p and "provenance header" in p) == 1
+
+
+def test_ported_toml_rejects_non_string_entry(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "PORTED.toml").write_text('files = ["Foo.lean", 5]\n')
+    problems = provenance_problems(root)
+    assert any("not a list of strings" in p for p in problems)
+
+
+def test_crlf_header_with_trailing_whitespace_accepted(tmp_path):
+    """A CRLF-terminated file, and trailing whitespace after the commit token, must
+    not make an otherwise-valid header fail closed."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    content = (
+        "-- ported from upstream/Bar.lean\r\n"
+        "-- Provenance: repo=upstream file=Bar.lean commit=" + "a" * 40 + "   \r\n"
+        "theorem foo : True := trivial\r\n"
+    )
+    (root / "Foo.lean").write_bytes(content.encode("utf-8"))
+    assert provenance_problems(root) == []

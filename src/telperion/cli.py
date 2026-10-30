@@ -347,10 +347,21 @@ def cmd_lint_provenance(args) -> int:
     "ported" -- a `ported`/`adapted`/`copied from` mention in its own first 30 lines, or
     a name in `<dir>/PORTED.toml` -- must carry a `-- Provenance: repo=... file=...
     commit=<40-hex>` line in that same window. Exits 1 and prints every problem
-    `missions.process.provenance_problems` reports; 0 and a single OK line otherwise."""
+    `missions.process.provenance_problems` reports; 0 and a single OK line otherwise.
+
+    Fix round 1 (Minor): a *dir* that does not exist, or that exists but is not a
+    directory, used to print a silent "OK" (`os.walk` on a missing path yields
+    nothing, and `_load_ported_toml_safe`'s FileNotFoundError branch reports no
+    problem either) -- a typo'd path would pass as cleanly as a real, clean campaign,
+    exactly the kind of thing that could mask a CI misconfiguration. That now exits 2
+    with a one-line message naming the path, before `provenance_problems` is ever
+    called."""
     from .missions.process import provenance_problems
 
     root = Path(args.dir)
+    if not root.is_dir():
+        print(f"lint-provenance {root}: not a directory")
+        return 2
     problems = provenance_problems(root)
     if not problems:
         print(f"lint-provenance {root}: OK (no provenance problems)")
