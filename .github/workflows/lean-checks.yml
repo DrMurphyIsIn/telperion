@@ -1,0 +1,164 @@
+name: telperion-lean-checks
+# The step 4 checks' Lean tests in their own workflow, so that a path filter can apply to them alone: a full run builds
+# the Mathlib env and takes on the order of an hour or two, which every push and pull request should not pay (Ruling 14).
+# It runs on demand, once a week (the backstop for the path filter: Lean, Mathlib or a runner image can break the
+# controls with no change here), and on a push or pull request that touches the checks, the missions gate, these tests,
+# the helpers they import, or this file.
+on:
+  workflow_dispatch:
+  schedule:
+    # Monday 06:23 UTC.
+    - cron: "23 6 * * 1"
+  push:
+    paths:
+      - "src/telperion/checks/**"
+      - "src/telperion/missions/**"
+      # Imported by the checks (lean_name_literal, DEFAULT_LIBRARY_ROOTS, CLEAN_AXIOMS).
+      - "src/telperion/closure_audit.py"
+      - "src/telperion/comparator.py"
+      - "tests/test_negation_probe.py"
+      - "tests/test_fingerprint.py"
+      - "tests/test_lean_replay.py"
+      - "tests/test_missions_checks.py"
+      # The shared helpers those tests import.
+      - "tests/lean_env.py"
+      - "tests/fake_lean_cli.py"
+      - ".github/workflows/lean-checks.yml"
+  pull_request:
+    # The same list as push (written out twice rather than as a YAML anchor, for older tooling that reads workflows).
+    paths:
+      - "src/telperion/checks/**"
+      - "src/telperion/missions/**"
+      # Imported by the checks (lean_name_literal, DEFAULT_LIBRARY_ROOTS, CLEAN_AXIOMS).
+      - "src/telperion/closure_audit.py"
+      - "src/telperion/comparator.py"
+      - "tests/test_negation_probe.py"
+      - "tests/test_fingerprint.py"
+      - "tests/test_lean_replay.py"
+      - "tests/test_missions_checks.py"
+      # The shared helpers those tests import.
+      - "tests/lean_env.py"
+      - "tests/fake_lean_cli.py"
+      - ".github/workflows/lean-checks.yml"
+permissions:
+  contents: read
+jobs:
+  lean-checks:
+    # The step 4 checks' Lean tests: the negation probe, the statement fingerprint, and the kernel replay both of them
+    # run on. Those tests skip unless TELPERION_LEAN_ENV points at a built env, so without this job every must-fail
+    # control (the evil-module, shadowed-definition, axiom and vacuous-statement cases) would sit skipped in CI and
+    # ci.yml's test job would still be green. The env is built the way ~/telperion-tools/lean-env is built locally: a
+    # bare Lake project that requires Mathlib v4.35.0 on Lean v4.35.0, with Mathlib's oleans from `lake exe cache get`.
+    # There is no leanlock on the Linux runner, and none is needed: lean_replay.default_wrapper() uses
+    # ~/hodge-engine/leanlock.sh only when that file exists, and runs the pinned lean with no prefix otherwise.
+    runs-on: ubuntu-latest
+    # The three files took 21.5 minutes on the owner's machine (151 tests); a hosted runner is slower.
+    timeout-minutes: 180
+    env:
+      LEAN_TOOLCHAIN: "leanprover/lean4:v4.35.0"
+      MATHLIB_TAG: "v4.35.0"
+      # The commit the v4.35.0 tag resolved to when the local env was built (its lake-manifest.json). The job fails if
+      # the tag ever resolves to anything else, rather than testing against a Mathlib nobody pinned.
+      MATHLIB_REV: "56a005855ea17e0b0958f73ec801ae140b0a1679"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . pytest
+
+      - name: Check free disk space (at least 10 GB)
+        # The env's .lake is about 7.2 GB once Mathlib's oleans are unpacked, on top of the elan toolchain, the Mathlib
+        # git clone and the downloaded cache archives. Failing here, with the numbers, beats a "No space left on
+        # device" an hour into the run.
+        shell: bash
+        run: |
+          for d in "$RUNNER_TEMP" "$HOME"; do
+            avail_kb=$(df -Pk "$d" | awk 'NR == 2 {print $4}')
+            echo "free on the filesystem of $d: $((avail_kb / 1024 / 1024)) GB"
+            if [ "$avail_kb" -lt $((10 * 1024 * 1024)) ]; then
+              echo "::error::less than 10 GB free on the filesystem of $d; the probe env needs about 10 GB"
+              exit 1
+            fi
+          done
+
+      - name: Place the probe env and its trusted manifest outside the checkout
+        # The manifest lives OUTSIDE the env, as it must in production (lean_replay.default_manifest_path): nothing
+        # built in the env, or in a submission, should be able to write the file that says what the env should hold.
+        run: |
+          echo "TELPERION_LEAN_ENV=$RUNNER_TEMP/lean-env" >> "$GITHUB_ENV"
+          echo "PROBE_MANIFEST=$RUNNER_TEMP/trusted-manifests/lean-env.json" >> "$GITHUB_ENV"
+
+      - name: Write the probe env (the same lakefile as ~/telperion-tools/lean-env)
+        shell: bash
+        run: |
+          mkdir -p "$TELPERION_LEAN_ENV"
+          cd "$TELPERION_LEAN_ENV"
+          echo "$LEAN_TOOLCHAIN" > lean-toolchain
+          printf '%s\n' 'name = "probeenv"' '[[require]]' 'name = "mathlib"' 'scope = "leanprover-community"' \
+            "rev = \"$MATHLIB_TAG\"" > lakefile.toml
+
+      # The cache step and the install step are copied from Arda's telperion-lean-e2e.yml. Arda keys the elan cache on
+      # hashFiles(<the island's lean-toolchain>); this env's lean-toolchain is written above from LEAN_TOOLCHAIN and is
+      # not in the checkout (hashFiles only sees the workspace), so the key is that pin itself.
+      - name: Cache elan toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ env.LEAN_TOOLCHAIN }}
+
+      - name: Install elan
+        run: |
+          curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch Mathlib olean cache
+        shell: bash
+        run: |
+          cd "$TELPERION_LEAN_ENV"
+          lake exe cache get
+
+      - name: Check the env is the pinned one, and built
+        # tests/lean_env.py's readiness marker is Mathlib.olean; without it `lake env lean` would start a full
+        # Mathlib build instead of failing.
+        shell: bash
+        run: |
+          cd "$TELPERION_LEAN_ENV"
+          python - <<'PY'
+          import json, os, sys
+          pkgs = {p["name"]: p for p in json.load(open("lake-manifest.json"))["packages"]}
+          rev = pkgs.get("mathlib", {}).get("rev")
+          if rev != os.environ["MATHLIB_REV"]:
+              sys.exit(f"mathlib resolved to {rev!r}, but the pin is {os.environ['MATHLIB_REV']}")
+          PY
+          test -f .lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean
+          test "$(cat lean-toolchain)" = "$LEAN_TOOLCHAIN"
+
+      - name: Build the trusted manifest (and check that it verifies and is not overwritten without --force)
+        shell: bash
+        run: |
+          telperion trusted-manifest build --env "$TELPERION_LEAN_ENV" --out "$PROBE_MANIFEST"
+          telperion trusted-manifest verify --env "$TELPERION_LEAN_ENV" --out "$PROBE_MANIFEST"
+          # A second build without --force must refuse (exit 2) and leave the manifest alone.
+          rc=0
+          telperion trusted-manifest build --env "$TELPERION_LEAN_ENV" --out "$PROBE_MANIFEST" || rc=$?
+          if [ "$rc" != 2 ]; then
+            echo "expected trusted-manifest build to refuse an existing manifest with exit 2, got $rc"
+            exit 1
+          fi
+
+      - name: Lean controls (negation probe, fingerprint, kernel replay)
+        # Each test process builds its own copy of the manifest in a temp dir (tests/lean_env.py,
+        # session_trusted_manifest), so the tests do not depend on the one built above; that step is the CLI's own
+        # check. With the env set, nothing in these three files has a reason to skip, so any skip fails the job:
+        # a skipped must-fail control is a control that did not run.
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -X faulthandler -m pytest tests/test_negation_probe.py tests/test_fingerprint.py \
+            tests/test_lean_replay.py -q -rs 2>&1 | tee "$RUNNER_TEMP/lean-checks.out"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/lean-checks.out"; then
+            echo "Lean tests were skipped with TELPERION_LEAN_ENV set; every control must run here."
+            exit 1
+          fi

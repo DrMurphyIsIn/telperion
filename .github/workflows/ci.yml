@@ -37,7 +37,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e . && telperion kernel-policy check
+      - run: pip install -e . pyyaml
+      # Shrink-only enforcement needs a base to compare against, which only a pull
+      # request has (the PR's base branch); a push (e.g. a merge to main) has nothing
+      # to diff against, so it just re-checks the floor + exception consistency.
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: telperion kernel-policy check --base "origin/$BASE_REF"
+      - if: github.event_name != 'pull_request'
+        run: telperion kernel-policy check

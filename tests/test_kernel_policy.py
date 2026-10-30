@@ -151,6 +151,76 @@ def test_cli_check_calls_find_projects_once_on_ok_path(tmp_path, monkeypatch):
     assert calls["n"] == 1
 
 
+# --- shrink-only enforcement (Task 0) ------------------------------------
+
+_OLD = "leanprover/lean4:v4.32.0"
+_NEW = "leanprover/lean4:v4.35.0"
+
+
+def _exceptions_text(entries: dict[str, str]) -> str:
+    return "".join(
+        f'[[exception]]\nproject = "{proj}"\ntoolchain = "{tc}"\nreason = "x"\n'
+        for proj, tc in entries.items()
+    )
+
+
+def test_shrink_added_entry_fails():
+    base = _exceptions_text({"old": _OLD})
+    current = {"old": {"toolchain": _OLD, "reason": "x"}, "new": {"toolchain": _OLD, "reason": "x"}}
+    probs = kp.shrink_problems(base, current)
+    assert any("exception added: new" in p for p in probs)
+    assert not any("old" in p for p in probs)
+
+
+def test_shrink_lowered_toolchain_fails():
+    base = _exceptions_text({"p": _NEW})
+    current = {"p": {"toolchain": _OLD, "reason": "x"}}
+    probs = kp.shrink_problems(base, current)
+    assert any("exception toolchain lowered: p" in p for p in probs)
+
+
+def test_shrink_removed_entry_passes():
+    base = _exceptions_text({"p": _OLD, "q": _OLD})
+    current = {"p": {"toolchain": _OLD, "reason": "x"}}
+    assert kp.shrink_problems(base, current) == []
+
+
+def test_shrink_raised_toolchain_passes():
+    base = _exceptions_text({"p": _OLD})
+    current = {"p": {"toolchain": _NEW, "reason": "x"}}
+    assert kp.shrink_problems(base, current) == []
+
+
+def test_shrink_base_none_treats_every_entry_as_added():
+    current = {"p": {"toolchain": _OLD, "reason": "x"}, "q": {"toolchain": _NEW, "reason": "x"}}
+    probs = kp.shrink_problems(None, current)
+    assert any("exception added: p" in p for p in probs)
+    assert any("exception added: q" in p for p in probs)
+    assert len(probs) == 2
+
+
+def test_cli_base_head_catches_added_exception(tmp_path):
+    import os
+    import sys
+
+    root = _repo(tmp_path, {"old": _OLD})
+    (root / "kernel_policy_exceptions.toml").write_text(_exceptions_text({"old": _OLD}))
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-q", "-m", "base"], check=True)
+    (root / "new").mkdir()
+    (root / "new" / "lean-toolchain").write_text(_OLD + "\n")
+    (root / "kernel_policy_exceptions.toml").write_text(_exceptions_text({"old": _OLD, "new": _OLD}))
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+
+    cmd = [sys.executable, "-m", "telperion.cli", "kernel-policy", "check",
+           "--root", str(root), "--base", "HEAD"]
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "exception added: new" in result.stdout
+
+
 from telperion.checks.kernel_policy import judge_config_problems
 
 

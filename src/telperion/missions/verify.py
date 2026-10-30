@@ -31,8 +31,11 @@ from .coverage import (
     islands_with_lean,
 )
 from .provenance import (
+    CHECKS_CUTOFF,
     ProvenanceError,
     build_grant,
+    checks_problem,
+    checks_required,
     comparator_staleness,
     grant_digest_errors,
     readback_is_self_audit,
@@ -88,52 +91,20 @@ def _repo_root(campaign_root: Path) -> Path:
     return repo_root(Path(campaign_root).resolve().parents[1])
 
 def _strip_lean_comments(text: str) -> str:
-    """Single-pass comment stripper in Lean lexing order.
+    """Single-pass comment stripper in Lean lexing order: `scripts/guard_anchors.strip_lean_comments`, the ONE shared
+    lexer (the final re-review found the copies here and there drifting on raw strings and char literals).
 
     Handles `--` line comments, NESTED `/- ... -/` block comments (Lean 4
     block comments nest — and `/--` doc comments open a block, so stripping
     line comments first would mutilate the opener and leave prose residue;
     that exact bug broke containment on the 2026-09-16 grant pre-flight),
-    and double-quoted string literals (comment markers inside strings are
-    inert). An unterminated block comment swallows the rest of the text,
-    matching Lean's own lexer.
+    and string, raw-string (`r#"..."#`) and char (`'"'`) literals (comment
+    markers inside them are inert, and a quote inside a char literal or a raw
+    string opens nothing). An unterminated block comment swallows the rest of
+    the text, matching Lean's own lexer.
     """
-    out = []
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if ch == "-" and text[i:i + 2] == "--":
-            while i < n and text[i] != "\n":
-                i += 1
-        elif ch == "/" and text[i:i + 2] == "/-":
-            depth = 1
-            i += 2
-            while i < n and depth:
-                if text[i:i + 2] == "/-":
-                    depth += 1
-                    i += 2
-                elif text[i:i + 2] == "-/":
-                    depth -= 1
-                    i += 2
-                else:
-                    i += 1
-        elif ch == '"':
-            out.append(ch)
-            i += 1
-            while i < n:
-                out.append(text[i])
-                if text[i] == "\\" and i + 1 < n:
-                    out.append(text[i + 1])
-                    i += 2
-                    continue
-                if text[i] == '"':
-                    i += 1
-                    break
-                i += 1
-        else:
-            out.append(ch)
-            i += 1
-    return "".join(out)
+    from .judge import _guard_anchors
+    return _guard_anchors().strip_lean_comments(text)
 
 
 def normalize_lean(text: str) -> str:
@@ -263,13 +234,15 @@ _PROOF_BODY_RE = re.compile(r"^\s*(:=|by\b)")
 
 
 def _strip_string_literals(text: str) -> str:
-    """Blank the contents of double-quoted literals.
+    """Blank the contents of string and raw-string literals (`scripts/guard_anchors.strip_string_literals`, the shared
+    lexer).
 
     `_strip_lean_comments` preserves them on purpose (comment markers inside a string are
     inert), but for CONTAINMENT they are attacker-controlled text: audit 2026-09-19 granted
     a node whose statement appeared only inside a `String` literal in the artifact.
     """
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    from .judge import _guard_anchors
+    return _guard_anchors().strip_string_literals(text)
 
 
 def statement_matches(artifact_text: str, node_statement: str) -> bool:
@@ -613,6 +586,17 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
         if rj:
             raise GateError(f"Node {slug!r}: {rj}")
 
+    # Spec 5.2 grant rule (step 4 Task 4): a node created on or after the cutoff, or with no
+    # `created` date at all (Ruling 2, fail-closed), is granted `proved` only with a passing,
+    # current `[checks]` record. Scoped to `proved` like the re-judge above: the negation probe
+    # and the fingerprint are about a theorem's statement, which a refutation does not prove.
+    if new_status == "proved" and checks_required(node):
+        ck = checks_problem(campaign.root, node)
+        if ck:
+            raise GateError(
+                f"Node {slug!r}: [checks] required (created {node.created or '(empty)'}, "
+                f"cutoff {CHECKS_CUTOFF}): {ck}")
+
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":
         from .registry import parse_dep
@@ -832,6 +816,13 @@ def verify_campaign(
         rj = rejudge_problem(root, node)
         if rj and node.status == "proved":
             errors.append(f"Node {sl!r}: status is 'proved' but {rj} (re-judge)")
+        # Ruling 11 (step 4): a proved node the grant rule covers stays proved only with a
+        # passing [checks] record on its CURRENT artifact, as the re-judge above.
+        if node.status == "proved" and checks_required(node):
+            ck = checks_problem(root, node)
+            if ck:
+                errors.append(f"Node {sl!r}: status is 'proved' but [checks] are required "
+                              f"(created {node.created or '(empty)'}, cutoff {CHECKS_CUTOFF}): {ck}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":

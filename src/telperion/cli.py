@@ -1783,6 +1783,198 @@ def cmd_mission_rejudge_record(args) -> int:
     return 0
 
 
+def cmd_mission_checks_record(args) -> int:
+    """Record the spec 5.2 checks (negation probe, closure audit, statement fingerprint) for a node.
+
+    Every verdict is read from the checks' own JSON output, never from a flag:
+    - `--probe-json`: `telperion probe-negation --json` stdout, {"verdict", "detail",
+      "olean_sha256", "olean_closure"};
+    - `--fingerprint-json`: `telperion fingerprint --json` stdout, {"fingerprints",
+      "olean_sha256", "olean_closure"} (or {"error"}, refused);
+    - `--closure-json`: the file `telperion audit-closure --json FILE` writes
+      (closure_audit.AuditResult.to_json). PASS only when its "verdict" is "PASS" AND "ok" is
+      true (a clean Lean exit); anything else, including no verdict, is recorded as FAIL.
+
+    Ruling 9: the probe and the fingerprint must have run on the SAME replayed olean closure,
+    so both JSONs must carry the same `olean_sha256`; it is stored next to the artifact's
+    source sha256. The fingerprinted theorem (`--target`, or the only one in the JSON) must be
+    one of the closure audit's targets -- the closure JSON carries no olean digest, so that name
+    is its only tie to the other two. A `signoff:` in --note is free text: nothing checks the
+    reviewer is independent of the author (see `provenance.checks_problem`).
+
+    Ruling 12: the probe's `theorem` (and the fingerprint's, when it names one) must be that
+    target, and both JSONs' `source_sha256` (the --file each check was given) must be the
+    artifact's CURRENT sha256. A mismatch or an absent value is refused (final review I2).
+    Final review I1: the target is the node's registered theorem
+    (`guard_anchors.resolve_theorem`, the declaration the grant gate matches); a `--target`
+    naming anything else is refused. Final review I3: the probe and fingerprint JSONs' replay
+    `axioms` lists must agree, be a subset of CLEAN_AXIOMS and include the closure audit's
+    axioms for the target; the list is recorded.
+
+    The JSON inputs are unsigned operator files: reading verdicts from them (never from flags)
+    guards against mistakes, not against an operator who writes them by hand.
+
+    Refuses (exit 2, no record): a malformed or unreadable JSON, an unknown probe verdict, a
+    missing or mismatched `olean_sha256`, an ambiguous or unaudited fingerprint target, no
+    proof link or a missing artifact, status `deprecated` or `refuted`. Otherwise writes the
+    record and exits 0 when it passes `provenance.checks_problem`, 1 when it does not (e.g.
+    VACUOUS, or PROBE_ONLY without a `signoff:` in --note). Never changes the node's status.
+    """
+    import dataclasses as _dc
+    import json as _json
+    from datetime import date as _date
+
+    from .missions.provenance import checks_problem, sha256_file
+    from .missions.registry import load_campaign
+    from .missions.schema import PROBE_VERDICTS, ChecksRecord, SchemaError, save_node, slug_of
+
+    slug = slug_of(args.slug)
+    camp_root = _resolve_campaign(_missions_root(args), slug,
+                                  getattr(args, "campaign", None))
+    if camp_root is None:
+        return 1
+    try:
+        camp = load_campaign(camp_root)
+    except SchemaError as exc:
+        print(f"Schema error: {exc}")
+        return 1
+    node = camp.nodes.get(slug)
+    if node is None:
+        print(f"Node {slug!r} not found in campaign {camp_root.name!r}")
+        return 1
+
+    def refuse(msg: str) -> int:
+        print(f"{slug}: {msg}. Refusing to record.", file=sys.stderr)
+        return 2
+
+    if node.proof is None:
+        return refuse("no artifact linked; the checks are about an artifact")
+    art = camp_root / node.proof.artifact
+    if not art.exists():
+        return refuse(f"artifact {node.proof.artifact!r} does not exist")
+    if node.status in ("deprecated", "refuted"):
+        return refuse(f"status is {node.status!r}; checks are recorded for a node that is or "
+                      "may become proved")
+
+    docs = {}
+    for name, path in (("probe", args.probe_json), ("fingerprint", args.fingerprint_json),
+                       ("closure", args.closure_json)):
+        try:
+            docs[name] = _json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return refuse(f"cannot read the {name} JSON {path}: {exc}")
+        if not isinstance(docs[name], dict):
+            return refuse(f"the {name} JSON {path} is not an object")
+    probe, fp, closure = docs["probe"], docs["fingerprint"], docs["closure"]
+
+    verdict = probe.get("verdict")
+    if verdict not in PROBE_VERDICTS:
+        return refuse(f"the probe JSON's verdict {verdict!r} is not one of {PROBE_VERDICTS}")
+    if "error" in fp or not isinstance(fp.get("fingerprints"), dict):
+        why = fp.get("error", 'no "fingerprints" object')
+        return refuse(f"the fingerprint JSON holds no fingerprints ({why})")
+    if "verdict" not in closure or "ok" not in closure or not isinstance(closure.get("targets"), list):
+        return refuse("the closure JSON is not `audit-closure --json` output (needs \"verdict\", "
+                      "\"ok\" and \"targets\")")
+
+    # Ruling 9: both checks ran on one replayed closure.
+    p_olean, f_olean = probe.get("olean_sha256"), fp.get("olean_sha256")
+    if not p_olean or not f_olean:
+        return refuse("the probe and fingerprint JSONs must both carry olean_sha256 (the "
+                      f"replayed closure); probe has {p_olean!r}, fingerprint has {f_olean!r}")
+    if p_olean != f_olean:
+        return refuse(f"the probe ran on olean_sha256 {str(p_olean)[:12]}... but the fingerprint "
+                      f"on {str(f_olean)[:12]}...; run both checks on the same build")
+
+    # Final review I1: the checks must be of the node's OWN theorem, the artifact declaration the
+    # grant gate matches (`guard_anchors.resolve_theorem`), never a helper lemma beside it.
+    from .missions import judge as _judge
+    from .missions.statements import statement_path
+    ga = _judge._guard_anchors()
+    try:
+        want = ga.resolve_theorem(art.read_text(encoding="utf-8"),
+                                  statement_path(camp_root, node).read_text(encoding="utf-8"))
+    except (OSError, ga.RegistryError) as exc:
+        return refuse(f"cannot resolve the node's registered theorem ({exc})")
+    fps = fp["fingerprints"]
+    target = args.target if args.target is not None else want
+    if target != want:
+        return refuse(f"--target {target!r} is not the node's registered theorem {want!r}; checks of a "
+                      "helper lemma do not cover the node")
+    if target not in fps:
+        return refuse(f"the fingerprint JSON has no target {target!r}, the node's registered theorem "
+                      f"(has {sorted(fps)})")
+    audited = [t.get("name") for t in closure["targets"] if isinstance(t, dict)]
+    if target not in audited:
+        return refuse(f"the closure audit's targets {audited} do not include {target!r}")
+
+    # Ruling 12: one theorem across all three, and the probe and fingerprint ran on the
+    # artifact's CURRENT source. Every value must be present and right (final review I2: no
+    # waiver); re-run the checks with --file for a JSON that lacks one.
+    cur_sha = sha256_file(art)
+    if probe.get("theorem") is None:
+        return refuse("the probe JSON names no theorem; re-run `probe-negation --json` with --file")
+    if probe["theorem"] != target:
+        return refuse(f"the probe was of theorem {probe['theorem']!r} but the fingerprint and "
+                      f"closure audit are of {target!r}")
+    if fp.get("theorem") is not None and fp["theorem"] != target:
+        return refuse(f"the fingerprint JSON's theorem {fp['theorem']!r} is not {target!r}")
+    for name, doc in (("probe", probe), ("fingerprint", fp)):
+        src = doc.get("source_sha256")
+        if src is None:
+            return refuse(f"the {name} JSON has no source_sha256; re-run the {name} with --file <the "
+                          "artifact>")
+        if str(src).lower() != cur_sha:
+            return refuse(f"the {name} ran on source_sha256 {str(src)[:12]}..., but the artifact "
+                          f"on disk is {cur_sha[:12]}...; re-run the {name} on the current artifact")
+        if doc.get("stale"):
+            return refuse(f"the {name} JSON says its --file was newer than the module's olean "
+                          "(a stale build); rebuild and re-run")
+    note = args.note
+
+    # Final review I3 (interim): the REPLAY's axiom list, which an imported module cannot forge
+    # (the closure audit still imports the submission). The probe and the fingerprint must carry
+    # the same list, it must be a subset of CLEAN_AXIOMS, and it must include the closure audit's
+    # axioms for the target.
+    from .comparator import CLEAN_AXIOMS
+    p_ax, f_ax = probe.get("axioms"), fp.get("axioms")
+    if not isinstance(p_ax, list) or not isinstance(f_ax, list):
+        return refuse("the probe and fingerprint JSONs must both carry the replay's `axioms` list; "
+                      "re-run them with the current telperion")
+    if sorted(p_ax) != sorted(f_ax):
+        return refuse(f"the probe's replay axioms {sorted(p_ax)} differ from the fingerprint's "
+                      f"{sorted(f_ax)}")
+    bad = [a for a in p_ax if a not in CLEAN_AXIOMS]
+    if bad:
+        return refuse(f"the replayed module uses non-standard axioms {bad}")
+    c_ax = next((t.get("axioms") for t in closure["targets"]
+                 if isinstance(t, dict) and t.get("name") == target), None)
+    if not isinstance(c_ax, list) or not set(c_ax) <= set(p_ax):
+        return refuse(f"the closure audit's axioms for {target!r} ({c_ax!r}) are not among the "
+                      f"replay's {sorted(p_ax)}")
+
+    closure_verdict = "PASS" if closure["verdict"] == "PASS" and closure["ok"] is True else "FAIL"
+    try:
+        rec = ChecksRecord(
+            date=_date.today().isoformat(), artifact_sha256=cur_sha,
+            olean_sha256=str(p_olean).lower(), probe_verdict=verdict,
+            closure_verdict=closure_verdict,
+            statement_fingerprint=str(fps[target]).lower(), theorem=target, note=note,
+            axioms=tuple(sorted(p_ax)))
+    except SchemaError as exc:
+        return refuse(str(exc))
+    new = _dc.replace(node, checks=rec, updated=rec.date)
+    save_node(new, camp_root / "nodes" / f"{slug}.toml")
+    problem = checks_problem(camp_root, new)
+    if problem:
+        print(f"CHECKS NOT PASSING {slug}: {problem}", file=sys.stderr)
+        return 1
+    print(f"CHECKS PASS {slug}: probe {rec.probe_verdict}, closure {rec.closure_verdict}, "
+          f"fingerprint {rec.statement_fingerprint[:12]}... artifact {rec.artifact_sha256[:12]}... "
+          f"olean {rec.olean_sha256[:12]}...")
+    return 0
+
+
 def _nanoda_rev_path() -> Path:
     """The pinned nanoda rev, <project>/NANODA_REV, in the Arda and the standalone layout alike."""
     from . import paths
@@ -2490,7 +2682,14 @@ def cmd_mission(args) -> int:
 
 
 def cmd_kernel_policy_check(args) -> int:
-    """Lean toolchain floor + shrink-only exception list (spec 5.1). Exit 1 if any problem."""
+    """Lean toolchain floor + shrink-only exception list (spec 5.1). Exit 1 if any problem.
+
+    With --base REF, also enforces that the exception list only shrinks relative to
+    REF: the base-ref copy of the exceptions file is read with `git show`, treating
+    "path does not exist at REF" as a brand-new file (every current entry then counts
+    as added) and any other git error as a hard failure."""
+    import subprocess
+
     from .checks import kernel_policy as kp
 
     root = Path(args.root)
@@ -2502,11 +2701,183 @@ def cmd_kernel_policy_check(args) -> int:
         return 1
     projects = kp.find_projects(root)
     problems = kp.policy_problems(root, exceptions)
+    base = getattr(args, "base", None)
+    if base:
+        try:
+            relpath = exceptions_path.resolve().relative_to(root.resolve())
+        except ValueError:
+            relpath = Path(exceptions_path.name)
+        result = subprocess.run(["git", "show", f"{base}:{relpath.as_posix()}"],
+                                cwd=root, capture_output=True, text=True)
+        if result.returncode == 0:
+            base_text = result.stdout
+        elif "does not exist in" in result.stderr or "exists on disk, but not in" in result.stderr:
+            base_text = None
+        else:
+            print(f"kernel-policy check: cannot read {relpath} at {base}: {result.stderr.strip()}")
+            return 1
+        try:
+            problems += kp.shrink_problems(base_text, exceptions)
+        except ValueError as e:
+            print(e)
+            return 1
     if problems:
         for p in problems:
             print(p)
         return 1
     print(f"kernel policy: OK ({len(projects)} projects, {len(exceptions)} exceptions)")
+    return 0
+
+
+def _trust_kwargs(args) -> dict:
+    """The --trusted-env / --trusted-manifest / --olean-dir options that were given, as keyword arguments."""
+    kw = {}
+    if getattr(args, "trusted_env", None):
+        kw["trusted_env"] = Path(args.trusted_env)
+    if getattr(args, "trusted_manifest", None):
+        kw["manifest"] = Path(args.trusted_manifest)
+    if getattr(args, "olean_dirs", None):
+        kw["untrusted_paths"] = [Path(d) for d in args.olean_dirs]
+    if getattr(args, "memory_mb", None) is not None:
+        kw["memory_mb"] = args.memory_mb or None
+    return kw
+
+
+def _source_sha256(path) -> "str | None":
+    """sha256 of the `--file` source a check was given, or None (no file, or unreadable)."""
+    import hashlib as _hashlib
+    if not path:
+        return None
+    try:
+        return _hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _staleness(args, module) -> dict:
+    """The honest stale-build guard (final review I4): {"source_mtime", "olean_mtime", "stale"} for --file against
+    the module's .olean as an import resolves it in <project>/.lake/build/lib/lean and the --olean-dir dirs ({} when
+    there is no --file, no single module or no built olean). `stale` is true when --file is newer than that olean: the build is
+    older than the source being asserted. It catches a forgotten rebuild, not an adversary (mtimes are settable)."""
+    import os as _os
+
+    from .checks.lean_replay import resolve_olean, submission_paths
+    if not getattr(args, "file", None) or not module:
+        return {}
+    try:
+        dirs = submission_paths(Path(args.project), getattr(args, "olean_dirs", None) or ())
+        olean = resolve_olean(dirs, module)
+        src_m = _os.path.getmtime(args.file)
+    except (OSError, ValueError):
+        return {}
+    if not olean:
+        return {}                     # nothing built to compare with: the replay reports the missing module
+    ol_m = _os.path.getmtime(olean)
+    return {"source_mtime": src_m, "olean_mtime": ol_m, "stale": src_m > ol_m}
+
+
+def cmd_probe_negation(args) -> int:
+    """Negation probe of one theorem's ELABORATED constant (checks/negation_probe.py), run on the module's KERNEL
+    REPLAY into the pinned trusted env; the module itself is never imported.
+
+    Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including an unbuilt module, no trusted env or
+    manifest, or any unexpected failure). With --json, stdout is exactly {"verdict": ..., "detail": ...,
+    "module": ..., "theorem": <the qualified name probed>, "source_sha256": <sha256 of --file, or null>,
+    "olean_sha256": ..., "olean_closure": [...]} (the last two when the module was replayed). --file only qualifies a
+    short --theorem and is hashed into source_sha256; the statement is never read from it."""
+    import json as _json
+    import shlex
+
+    from .checks import negation_probe as np_
+    from .checks.negation_probe import ProbeResult, ProbeSpec, TACTIC_IMPORTS
+
+    theorem = args.theorem
+    stale = _staleness(args, args.module)
+    try:
+        if args.file:
+            theorem = np_.qualify(Path(args.file).read_text(encoding="utf-8"), theorem)
+        if stale.get("stale"):
+            res = ProbeResult("ERROR", f"--file {args.file} is newer than the olean of {args.module}: a stale "
+                                       "build; rebuild the module, then re-run the probe")
+        else:
+            spec = ProbeSpec(args.module, theorem, args.witness,
+                             tuple(args.imports) if args.imports is not None else TACTIC_IMPORTS)
+            res = np_.run_probe(spec, Path(args.project),
+                                wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                                timeout=args.timeout, **_trust_kwargs(args))
+    except Exception as exc:  # any surprise is ERROR (exit 2), never a traceback or a failing verdict
+        res = ProbeResult("ERROR", f"probe-negation failed: {type(exc).__name__}: {exc}")
+    if args.json:
+        # Ruling 12: name what was probed and the source it came from (`mission checks-record`).
+        out = res.to_json()
+        out.update(module=args.module, theorem=theorem, source_sha256=_source_sha256(args.file), **stale)
+        print(_json.dumps(out))
+    else:
+        print(f"probe-negation {args.theorem}: {res.verdict} -- {res.detail}")
+    return {"PROBE_ONLY": 0, "WITNESSED": 0, "VACUOUS": 1, "REFUTED": 1}.get(res.verdict, 2)
+
+
+def cmd_fingerprint(args) -> int:
+    """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target, or with
+    --json {"fingerprints": {...}, "olean_sha256": <closure digest>, "olean_closure": [[module, part, sha256], ...],
+    "module": ..., "theorem": ..., "source_sha256": <sha256 of --file, or null>} (module and theorem are null unless
+    there is exactly one --import and one --target). The optional --file is only hashed, into source_sha256, which
+    `mission checks-record` compares with the node's artifact. The modules are KERNEL-REPLAYED into the pinned
+    trusted env, never imported.
+
+    Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
+    env or manifest). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project."""
+    import json as _json
+    import shlex
+
+    from .checks import fingerprint
+
+    stale = _staleness(args, args.imports[0] if len(args.imports) == 1 else None)
+    try:
+        if stale.get("stale"):
+            raise ValueError(f"--file {args.file} is newer than the olean of {args.imports[0]}: a stale build; "
+                             "rebuild the module, then re-run the fingerprint")
+        fps = fingerprint.run_fingerprint(Path(args.project), args.imports, args.targets,
+                                          wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                                          timeout=args.timeout, **_trust_kwargs(args))
+    except ValueError as exc:
+        if args.json:
+            print(_json.dumps({"error": str(exc)}))
+        else:
+            print(f"fingerprint: {exc}")
+        return 2
+    if args.json:
+        # Ruling 12: `module`/`theorem` only when there is exactly one; `source_sha256` of --file.
+        print(_json.dumps({"fingerprints": {t: fps[t] for t in args.targets},
+                           "olean_sha256": getattr(fps, "olean_sha256", None),
+                           "olean_closure": getattr(fps, "olean_closure", []),
+                           "module": args.imports[0] if len(args.imports) == 1 else None,
+                           "theorem": args.targets[0] if len(args.targets) == 1 else None,
+                           "source_sha256": _source_sha256(args.file),
+                           "axioms": getattr(fps, "axioms", None), **stale}))
+        return 0
+    for t in args.targets:
+        print(f"{t} {fps[t]}")
+    return 0
+
+
+def cmd_trusted_manifest(args) -> int:
+    """`trusted-manifest build`: write the sha256 manifest of the pinned env's trusted files (checks/lean_replay.py)
+    to --out (default: outside the env, see lean_replay.default_manifest_path). `verify`: check it. Exit 0 or 2."""
+    from .checks import lean_replay
+
+    try:
+        if args.trusted_manifest_cmd == "build":
+            path = lean_replay.build_trusted_manifest(args.env, args.out, force=args.force)
+            print(f"trusted manifest written: {path}")
+        else:
+            pinned = lean_replay.pinned_env(args.env)
+            path = Path(args.out) if args.out else lean_replay.default_manifest_path(pinned.root)
+            lean_replay.verify_trusted_manifest(pinned, path)
+            print(f"trusted manifest OK: {path}")
+    except (OSError, ValueError) as exc:
+        print(f"trusted-manifest: {exc}")
+        return 2
     return 0
 
 
@@ -3026,6 +3397,26 @@ def main(argv=None) -> int:
     p.add_argument("--note", default="")
     p.set_defaults(mission_fn=cmd_mission_rejudge_record)
 
+    # checks-record SLUG --campaign C --probe-json F --closure-json F --fingerprint-json F
+    #               [--target NAME] [--note S]
+    p = msub.add_parser("checks-record",
+                        help="record the negation probe, closure audit and statement fingerprint "
+                             "(read from their JSON output) for a node")
+    p.add_argument("slug")
+    p.add_argument("--campaign", required=True)
+    p.add_argument("--probe-json", required=True, type=Path, dest="probe_json",
+                   help="`telperion probe-negation --json` output")
+    p.add_argument("--closure-json", required=True, type=Path, dest="closure_json",
+                   help="the file `telperion audit-closure --json FILE` wrote")
+    p.add_argument("--fingerprint-json", required=True, type=Path, dest="fingerprint_json",
+                   help="`telperion fingerprint --json` output")
+    p.add_argument("--target", default=None,
+                   help="the fingerprinted theorem (default and only allowed value: the node's registered "
+                        "theorem, the artifact declaration the grant gate matches)")
+    p.add_argument("--note", default="",
+                   help="free text; a PROBE_ONLY verdict passes only with 'signoff: <who>' here")
+    p.set_defaults(mission_fn=cmd_mission_checks_record)
+
     # rejudge-backfill-closure SLUG --campaign C [--since 23bda8b16] [--rebind]
     p = msub.add_parser("rejudge-backfill-closure",
                         help="back-fill [rejudge].closure_sha256 for a node whose closure "
@@ -3074,7 +3465,99 @@ def main(argv=None) -> int:
     p.add_argument("--root", default=".", help="repo root to scan (default: .)")
     p.add_argument("--exceptions", default=None,
                    help="exceptions TOML (default: <root>/kernel_policy_exceptions.toml)")
+    p.add_argument("--base", default=None,
+                   help="base git ref; also enforce that the exception list only shrinks "
+                        "relative to this ref (read via `git show REF:<path>` in --root)")
     p.set_defaults(fn=cmd_kernel_policy_check)
+
+    p = sub.add_parser("probe-negation",
+                       help="one-sided probe of a theorem's ELABORATED constant: VACUOUS (its premises "
+                            "prove False), REFUTED (plausible counterexample), WITNESSED, PROBE_ONLY or ERROR")
+    p.add_argument("--project", required=True,
+                   help="the Lake project in which --module is built (its .lake/build/lib/lean is untrusted)")
+    p.add_argument("--module", required=True,
+                   help="the theorem's own module, which must be BUILT in --project (lake build <module>); "
+                        "the statement is the elaborated constant's type, so local definitions, notation "
+                        "and attributes are exactly as in the file. An unbuilt module is ERROR")
+    p.add_argument("--theorem", required=True, help="the theorem's name (fully qualified unless --file is given)")
+    p.add_argument("--file", default=None,
+                   help="the Lean file declaring the theorem (pass the node's artifact); used ONLY to qualify a "
+                        "short --theorem with its namespace and hashed into the --json `source_sha256`, never to "
+                        "read the statement")
+    p.add_argument("--witness", default=None,
+                   help="a term proving `∃ <premises>, True` (the hypotheses are satisfiable)")
+    p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
+                   help="trusted tactic module imported before --module is replayed (repeatable; default: Mathlib)")
+    p.add_argument("--wrapper", default=None,
+                   help="command prefix before the pinned `lean` (default: leanlock with one slot "
+                        "when ~/hodge-engine/leanlock.sh exists; '' for none)")
+    p.add_argument("--timeout", type=int, default=1800, help="seconds for the Lean run")
+    p.add_argument("--trusted-env", default=None, metavar="DIR",
+                   help="the PINNED Lean env whose toolchain and .lake packages are trusted (default: "
+                        "$TELPERION_LEAN_ENV; exit 2 if neither is set). Nothing from --project is trusted")
+    p.add_argument("--trusted-manifest", default=None, metavar="FILE",
+                   help="the sha256 manifest of the trusted env's files, verified before every run (default: "
+                        "~/telperion-tools/trusted-manifests/<hash of the env's pins>.json; build it with "
+                        "`telperion trusted-manifest build --env DIR`)")
+    p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
+                   help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
+                        "(repeatable)")
+    p.add_argument("--memory-mb", type=int, default=None, metavar="MB",
+                   help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
+                        "sandbox")
+    p.add_argument("--json", action="store_true",
+                   help='print {"verdict": ..., "detail": ..., "module": ..., "theorem": ..., "source_sha256": ..., '
+                        '"olean_sha256": ..., "olean_closure": ...} only')
+    p.set_defaults(fn=cmd_probe_negation)
+
+    p = sub.add_parser("fingerprint",
+                       help="sha256 of each theorem's statement, delta-unfolded past the library roots, "
+                            "binder-name-insensitive",
+                       description="Statement fingerprint. NOT a sandbox: building untrusted Lean (the imported "
+                                   "modules, a submitted text) runs that code with your permissions, so fingerprint "
+                                   "untrusted input only inside a sandbox (e.g. Comparator's Linux sandbox in CI).")
+    p.add_argument("--project", required=True, help="a built Lake project in which the imports resolve")
+    p.add_argument("--import", dest="imports", action="append", required=True, metavar="MODULE",
+                   help="module to import (repeatable)")
+    p.add_argument("--target", dest="targets", action="append", required=True, metavar="THEOREM",
+                   help="fully qualified theorem name (repeatable)")
+    p.add_argument("--file", default=None,
+                   help="the theorem's source file; only hashed, into the --json `source_sha256` that "
+                        "`mission checks-record` compares with the node's artifact")
+    p.add_argument("--wrapper", default=None,
+                   help="command prefix before the pinned `lean` (default: leanlock with one slot "
+                        "when ~/hodge-engine/leanlock.sh exists; '' for none)")
+    p.add_argument("--timeout", type=int, default=1800, help="seconds for each Lean run")
+    p.add_argument("--trusted-env", default=None, metavar="DIR",
+                   help="the PINNED Lean env whose toolchain and .lake packages are trusted (default: "
+                        "$TELPERION_LEAN_ENV; exit 2 if neither is set). Nothing from --project is trusted")
+    p.add_argument("--trusted-manifest", default=None, metavar="FILE",
+                   help="the sha256 manifest of the trusted env's files, verified before every run (default: "
+                        "~/telperion-tools/trusted-manifests/<hash of the env's pins>.json; build it with "
+                        "`telperion trusted-manifest build --env DIR`)")
+    p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
+                   help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
+                        "(repeatable)")
+    p.add_argument("--memory-mb", type=int, default=None, metavar="MB",
+                   help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
+                        "sandbox")
+    p.add_argument("--json", action="store_true",
+                   help='print {"fingerprints": {...}, "olean_sha256": ..., "olean_closure": [...], "module": ..., '
+                        '"theorem": ..., "source_sha256": ...} (or {"error": ...}) only')
+    p.set_defaults(fn=cmd_fingerprint)
+
+    p = sub.add_parser("trusted-manifest",
+                       help="build or verify the sha256 manifest of a pinned Lean env's trusted files (the replay "
+                            "checks refuse to run without a matching one)")
+    tm_sub = p.add_subparsers(dest="trusted_manifest_cmd", required=True)
+    for name, what in (("build", "write"), ("verify", "check")):
+        q = tm_sub.add_parser(name, help=f"{what} the manifest of --env")
+        q.add_argument("--env", required=True, metavar="DIR", help="the pinned Lean env")
+        q.add_argument("--out", default=None, metavar="FILE",
+                       help="the manifest path (default: ~/telperion-tools/trusted-manifests/<hash>.json)")
+        if name == "build":
+            q.add_argument("--force", action="store_true", help="overwrite an existing manifest")
+        q.set_defaults(fn=cmd_trusted_manifest)
 
     args = ap.parse_args(argv)
     return args.fn(args)

@@ -239,6 +239,59 @@ def test_normaliser_parity_with_verify(src):
 
 
 # ---------------------------------------------------------------------------
+# the shared lexer (final re-review residual R1): raw strings and char literals
+# ---------------------------------------------------------------------------
+
+# The re-reviewer's artifact: the "real" `main_thm` sits inside a string, between two raw strings `r"\"` (whose
+# backslash does not escape). The old regex lexer paired the quotes wrongly and resolved `Helper.main_thm`.
+DESYNC = ('def s : String := r"\\" ++ "\nnamespace Helper\ntheorem main_thm : 1 + 1 = 2 := by rfl\n" ++ r"\\" ++ "x"\n'
+          '-- "\ntheorem Helper.main_thm (n : Nat) (h : n = 0) : n = n := rfl\n')
+MAIN_STMT = _stmt("theorem main_thm : 1 + 1 = 2", "main")
+
+
+def test_desync_artifact_refuses():
+    with pytest.raises(ga.RegistryError, match="main_thm"):
+        ga.resolve_theorem(DESYNC, MAIN_STMT)
+    verify = pytest.importorskip("telperion.missions.verify")
+    assert not verify.statement_matches(DESYNC, "theorem main_thm : 1 + 1 = 2")
+
+
+def test_desync_artifact_with_a_real_theorem_resolves_to_it():
+    art = DESYNC + "namespace Real\ntheorem main_thm : 1 + 1 = 2 := by rfl\nend Real\n"
+    assert ga.resolve_theorem(art, MAIN_STMT) == "Real.main_thm"
+    verify = pytest.importorskip("telperion.missions.verify")
+    assert verify.statement_matches(art, "theorem main_thm : 1 + 1 = 2")
+
+
+@pytest.mark.parametrize("decoy", [
+    'def q : Char := \'"\'\nnamespace Fake\ntheorem main_thm : 1 + 1 = 2 := by rfl\nend Fake\ndef r : Char := \'"\'\n',
+    'def q : String := r#"he said "\ntheorem main_thm : 1 + 1 = 2 := by rfl\n" and left"#\n',
+    'def q : String := r##"a "# b\ntheorem main_thm : 1 + 1 = 2 := by rfl\n"##\n',
+])
+def test_char_and_raw_literals_do_not_desync(decoy):
+    # a decoy inside a raw string is not a declaration; around char literals the real one is found and qualified
+    real = "namespace Real\ntheorem main_thm : 1 + 1 = 2 := by rfl\nend Real\n"
+    if decoy.startswith("def q : Char"):
+        assert ga.resolve_theorem(decoy, MAIN_STMT) == "Fake.main_thm"     # a char literal opens no string
+        assert ga.strip_lean_comments("x := '\"' -- c\ny\n") == "x := '\"' \ny\n"
+    else:
+        with pytest.raises(ga.RegistryError):
+            ga.resolve_theorem(decoy, MAIN_STMT)
+        assert ga.resolve_theorem(decoy + real, MAIN_STMT) == "Real.main_thm"
+
+
+@pytest.mark.parametrize("src", [DESYNC, 'x := r#"a "-- b" c"# -- d\n', "c := '\\'' -- e\n", 'unterminated "abc',
+                                 "/- open", "h' := 1 -- '\"' \n"])
+def test_lexer_round_trips_and_is_shared(src):
+    assert "".join(t for _, t in ga.lean_segments(src)) == src
+    verify = pytest.importorskip("telperion.missions.verify")
+    assert ga.strip_lean_comments(src) == verify._strip_lean_comments(src)
+    assert ga.strip_string_literals(src) == verify._strip_string_literals(src)
+    probe = pytest.importorskip("telperion.checks.negation_probe")
+    assert probe.qualify("namespace N\ntheorem t : True := trivial\nend N\n" + src, "t") == "N.t"
+
+
+# ---------------------------------------------------------------------------
 # judge_via = "heavy": --exclude-heavy / --only-heavy (2026-10-13)
 # ---------------------------------------------------------------------------
 

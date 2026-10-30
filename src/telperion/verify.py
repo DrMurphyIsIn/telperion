@@ -40,6 +40,13 @@ Three hardening properties this module guarantees (previously bugs):
    actually axiom-checked.  When ``decls`` is empty nothing was certified, so
    ``axioms_clean`` is ``False`` -- callers must NAME what they certify.  A
    compile-only pass (no decls) is still expressible as ``r.okay`` alone.
+
+4. KERNEL_REJECTED classification.  An error block is classified as a KERNEL
+   rejection -- as opposed to an elaboration-time error -- purely by whether its
+   first line begins with the Lean ``(kernel)`` prefix (e.g. "(kernel)
+   declaration type mismatch"). No other heuristic is used: a decl with
+   metavariables, an unknown identifier, or any other elaborator error is NOT
+   kernel-rejected even though it also fails ``okay``.
 """
 from __future__ import annotations
 
@@ -80,6 +87,8 @@ class VerifyResult:
     axioms_checked: bool = False                 # were ANY decls axiom-checked at all?
     errors: list = field(default_factory=list)   # Lean error blocks (may be multi-line)
     warnings: list = field(default_factory=list) # Lean warnings
+    kernel_rejected: bool = False                # any error block's first line starts "(kernel)"
+    kernel_errors: list = field(default_factory=list)  # the subset of errors that are kernel-rejected
     sorries: bool = False                        # any "declaration uses 'sorry'"
     axioms: dict = field(default_factory=dict)   # decl -> sorted list of axiom names
     disallowed: dict = field(default_factory=dict)  # decl -> axioms outside the allow-set
@@ -88,7 +97,12 @@ class VerifyResult:
     raw: str = ""
 
     def summary(self) -> str:
-        tag = "OK" if (self.okay and self.axioms_clean) else "FAIL"
+        if self.kernel_rejected:
+            tag = "KERNEL_REJECTED"
+        elif self.okay and self.axioms_clean:
+            tag = "OK"
+        else:
+            tag = "FAIL"
         if not self.axioms_checked:
             ax = "; axioms UNCHECKED (no decls named)"
         elif self.axioms_clean:
@@ -168,6 +182,10 @@ def _parse_output(out: str, returncode: int, *, decls, permitted) -> dict:
 
     okay = (len(errors) == 0) and (returncode == 0)
 
+    # (#4) KERNEL_REJECTED classification: by the Lean `(kernel)` prefix only.
+    kernel_errors = [e for e in errors if e.lstrip().startswith("(kernel)")]
+    kernel_rejected = bool(kernel_errors)
+
     # (#3.3) axioms_checked is the explicit UNCHECKED state.  When no decls were
     # named nothing was certified -> axioms_clean is False (never vacuously true).
     axioms_checked = len(tuple(decls)) > 0
@@ -181,6 +199,7 @@ def _parse_output(out: str, returncode: int, *, decls, permitted) -> dict:
         okay=okay, axioms_clean=axioms_clean, axioms_checked=axioms_checked,
         errors=errors, warnings=warnings, sorries=sorries, axioms=axioms,
         disallowed=disallowed, returncode=returncode, raw=out,
+        kernel_rejected=kernel_rejected, kernel_errors=kernel_errors,
     )
 
 

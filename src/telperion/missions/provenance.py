@@ -41,7 +41,10 @@ from .statements import statement_path
 #: than a fresh one. History:
 #:   2026-09-23.1  first version that writes a [grant] block (digests + provenance) and
 #:                 refuses a read-back whose auditor matches the author.
-GATE_VERSION = "2026-09-23.1"
+#:   2026-10-29.1  grants of nodes created on or after 2026-10-28 (or with no created date)
+#:                 require a passing [checks] record (probe + closure + fingerprint, one olean
+#:                 closure). Existing grants keep their recorded version.
+GATE_VERSION = "2026-10-29.1"
 
 #: A read-back shorter than this is not a rendering of a formal statement; it is a label.
 #: The shortest genuine read-back in the live registry on 2026-09-23 was 262 characters.
@@ -609,6 +612,7 @@ def build_grant(campaign_root: Path, node: Node, *, identity: str, session: str,
         date=today or date.today().isoformat(),
         identity=identity.strip(),
         session=session.strip(),
+        checks_required=checks_required(node),
     )
 
 
@@ -833,6 +837,127 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
     return ""
 
 
+#: Nodes created on or after this date are granted `proved` only with a passing `[checks]`
+#: record (spec 5.2 grant rule, step 4 Task 4). Earlier nodes are "pre-process".
+CHECKS_CUTOFF = "2026-10-28"
+
+
+def checks_required(node: Node) -> bool:
+    """True unless the node's `created` is an explicit, valid date before CHECKS_CUTOFF and its
+    `[grant]` (if any) does not record that the gate required checks.
+
+    Ruling 2 (step 4): an EMPTY `created` requires checks (fail-closed) -- otherwise a new node
+    that omits the field skips every check. Ruling 12: the WHOLE string must parse as an ISO
+    date ("2026-10-01junk" or a timestamp does not), or checks are required.
+
+    Ruling 12: a node whose `[grant]` says `checks_required = true` (the gate, 2026-10-29.1
+    and later, records its own decision there) always requires checks, so back-dating
+    `created` after such a grant cannot drop the requirement, in `mission verify` or on a
+    re-grant (both call this one predicate). The decision is recorded rather than read off
+    `gate_version`: every grant the new gate writes carries that version, including a
+    pre-cutoff node's, which must stay exempt. A back-dated `created` BEFORE the first grant
+    is not caught here (see `checks_problem`).
+    """
+    if node.grant is not None and node.grant.checks_required:
+        return True
+    try:
+        created = date.fromisoformat((node.created or "").strip())
+    except ValueError:
+        return True
+    return created >= date.fromisoformat(CHECKS_CUTOFF)
+
+
+def checks_problem(campaign_root: Path, node: Node) -> str:
+    """"" iff the node's `[checks]` record passes on the artifact currently on disk; else why not.
+
+    Passing: probe verdict WITNESSED, or PROBE_ONLY with a reviewer's `signoff: <who>` in the
+    note (the probe is one-sided, spec 5.2); VACUOUS, REFUTED and ERROR block. The closure
+    verdict must be PASS. Currency is checked by the artifact SOURCE digest only: the record's
+    `olean_sha256` (the replayed closure the probe and fingerprint both ran on) cannot be
+    recomputed without a build, so it is recorded for the reader and a changed source is what
+    makes the record stale. Does not look at the cutoff; the gate (and `mission verify`, for
+    proved nodes, Ruling 11) applies `checks_required`.
+
+    Known limitations (Ruling 11):
+    - the sign-off is free text in the note, written by whoever runs `checks-record`; nothing
+      checks that the reviewer is independent of the author. A later step could require a
+      sign-off identity distinct from the `[author]`, as the read-back rule does;
+    - the closure audit is tied to the probe and fingerprint by the theorem name and the interim
+      axiom cross-check:
+      `audit-closure` still IMPORTS the submission rather than replaying it, so its JSON carries
+      no olean digest and an imported module could forge it. The interim cross-check (final
+      review I3): the record carries the REPLAY's axiom list, which the probe and fingerprint
+      must agree on, which must be a subset of CLEAN_AXIOMS, and which must include the closure
+      audit's per-target axioms. The owner accepted this gap for this merge (2026-10-30); porting
+      the closure audit to a replay callback is step-5 work;
+    - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
+      declaration the grant gate matched) and of the Comparator record's theorem when there is
+      one (final review I1). The resolver is the gate's SYNTACTIC one, so a non-adversarial
+      artifact cannot pass a helper lemma's checks; an adversarial artifact still has known
+      ways to fool the resolver, all of which predate step 4: `s!`-interpolated strings, quotes
+      inside `«»` names, declaration text inside `«»`, `#exit`, and `(command| ...)`
+      quotations. The sound fix, tying the target's statement fingerprint to the node's
+      statement file, is step 5;
+    - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
+      of the statement and of each forall-body, but a vacuous sub-proposition under any other
+      conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
+      e.g. `forall m, m = m -> id (forall n, n < 0 -> n = 7)`) is invisible to it, and a
+      satisfiable pad can still reach WITNESSED without a sign-off. Witnessing over a reducing
+      telescope is a step-5 decision;
+    - hand-editing the node file is out of reach of this check: deleting `checks_required`
+      from `[grant]`, like back-dating `created` before the first grant, removes the
+      requirement. Both are the same documented limitation class (a CI diff check, step 5);
+    - the cutoff keys on `created`, which nothing protects before a node's first grant: a
+      node back-dated to before 2026-10-28 while still unproved is granted without checks.
+      Once a gate has granted it with `checks_required = true` in the `[grant]`, the
+      requirement holds regardless of `created`. A future CI check could refuse any diff that changes an existing `created`.
+    """
+    k = node.checks
+    if k is None:
+        return "no [checks] record (`mission checks-record`)"
+    if k.probe_verdict == "PROBE_ONLY":
+        if not re.search(r"signoff:\s*\S", k.note or ""):
+            return ("negation probe is PROBE_ONLY (one-sided: nothing witnessed the hypotheses); "
+                    "it needs a reviewer's 'signoff: <who>' in the [checks] note")
+    elif k.probe_verdict != "WITNESSED":
+        return f"negation probe verdict is {k.probe_verdict} (recorded {k.date})"
+    if k.closure_verdict != "PASS":
+        return f"closure audit verdict is {k.closure_verdict} (recorded {k.date})"
+    if node.proof is None:
+        return "[checks] recorded but the node has no artifact"
+    art = Path(campaign_root) / node.proof.artifact
+    if not art.exists():
+        return f"artifact {node.proof.artifact!r} does not exist"
+    cur = sha256_file(art)
+    if cur != k.artifact_sha256:
+        return (f"[checks] of {k.date} were on artifact sha256 {k.artifact_sha256[:12]}..., but "
+                f"the artifact on disk is {cur[:12]}...; re-run the checks on the current artifact")
+    # Final review I3 (interim): the replay's own axiom list, which no imported module can forge.
+    from ..comparator import CLEAN_AXIOMS
+    if k.axioms is None:
+        return ("[checks] record has no replay axiom list (an older record); re-run "
+                "`mission checks-record` with the current probe and fingerprint JSONs")
+    bad = [a for a in k.axioms if a not in CLEAN_AXIOMS]
+    if bad:
+        return f"the replayed module uses non-standard axioms {bad} (recorded {k.date})"
+    # Final review I1: the record must be of the node's OWN theorem, the declaration the grant
+    # gate matched in the artifact, and of the Comparator record's theorem once there is one.
+    from .judge import _guard_anchors
+    ga = _guard_anchors()
+    try:
+        want = ga.resolve_theorem(art.read_text(encoding="utf-8"),
+                                  statement_path(Path(campaign_root), node).read_text(encoding="utf-8"))
+    except (OSError, ga.RegistryError) as exc:
+        return f"cannot resolve the node's registered theorem ({exc})"
+    if k.theorem != want:
+        return (f"[checks] are of theorem {k.theorem!r}, but the node's registered theorem is "
+                f"{want!r}; a helper lemma's checks do not cover the node")
+    if node.comparator is not None and node.comparator.theorem and node.comparator.theorem != k.theorem:
+        return (f"[checks] are of theorem {k.theorem!r}, but the Comparator record is of "
+                f"{node.comparator.theorem!r}")
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Migration and report
 # ---------------------------------------------------------------------------
@@ -995,6 +1120,25 @@ def render_provenance_report(campaign) -> str:
         if weak:
             lines.append(f"  {r.slug:<48} comparator={r.comparator_run} "
                          f"WEAKLY CHECKED: {'; '.join(weak)}")
+    # Step 4 Task 4: the spec 5.2 checks, for every proved node the grant rule covers. Nodes
+    # created before the cutoff were granted without them and are counted, not listed.
+    pre = 0
+    for r in proved:
+        node = campaign.nodes[r.slug]
+        if not checks_required(node):
+            pre += 1
+            continue
+        problem = checks_problem(campaign.root, node)
+        k = node.checks
+        if not problem:
+            signoff = " with sign-off" if k.probe_verdict == "PROBE_ONLY" else ""
+            lines.append(f"  {r.slug:<48} checks: probe {k.probe_verdict}{signoff}, closure "
+                         f"{k.closure_verdict} (recorded {k.date})")
+        else:
+            lines.append(f"  {r.slug:<48} checks: NOT PASSING -- {problem}")
+    if pre:
+        lines.append(f"  ({pre} proved node(s) pre-process: created before {CHECKS_CUTOFF}, "
+                     "no [checks] required)")
     return "\n".join(lines) + "\n"
 
 

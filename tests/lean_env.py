@@ -39,3 +39,63 @@ def lean_env_ready(env_dir) -> bool:
     will elaborate quickly (~seconds) rather than kick off a full dependency build.
     """
     return shutil.which("lake") is not None and mathlib_built(env_dir)
+
+
+def fake_trusted_env(root) -> tuple[Path, Path, Path]:
+    """(env, elan_home, manifest): a fake PINNED env under `root` for pure tests of the replay checks. Its toolchain
+    has a `lean` and `Init.olean`, its mathlib package `Mathlib.olean`, and its trusted manifest is built."""
+    from telperion.checks.lean_replay import build_trusted_manifest
+    root = Path(root)
+    elan = root / "elan"
+    tdir = elan / "toolchains" / "leanprover--lean4---v4.35.0"
+    (tdir / "bin").mkdir(parents=True)
+    (tdir / "bin" / "lean").write_text("#!/bin/sh\n")
+    (tdir / "bin" / "lean").chmod(0o755)
+    (tdir / "lib" / "lean").mkdir(parents=True)
+    (tdir / "lib" / "lean" / "Init.olean").write_bytes(b"init")
+    env = root / "env"
+    ml = env / ".lake" / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean"
+    (ml / "Mathlib").mkdir(parents=True)
+    (ml / "Mathlib.olean").write_bytes(b"ml")
+    (env / "lean-toolchain").write_text("leanprover/lean4:v4.35.0\n")
+    manifest = build_trusted_manifest(env, root / "manifest.json", elan)
+    return env, elan, manifest
+
+
+_SESSION_MANIFEST: dict[str, Path] = {}
+
+
+def session_trusted_manifest(env_dir) -> Path:
+    """The REAL pinned env's trusted manifest, built once per test process in a temp dir (never in the shared
+    default location), with TELPERION_TRUSTED_MANIFEST pointed at it so that every check in the process uses it."""
+    import os
+    import tempfile
+    from telperion.checks.lean_replay import build_trusted_manifest
+    key = os.path.realpath(env_dir)
+    if key not in _SESSION_MANIFEST:
+        import atexit
+        import shutil
+        d = Path(tempfile.mkdtemp(prefix="tp_manifest_"))
+        atexit.register(shutil.rmtree, d, True)
+        _SESSION_MANIFEST[key] = build_trusted_manifest(env_dir, d / "trusted.json")
+    os.environ["TELPERION_TRUSTED_MANIFEST"] = str(_SESSION_MANIFEST[key])
+    return _SESSION_MANIFEST[key]
+
+
+def fake_replay_output(script: str, ok_body: str = "", needs: str | None = None, always: bool = False) -> str:
+    """What a replay script would print, for pure tests: in a list run, one CLOSURE line per target (its expected
+    olean, no dependencies) and LISTED; in a replay run, one READ line per target (its expected copy), then REPLAY OK,
+    `ok_body` (callback output, untagged or not) and DONE; or REPLAY NEEDS `needs` unless the script imports it."""
+    import re
+    tag = re.search(r'def tag : String := "(TR[0-9a-f]+)"', script).group(1)
+    expect = re.search(r"def expectOleans : List \(Name × String\) := \[(.*)\]", script).group(1)
+    pairs = re.findall(r'\(`([^,]+), "([^"]*)"\)', expect)
+    out = []
+    if "def listOnly : Bool := true" in script:
+        out += [f"CLOSURE {m}\t{f}" for m, f in pairs if f] + [f"REPLAY LISTED {len(pairs)}", "DONE"]
+        return "".join(f"{tag}-{ln}\n" for ln in out)
+    out += [f"READ {f}" for _m, f in pairs if f]
+    if needs is not None and (always or f"\nimport {needs}\n" not in script):
+        return "".join(f"{tag}-{ln}\n" for ln in out + [f"REPLAY NEEDS {needs}", "DONE"])
+    head = "".join(f"{tag}-{ln}\n" for ln in out + ["REPLAY OK modules=[] constants=0 declared=[] axioms=[propext]"])
+    return head + ok_body.replace("<TAG>", tag) + f"{tag}-DONE\n"

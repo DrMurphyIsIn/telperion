@@ -224,6 +224,11 @@ class Grant:
     date: str
     identity: str
     session: str
+    #: True when the gate that wrote this grant required a passing [checks] record for the node
+    #: (`provenance.checks_required`, gate 2026-10-29.1+). It keeps the requirement once
+    #: granted, so back-dating `created` afterwards cannot drop it (Ruling 12). Written only
+    #: when True, so every older grant round-trips unchanged.
+    checks_required: bool = False
 
     def __post_init__(self):
         for f in ("artifact_sha256", "statement_sha256", "gate_version", "date",
@@ -419,6 +424,64 @@ class RejudgeRecord:
             raise SchemaError("rejudge.route must be non-empty")
 
 
+#: `telperion probe-negation` verdicts (checks/negation_probe.VERDICTS, kept here so the schema
+#: does not import the checks package).
+PROBE_VERDICTS = ("VACUOUS", "REFUTED", "PROBE_ONLY", "WITNESSED", "ERROR")
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class ChecksRecord:
+    """The spec 5.2 checks on a node's artifact (step 4 Task 4), written by `mission checks-record`.
+
+    Nodes created on or after `provenance.CHECKS_CUTOFF` (or with no `created` date) are
+    granted `proved` only with a record whose probe verdict is WITNESSED (or PROBE_ONLY with a
+    reviewer's `signoff:` in the note), whose closure verdict is PASS, and whose
+    `artifact_sha256` is the artifact on disk (`provenance.checks_problem`). The verdicts are
+    read from the checks' own JSON output, never from flags.
+    """
+    date: str
+    #: sha256 of the artifact source file (`node.proof.artifact`) when the checks were recorded.
+    artifact_sha256: str
+    #: `lean_replay.closure_digest` of the whole replayed untrusted olean closure, which the
+    #: probe and fingerprint JSONs must both name (Ruling 9). Recorded, not re-checked at grant
+    #: time: recomputing it needs a build, so staleness is caught by `artifact_sha256`.
+    olean_sha256: str
+    probe_verdict: str
+    closure_verdict: str
+    #: `telperion fingerprint` of the theorem's statement.
+    statement_fingerprint: str
+    #: The constant the fingerprint (and the closure audit) is of.
+    theorem: str = ""
+    note: str = ""
+    #: The replay's axiom list (`collectAxioms` over the target module's constants), which the probe and the
+    #: fingerprint JSONs must both carry and agree on (final review I3). None: an older record, which
+    #: `provenance.checks_problem` refuses.
+    axioms: Optional[Tuple[str, ...]] = None
+
+    def __post_init__(self):
+        if not str(self.date).strip():
+            raise SchemaError("checks.date must be non-empty")
+        for f in ("artifact_sha256", "olean_sha256", "statement_fingerprint"):
+            if not _SHA256_RE.fullmatch(str(getattr(self, f))):
+                raise SchemaError(f"checks.{f} must be 64 lowercase hex characters, "
+                                  f"not {getattr(self, f)!r}")
+        if self.probe_verdict not in PROBE_VERDICTS:
+            raise SchemaError(f"checks.probe_verdict must be one of {PROBE_VERDICTS!r}, "
+                              f"not {self.probe_verdict!r}")
+        if self.closure_verdict not in ("PASS", "FAIL"):
+            raise SchemaError(f"checks.closure_verdict must be 'PASS' or 'FAIL', "
+                              f"not {self.closure_verdict!r}")
+        if self.axioms is not None and (not isinstance(self.axioms, tuple)
+                                        or not all(isinstance(a, str) and a for a in self.axioms)):
+            raise SchemaError(f"checks.axioms must be a list of axiom names, not {self.axioms!r}")
+
+
+#: The keys a `[checks]` table may carry (one per ChecksRecord field).
+_CHECKS_KEYS = frozenset(ChecksRecord.__dataclass_fields__)
+
+
 @dataclass(frozen=True)
 class Node:
     name: str
@@ -449,6 +512,9 @@ class Node:
     #: A passing LOCAL re-judge (Comparator, nanoda ON) on the current artifact, for a
     #: `heavy_certificates` node (see RejudgeRecord); written by `mission rejudge-record`.
     rejudge: Optional[RejudgeRecord] = None
+    #: The spec 5.2 checks (negation probe, closure audit, fingerprint) on the current
+    #: artifact (see ChecksRecord); written by `mission checks-record`.
+    checks: Optional[ChecksRecord] = None
     #: True when the artifact's exact certificates (`decide +kernel` LDL^T blocks, ~16 GB to
     #: replay) cannot be run through nanoda on a hosted runner: the judge then asserts the
     #: node with `enable_nanoda = false` and the record says "Lean kernel only".
@@ -540,7 +606,7 @@ _MODELLED_NODE_KEYS = frozenset({
     "refutation_statement", "deprecated_reason", "created", "updated",
     "depends_on", "proof", "readback", "author", "grant", "comparator",
     "requires_ci_job", "ci_record", "rejudge", "heavy_certificates", "judge_via", "compose",
-    "heavy_build_targets", "second_kernel_route",
+    "heavy_build_targets", "second_kernel_route", "checks",
 })
 
 
@@ -662,6 +728,8 @@ def _node_to_doc(node: Node) -> dict:
             "session": node.grant.session,
             "statement_sha256": node.grant.statement_sha256,
         }
+        if node.grant.checks_required:
+            doc["grant"]["checks_required"] = True
     if node.comparator is not None:
         doc["comparator"] = {
             "artifact_sha256": node.comparator.artifact_sha256,
@@ -701,6 +769,17 @@ def _node_to_doc(node: Node) -> dict:
             doc["rejudge"]["route"] = r.route
         if r.note:
             doc["rejudge"]["note"] = r.note
+    if node.checks is not None:
+        k = node.checks
+        doc["checks"] = {f: getattr(k, f) for f in (
+            "date", "artifact_sha256", "olean_sha256", "probe_verdict", "closure_verdict",
+            "statement_fingerprint")}
+        if k.theorem:
+            doc["checks"]["theorem"] = k.theorem
+        if k.note:
+            doc["checks"]["note"] = k.note
+        if k.axioms is not None:
+            doc["checks"]["axioms"] = list(k.axioms)
     return doc
 
 
@@ -739,6 +818,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 date=g["date"],
                 identity=g["identity"],
                 session=g["session"],
+                checks_required=bool(g.get("checks_required", False)),
             )
         comparator = None
         if "comparator" in doc:
@@ -773,6 +853,24 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 closure_sha256=r.get("closure_sha256", ""),
                 closure_files=int(r.get("closure_files", 0)),
                 route=r.get("route", "comparator"))
+        checks = None
+        if "checks" in doc:
+            k = doc["checks"]
+            # Ruling 12: unlike [rejudge], an unknown key is an error, not silently dropped --
+            # a gate record that half-parses must fail loudly.
+            if not isinstance(k, dict):
+                raise SchemaError(f"[checks] must be a table, not {type(k).__name__}")
+            unknown = sorted(set(k) - _CHECKS_KEYS)
+            if unknown:
+                raise SchemaError(f"[checks] has unknown key(s) {unknown}; "
+                                  f"allowed: {sorted(_CHECKS_KEYS)}")
+            checks = ChecksRecord(
+                date=k["date"], artifact_sha256=k["artifact_sha256"],
+                olean_sha256=k["olean_sha256"], probe_verdict=k["probe_verdict"],
+                closure_verdict=k["closure_verdict"],
+                statement_fingerprint=k["statement_fingerprint"],
+                theorem=k.get("theorem", ""), note=k.get("note", ""),
+                axioms=tuple(k["axioms"]) if isinstance(k.get("axioms"), list) else k.get("axioms"))
         compose = None
         if "compose" in doc:
             c = doc["compose"]
@@ -805,6 +903,7 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
             requires_ci_job=doc.get("requires_ci_job", ""),
             ci_record=ci_record,
             rejudge=rejudge,
+            checks=checks,
             heavy_certificates=bool(doc.get("heavy_certificates", False)),
             judge_via=_judge_via(doc.get("judge_via", "")),
             compose=compose,
