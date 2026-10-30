@@ -2725,7 +2725,9 @@ def cmd_probe_negation(args) -> int:
 
     Exit 0 PROBE_ONLY or WITNESSED, 1 VACUOUS or REFUTED, 2 ERROR (including an unbuilt module, no trusted env or
     manifest, or any unexpected failure). With --json, stdout is exactly {"verdict": ..., "detail": ...,
-    "olean_sha256": ..., "olean_closure": [...]} (the last two when the module was replayed)."""
+    "module": ..., "theorem": <the qualified name probed>, "source_sha256": <sha256 of --file, or null>,
+    "olean_sha256": ..., "olean_closure": [...]} (the last two when the module was replayed). --file only qualifies a
+    short --theorem and is hashed into source_sha256; the statement is never read from it."""
     import json as _json
     import shlex
 
@@ -2757,8 +2759,9 @@ def cmd_fingerprint(args) -> int:
     """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target, or with
     --json {"fingerprints": {...}, "olean_sha256": <closure digest>, "olean_closure": [[module, part, sha256], ...],
     "module": ..., "theorem": ..., "source_sha256": <sha256 of --file, or null>} (module and theorem are null unless
-    there is exactly one --import and one --target). The modules are KERNEL-REPLAYED into the pinned trusted env,
-    never imported.
+    there is exactly one --import and one --target). The optional --file is only hashed, into source_sha256, which
+    `mission checks-record` compares with the node's artifact. The modules are KERNEL-REPLAYED into the pinned
+    trusted env, never imported.
 
     Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
     env or manifest). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project."""
@@ -3413,8 +3416,9 @@ def main(argv=None) -> int:
                         "and attributes are exactly as in the file. An unbuilt module is ERROR")
     p.add_argument("--theorem", required=True, help="the theorem's name (fully qualified unless --file is given)")
     p.add_argument("--file", default=None,
-                   help="the Lean file declaring the theorem; used ONLY to qualify a short --theorem "
-                        "with its namespace, never to read the statement")
+                   help="the Lean file declaring the theorem (pass the node's artifact); used ONLY to qualify a "
+                        "short --theorem with its namespace and hashed into the --json `source_sha256`, never to "
+                        "read the statement")
     p.add_argument("--witness", default=None,
                    help="a term proving `∃ <premises>, True` (the hypotheses are satisfiable)")
     p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
@@ -3437,7 +3441,8 @@ def main(argv=None) -> int:
                    help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
                         "sandbox")
     p.add_argument("--json", action="store_true",
-                   help='print {"verdict": ..., "detail": ..., "olean_sha256": ..., "olean_closure": ...} only')
+                   help='print {"verdict": ..., "detail": ..., "module": ..., "theorem": ..., "source_sha256": ..., '
+                        '"olean_sha256": ..., "olean_closure": ...} only')
     p.set_defaults(fn=cmd_probe_negation)
 
     p = sub.add_parser("fingerprint",
@@ -3472,8 +3477,8 @@ def main(argv=None) -> int:
                    help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
                         "sandbox")
     p.add_argument("--json", action="store_true",
-                   help='print {"fingerprints": {...}, "olean_sha256": ..., "olean_closure": [...]} (or {"error": ...})'
-                        ' only')
+                   help='print {"fingerprints": {...}, "olean_sha256": ..., "olean_closure": [...], "module": ..., '
+                        '"theorem": ..., "source_sha256": ...} (or {"error": ...}) only')
     p.set_defaults(fn=cmd_fingerprint)
 
     p = sub.add_parser("trusted-manifest",

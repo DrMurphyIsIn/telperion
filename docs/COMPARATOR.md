@@ -200,6 +200,22 @@ preserves `--`. The `comparator-sandbox-check` CI job self-tests it (bwrap runs,
 `--` survives, ro-root writes blocked, network unshared). A full run under bwrap
 may need extra binds tuned to the project.
 
+**The bwrap shim must pass `--cap-drop ALL`.** (Added 2026-10-30.) This one is
+easy to miss, because on the machines we usually test on it changes nothing.
+When bwrap runs as uid 0 (root in a container, or a self-hosted runner that
+runs jobs as root), the sandboxed process keeps root's capabilities unless you
+tell bwrap to drop them. A mount namespace and an unshared network do not help
+much against a process that still holds capabilities like `CAP_SYS_ADMIN`, and
+a peer reviewer demonstrated an actual escape from a uid-0 bwrap run without
+the flag. With `--cap-drop ALL` the child starts with no capabilities at all.
+On GitHub's hosted runners, which run jobs as the unprivileged `runner` user,
+bwrap grants no capabilities in the first place, so the flag is a no-op there.
+That is exactly why it has to be in the shim anyway: the shim should be safe
+wherever it is run, not only where it was tested. Arda's
+`.github/comparator/landrun-bwrap.sh` did not pass it in the copy checked on
+2026-10-30 and needs the same flag; that file lives in the Arda repository, so
+the fix is made there, not here.
+
 ## Applied to a real proof — Brualdi–Goldwasser
 
 Not just the examples: the three anchor theorems of the BG formalization — the

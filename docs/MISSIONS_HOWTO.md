@@ -213,6 +213,12 @@ as `--file` (or `null` with no `--file`). `checks-record` then insists on three 
   pass `--allow-missing-source`, and then the record's note says which values were absent, so a reader can see that
   the tie to the source was not checked.
 
+So **always run `probe-negation` and `fingerprint` with `--file` pointing at the node's artifact**. That is what puts a
+real `source_sha256` into the JSON, and it is the only way the record can show that the checks were run on the source
+the node actually links. `--allow-missing-source` exists for legacy JSON written before the field existed, not as a
+shortcut: the note it writes ("recorded with --allow-missing-source (absent: ...)") stays in the `[checks]` record,
+where anyone auditing the grant will see it.
+
 ### What the verdicts mean
 
 | Verdict | What happened | Effect on the grant |
@@ -336,8 +342,9 @@ These are real, and you should know them before you rely on a `[checks]` record.
   file you can, including the trusted env (the manifest only catches tampering done before the check starts), open
   network connections, or start a daemon. The same goes for `audit-closure`, which imports the submission, and for
   fingerprinting submitted text (`run_fingerprint_on_text` compiles it). **Untrusted submissions must be built and
-  checked inside a sandbox**, for example Comparator's sandbox on Linux CI. Outside one, run these checks only on code
-  you would be willing to run anyway.
+  checked inside a sandbox**, for example Comparator's sandbox on Linux CI (whose bwrap shim must pass
+  `--cap-drop ALL`; see `docs/COMPARATOR.md`). Outside one, run these checks only on code you would be willing to run
+  anyway.
 - **The `.olean` reader trusts bytes.** Lean maps an `.olean` into memory as an image of its data structures. The
   replay re-checks every declaration in the kernel, but a deliberately malformed file is an attack on the memory
   safety of the reading process itself, which no kernel check comes after. Another reason for the sandbox.
@@ -358,15 +365,23 @@ These are real, and you should know them before you rely on a `[checks]` record.
 
 ### In CI
 
-The `lean-checks` job in `.github/workflows/ci.yml` builds the same pinned env on a Linux runner (Lean v4.35.0, Mathlib
-v4.35.0 at `56a005855ea17e0b0958f73ec801ae140b0a1679`, `lake exe cache get`), builds its trusted manifest with
-`trusted-manifest build` into a path outside the env, checks that `verify` accepts it and that a second `build` without
-`--force` refuses, and then runs `tests/test_negation_probe.py`, `tests/test_fingerprint.py` and
+The `lean-checks` job, in its own workflow `.github/workflows/lean-checks.yml`, builds the same pinned env on a Linux
+runner (Lean v4.35.0, Mathlib v4.35.0 at `56a005855ea17e0b0958f73ec801ae140b0a1679`, `lake exe cache get`), builds its
+trusted manifest with `trusted-manifest build` into a path outside the env, checks that `verify` accepts it and that a
+second `build` without `--force` refuses, and then runs `tests/test_negation_probe.py`, `tests/test_fingerprint.py` and
 `tests/test_lean_replay.py` with `TELPERION_LEAN_ENV` set. Those files hold the must-fail controls (the evil-module
 cases, a shadowed definition, a vacuous and a refuted statement, a declared axiom, a lemma the kernel never checked),
-and they skip without an env, so the job fails if any of them is skipped. There is no leanlock on the runner and none is
-needed: the default wrapper is used only when `~/hodge-engine/leanlock.sh` exists. The CI runner is still not a
-sandbox for third-party submissions; it runs only this repository's own test modules.
+and they skip without an env, so the job fails if any of them is skipped. It first checks that the runner has at least
+10 GB free, so a full disk fails in seconds rather than an hour in. There is no leanlock on the runner and none is
+needed: the default wrapper is used only when `~/hodge-engine/leanlock.sh` exists. The CI runner is still not a sandbox
+for third-party submissions; it runs only this repository's own test modules.
+
+A full run builds Mathlib's env and takes a long time, so it does not run on every push. It runs when you start it by
+hand (workflow_dispatch), once a week on a schedule, and on a push or pull request that touches `src/telperion/checks/`,
+`src/telperion/missions/`, `src/telperion/closure_audit.py` or `src/telperion/comparator.py` (both imported by the
+checks), the three test files above, `tests/test_missions_checks.py`, the test helpers `tests/lean_env.py` and
+`tests/fake_lean_cli.py`, or the workflow file itself. The weekly run is the backstop: a new runner image, or anything
+else outside those paths, can break the controls without touching them, and a path filter would never notice.
 
 ## MCP Tools (for Claude Code / agents)
 
