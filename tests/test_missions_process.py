@@ -1380,7 +1380,237 @@ def test_cli_audit_crosscheck_ok_and_mismatch(tmp_path, capsys):
     assert "sorryAx" in capsys.readouterr().out
 
 
-def test_process_runs_git_only_through_the_sanitised_helper():
+# ---------------------------------------------------------------------------
+# Step 5 Task 2 fix round 1 (Controller Ruling 10)
+#
+# C1: Lean source injection via an unsanitized module/theorem name in the generated
+# `import`/`#print axioms` lines. C2: the #print-axioms parser corrupts on a trailing
+# prime (the single most common Lean naming idiom) and on an unterminated axiom list.
+# Important: `_artifact_module` must go through `provenance.lake_workspace`, not a
+# parallel re-derivation of the island root. Minors: CLI input size cap/decode errors,
+# and `crosscheck_axioms` type-checks the closure JSON's axiom entries.
+# ---------------------------------------------------------------------------
+
+def _evil_island_node(tmp_path: Path, evil_component: str, *, slug: str = "Evil") -> Path:
+    """A real judge island (`<tel>/examples/isl_evil/lean/<evil_component>/Bar.lean`) and a
+    campaign whose proved node's `[proof] artifact` names that file -- the reviewer's
+    exact C1 repro shape: a path component a campaign author controls (and legitimately
+    writes to disk), flowing straight into `_artifact_module`'s `import` line with none of
+    `judge.module_name_of`'s own sanitisation (it performs none at all). Returns the
+    campaign root."""
+    tel = tmp_path / "telperion"
+    island_lean = tel / "examples" / "isl_evil" / "lean"
+    island_lean.mkdir(parents=True)
+    (island_lean / "lakefile.toml").write_text('name = "IslEvil"\n\n[[lean_lib]]\nname = "Bar"\n')
+    evil_dir = island_lean / evil_component
+    evil_dir.mkdir(parents=True)
+    stmt_text = f"theorem thm_{slug} : True"
+    (evil_dir / "Bar.lean").write_text(f"{stmt_text} := trivial\n")
+
+    camp = tel / "missions" / "demo"
+    (camp / "nodes").mkdir(parents=True)
+    manifest = MissionManifest(
+        name="Demo.goal", title="Demo", description="synthetic", goal_node=slug,
+        environment_toolchain="leanprover/lean4:v4.32.0", environment_mathlib_rev="v4.32.0",
+        sources=(),
+    )
+    save_manifest(manifest, camp / "mission.toml")
+    rel = "/".join(["..", "..", "examples", "isl_evil", "lean", evil_component, "Bar.lean"])
+    node = Node(name=slug, title="t", kind="lemma", status="proved", depends_on=(),
+               statement_module=f"Statements.{slug}",
+               proof=Proof(artifact=rel, artifact_kind="lean_module", via="direct"))
+    save_node(node, camp / "nodes" / f"{slug}.toml")
+    write_statement(camp, node, stmt_text, manifest)
+    return camp
+
+
+@pytest.mark.parametrize("evil_component", [
+    'evil\n#eval IO.println "pwned-by-campaign-author"\n--',
+    "has space",
+    "«guillemet»",
+], ids=["newline-eval", "space", "guillemet"])
+def test_render_audit_file_refuses_unsafe_module_component(tmp_path, evil_component):
+    """C1 (Critical): a module name derived from an unsafe artifact-path component --
+    one that is not a plain Lean identifier -- must never be emitted into the generated
+    `import` line; `render_audit_file` must raise rather than write it."""
+    camp = _evil_island_node(tmp_path, evil_component)
+
+    with pytest.raises(ValueError, match="not a plain Lean identifier"):
+        render_audit_file(camp)
+
+
+def test_validate_theorem_name_rejects_newline():
+    """C1 (Critical), theorem-name side. `guard_anchors.resolve_theorem`'s own matching
+    cannot actually produce a newline-bearing name (its regexes are word/`\\S+`-anchored
+    throughout), so this is tested directly against the validator rather than through a
+    contrived end-to-end artifact -- defense in depth, keeping the theorem side no less
+    guarded than the module side."""
+    from telperion.missions.process import _validate_theorem_name
+
+    with pytest.raises(ValueError, match="control character"):
+        _validate_theorem_name("thm_evil\n#eval 1", slug="X")
+
+    _validate_theorem_name("thm_fine'", slug="X")  # a trailing prime is fine: no raise
+
+
+def test_parse_print_axioms_trailing_prime():
+    """C2 (Critical): a theorem name ending in its own `'` (the single most common Lean
+    naming idiom) must be captured whole, not truncated at the embedded quote."""
+    out = "'h'' depends on axioms: [propext]\n'foo''' does not depend on any axioms\n"
+    parsed = parse_print_axioms(out)
+    assert parsed == {"h'": {"propext"}, "foo''": set()}
+
+
+def test_parse_print_axioms_unterminated_list_before_another_theorem_raises():
+    """C2 (Critical): an unterminated bracket must never silently absorb a LATER
+    theorem's own header line -- it must raise, naming the theorem whose list never
+    closed, and 'T2' must never be allowed to simply vanish from the result."""
+    out = ("'T1' depends on axioms: [propext, Classical.choice\n"
+           "note: unrelated diagnostic line\n"
+           "'T2' depends on axioms: [propext]\n")
+    with pytest.raises(ValueError, match="unterminated axiom list for 'T1'"):
+        parse_print_axioms(out)
+
+
+def test_parse_print_axioms_unterminated_list_at_eof_raises():
+    out = "'T1' depends on axioms: [propext, Classical.choice\n"
+    with pytest.raises(ValueError, match="unterminated axiom list for 'T1'"):
+        parse_print_axioms(out)
+
+
+def test_parse_print_axioms_crlf():
+    out = "'T' depends on axioms: [propext,\r\n Classical.choice]\r\n"
+    assert parse_print_axioms(out) == {"T": {"propext", "Classical.choice"}}
+
+
+def test_parse_print_axioms_interleaved_warnings_ignored():
+    out = ("warning: something\n"
+           "'T1' depends on axioms: [propext]\n"
+           "info: unrelated\n"
+           "'T2' does not depend on any axioms\n")
+    assert parse_print_axioms(out) == {"T1": {"propext"}, "T2": set()}
+
+
+def test_parse_print_axioms_guillemet_names_still_work():
+    out = ("'Foo.bar' depends on axioms: [propext]\n"
+          "'Foo.«bar baz».qux' does not depend on any axioms\n")
+    parsed = parse_print_axioms(out)
+    assert parsed["Foo.bar"] == {"propext"}
+    assert parsed["Foo.«bar baz».qux"] == set()
+
+
+def test_parse_print_axioms_malformed_header_raises():
+    """A line that LOOKS like a header (starts with `'`, mentions "depends on axioms")
+    but does not fully match the anchored pattern (here: missing the colon) must raise,
+    not be silently skipped as an unrelated line."""
+    out = "'T' depends on axioms [propext]\n"
+    with pytest.raises(ValueError, match="unrecognised"):
+        parse_print_axioms(out)
+
+
+def test_crosscheck_axioms_type_checks_closure_entries():
+    with pytest.raises(ValueError, match="T"):
+        crosscheck_axioms({"T": {"propext"}}, {"T": "propext"})  # a str, not a list
+    with pytest.raises(ValueError, match="T"):
+        crosscheck_axioms({"T": {"propext"}}, {"T": [1, 2]})     # not strings
+
+
+def test_artifact_module_uses_lake_workspace_for_sub_workspace(tmp_path):
+    """Important finding 3: `_artifact_module` must go through `provenance.lake_workspace`
+    (the zzl_aux shape: a smaller sub-workspace, `srcDir = ".."`, declares the SAME module
+    with far fewer libs) rather than a parallel re-derivation of the island root -- and
+    must not crash when `lake_workspace` picks that smaller sub-workspace, whose own
+    source root (via its `srcDir`) is the island root, not itself."""
+    from telperion.missions.process import _artifact_module
+    from telperion.missions.provenance import lake_workspace
+
+    tel = tmp_path / "telperion"
+    lean = tel / "examples" / "isl_subws" / "lean"
+    lean.mkdir(parents=True)
+    (lean / "lakefile.toml").write_text(
+        'name = "isl_subws"\n\n[[lean_lib]]\nname = "O1"\n[[lean_lib]]\nname = "Target"\n')
+    stmt_text = "theorem thm_SubWs : True"
+    (lean / "Target.lean").write_text(f"{stmt_text} := trivial\n")
+    sub_dir = lean / "sub_aux"
+    sub_dir.mkdir()
+    (sub_dir / "lakefile.toml").write_text(
+        'name = "sub_aux"\nsrcDir = ".."\n\n[[lean_lib]]\nname = "Target"\n')
+
+    camp = tel / "missions" / "demo"
+    (camp / "nodes").mkdir(parents=True)
+    manifest = MissionManifest(
+        name="Demo.goal", title="Demo", description="synthetic", goal_node="SubWs",
+        environment_toolchain="leanprover/lean4:v4.32.0", environment_mathlib_rev="v4.32.0",
+        sources=(),
+    )
+    save_manifest(manifest, camp / "mission.toml")
+    node = Node(name="SubWs", title="t", kind="lemma", status="proved", depends_on=(),
+               statement_module="Statements.SubWs",
+               proof=Proof(artifact="../../examples/isl_subws/lean/Target.lean",
+                          artifact_kind="lean_module", via="direct"))
+    save_node(node, camp / "nodes" / "SubWs.toml")
+    write_statement(camp, node, stmt_text, manifest)
+
+    # Sanity: lake_workspace really does pick the smaller sub-workspace here.
+    assert lake_workspace(camp, node) == sub_dir.resolve()
+
+    assert _artifact_module(camp, node) == "Target"
+
+    text = render_audit_file(camp)
+    assert "import Target" in text
+    assert "#print axioms thm_SubWs" in text
+
+
+def test_cli_audit_crosscheck_oversized_print_axioms_file_rejected(tmp_path, capsys):
+    """Minor finding: the CLI's input reads are size-capped."""
+    from telperion.cli import _AUDIT_CROSSCHECK_INPUT_MAX_BYTES
+
+    print_axioms_out = tmp_path / "print_axioms.txt"
+    print_axioms_out.write_bytes(b"x" * (_AUDIT_CROSSCHECK_INPUT_MAX_BYTES + 1))
+    closure_json = tmp_path / "closure.json"
+    closure_json.write_text('{"targets": []}')
+
+    rc = main(["mission", "audit-crosscheck",
+              "--print-axioms-out", str(print_axioms_out),
+              "--closure-json", str(closure_json)])
+    assert rc == 2
+    assert "larger than" in capsys.readouterr().out
+
+
+def test_cli_audit_crosscheck_non_utf8_print_axioms_file_rejected(tmp_path, capsys):
+    """Minor finding: a clean error on decode failure, never a traceback."""
+    print_axioms_out = tmp_path / "print_axioms.txt"
+    print_axioms_out.write_bytes(b"\xff\xfe\xfd")
+    closure_json = tmp_path / "closure.json"
+    closure_json.write_text('{"targets": []}')
+
+    rc = main(["mission", "audit-crosscheck",
+              "--print-axioms-out", str(print_axioms_out),
+              "--closure-json", str(closure_json)])
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "not valid UTF-8" in out and "Traceback" not in out
+
+
+def test_cli_audit_crosscheck_malformed_closure_axioms_rejected(tmp_path, capsys):
+    """Minor finding: a malformed closure JSON's `axioms` entry is a clean CLI error, not
+    a `TypeError` from deep inside `crosscheck_axioms`."""
+    import json
+
+    print_axioms_out = tmp_path / "print_axioms.txt"
+    print_axioms_out.write_text("'T' depends on axioms: [propext]\n")
+    closure_json = tmp_path / "closure.json"
+    closure_json.write_text(json.dumps({
+        "targets": [{"name": "T", "kind": "theorem", "statement": "", "axioms": "propext"}],
+    }))
+
+    rc = main(["mission", "audit-crosscheck",
+              "--print-axioms-out", str(print_axioms_out),
+              "--closure-json", str(closure_json)])
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "malformed closure audit data" in out and "Traceback" not in out
+
     """Structural (Ruling 9): no subprocess call in process.py outside `_git`, so no git
     invocation can skip --no-replace-objects or the sanitised environment."""
     import ast

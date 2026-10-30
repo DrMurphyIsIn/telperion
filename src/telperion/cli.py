@@ -1572,15 +1572,44 @@ def cmd_mission_audit_file(args) -> int:
     return 0
 
 
+#: Upper bound on a `--print-axioms-out`/`--closure-json` file (fix round 1, Ruling 10,
+#: minor finding): generous for either a `#print axioms` transcript or a closure audit
+#: JSON, small enough that a bogus or truncated path cannot read gigabytes into memory
+#: before `audit-crosscheck` can report a clean error.
+_AUDIT_CROSSCHECK_INPUT_MAX_BYTES = 1 << 24
+
+
+def _read_audit_crosscheck_input(path: Path, *, what: str) -> Optional[str]:
+    """`path.read_text(encoding="utf-8")`, guarded (fix round 1, Ruling 10, minor
+    finding): a size cap before reading, and a clean message -- never a traceback -- on a
+    missing file, an unreadable one, or one that is not valid UTF-8. Returns None (having
+    already printed why) on any problem."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        print(f"cannot read {what} {path}: {exc}")
+        return None
+    if size > _AUDIT_CROSSCHECK_INPUT_MAX_BYTES:
+        print(f"cannot read {what} {path}: larger than "
+              f"{_AUDIT_CROSSCHECK_INPUT_MAX_BYTES} bytes")
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {what} {path}: {exc}")
+        return None
+    except UnicodeDecodeError as exc:
+        print(f"cannot read {what} {path}: not valid UTF-8 ({exc})")
+        return None
+
+
 def cmd_mission_audit_crosscheck(args) -> int:
     import json as _json
 
     from .missions.process import crosscheck_axioms, parse_print_axioms
 
-    try:
-        output = args.print_axioms_out.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(f"cannot read {args.print_axioms_out}: {exc}")
+    output = _read_audit_crosscheck_input(args.print_axioms_out, what="--print-axioms-out")
+    if output is None:
         return 2
     try:
         print_axioms = parse_print_axioms(output)
@@ -1588,9 +1617,12 @@ def cmd_mission_audit_crosscheck(args) -> int:
         print(f"cannot parse {args.print_axioms_out}'s #print axioms output: {exc}")
         return 2
 
+    closure_text = _read_audit_crosscheck_input(args.closure_json, what="--closure-json")
+    if closure_text is None:
+        return 2
     try:
-        closure = _json.loads(args.closure_json.read_text(encoding="utf-8"))
-    except (OSError, _json.JSONDecodeError) as exc:
+        closure = _json.loads(closure_text)
+    except _json.JSONDecodeError as exc:
         print(f"cannot read {args.closure_json}: {exc}")
         return 2
     targets = closure.get("targets") if isinstance(closure, dict) else None
@@ -1602,7 +1634,11 @@ def cmd_mission_audit_crosscheck(args) -> int:
         for t in targets if isinstance(t, dict) and isinstance(t.get("name"), str)
     }
 
-    problems = crosscheck_axioms(print_axioms, closure_axioms)
+    try:
+        problems = crosscheck_axioms(print_axioms, closure_axioms)
+    except ValueError as exc:
+        print(f"{args.closure_json}: malformed closure audit data: {exc}")
+        return 2
     if problems:
         for p in problems:
             print(f"MISMATCH: {p}")

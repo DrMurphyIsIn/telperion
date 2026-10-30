@@ -1034,26 +1034,106 @@ def freeze_grant_problem(root: Path, node) -> str:
 # ---------------------------------------------------------------------------
 
 def _artifact_module(campaign_root: Path, node) -> str:
-    """The Lean import name of *node*'s proof artifact: `judge.module_name_of` against the
-    artifact's judge island lean dir -- the same resolution `provenance.lake_workspace` and
-    `provenance.closure_files` use (`examples/<island>/lean`, a materialized island's
-    recipe, or an out-of-tree island's own lean dir). Off-island (no recognised judge
-    island covers the artifact -- a synthetic test fixture with no `examples/<island>/lean`
-    tree, typically), the artifact's own directory, matching those functions' fallback; the
-    module is then just the artifact's file stem."""
+    """The Lean import name of *node*'s proof artifact.
+
+    Fix round 1 (Ruling 10, Important finding 3): this now actually calls
+    `provenance.lake_workspace` -- the earlier version re-derived the island root inline
+    (`rejudge.island_of_artifact` + `judge.island_dir`) and resolved the module against
+    THAT, which is a parallel, un-kept-in-sync re-implementation of part of what
+    `lake_workspace` already does to pick the real build/export workspace (its own
+    candidate search only ever accepts a smaller sub-workspace whose declared `lean_lib`
+    maps the island-root-relative module name back to the artifact's own file, so the
+    import name itself does not actually change across candidates -- but going through
+    the one real resolver, rather than a hand-rolled copy of its first few steps, is what
+    keeps this in lock-step with it if that ever changes). Off-island (no recognised judge
+    island at all -- a synthetic test fixture with no `examples/<island>/lean` tree,
+    typically), `lake_workspace` itself falls back to the artifact's own directory, so the
+    module is then just the artifact's file stem, same as before.
+
+    `judge.module_name_of` has no notion of `srcDir` at all (its own docstring says so): it
+    just resolves *artifact* relative to whatever directory it is given. When
+    `lake_workspace` picks a smaller sub-workspace whose own `srcDir` points back ABOVE
+    itself (the zzl_aux shape: the artifact then lives OUTSIDE that directory on disk),
+    resolving straight against the sub-workspace directory would raise (`artifact` is not
+    relative to it) even though the module name is perfectly well-defined.
+    `_module_root_for` retries against the workspace's own declared source roots
+    (`srcDir`-aware, via `coverage._package`) before giving up."""
     from . import judge
-    from .rejudge import RejudgeSetupError, island_of_artifact
+    from .provenance import lake_workspace
 
     campaign_root = Path(campaign_root).resolve()
     artifact = (campaign_root / node.proof.artifact).resolve()
-    troot = campaign_root.parent.parent
-    lean_dir = artifact.parent
-    try:
-        island = island_of_artifact(troot, artifact)
-        lean_dir = judge.island_dir(troot, island).resolve()
-    except (RejudgeSetupError, judge.JudgeError):
-        pass       # off-island: no recognised workspace: the artifact's own directory.
-    return judge.module_name_of(lean_dir, artifact)
+    workspace = lake_workspace(campaign_root, node)
+    return judge.module_name_of(_module_root_for(workspace, artifact), artifact)
+
+
+def _module_root_for(workspace: Path, artifact: Path) -> Path:
+    """The directory `judge.module_name_of(_, artifact)` should actually be called
+    against for a *workspace* `lake_workspace` chose: *workspace* itself when *artifact*
+    is under it, else the first of `coverage._package(workspace)`'s own declared source
+    roots (already `srcDir`-resolved, for the package itself and each of its libs) that
+    contains it. Falls back to *workspace* itself -- so the caller's own `ValueError`
+    ("not relative to") names the real failure -- if none do."""
+    from . import coverage
+
+    workspace = Path(workspace).resolve()
+    artifact = Path(artifact).resolve()
+    if artifact.is_relative_to(workspace):
+        return workspace
+    pkg = coverage._package(workspace)
+    for src_dir in (pkg.src_dirs if pkg is not None else ()):
+        src_dir = Path(src_dir).resolve()
+        if artifact.is_relative_to(src_dir):
+            return src_dir
+    return workspace
+
+
+#: A Lean identifier component safe to emit VERBATIM into generated Lean source (no
+#: guillemet-quoting, no escaping of any kind): `closure_audit._IDENT_COMPONENT`, reused
+#: rather than re-written (this task's own rule for escaping helpers, extended to the
+#: validation that decides whether one is even needed).
+def _validate_module_name(module: str, *, slug: str) -> None:
+    """Refuses (`ValueError`, naming *slug*) a module whose dotted components are not
+    every one a plain Lean identifier. Fix round 1 (Ruling 10, Critical finding 1):
+    `render_audit_file` writes `module` straight into an `import` line with ZERO
+    sanitisation (`judge.module_name_of` just dot-joins a FILESYSTEM PATH's components,
+    and POSIX permits almost anything but `/` in a path component, including a literal
+    newline) -- a node whose `[proof] artifact` names a path with an evil directory
+    component (e.g. `"evil\\n#eval IO.println \\"pwned\\"\\n--"`) could otherwise inject
+    arbitrary Lean commands into the generated `Audit.lean`, which spec 7.2's own workflow
+    runs through `lake env lean`. Unlike a theorem name, a module name is NEVER
+    guillemet-quoted here -- an `import` line is not a context this function trusts itself
+    to escape -- so anything that is not already a safe plain identifier is refused
+    outright rather than rendered."""
+    from ..closure_audit import _IDENT_COMPONENT
+
+    for part in module.split("."):
+        if not part or part[0].isdigit() or not _IDENT_COMPONENT.match(part):
+            raise ValueError(
+                f"node {slug!r}: its artifact resolves to import module {module!r}, whose "
+                f"component {part!r} is not a plain Lean identifier; refusing to emit it "
+                "into Audit.lean (this would otherwise inject unsanitised text into "
+                "generated Lean source)."
+            )
+
+
+def _validate_theorem_name(theorem: str, *, slug: str) -> None:
+    """Refuses (`ValueError`, naming *slug*) a theorem name carrying a control character
+    (a literal newline above all -- the same Lean-source-injection vector
+    `_validate_module_name` exists for). Every other character is fine: unlike a module
+    name, `render_audit_file` renders a theorem name through `closure_audit.
+    lean_name_literal`, which already guillemet-quotes any dotted component that is not a
+    plain identifier -- so a dot, a trailing prime, or even an embedded space inside a
+    «»-quoted component are all legitimate Lean names -- and already refuses an embedded
+    `"»"`. `guard_anchors.resolve_theorem`'s own matching (word-boundary- and
+    `\\S+`-anchored regexes throughout its namespace/declaration scan) cannot actually
+    produce a newline-bearing name today, but this check is cheap and keeps the theorem
+    side no less defended than the module side rather than relying on that staying true."""
+    if any(ord(c) < 0x20 for c in theorem):
+        raise ValueError(
+            f"node {slug!r}: its registered theorem {theorem!r} contains a control "
+            "character; refusing to emit it into Audit.lean."
+        )
 
 
 #: Header `render_audit_file` writes at the top of every generated Audit.lean.
@@ -1074,7 +1154,12 @@ def render_audit_file(root: Path) -> str:
     recorded check to be of. A name needing «»-escaping is rendered with
     `closure_audit.lean_name_literal`, stripped of its leading backtick: that helper
     produces a TERM-level `` `Name `` literal, but `#print axioms` takes a raw (optionally
-    guillemet-escaped) identifier, never a term."""
+    guillemet-escaped) identifier, never a term.
+
+    Fix round 1 (Ruling 10, Critical finding 1): every theorem name and module name is
+    validated (`_validate_theorem_name`, `_validate_module_name`) before being emitted --
+    raising `ValueError`, naming the offending node, rather than writing unsanitised
+    artifact-path or theorem-name text into the generated Lean source."""
     from . import judge
     from .registry import load_campaign
     from ..closure_audit import lean_name_literal
@@ -1094,7 +1179,10 @@ def render_audit_file(root: Path) -> str:
         stmt = statement_path(root, node)
         theorem = ga.resolve_theorem(artifact.read_text(encoding="utf-8"),
                                      stmt.read_text(encoding="utf-8"))
-        modules.add(_artifact_module(root, node))
+        _validate_theorem_name(theorem, slug=slug)
+        module = _artifact_module(root, node)
+        _validate_module_name(module, slug=slug)
+        modules.add(module)
         printed.append((slug, theorem))
 
     lines = [_AUDIT_HEADER, ""]
@@ -1105,35 +1193,93 @@ def render_audit_file(root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-#: `'<theorem>' depends on axioms: [a, b]` or `'<theorem>' does not depend on any axioms`,
-#: one-line or wrapped (Lean wraps a long bracketed list one axiom per line). The name is
-#: read verbatim between the single quotes, so a dotted or «»-escaped name survives intact;
-#: `[^\]]*` already spans embedded newlines without needing re.DOTALL.
-_PRINT_AXIOMS_RE = re.compile(
-    r"'([^']*)'\s+(?:depends on axioms:\s*\[([^\]]*)\]|(does not depend on any axioms))"
-)
+#: A `#print axioms` header, matched against a WHOLE line (`^...$`, never a `re.search`
+#: over the full text): the name is read GREEDILY up to the fixed literal suffix, so a
+#: name ending in its own `'` (a trailing prime -- Mathlib's single most common naming
+#: idiom, e.g. `h'`, `Foo.bar'`) is captured whole rather than truncated at that embedded
+#: quote (fix round 1, Ruling 10, Critical finding 2).
+_HEADER_NONE_RE = re.compile(r"^'(.+)' does not depend on any axioms$")
+_HEADER_LIST_RE = re.compile(r"^'(.+)' depends on axioms: \[(.*)$")
+
+
+def _record_axioms(axioms_by_name: Dict[str, Set[str]], name: str, axioms: Set[str]) -> None:
+    """Shared by both header shapes: raises `ValueError` if *name* was already recorded
+    with a DIFFERENT axiom set (a parse problem -- a stale cache, two runs' output
+    concatenated, ... -- reported explicitly rather than resolved by silently keeping one
+    of the two); a repeat with the SAME set is not an error."""
+    if name in axioms_by_name and axioms_by_name[name] != axioms:
+        raise ValueError(
+            f"{name!r} is printed twice in the #print axioms output with different "
+            f"axiom sets: {sorted(axioms_by_name[name])} and {sorted(axioms)}."
+        )
+    axioms_by_name[name] = axioms
+
+
+def _split_axiom_bracket(rest: str) -> Tuple[bool, str]:
+    """`(True, content before the first ']')` if *rest* closes its bracket, else
+    `(False, rest)` unchanged so the caller can append more lines before checking again."""
+    idx = rest.find("]")
+    if idx == -1:
+        return False, rest
+    return True, rest[:idx]
 
 
 def parse_print_axioms(output: str) -> Dict[str, Set[str]]:
-    """Every `#print axioms` line in *output* (Lean's text, one-line or wrapped), mapped to
-    its axiom set -- the empty set for "does not depend on any axioms".
+    """Every `#print axioms` entry in *output* (Lean's text; one line, or wrapped -- Lean
+    wraps a long bracketed axiom list one axiom per line, each continuation indented),
+    mapped to its axiom set -- the empty set for "does not depend on any axioms".
 
-    Raises `ValueError` if the same theorem is printed twice with two DIFFERENT axiom sets:
-    a parse problem (a stale cache, two runs' output concatenated, ...) that must be
-    reported explicitly rather than resolved by silently keeping one of the two."""
+    Fix round 1 (Ruling 10, Critical finding 2): line-based and anchored, not a
+    `[^\\]]*`-style scan across the whole text. The old scan broke on the single most
+    common Lean naming idiom (a trailing prime truncated the captured name) and let an
+    UNTERMINATED list silently absorb everything up to and including a LATER theorem's own
+    header line -- corrupting the first theorem's axiom set with garbage text and making
+    the second theorem vanish from the result entirely, with no error at all. Here, a
+    continuation line must start with whitespace; a new header-looking line, or the end of
+    input, before the closing `]` is an explicit `ValueError` ("unterminated axiom list"),
+    never a silent absorption. A line that is neither a recognised header nor (while a
+    list is open) a continuation -- a warning, an `info:` line, a blank line -- is
+    ignored, UNLESS it looks like a header but does not fully match (e.g. a typo'd
+    "depends on axiomss:"), which raises rather than being silently skipped.
+    `str.splitlines()` already treats `\\r\\n` as a single line ending.
+
+    Raises `ValueError` if the same theorem is printed twice with two DIFFERENT axiom
+    sets (see `_record_axioms`)."""
     axioms_by_name: Dict[str, Set[str]] = {}
-    for m in _PRINT_AXIOMS_RE.finditer(output):
-        name = m.group(1)
-        if m.group(3):
-            axioms: Set[str] = set()
-        else:
-            axioms = {a.strip() for a in re.sub(r"\s+", " ", m.group(2)).split(",") if a.strip()}
-        if name in axioms_by_name and axioms_by_name[name] != axioms:
-            raise ValueError(
-                f"{name!r} is printed twice in the #print axioms output with different "
-                f"axiom sets: {sorted(axioms_by_name[name])} and {sorted(axioms)}."
-            )
-        axioms_by_name[name] = axioms
+    lines = output.splitlines()
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        i += 1
+
+        m_none = _HEADER_NONE_RE.match(line)
+        if m_none:
+            _record_axioms(axioms_by_name, m_none.group(1), set())
+            continue
+
+        m_list = _HEADER_LIST_RE.match(line)
+        if m_list:
+            name = m_list.group(1)
+            closed, content = _split_axiom_bracket(m_list.group(2))
+            while not closed:
+                if i >= n or not lines[i][:1].isspace():
+                    raise ValueError(
+                        f"unterminated axiom list for {name!r} (no closing ']' before "
+                        "end of input or the next theorem)."
+                    )
+                closed, more = _split_axiom_bracket(lines[i])
+                content += "," + more
+                i += 1
+            axioms = {a.strip() for a in content.split(",") if a.strip()}
+            _record_axioms(axioms_by_name, name, axioms)
+            continue
+
+        stripped = line.strip()
+        if stripped.startswith("'") and (
+                " depends on axioms" in stripped
+                or "does not depend on any axioms" in stripped):
+            raise ValueError(f"unrecognised #print axioms line: {line!r}")
+        # else: a warning, an `info:` line, a blank line, ... -- ignored.
     return axioms_by_name
 
 
@@ -1145,7 +1291,19 @@ def crosscheck_axioms(print_axioms: Dict[str, Set[str]],
     `closure_audit.AuditResult.to_json`). A theorem present on only one side is a problem
     too: a closure-audit target Audit.lean never printed, or a printed theorem the closure
     audit never audited, is exactly the drift this cross-check exists to catch (e.g. a
-    stale `.olean` on one side alone -- the "stale cache" case). Sorted by name."""
+    stale `.olean` on one side alone -- the "stale cache" case). Sorted by name.
+
+    Fix round 1 (Ruling 10, minor finding): *closure_axioms*' entries are type-checked as
+    `list[str]` up front -- raising `ValueError` naming the offending target -- rather
+    than letting a malformed JSON (a caller's bug, or a corrupted file) fail with a
+    confusing `TypeError` deep inside a later `sorted()`/set operation."""
+    for name, axioms in closure_axioms.items():
+        if not isinstance(axioms, list) or not all(isinstance(a, str) for a in axioms):
+            raise ValueError(
+                f"{name!r}: the closure audit's axioms entry is not a list of strings "
+                f"({axioms!r})."
+            )
+
     problems: List[str] = []
     for name in sorted(set(print_axioms) | set(closure_axioms)):
         if name not in print_axioms:
