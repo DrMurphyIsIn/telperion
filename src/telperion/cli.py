@@ -342,6 +342,24 @@ def cmd_lint_lean(args) -> int:
     return 1 if fatal else 0
 
 
+def cmd_lint_provenance(args) -> int:
+    """Provenance-header lint for ported files (spec 7.4): every file this counts as
+    "ported" -- a `ported`/`adapted`/`copied from` mention in its own first 30 lines, or
+    a name in `<dir>/PORTED.toml` -- must carry a `-- Provenance: repo=... file=...
+    commit=<40-hex>` line in that same window. Exits 1 and prints every problem
+    `missions.process.provenance_problems` reports; 0 and a single OK line otherwise."""
+    from .missions.process import provenance_problems
+
+    root = Path(args.dir)
+    problems = provenance_problems(root)
+    if not problems:
+        print(f"lint-provenance {root}: OK (no provenance problems)")
+        return 0
+    for p in problems:
+        print(f"{root}: {p}")
+    return 1
+
+
 def cmd_package(args) -> int:
     """Self-contained reviewer bundle: family, frozen Lean, certificates JSON,
     the standalone rechecker, and REVIEWING.md with the independent checks."""
@@ -3261,6 +3279,12 @@ def main(argv=None) -> int:
     p.add_argument("--strict", action="store_true",
                    help="also fail on warn-level issues (trivial/Prop:=True stubs)")
     p.set_defaults(fn=cmd_lint_lean)
+
+    p = sub.add_parser("lint-provenance",
+                       help="provenance-header lint for ported files (spec 7.4): "
+                            "repo/file/commit in the first 30 lines")
+    p.add_argument("dir", nargs="?", default=".", help="campaign root (default: .)")
+    p.set_defaults(fn=cmd_lint_provenance)
 
     p = sub.add_parser("audit",
                        help="audit external Lean for sorry/axiom/stub/vacuity (the referee role)")

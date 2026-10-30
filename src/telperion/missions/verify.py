@@ -30,7 +30,13 @@ from .coverage import (
     ci_covered_lean_files,
     islands_with_lean,
 )
-from .process import deviations_grant_problem, freeze_grant_problem, freeze_problems
+from .process import (
+    campaign_is_post_cutoff,
+    deviations_grant_problem,
+    freeze_grant_problem,
+    freeze_problems,
+    provenance_problems,
+)
 from .provenance import (
     CHECKS_CUTOFF,
     ProvenanceError,
@@ -942,6 +948,15 @@ def verify_campaign(
     # an incomplete unfreeze history, and self-read-back unfreezes. A missing FREEZE.toml is
     # only reported when a PROVED post-cutoff node exists to require one.
     errors.extend(freeze_problems(root))
+
+    # 4c. Provenance-header lint (step 5 Task 4, spec 7.4): every ported file names its
+    # source repository, file and commit. Scoped to a POST-CUTOFF campaign only -- read
+    # through `campaign_is_post_cutoff`, never FREEZE.toml directly -- the same
+    # predicate `freeze_grant_problem`/`deviations_grant_problem` gate on, so a legacy
+    # campaign frozen before the cutoff is not retroactively held to a requirement that
+    # did not exist when its files were ported.
+    if campaign_is_post_cutoff(root):
+        errors.extend(provenance_problems(root))
 
     # 5. Attempts ledger (if it exists)
     ledger_path = root / "attempts.jsonl"

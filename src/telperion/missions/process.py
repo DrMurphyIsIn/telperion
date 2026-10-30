@@ -1779,3 +1779,353 @@ def deviations_grant_problem(root: Path, node) -> str:
         )
     return ""
 
+
+# ---------------------------------------------------------------------------
+# The provenance-header lint (step 5 Task 4)
+#
+# Spec 7.4: every ported file names its source repository, file and commit, and a lint
+# check enforces this, islands included. A `.lean` file is "ported" (`ported_files`)
+# either by a `ported`/`adapted`/`copied from` mention in its own first 30 lines --
+# inside a `--` or `/- -/` Lean comment, never inside a string literal or in code, and
+# matched via the shared Lean lexer (`judge._guard_anchors().lean_segments`, step 4's
+# comment/string/raw/char split -- this does not re-lex Lean on its own) -- or by being
+# named in `<root>/PORTED.toml`'s `files = [...]`, regardless of whether it carries any
+# mention of its own (a hand-curated declaration of "this came from elsewhere" that a
+# header-mention scan alone could miss, e.g. a file ported verbatim with its original
+# header already stripped). Every ported file must then carry a line matching
+# `^-- Provenance: repo=... file=... commit=<40 lowercase hex>$`, same window, same
+# comment-only scan; `provenance_problems` reports every file that does not, plus every
+# PORTED.toml problem of its own (unsafe or missing entries, an untrustworthy
+# PORTED.toml) independent of whether any file is ported at all.
+#
+# Every read here is guarded the way `_load_freeze_safe` already is (Controller Ruling
+# 8): a symlink refused via `lstat` before anything is read through it, `O_NOFOLLOW` as
+# a second line of defense, non-regular files and oversized files refused, and a decode
+# or parse failure turned into a returned problem string -- never a traceback, the CLI
+# included. The tree walk never follows a directory symlink (`os.walk`'s own default)
+# and never descends into `.git/`, `.lake/`, or a build directory, so a campaign cannot
+# be escaped, looped back into, or made to walk an unrelated dependency tree through
+# one. A PORTED.toml entry is accepted only as a path relative to *root* with no `..`
+# component and no absolute form, and only once its resolved target is confirmed to
+# still land inside *root* -- the same shape of escape a symlinked component could
+# otherwise launder.
+# ---------------------------------------------------------------------------
+
+#: How many of a `.lean` file's lines count toward both the `ported from` mention scan
+#: and the provenance-header scan (spec 7.4: "first 30 lines").
+_PORTED_HEAD_LINES = 30
+
+#: Upper bound on how much of a `.lean` file `_read_lean_head_safe` will read, so a
+#: pathological single huge line (or a huge file with no early newline) costs no more
+#: than one bounded read -- the same rationale as `FREEZE_MAX_BYTES`, just much smaller
+#: since only a header-sized prefix is ever needed.
+_LEAN_HEAD_MAX_BYTES = 1 << 16
+
+#: Directory names the tree walk never descends into: version control and Lake's own
+#: (potentially huge, and irrelevant) build/dependency output.
+_SKIP_DIR_NAMES = frozenset({".git", ".lake", "build", "_build"})
+
+#: `(?i)\b(ported|adapted|copied) from\b`, scanned only against the comment-only text
+#: of a file's first `_PORTED_HEAD_LINES` lines (`_lean_head_comment_text`) -- a mention
+#: inside a string literal or in ordinary code is masked out before this ever runs.
+_PORTED_MENTION_RE = re.compile(r"(?i)\b(ported|adapted|copied) from\b")
+
+#: The header LINE's shape, matched whole (`^...$`, `re.MULTILINE`) against the same
+#: comment-only text: `repo=` and `file=` tokens are anything non-whitespace, same as
+#: the brief's regex; the commit token is captured un-anchored here so a short or
+#: non-hex commit still matches the LINE (letting `provenance_problems` report it with
+#: a specific "not 40 lowercase hex" message) rather than falling through to the
+#: generic "no header at all" one.
+_PROVENANCE_LINE_RE = re.compile(
+    r"^-- Provenance: repo=(\S+) file=(\S+) commit=(\S+)$", re.MULTILINE)
+
+#: The commit token's own required shape (spec 7.4's exact regex: `[0-9a-f]{40}`).
+_PROVENANCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+#: Name of the campaign-level declaration of explicitly-ported files, at the campaign
+#: root (next to `mission.toml`).
+PORTED_TOML_FILENAME = "PORTED.toml"
+
+#: Upper bound on PORTED.toml, the same rationale as `FREEZE_MAX_BYTES`: a real one is a
+#: short list of relative paths.
+PORTED_TOML_MAX_BYTES = 1 << 20
+
+
+def ported_toml_path(root: Path) -> Path:
+    """`<root>/PORTED.toml`, the campaign-level declaration of explicitly-ported files."""
+    return Path(root) / PORTED_TOML_FILENAME
+
+
+def _lean_head_comment_text(text: str, *, max_lines: int = _PORTED_HEAD_LINES) -> str:
+    """The first *max_lines* lines of *text*, with everything OUTSIDE a `--` or `/- -/`
+    Lean comment replaced by spaces (newlines kept, so line numbers and `^`/`$` anchors
+    in the result still line up with the original text). Built from the shared Lean
+    lexer (`judge._guard_anchors().lean_segments`, step 4's one comment/string/raw/char
+    split) rather than a new regex scan, so a `ported from` mention or a provenance
+    header inside a string literal -- or split across a code/comment boundary -- can
+    never be mistaken for the real thing."""
+    from .judge import _guard_anchors
+
+    snippet = "".join(text.splitlines(keepends=True)[:max_lines])
+    ga = _guard_anchors()
+    out: List[str] = []
+    for kind, seg in ga.lean_segments(snippet):
+        if kind == "comment":
+            out.append(seg)
+        else:
+            out.append("".join(ch if ch == "\n" else " " for ch in seg))
+    return "".join(out)
+
+
+def _read_lean_head_safe(path: Path) -> Tuple[Optional[str], Optional[str]]:
+    """The first `_PORTED_HEAD_LINES` lines of *path*, read the same guarded way as
+    `_load_freeze_safe`: refuses a symlink via `lstat` before anything is read through
+    it (`O_NOFOLLOW` as a second line of defense against one swapped in after the
+    lstat); refuses anything that is not a regular file. Stops BEFORE a line that would
+    push the total past `_LEAN_HEAD_MAX_BYTES` rather than reading a partial one, so a
+    decode can never split a multi-byte UTF-8 character mid-line; a decode error (or any
+    other I/O failure) becomes a returned problem string, never a traceback. Returns
+    `(text, None)`, or `(None, problem)` -- *problem* names no path; the caller already
+    knows which file it asked about."""
+    try:
+        st = path.lstat()
+    except OSError as exc:
+        return None, f"could not be read ({exc.strerror or exc})"
+    if stat.S_ISLNK(st.st_mode):
+        return None, "is a symlink; refusing to read it"
+    if not stat.S_ISREG(st.st_mode):
+        return None, "is not a regular file; refusing to read it"
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None, "changed while being read; refusing to trust it"
+            chunks: List[bytes] = []
+            total = 0
+            for _ in range(_PORTED_HEAD_LINES):
+                remaining = _LEAN_HEAD_MAX_BYTES - total
+                if remaining <= 0:
+                    break
+                line = fh.readline(remaining + 1)
+                if not line:
+                    break
+                if total + len(line) > _LEAN_HEAD_MAX_BYTES:
+                    break
+                chunks.append(line)
+                total += len(line)
+    except OSError as exc:
+        return None, f"could not be read ({exc.strerror or exc})"
+    try:
+        return b"".join(chunks).decode("utf-8"), None
+    except UnicodeDecodeError:
+        return None, "is not valid UTF-8; refusing to read it"
+
+
+def _walk_lean_files(root: Path) -> List[Path]:
+    """Every `.lean` file under *root*, ABSOLUTE paths, sorted. The walk never follows a
+    directory symlink (`os.walk`'s own default, `followlinks=False`: a campaign cannot
+    be escaped or looped back into through one) and never descends into `.git/`,
+    `.lake/`, or a build directory (`_SKIP_DIR_NAMES`) -- none of them hold anything this
+    lint should look at, and `.lake/` in particular can hold a huge, unrelated
+    dependency tree. A `.lean` path that is ITSELF a symlink is still returned here;
+    `_read_lean_head_safe` is what refuses to follow it."""
+    root = Path(root)
+    found: List[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIR_NAMES]
+        for name in filenames:
+            if name.endswith(".lean"):
+                found.append(Path(dirpath) / name)
+    return sorted(found)
+
+
+def _safe_ported_relpath(root: Path, raw: str) -> Tuple[Optional[Path], Optional[str]]:
+    """*raw* (one `PORTED.toml` `files` entry) as a `Path` relative to *root*, or
+    `(None, reason)` if it is not safely INSIDE the campaign: not a non-empty string, an
+    absolute path, a `..` component, or anything whose resolved target does not land
+    inside *root* once resolved (a symlinked component walking back out, e.g.) --
+    PORTED.toml entries name a file inside the campaign, never a filesystem path that
+    can reach outside it."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None, "is not a non-empty string"
+    rel = Path(raw)
+    if rel.is_absolute():
+        return None, "is an absolute path"
+    if ".." in rel.parts:
+        return None, "contains '..'"
+    root_resolved = Path(root).resolve()
+    try:
+        resolved = (root_resolved / rel).resolve()
+    except OSError:
+        return None, "could not be resolved"
+    try:
+        resolved.relative_to(root_resolved)
+    except ValueError:
+        return None, "resolves outside the campaign root"
+    return rel, None
+
+
+def _load_ported_toml_safe(root: Path) -> Tuple[Optional[List[str]], Optional[str]]:
+    """The guarded reader of `<root>/PORTED.toml`'s `files = [...]` list -- the same
+    refusals as `_load_freeze_safe`/`_load_deviations_safe`: a symlink refused via
+    `lstat` before anything is read through it (`O_NOFOLLOW` as a second line of
+    defense), anything else that is not a regular file, a file over
+    `PORTED_TOML_MAX_BYTES`, content that is not UTF-8, not valid TOML, or whose `files`
+    field (if present at all) is not a list of strings. Returns `(entries, None)` (`[]`
+    if the file has no `files` key); `(None, None)` if PORTED.toml does not exist; or
+    `(None, problem)` for anything this refuses. Never raises."""
+    path = ported_toml_path(root)
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"{PORTED_TOML_FILENAME} could not be read ({exc.strerror or exc})."
+    if stat.S_ISLNK(st.st_mode):
+        return None, (f"{PORTED_TOML_FILENAME} is a symlink in the working tree; "
+                      "refusing to trust it.")
+    if not stat.S_ISREG(st.st_mode):
+        return None, (f"{PORTED_TOML_FILENAME} in the working tree is not a regular "
+                      "file (a directory, e.g. a submodule checkout, or a special "
+                      "file); refusing to trust it.")
+    if st.st_size > PORTED_TOML_MAX_BYTES:
+        return None, (f"{PORTED_TOML_FILENAME} is larger than {PORTED_TOML_MAX_BYTES} "
+                      "bytes; refusing to trust it.")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None, (f"{PORTED_TOML_FILENAME} changed while being read; "
+                              "refusing to trust it.")
+            data = fh.read(PORTED_TOML_MAX_BYTES + 1)
+    except OSError as exc:
+        return None, f"{PORTED_TOML_FILENAME} could not be read ({exc.strerror or exc})."
+    if len(data) > PORTED_TOML_MAX_BYTES:
+        return None, (f"{PORTED_TOML_FILENAME} is larger than {PORTED_TOML_MAX_BYTES} "
+                      "bytes; refusing to trust it.")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, f"{PORTED_TOML_FILENAME} is not valid UTF-8; refusing to trust it."
+    from .schema import loads_toml
+
+    try:
+        doc = loads_toml(text)
+    except Exception as exc:  # malformed TOML, or whatever else a hostile file provokes
+        return None, f"{PORTED_TOML_FILENAME} is not valid TOML ({exc})."
+    files = doc.get("files", [])
+    if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+        return None, f"{PORTED_TOML_FILENAME} has a `files` that is not a list of strings."
+    return files, None
+
+
+def ported_files(root: Path) -> List[Path]:
+    """Every file counted as "ported" (spec 7.4) under *root*, as paths RELATIVE to it,
+    sorted and de-duplicated: every `.lean` file under *root* (`_walk_lean_files`) whose
+    first 30 lines carry a `ported`/`adapted`/`copied from` mention inside a Lean
+    comment (never inside a string literal or in code -- `_lean_head_comment_text` masks
+    both out before `_PORTED_MENTION_RE` ever runs), plus every safe, existing entry
+    named in `<root>/PORTED.toml`'s `files = [...]`.
+
+    A `.lean` file this cannot safely read (a symlink, a decode failure, ...) is simply
+    not auto-detected by its own mention -- there is nothing to scan -- but is still
+    included here if PORTED.toml names it explicitly; `provenance_problems` is what
+    then reports the read failure as a problem, rather than this function silently
+    deciding the file is not ported after all. A PORTED.toml entry that is unsafe (does
+    not resolve inside *root*) or names a file that does not exist is never added here
+    either; `provenance_problems` reports both directly so a bad entry is still visible
+    even though nothing on disk can be checked for a header.
+    """
+    root = Path(root)
+    found: Set[Path] = set()
+
+    for lean_path in _walk_lean_files(root):
+        text, problem = _read_lean_head_safe(lean_path)
+        if problem:
+            continue
+        if _PORTED_MENTION_RE.search(_lean_head_comment_text(text)):
+            found.add(lean_path.relative_to(root))
+
+    entries, _problem = _load_ported_toml_safe(root)
+    for raw in entries or ():
+        rel, _reason = _safe_ported_relpath(root, raw)
+        if rel is not None and (root / rel).exists():
+            found.add(rel)
+
+    return sorted(found)
+
+
+def provenance_problems(root: Path) -> List[str]:
+    """Spec 7.4: every ported file names its source repository, file and commit.
+    Reports, in this order:
+
+    - `<root>/PORTED.toml` itself unreadable, untrustworthy or malformed
+      (`_load_ported_toml_safe`);
+    - each PORTED.toml entry that is not a safe path inside *root* (absolute, `..`, or
+      resolving outside it -- `_safe_ported_relpath`);
+    - each otherwise-safe PORTED.toml entry whose file does not exist on disk;
+    - for every file `ported_files(root)` returns that DOES exist: unreadable (a
+      symlink, not valid UTF-8, ...) via `_read_lean_head_safe`; no line matching the
+      provenance header's shape in its first 30 lines; or a header whose commit is not
+      exactly 40 lowercase hex digits.
+
+    Sorted; islands included, same as everything else `_walk_lean_files` reaches, since
+    nothing here is scoped to a particular subdirectory of the campaign."""
+    root = Path(root)
+    problems: List[str] = []
+
+    entries, toml_problem = _load_ported_toml_safe(root)
+    if toml_problem:
+        problems.append(toml_problem)
+    for raw in entries or ():
+        rel, reason = _safe_ported_relpath(root, raw)
+        if rel is None:
+            problems.append(f"{PORTED_TOML_FILENAME}: entry {raw!r} {reason}.")
+            continue
+        if not (root / rel).exists():
+            problems.append(
+                f"{PORTED_TOML_FILENAME}: entry {rel.as_posix()!r} does not exist."
+            )
+
+    for rel in ported_files(root):
+        path = root / rel
+        if not path.exists():
+            continue  # already reported above, from the PORTED.toml pass
+        text, problem = _read_lean_head_safe(path)
+        if problem:
+            problems.append(f"{rel.as_posix()}: {problem}.")
+            continue
+        masked = _lean_head_comment_text(text)
+        m = _PROVENANCE_LINE_RE.search(masked)
+        if m is None:
+            problems.append(
+                f"{rel.as_posix()}: ported file has no provenance header "
+                "(`-- Provenance: repo=<repo> file=<file> commit=<40 lowercase hex>`) "
+                f"in its first {_PORTED_HEAD_LINES} lines."
+            )
+            continue
+        commit = m.group(3)
+        if not _PROVENANCE_COMMIT_RE.match(commit):
+            problems.append(
+                f"{rel.as_posix()}: Provenance header's commit {commit!r} is not "
+                "exactly 40 lowercase hex characters."
+            )
+    return sorted(problems)
+
+
+def campaign_is_post_cutoff(root: Path) -> bool:
+    """Whether *root*'s FREEZE.toml records a `frozen` date on or after `CUTOFF` -- the
+    same predicate `freeze_history_problems` computes internally, exposed here so a
+    caller (`verify.verify_campaign`, step 5 Task 4) can gate `provenance_problems` by
+    it without ever reading FREEZE.toml directly: the date is read through
+    `_load_freeze_safe`, the ONE guarded reader of it (Controller Ruling 8). False
+    whenever no FREEZE.toml exists, or it exists but cannot be trusted at all --
+    `freeze_problems`/`freeze_history_problems` already surface an untrustworthy record
+    as its own error; this is not where that problem gets reported a second time."""
+    doc, problem = _load_freeze_safe(root)
+    if problem or doc is None:
+        return False
+    return str(doc.get("frozen", "")) >= CUTOFF
+

@@ -2031,3 +2031,139 @@ def test_pre_cutoff_grant_without_author_unchanged(tmp_path):
     granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
                            session="gate-session")
     assert granted.status == "proved"
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 4: the provenance-header lint (spec 7.4).
+#
+# A `.lean` file is "ported" if its first 30 lines carry a `ported`/`adapted`/`copied
+# from` mention inside a Lean comment, or if it is named in `<root>/PORTED.toml`'s
+# `files = [...]`. Every ported file must then also carry, in its first 30 lines, a
+# line matching `^-- Provenance: repo=... file=... commit=<40 lowercase hex>$`.
+# `provenance_problems` is imported locally per test (rather than at module scope) so
+# this RED stage fails on the missing behaviour itself -- an ImportError raised inside
+# the test body -- without breaking collection of every other test already in this
+# file.
+# ---------------------------------------------------------------------------
+
+def test_ported_without_header_flagged(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "Foo.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "theorem foo : True := trivial\n"
+    )
+    problems = provenance_problems(root)
+    assert any("Foo.lean" in p for p in problems)
+
+
+def test_header_ok(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "Foo.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "-- Provenance: repo=upstream file=Bar.lean commit=" + "a" * 40 + "\n"
+        "theorem foo : True := trivial\n"
+    )
+    assert provenance_problems(root) == []
+
+
+def test_short_commit_rejected(tmp_path):
+    """A 7-hex commit (the common 'short SHA' people paste by habit) is not 40
+    lowercase hex digits, so the header does not satisfy spec 7.4 even though a line
+    shaped like one is present."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "Foo.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "-- Provenance: repo=upstream file=Bar.lean commit=abc1234\n"
+        "theorem foo : True := trivial\n"
+    )
+    problems = provenance_problems(root)
+    assert any("Foo.lean" in p for p in problems)
+
+
+def test_late_mention_not_ported(tmp_path):
+    """A 'ported from' mention past line 30 does not make the file "ported" at all --
+    only the first 30 lines count -- so no header is required and nothing is flagged."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    lines = [f"-- line {i}\n" for i in range(1, 200)]
+    lines.append("-- adapted from upstream/Bar.lean\n")
+    (root / "Foo.lean").write_text("".join(lines))
+    assert provenance_problems(root) == []
+
+
+def test_ported_toml_listed_file_needs_header(tmp_path):
+    """A file named in PORTED.toml is ported regardless of whether it carries its own
+    'ported from' mention -- it still needs the provenance header."""
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "Foo.lean").write_text("theorem foo : True := trivial\n")
+    (root / "PORTED.toml").write_text('files = ["Foo.lean"]\n')
+    problems = provenance_problems(root)
+    assert any("Foo.lean" in p for p in problems)
+
+
+def test_ported_toml_missing_file(tmp_path):
+    from telperion.missions.process import provenance_problems
+
+    root = tmp_path
+    (root / "PORTED.toml").write_text('files = ["Missing.lean"]\n')
+    problems = provenance_problems(root)
+    assert any("Missing.lean" in p and "does not exist" in p for p in problems)
+
+
+def test_cli_exit_codes(tmp_path, capsys):
+    root = tmp_path
+    (root / "Clean.lean").write_text("theorem foo : True := trivial\n")
+    rc = main(["lint-provenance", str(root)])
+    assert rc == 0
+    capsys.readouterr()
+
+    (root / "Bad.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "theorem bar : True := trivial\n"
+    )
+    rc = main(["lint-provenance", str(root)])
+    assert rc == 1
+    assert "Bad.lean" in capsys.readouterr().out
+
+
+def test_verify_campaign_includes_provenance_problems_post_cutoff(tmp_path):
+    """`verify_campaign` wires `provenance_problems` in for a campaign frozen ON OR
+    AFTER `CUTOFF` -- read through `campaign_is_post_cutoff`'s guarded loader, never
+    FREEZE.toml directly."""
+    from telperion.missions.verify import verify_campaign
+
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")  # >= CUTOFF
+    (root / "Bad.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "theorem bar : True := trivial\n"
+    )
+    report = verify_campaign(root)
+    assert any("Bad.lean" in e for e in report.errors)
+
+
+def test_verify_campaign_excludes_provenance_problems_pre_cutoff(tmp_path):
+    """The same lint is NOT applied to a campaign frozen BEFORE `CUTOFF` -- a legacy
+    campaign is not retroactively held to a requirement that did not exist yet when its
+    files were ported."""
+    from telperion.missions.verify import verify_campaign
+
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")  # < CUTOFF
+    (root / "Bad.lean").write_text(
+        "-- ported from upstream/Bar.lean\n"
+        "theorem bar : True := trivial\n"
+    )
+    report = verify_campaign(root)
+    assert not any("Bad.lean" in e for e in report.errors)
