@@ -1213,7 +1213,7 @@ _HEADER_LIST_RE = re.compile(r"^'(.+)' depends on axioms: \[(.*)$")
 #: bracket-wrapping, which never splits the header itself -- only the axiom LIST). Lean's
 #: own output never prints a line that is just one quoted identifier and nothing else, so
 #: this is unambiguously a malformed/split header, not a line to ignore.
-_BARE_QUOTED_NAME_RE = re.compile(r"^'[^']*'$")
+_BARE_QUOTED_NAME_RE = re.compile(r"^'.+'$")  # greedy: primed names (`'h''`) too
 
 
 def _record_axioms(axioms_by_name: Dict[str, Set[str]], name: str, axioms: Set[str]) -> None:

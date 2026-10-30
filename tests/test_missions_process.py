@@ -1623,6 +1623,13 @@ def test_cli_audit_crosscheck_malformed_closure_axioms_rejected(tmp_path, capsys
     assert "malformed closure audit data" in out and "Traceback" not in out
 
 
+def test_parse_print_axioms_split_header_primed_name_raises():
+    """A split header whose name ends in a prime (`'h''`) must raise too (lead, Ruling 11)."""
+    out = "'h''\n depends on axioms: [propext]\n"
+    with pytest.raises(ValueError, match="unrecognised"):
+        parse_print_axioms(out)
+
+
 def test_process_runs_git_only_through_the_sanitised_helper():
     """Structural (Ruling 9): no subprocess call in process.py outside `_git`, so no git
     invocation can skip --no-replace-objects or the sanitised environment."""
