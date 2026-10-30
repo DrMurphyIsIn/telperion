@@ -36,6 +36,20 @@ adversarial action to reproduce the same blind spot) and a FREEZE.toml that is, 
 was, a symlink (its target can move independently of the history being walked). All of
 this fails closed ONLY for a post-cutoff campaign, the same as Ruling 5.
 
+Controller Ruling 8 (fix round 4, 2026-10-30), after re-review 2:
+- One guarded reader. `_load_freeze_safe` is the only reader of the working-tree
+  FREEZE.toml. It refuses a symlink before reading anything through it, refuses
+  non-regular files and files over `FREEZE_MAX_BYTES`, and turns non-UTF-8, non-TOML and
+  wrongly-shaped content into a problem string instead of an exception. `freeze_problems`
+  and `freeze_grant_problem` used to read through a symlink before the walk's own check
+  ran, and crashed `mission grant`/`mission verify` on non-UTF-8 content.
+- A single-pass walk. Round 3's one `ls-tree` per commit (about 29 s for 2,000 commits,
+  paid on every post-cutoff grant) became ONE `git log --first-parent --raw` of the path
+  plus `git cat-file` for the blobs, with the same refusals. A gitlink at the path now
+  says so.
+- The walk runs from the repository's top level. Round 3 ran it from the campaign root,
+  so every campaign in a subdirectory was reported as never committed.
+
 What it still cannot see (NEW-1, documented rather than coded -- inherent to local git, not
 fixable by walking harder): a history REWRITE that replaces the whole committed history
 with one internally self-consistent fabrication (`git commit --amend` on the sole commit,
@@ -60,6 +74,8 @@ use of `provenance` below is therefore a lazy, in-function import.
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -120,16 +136,123 @@ def _dump_freeze(doc: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _load_freeze(root: Path) -> Optional[dict]:
-    """The parsed FREEZE.toml document, or None if the campaign has not been frozen."""
-    path = freeze_path(root)
-    if not path.exists():
-        return None
+#: Upper bound on a FREEZE.toml, in the working tree or in history. A real record is a few
+#: hundred bytes plus one line per node; anything this large is not one, and refusing it
+#: before decoding keeps a hostile file from costing more than a stat.
+FREEZE_MAX_BYTES = 1 << 20
+
+_UNFREEZE_STR_FIELDS = ("date", "author", "reason", "readback_identity")
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _freeze_shape_problem(doc: dict) -> Optional[str]:
+    """Why *doc* does not have `_dump_freeze`'s shape, or None. Every reader below indexes
+    these fields directly, so a hand-edit that changes a field's type must surface here as
+    a problem, not later as a TypeError or ValueError (`int("two")`)."""
+    if not _is_int(doc.get("version")) or doc["version"] < 1:
+        return "has no positive integer `version`"
+    if not isinstance(doc.get("frozen"), str):
+        return "has no string `frozen` date"
+    for key in ("identity", "session"):
+        if key in doc and not isinstance(doc[key], str):
+            return f"has a non-string `{key}`"
+    statements = doc.get("statements", {})
+    if not isinstance(statements, dict) or not all(
+            isinstance(v, str) for v in statements.values()):
+        return "has a `statements` that is not a table of string hashes"
+    entries = doc.get("unfreeze", [])
+    if not isinstance(entries, list):
+        return "has an `unfreeze` that is not an array of tables"
+    for entry in entries:
+        if not isinstance(entry, dict) or not _is_int(entry.get("version")):
+            return "has an `unfreeze` entry that is not a table with an integer `version`"
+        if any(k in entry and not isinstance(entry[k], str) for k in _UNFREEZE_STR_FIELDS):
+            return "has an `unfreeze` entry with a non-string field"
+    return None
+
+
+def _parse_freeze_bytes(data: bytes) -> Tuple[Optional[dict], Optional[str]]:
+    """`(doc, None)`, or `(None, why)` where *why* completes a sentence about where the bytes
+    came from ("is not valid UTF-8"). Shared by the working-tree loader and the history walk
+    so both refuse the same things. Never raises."""
+    if len(data) > FREEZE_MAX_BYTES:
+        return None, f"is larger than {FREEZE_MAX_BYTES} bytes"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "is not valid UTF-8"
     try:
         import tomllib
     except ModuleNotFoundError:
         import tomli as tomllib  # type: ignore[no-redef]
-    return tomllib.loads(path.read_text())
+    try:
+        doc = tomllib.loads(text)
+    except Exception as exc:  # TOMLDecodeError, or whatever else a hostile file provokes
+        return None, f"is not valid TOML ({exc})"
+    shape = _freeze_shape_problem(doc)
+    if shape:
+        return None, shape
+    return doc, None
+
+
+def _load_freeze_safe(root: Path) -> Tuple[Optional[dict], Optional[str]]:
+    """THE reader of the working-tree FREEZE.toml (Controller Ruling 8, fix round 4): every
+    function here that needs the record goes through this one. Returns `(doc, None)`;
+    `(None, None)` when the campaign has not been frozen; or `(None, problem)` when the path
+    exists but cannot be trusted. Never raises.
+
+    Refused, in this order, before anything is read through the path: a symlink (its target
+    can be any file at all -- re-review 2 found `freeze_problems` and `freeze_grant_problem`
+    reading `mission.toml` through one, and crashing `mission grant`/`mission verify` with a
+    UnicodeDecodeError through one aimed at binary content); anything else that is not a
+    regular file (a directory, e.g. a submodule checkout); a file over `FREEZE_MAX_BYTES`.
+    Then the content: not UTF-8, not TOML, or not FREEZE.toml's shape. The open uses
+    O_NOFOLLOW, so a symlink swapped in after the lstat is refused too, not followed.
+    """
+    path = freeze_path(root)
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"{FREEZE_FILENAME} could not be read ({exc.strerror or exc})."
+    if stat.S_ISLNK(st.st_mode):
+        return None, f"{FREEZE_FILENAME} is a symlink in the working tree; refusing to trust it."
+    if not stat.S_ISREG(st.st_mode):
+        return None, (
+            f"{FREEZE_FILENAME} in the working tree is not a regular file (a directory, e.g. "
+            "a submodule checkout, or a special file); refusing to trust it."
+        )
+    if st.st_size > FREEZE_MAX_BYTES:
+        return None, (f"{FREEZE_FILENAME} is larger than {FREEZE_MAX_BYTES} bytes; refusing "
+                      "to trust it.")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None, (f"{FREEZE_FILENAME} changed while being read; refusing to "
+                              "trust it.")
+            data = fh.read(FREEZE_MAX_BYTES + 1)
+    except OSError as exc:
+        return None, f"{FREEZE_FILENAME} could not be read ({exc.strerror or exc})."
+    doc, why = _parse_freeze_bytes(data)
+    if why:
+        return None, f"{FREEZE_FILENAME} {why}; refusing to trust it."
+    return doc, None
+
+
+def _load_freeze(root: Path) -> Optional[dict]:
+    """`_load_freeze_safe` for a caller that refuses rather than reports (`unfreeze`): the
+    parsed document, None if the campaign has not been frozen, or `ValueError` carrying the
+    problem."""
+    doc, problem = _load_freeze_safe(root)
+    if problem:
+        raise ValueError(problem)
+    return doc
 
 
 def _write_freeze(root: Path, doc: dict) -> None:
@@ -162,7 +285,9 @@ def freeze(root: Path, *, identity: str, session: str, date: str) -> dict:
 
     require_identity(identity, session, "freeze")
     root = Path(root)
-    if freeze_path(root).exists():
+    # is_symlink too: exists() is False for a dangling symlink, which the write below would
+    # otherwise replace silently.
+    if freeze_path(root).exists() or freeze_path(root).is_symlink():
         raise ValueError(
             f"{root.name} is already frozen ({FREEZE_FILENAME} exists); use `unfreeze` to "
             "record an update, not `freeze` again."
@@ -269,7 +394,11 @@ def freeze_problems(root: Path) -> List[str]:
     from .registry import load_campaign
 
     campaign = load_campaign(root)
-    doc = _load_freeze(root)
+    doc, unreadable = _load_freeze_safe(root)
+    if unreadable:
+        # Nothing in an untrusted record can be compared against, including the `frozen`
+        # date that decides whether anything below applies (fix round 4, Ruling 8).
+        return [unreadable]
     problems: List[str] = []
 
     if doc is None:
@@ -387,147 +516,226 @@ def _is_shallow_repo(root: Path) -> bool:
     return out.returncode == 0 and out.stdout.strip() == "true"
 
 
-def _first_parent_chain(root: Path) -> List[str]:
-    """Every commit on HEAD's first-parent chain, oldest first (`git log --first-parent
-    --reverse`). First-parent, not every ancestor of every merge, so a merge commit does
-    not pull a side branch's unrelated history into the walk below."""
+#: Commit header in `_freeze_path_log`'s `git log` output. Raw diff lines start with ':', and
+#: the path that follows each one is consumed by position, so neither can be mistaken for it.
+_LOG_MARKER = "@@commit "
+
+#: Regular-file modes. Anything else at FREEZE.toml's path -- a symlink (120000), a
+#: gitlink/submodule (160000) -- is refused.
+_REGULAR_MODES = ("100644", "100755")
+
+#: One first-parent commit at which FREEZE.toml's path changed: `(commit sha, [(path, new
+#: mode, new object), ...])`, the raw diff entries against that commit's FIRST parent.
+_PathChange = Tuple[str, List[Tuple[bytes, str, str]]]
+
+
+def _git_head_exists(root: Path) -> bool:
     try:
         out = subprocess.run(
-            ["git", "-C", str(root), "log", "--first-parent", "--reverse", "--format=%H"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if out.returncode != 0:
-        return []
-    return [s for s in out.stdout.split() if s]
-
-
-def _first_commit_with_path(root: Path, relpath: str) -> Optional[str]:
-    """The oldest first-parent commit at which *relpath* exists at all -- found via a
-    path-filtered log (cheap: this is only to locate where the exhaustive walk below
-    should START, never to decide which commits that walk visits; every commit from here
-    to HEAD is visited whether or not it touches *relpath*, specifically so a window where
-    the file sat at a different path is not silently skipped -- fix round 3, NEW-3)."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "log", "--first-parent", "--reverse",
-             "--format=%H", "--", relpath],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    shas = [s for s in out.stdout.split() if s]
-    return shas[0] if shas else None
-
-
-def _ls_tree_entry(root: Path, sha: str, relpath: str) -> Optional[Tuple[str, str]]:
-    """`(mode, blob)` for *relpath* as recorded AT *sha* -- not at today's path, at this
-    commit's own tree -- or `None` if it is absent there or the lookup itself fails.
-    `ls-tree` is a cheap, content-free lookup (no blob is fetched), so this can run for
-    every commit in a long walk without `git show`'s cost."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "ls-tree", sha, "--", relpath],
+            ["git", "-C", str(root), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
             capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    line = out.stdout.strip()
-    if not line:
-        return None
-    meta, sep, _path = line.partition("\t")
-    if not sep:
-        return None
-    fields = meta.split()
-    if len(fields) != 3:
-        return None
-    mode, _obj_type, blob = fields
-    return mode, blob
+        return False
+    return out.returncode == 0
 
 
-def _load_blob_toml(root: Path, blob: str) -> Optional[dict]:
+def _freeze_path_log(repo: Path, relpath: str) -> Tuple[Optional[List[_PathChange]], Optional[str]]:
+    """Every commit on HEAD's first-parent chain at which *relpath* (relative to *repo*, the
+    top level the command runs from) -- or anything under it,
+    were it ever a directory -- differs from that commit's FIRST parent, oldest first, with
+    the raw diff entries: ONE `git log` for the whole history (Controller Ruling 8, fix round
+    4; round 3 ran one `git ls-tree` per commit, ~29 s for 2,000 commits on every
+    post-cutoff grant). `([], None)` if HEAD has no commits; `(None, problem)` if git fails
+    or prints something this does not recognise.
+
+    Why this misses nothing round 3's per-commit walk saw: path-limited history with
+    `--first-parent` compares each commit with its first parent ONLY (a merge whose side
+    branch brought the whole change is still listed, because it differs from its first
+    parent), and a commit it does not list is one where the path is identical to the
+    previous listed state -- so checking only the listed commits checks every commit.
+    `--diff-merges=first-parent` gives a merge's raw diff against that same parent, `--root`
+    the root commit's. Pinned against user config: `log.follow` (which, set, turns a single
+    path into `--follow` and reports a rename sandwich as one R100 entry, even with
+    `--no-renames`), rename detection, submodule hiding, signatures, colour.
+    `--literal-pathspecs`, so a campaign directory named with glob characters means itself.
+    `-z`, so the path is never quoted."""
+    argv = [
+        "git", "-C", str(repo), "--literal-pathspecs", "-c", "log.follow=false",
+        "log", "--first-parent", "--diff-merges=first-parent", "--root", "--raw",
+        "--no-abbrev", "--no-renames", "--ignore-submodules=none", "--no-color",
+        "--no-show-signature", "-z", "--reverse", f"--format={_LOG_MARKER}%H",
+        "HEAD", "--", relpath,
+    ]
+    unreadable = (f"{FREEZE_FILENAME}: freeze history could not be read (`git log` failed "
+                  "or printed something unexpected).")
     try:
-        show = subprocess.run(
-            ["git", "-C", str(root), "show", blob],
-            capture_output=True, text=True, timeout=10,
-        )
+        out = subprocess.run(argv, capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
-        return None
-    if show.returncode != 0:
-        return None
+        return None, unreadable
+    if out.returncode != 0:
+        return ([], None) if not _git_head_exists(repo) else (None, unreadable)
+
+    marker = _LOG_MARKER.encode("ascii")
+    tokens = out.stdout.split(b"\0")
+    changes: List[_PathChange] = []
+    i = 0
     try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
-    try:
-        return tomllib.loads(show.stdout)
-    except Exception:
-        return None
+        while i < len(tokens):
+            tok = tokens[i].lstrip(b"\n")
+            i += 1
+            if not tok:
+                continue
+            if tok.startswith(marker):
+                changes.append((tok[len(marker):].decode("ascii"), []))
+                continue
+            fields = tok.decode("ascii").split() if tok.startswith(b":") else []
+            # `:old_mode new_mode old_obj new_obj status`, then the path as its own token.
+            # A rename or copy status (two paths) cannot occur with --no-renames and
+            # log.follow off; refuse rather than guess if it ever does.
+            if (len(fields) != 5 or fields[4] not in ("A", "D", "M", "T")
+                    or not changes or i >= len(tokens)):
+                return None, unreadable
+            changes[-1][1].append((tokens[i], fields[1], fields[3]))
+            i += 1
+    except UnicodeDecodeError:
+        return None, unreadable
+    return changes, None
 
 
-def _walk_freeze_blobs(root: Path, chain: List[str], relpath: str
-                       ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
-    """Confirm *relpath* exists as an ordinary (non-symlink) blob at EVERY commit in
-    *chain*, oldest first -- not only the ones a path-filtered log would show, so a window
-    where the file was absent (renamed away, deleted) cannot hide between two commits where
-    it happens to exist again (fix round 3, NEW-3). Stops, and returns a problem string, at
-    the first commit that fails this -- the caller must never look past it (the point of
-    the check is exactly that nothing downstream of a break in the chain can be trusted).
+def _walk_freeze_log(changes: List[_PathChange], relpath: str
+                     ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    """Replay `_freeze_path_log`'s changes, oldest first, and check *relpath*'s state AT each
+    listed commit -- the same state round 3 read with `ls-tree` at every commit, since
+    between two listed commits it cannot change. Stops, returning a problem, at the first
+    commit where it is not an ordinary file; nothing after a break can be trusted, so the
+    caller never looks past it:
 
-    Returns `([(sha, blob), ...], None)` on success: one entry per run of consecutive
-    IDENTICAL blobs (keyed by the sha where that blob first appears in the walk), since
-    re-reading and re-parsing an unchanged blob at every commit that merely didn't touch it
-    buys nothing (fix round 3's own "stay fast" note) -- the existence/mode check above
-    still ran for every commit regardless, which is the part that must not be skipped.
-    """
+    - anything recorded UNDER the path: FREEZE.toml was a directory;
+    - the path deleted (new mode 000000) -- deleted, or moved away (a rename sandwich, fix
+      round 3's NEW-3); the walk stops here, so a later re-add is never reached;
+    - a symlink (120000), a gitlink/submodule (160000), or any other non-regular mode.
+
+    Returns `([(sha, blob), ...], None)`: one entry per run of consecutive IDENTICAL blobs,
+    keyed by the commit where that blob first appears (a mode-only change, 100644 to 100755,
+    adds no entry)."""
+    rel = os.fsencode(relpath)
     entries: List[Tuple[str, str]] = []
     last_blob: Optional[str] = None
-    for sha in chain:
-        got = _ls_tree_entry(root, sha, relpath)
-        if got is None:
-            return entries, f"{FREEZE_FILENAME} deleted or moved in history at {sha[:12]}."
-        mode, blob = got
+    for sha, diff in changes:
+        where = sha[:12]
+        if any(path != rel and mode != "000000" for path, mode, _obj in diff):
+            return entries, (f"{FREEZE_FILENAME} was a directory in history at {where}; "
+                             "refusing to trust it.")
+        exact = [(mode, obj) for path, mode, obj in diff if path == rel]
+        if not exact:
+            continue  # only entries under a directory being removed; refused when added
+        mode, blob = exact[-1]
+        if mode == "000000":
+            return entries, f"{FREEZE_FILENAME} deleted or moved in history at {where}."
         if mode == "120000":
             return entries, (
                 f"{FREEZE_FILENAME} was recorded as a symlink (mode {mode}) in history at "
-                f"{sha[:12]}; refusing to trust it."
+                f"{where}; refusing to trust it."
             )
+        if mode == "160000":
+            return entries, (f"{FREEZE_FILENAME} is a gitlink/submodule at {where} (mode "
+                             f"{mode} in history); refusing to trust it.")
+        if mode not in _REGULAR_MODES:
+            return entries, (f"{FREEZE_FILENAME} has mode {mode} in history at {where}, not "
+                             "a regular file; refusing to trust it.")
         if blob != last_blob:
             entries.append((sha, blob))
             last_blob = blob
     return entries, None
 
 
-def _freeze_commit_history(root: Path, relpath: str) -> Tuple[List[Tuple[str, dict]], Optional[str]]:
+def _cat_file_blobs(repo: Path, blobs: List[str]) -> Tuple[Dict[str, bytes], Optional[str]]:
+    """The content of every blob in *blobs*: one `git cat-file --batch-check` for the types
+    and sizes, then one `git cat-file --batch` for the contents of those that are blobs no
+    larger than `FREEZE_MAX_BYTES` -- so a huge object in history is refused by its size
+    and never read. A blob that is missing, not a blob, or too large maps to no content;
+    `(_, problem)` if git itself fails or its output is not what was asked for."""
+    unreadable = (f"{FREEZE_FILENAME}: freeze history could not be read (`git cat-file` "
+                  "failed or printed something unexpected).")
+    unique = list(dict.fromkeys(blobs))
+
+    def run(mode: str, names: List[str]):
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(repo), "cat-file", mode],
+                input="".join(n + "\n" for n in names).encode("ascii"),
+                capture_output=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return out.stdout if out.returncode == 0 else None
+
+    checked = run("--batch-check", unique)
+    if checked is None:
+        return {}, unreadable
+    lines = checked.decode("ascii", "replace").splitlines()
+    if len(lines) != len(unique):
+        return {}, unreadable
+    wanted: List[Tuple[str, int]] = []
+    for name, line in zip(unique, lines):
+        fields = line.split()
+        if (len(fields) == 3 and fields[0] == name and fields[1] == "blob"
+                and fields[2].isdigit() and int(fields[2]) <= FREEZE_MAX_BYTES):
+            wanted.append((name, int(fields[2])))
+
+    contents: Dict[str, bytes] = {}
+    if not wanted:
+        return contents, None
+    data = run("--batch", [name for name, _size in wanted])
+    if data is None:
+        return {}, unreadable
+    pos = 0
+    for name, size in wanted:
+        header_end = data.find(b"\n", pos)
+        expected = f"{name} blob {size}".encode("ascii")
+        if header_end < 0 or data[pos:header_end] != expected:
+            return {}, unreadable
+        start = header_end + 1
+        if data[start + size:start + size + 1] != b"\n":
+            return {}, unreadable
+        contents[name] = data[start:start + size]
+        pos = start + size + 1
+    return contents, None
+
+
+def _freeze_commit_history(repo: Path, relpath: str) -> Tuple[List[Tuple[str, dict]], Optional[str]]:
     """`([(commit sha, parsed FREEZE.toml doc), ...], None)`, oldest first, for the DISTINCT
-    states *relpath* held across every commit from its first appearance to HEAD on the
+    states *relpath* (relative to *repo*, the repository's top level) held across every commit from its first appearance to HEAD on the
     first-parent chain; or `([], None)` if it has never been committed; or `([], problem)`
-    if the walk hit an absence, a symlink, or an unreadable blob partway through (fix round
-    3) -- the caller must surface `problem` itself rather than silently falling back to
-    "never committed", which would under-report what actually happened."""
-    chain = _first_parent_chain(root)
-    if not chain:
-        return [], None
+    if the walk hit an absence, a directory, a symlink, a gitlink, or an unreadable blob
+    partway through -- the caller must surface `problem` itself rather than silently
+    falling back to "never committed", which would under-report what actually happened.
 
-    first = _first_commit_with_path(root, relpath)
-    if first is None or first not in chain:
+    Fix round 4 (Ruling 8): three git calls in all, however long the history -- one
+    `git log --raw` (`_freeze_path_log`) and two `git cat-file` (`_cat_file_blobs`) --
+    with the same refusals as round 3's per-commit walk."""
+    changes, problem = _freeze_path_log(repo, relpath)
+    if problem:
+        return [], problem
+    distinct, problem = _walk_freeze_log(changes, relpath)
+    if problem:
+        return [], problem
+    if not distinct:
         return [], None
-
-    walk = chain[chain.index(first):]
-    distinct, problem = _walk_freeze_blobs(root, walk, relpath)
+    contents, problem = _cat_file_blobs(repo, [blob for _sha, blob in distinct])
     if problem:
         return [], problem
 
     history: List[Tuple[str, dict]] = []
     for sha, blob in distinct:
-        doc = _load_blob_toml(root, blob)
-        if doc is None:
-            return [], f"{FREEZE_FILENAME} could not be read at commit {sha[:12]}."
+        data = contents.get(blob)
+        if data is None:
+            return [], (f"{FREEZE_FILENAME} could not be read at commit {sha[:12]} (missing, "
+                        f"not a blob, or larger than {FREEZE_MAX_BYTES} bytes).")
+        doc, why = _parse_freeze_bytes(data)
+        if why:
+            return [], f"{FREEZE_FILENAME} could not be read at commit {sha[:12]}: it {why}."
         history.append((sha, doc))
     return history, None
 
@@ -586,18 +794,21 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
 
 
 def freeze_history_problems(root: Path) -> List[str]:
-    """Walk FREEZE.toml's git history (every commit on the first-parent chain from the
-    file's first appearance to HEAD, not only the ones that touch its path, plus the
-    working tree as the final state) and check the invariants `_freeze_transition_problems`
-    describes between every consecutive DISTINCT state.
+    """Walk FREEZE.toml's git history (its state at every commit on the first-parent chain
+    from the file's first appearance to HEAD, plus the working tree as the final state) and
+    check the invariants `_freeze_transition_problems` describes between every consecutive
+    DISTINCT state. Since fix round 4 (Ruling 8) the walk reads only the commits where the
+    path changed, all in one `git log --raw` plus `git cat-file` (`_freeze_commit_history`);
+    the state at any other commit is, by construction, the previous listed one.
 
-    One check is UNCONDITIONAL, never gated by cutoff: FREEZE.toml being a symlink in the
-    working tree. Reading it (`_load_freeze`) follows the symlink, so even the `frozen`
-    date every other check below relies on to decide whether it applies cannot be trusted
-    once the path itself is a symlink -- there is nothing left to gate on. A symlink
-    recorded in HISTORY (git mode 120000) rather than in the working tree is a different
-    code path (the history walk itself, which does have a trustworthy `frozen` field to
-    gate on) and remains cutoff-gated like everything below.
+    One check is UNCONDITIONAL, never gated by cutoff: a working-tree FREEZE.toml that
+    `_load_freeze_safe` refuses -- a symlink (refused before anything is read through it),
+    not a regular file, oversized, not UTF-8, not TOML, or not FREEZE.toml's shape. None of
+    its fields, the `frozen` date every other check below gates on included, can be
+    trusted, so there is nothing left to gate on. A symlink recorded in HISTORY (git mode
+    120000) rather than in the working tree is a different code path (the history walk
+    itself, which does have a trustworthy `frozen` field to gate on) and remains
+    cutoff-gated like everything below.
 
     Everything else fails closed only where it genuinely cannot check anything, and only
     when a post-cutoff campaign (FREEZE.toml's own `frozen` date >= `CUTOFF`) needs the
@@ -606,7 +817,8 @@ def freeze_history_problems(root: Path) -> List[str]:
 
     - a symlink recorded at any point in history (git mode 120000) -- a symlink's target
       can change independently of the history being walked, so content comparisons through
-      it prove nothing (fix round 3);
+      it prove nothing (fix round 3); likewise a gitlink/submodule (160000) or a directory
+      at the path, and a blob that is not a readable FREEZE.toml (fix round 4);
     - the campaign root is not inside a git repository;
     - the repository is a SHALLOW clone (`git rev-parse --is-shallow-repository`) -- the
       history this would walk is truncated by construction, which operationally reproduces
@@ -637,15 +849,13 @@ def freeze_history_problems(root: Path) -> List[str]:
     """
     root = Path(root)
 
-    # Checked BEFORE loading anything, and reported UNCONDITIONALLY (not gated by
-    # post-cutoff like every other check below): `_load_freeze` reads straight through a
-    # symlink, so a symlinked FREEZE.toml poisons even the `frozen` field this function
-    # would otherwise use to decide whether it cares -- there is no field left that can be
-    # trusted enough to decide anything else, including whether to decide anything at all.
-    if freeze_path(root).is_symlink():
-        return [f"{FREEZE_FILENAME} is a symlink in the working tree; refusing to trust it."]
-
-    doc = _load_freeze(root)
+    # Reported UNCONDITIONALLY (not gated by post-cutoff like every other check below): an
+    # untrusted record -- a symlink, refused before anything is read through it, or content
+    # that is not FREEZE.toml at all -- leaves no `frozen` field trustworthy enough to decide
+    # anything else, including whether to decide anything at all.
+    doc, unreadable = _load_freeze_safe(root)
+    if unreadable:
+        return [unreadable]
     if doc is None:
         return []
 
@@ -684,7 +894,11 @@ def freeze_history_problems(root: Path) -> List[str]:
             ]
         return []
 
-    history, hist_problem = _freeze_commit_history(root, relpath)
+    # Run from the TOP LEVEL: git resolves a pathspec against its working directory, and
+    # *relpath* is relative to the top level. Round 3 ran from the campaign root, so every
+    # campaign in a subdirectory (`missions/<name>/`) found no history and was reported as
+    # never committed (fix round 4).
+    history, hist_problem = _freeze_commit_history(toplevel, relpath)
     if hist_problem:
         return [hist_problem] if post_cutoff else []
     if not history:
@@ -722,7 +936,9 @@ def freeze_grant_problem(root: Path, node) -> str:
     if not checks_required(node):
         return ""
     root = Path(root)
-    doc = _load_freeze(root)
+    doc, unreadable = _load_freeze_safe(root)
+    if unreadable:
+        return unreadable
     if doc is None:
         return (
             f"no {FREEZE_FILENAME} at the campaign root; a post-cutoff node may not be "

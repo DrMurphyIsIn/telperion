@@ -1480,6 +1480,11 @@ def cmd_mission_grant(args) -> int:
     except GateError as exc:
         print(str(exc))
         return 1
+    except Exception as exc:
+        # The gate's readers report an unreadable record as a refusal (process.
+        # _load_freeze_safe); anything that still raises is a refusal too, never a traceback.
+        print(f"Node {slug!r}: grant refused: {type(exc).__name__}: {exc}")
+        return 1
 
     note = ""
     if node.proof is not None and node.proof.via == "reduction":
@@ -2699,8 +2704,16 @@ def cmd_mission_verify(args) -> int:
     seen_warnings: set[str] = set()
     for camp_root in roots:
         deep = getattr(args, "deep_lean", False)
-        report = verify_campaign(camp_root, deep_lean=deep,
-                                 strict_provenance=getattr(args, 'strict_provenance', False))
+        try:
+            report = verify_campaign(camp_root, deep_lean=deep,
+                                     strict_provenance=getattr(args, 'strict_provenance', False))
+        except Exception as exc:
+            # A campaign whose records cannot even be read fails verify; it does not abort
+            # the run with a traceback (step 5 fix round 4).
+            print(f"ERROR [{camp_root.name}]: verify could not complete: "
+                  f"{type(exc).__name__}: {exc}")
+            any_fail = True
+            continue
         if report.errors:
             for e in report.errors:
                 print(f"ERROR [{camp_root.name}]: {e}")

@@ -694,3 +694,397 @@ def test_cutoff_is_single_source_of_truth():
 
     assert CHECKS_CUTOFF == CUTOFF
     assert CHECKS_CUTOFF is CUTOFF
+
+
+# ---------------------------------------------------------------------------
+# Fix round 4 (Controller Ruling 8): one guarded FREEZE.toml loader for every reader, and a
+# single-pass history walk (`git log --raw` + `git cat-file --batch`)
+# ---------------------------------------------------------------------------
+
+def _git(root: Path, *args: str) -> str:
+    r = subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         *args],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+
+def _symlink_freeze(root: Path, target: str) -> None:
+    freeze_path(root).unlink()
+    freeze_path(root).symlink_to(target)
+
+
+def _non_utf8_target(root: Path) -> str:
+    (root / "poison.bin").write_bytes(b'version = 1\nfrozen = "\xff\xfe\xfd"\n')
+    return "poison.bin"
+
+
+def _post_cutoff_frozen_grant_campaign(parent: Path, campaign: str = "campaign") -> Path:
+    """`_grant_campaign`'s post-cutoff node with passing checks, frozen and committed --
+    grantable as it stands, so a refusal can only come from what a test then does to
+    FREEZE.toml."""
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    root = _grant_campaign(parent, created="2026-10-29", campaign=campaign)
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node)))
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+    return root
+
+
+def test_freeze_problems_symlink_to_mission_toml_reports_only_the_refusal(tmp_path):
+    """Re-review 2's first repro: a symlink to another valid TOML file used to be read
+    THROUGH by freeze_problems' own load, producing a spurious 'not recorded' line from
+    mission.toml's fields ahead of the refusal."""
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _symlink_freeze(root, "mission.toml")
+
+    assert freeze_problems(root) == [
+        "FREEZE.toml is a symlink in the working tree; refusing to trust it."]
+
+
+def test_freeze_problems_symlink_to_non_utf8_does_not_raise(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _symlink_freeze(root, _non_utf8_target(root))
+
+    problems = freeze_problems(root)
+    assert problems == ["FREEZE.toml is a symlink in the working tree; refusing to trust it."]
+
+
+@pytest.mark.parametrize("target", ["mission.toml", "poison"])
+def test_freeze_grant_problem_refuses_symlinked_freeze(tmp_path, target):
+    root = _post_cutoff_frozen_grant_campaign(tmp_path)
+    _symlink_freeze(root, _non_utf8_target(root) if target == "poison" else "mission.toml")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+
+    assert "is a symlink in the working tree" in freeze_grant_problem(root, node)
+    with pytest.raises(GateError, match="symlink"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+@pytest.mark.parametrize("content, expect", [
+    (b'version = 1\nfrozen = "\xff"\n', "not valid UTF-8"),
+    (b"version = = 1\n", "not valid TOML"),
+    (b'version = "two"\nfrozen = "2026-10-29"\n', "version"),
+    (b'version = 1\nfrozen = "2026-10-29"\nstatements = "x"\n', "statements"),
+    (b'version = 1\nfrozen = "2026-10-29"\nunfreeze = [1, 2]\n', "unfreeze"),
+    (b"x = 1\n" + b"#" * (1 << 20), "larger than"),
+], ids=["non-utf8", "bad-toml", "version-type", "statements-type", "unfreeze-type", "oversize"])
+def test_unreadable_freeze_is_a_problem_not_an_exception(tmp_path, content, expect):
+    root = _post_cutoff_frozen_grant_campaign(tmp_path)
+    freeze_path(root).write_bytes(content)
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+
+    problems = freeze_problems(root)
+    assert len(problems) == 1 and expect in problems[0], problems
+    assert expect in freeze_grant_problem(root, node)
+    assert freeze_history_problems(root) == problems
+    with pytest.raises(ValueError, match="FREEZE.toml"):
+        unfreeze(root, author="alice@example.com", reason="r",
+                 readback_identity="bob@example.com", date="2026-10-30")
+
+
+def test_freeze_as_directory_in_working_tree_is_a_problem(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze_path(root).unlink()
+    freeze_path(root).mkdir()
+
+    problems = freeze_problems(root)
+    assert len(problems) == 1 and "not a regular file" in problems[0]
+
+
+def test_freeze_refuses_over_a_dangling_symlink(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze_path(root).symlink_to("nowhere.toml")
+    with pytest.raises(ValueError, match="already"):
+        freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+
+
+def test_cli_verify_symlinked_non_utf8_freeze_is_clean_error(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    root = _post_cutoff_frozen_grant_campaign(mroot, campaign="demo")
+    _symlink_freeze(root, _non_utf8_target(root))
+
+    rc = main(["mission", "--missions-root", str(mroot), "verify", "demo"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "symlink" in out and "Traceback" not in out
+
+
+def test_cli_grant_symlinked_non_utf8_freeze_is_clean_error(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    root = _post_cutoff_frozen_grant_campaign(mroot, campaign="demo")
+    _symlink_freeze(root, _non_utf8_target(root))
+
+    rc = main(["mission", "--missions-root", str(mroot), "grant", "Demo_ck",
+               "--campaign", "demo", "--identity", "gate@test", "--session", "gate-session"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "symlink" in out and "Traceback" not in out
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+@pytest.mark.parametrize("command", ["verify", "grant"])
+def test_cli_verify_and_grant_turn_any_exception_into_a_clean_error(tmp_path, capsys,
+                                                                     monkeypatch, command):
+    """Belt and braces behind the guarded loader: whatever a freeze read (or anything else
+    under verify/grant) raises, the CLI reports it and exits non-zero, never a traceback."""
+    import telperion.missions.verify as verify_mod
+
+    def boom(*_a, **_k):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    mroot = tmp_path / "missions"
+    _post_cutoff_frozen_grant_campaign(mroot, campaign="demo")
+    monkeypatch.setattr(verify_mod, "verify_campaign" if command == "verify" else "grant_status",
+                        boom)
+    argv = ["mission", "--missions-root", str(mroot), command]
+    argv += (["demo"] if command == "verify" else
+             ["Demo_ck", "--campaign", "demo", "--identity", "gate@test",
+              "--session", "gate-session"])
+    rc = main(argv)
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "UnicodeDecodeError" in out
+
+
+def test_freeze_history_gitlink_has_a_clear_message(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: initial freeze")
+    head = _git(root, "rev-parse", "HEAD").strip()
+    _git(root, "rm", "-q", "--cached", "FREEZE.toml")
+    _git(root, "update-index", "--add", "--cacheinfo", f"160000,{head},FREEZE.toml")
+    _git(root, "commit", "-q", "-m", "c2: FREEZE.toml replaced by a gitlink")
+    c2 = _git(root, "rev-parse", "HEAD").strip()
+
+    assert f"FREEZE.toml is a gitlink/submodule at {c2[:12]}" in " ".join(freeze_problems(root))
+
+
+def test_freeze_history_directory_at_path_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze_path(root).mkdir()
+    (freeze_path(root) / "inner").write_text("x\n")
+    _git_commit(root, "c1: FREEZE.toml is a directory")
+    (freeze_path(root) / "inner").unlink()
+    freeze_path(root).rmdir()
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c2: an ordinary FREEZE.toml replaces it")
+
+    problems = freeze_problems(root)
+    assert any("FREEZE.toml" in p and "history" in p for p in problems), problems
+
+
+def test_freeze_history_delete_then_readd_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: initial freeze")
+    freeze_path(root).unlink()
+    _git_commit(root, "c2: delete it", add=("-A",))
+    freeze(root, identity="mallory@example.com", session="s2", date="2026-10-30")
+    _git_commit(root, "c3: a fresh 'version 1'")
+
+    assert any("deleted or moved in history" in p for p in freeze_problems(root))
+
+
+def _tamper_hash(root: Path, manifest, text: str) -> None:
+    """The C1 tamper: edit Node_A's statement and rewrite its recorded hash to match, at an
+    unchanged version."""
+    node = load_campaign(root).nodes["Node_A"]
+    write_statement(root, node, text, manifest)
+    h = hashlib.sha256(statement_body(root, node).encode("utf-8")).hexdigest()
+    _hand_edit_freeze(root, lambda d: d["statements"].__setitem__("Node_A", h))
+
+
+def test_freeze_history_merge_bringing_a_tamper_from_a_side_branch_flagged(tmp_path):
+    """The merge's tree is identical to its SECOND parent at FREEZE.toml (the side branch
+    brought the whole change) and differs from its first; `git log --first-parent -- path`
+    must still list it."""
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: initial freeze")
+    main_branch = _git(root, "symbolic-ref", "--short", "HEAD").strip()
+
+    _git(root, "checkout", "-q", "-b", "side")
+    _tamper_hash(root, manifest, "theorem thm_Node_A : 5 = 5")
+    _git_commit(root, "side: tamper")
+    _git(root, "checkout", "-q", main_branch)
+    (root / "unrelated.txt").write_text("x\n")
+    _git_commit(root, "main: unrelated")
+    _git(root, "merge", "-q", "--no-ff", "side", "-m", "merge side")
+
+    assert any("without a version bump" in p for p in freeze_problems(root))
+
+
+def test_freeze_history_merge_bringing_a_legitimate_unfreeze_clean(tmp_path):
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: initial freeze")
+    main_branch = _git(root, "symbolic-ref", "--short", "HEAD").strip()
+
+    _git(root, "checkout", "-q", "-b", "side")
+    write_statement(root, load_campaign(root).nodes["Node_A"], "theorem thm_Node_A : 6 = 6",
+                    manifest)
+    unfreeze(root, author="alice@example.com", reason="revision",
+             readback_identity="bob@example.com", date="2026-10-30")
+    _git_commit(root, "side: legitimate unfreeze")
+    _git(root, "checkout", "-q", main_branch)
+    (root / "unrelated.txt").write_text("x\n")
+    _git_commit(root, "main: unrelated")
+    _git(root, "merge", "-q", "--no-ff", "side", "-m", "merge side")
+
+    assert freeze_problems(root) == []
+
+
+def test_freeze_history_evil_merge_flagged(tmp_path):
+    """A merge whose FREEZE.toml matches NEITHER parent (the tamper is made while resolving
+    the merge itself)."""
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: initial freeze")
+    main_branch = _git(root, "symbolic-ref", "--short", "HEAD").strip()
+
+    _git(root, "checkout", "-q", "-b", "side")
+    (root / "side.txt").write_text("s\n")
+    _git_commit(root, "side: unrelated")
+    _git(root, "checkout", "-q", main_branch)
+    _git(root, "merge", "-q", "--no-ff", "--no-commit", "side")
+    _tamper_hash(root, manifest, "theorem thm_Node_A : 8 = 8")
+    _git_commit(root, "evil merge")
+
+    assert any("without a version bump" in p for p in freeze_problems(root))
+
+
+def _append_noise_commits(root: Path, n: int) -> None:
+    """*n* further first-parent commits on HEAD that never touch FREEZE.toml, written in ONE
+    `git fast-import` pass -- a `git commit` per commit would make the fixture itself the
+    slow part."""
+    branch = _git(root, "symbolic-ref", "HEAD").strip()
+    head = _git(root, "rev-parse", "HEAD").strip()
+    chunks = []
+    for i in range(n):
+        data = f"{i}\n".encode()
+        chunks.append(
+            f"commit {branch}\ncommitter t <t@example.invalid> {1761700000 + i} +0000\n"
+            f"data 5\nnoise\n".encode()
+            + (f"from {head}\n".encode() if i == 0 else b"")
+            + f"M 100644 inline noise.txt\ndata {len(data)}\n".encode() + data + b"\n")
+    r = subprocess.run(["git", "-C", str(root), "fast-import", "--quiet"],
+                       input=b"".join(chunks), capture_output=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_freeze_history_walk_is_single_pass_over_500_commits(tmp_path, monkeypatch):
+    """Ruling 8 (b): round 3 ran one `git ls-tree` per first-parent commit (~29 s for 2,000
+    commits, on every post-cutoff grant). The walk's git calls must not grow with history
+    length, and 500 commits must take well under 5 s."""
+    import time
+
+    import telperion.missions.process as process_mod
+
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c1: initial freeze")
+    _append_noise_commits(root, 250)
+    write_statement(root, load_campaign(root).nodes["Node_A"], "theorem thm_Node_A : 4 = 4",
+                    manifest)
+    unfreeze(root, author="alice@example.com", reason="revision",
+             readback_identity="bob@example.com", date="2026-10-30")
+    _git_commit(root, "unfreeze to v2", add=("FREEZE.toml", "lean"))
+    _append_noise_commits(root, 248)
+    assert int(_git(root, "rev-list", "--count", "HEAD")) == 500
+
+    calls = []
+    real_run = subprocess.run
+
+    def counting_run(argv, *a, **k):
+        calls.append(list(argv))
+        return real_run(argv, *a, **k)
+
+    monkeypatch.setattr(process_mod.subprocess, "run", counting_run)
+    t0 = time.monotonic()
+    problems = freeze_history_problems(root)
+    elapsed = time.monotonic() - t0
+
+    assert problems == []
+    assert len(calls) <= 8, [c[3:5] for c in calls[:12]]
+    assert elapsed < 5.0
+
+
+def test_freeze_history_non_utf8_blob_is_a_problem_not_an_exception(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze_path(root).write_bytes(b'version = 1\nfrozen = "\xff"\n')
+    _git_commit(root, "c1: a FREEZE.toml that is not UTF-8")
+    c1 = _git(root, "rev-parse", "HEAD").strip()
+    freeze_path(root).unlink()
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "c2: an ordinary freeze over it")
+
+    assert freeze_problems(root) == [
+        f"FREEZE.toml could not be read at commit {c1[:12]}: it is not valid UTF-8."]
+
+
+def test_freeze_history_campaign_dir_with_glob_characters(tmp_path):
+    """The path handed to `git log` is literal (`--literal-pathspecs`): a campaign at
+    `c[1]/` is not confused with a sibling `c1/` whose FREEZE.toml has its own history."""
+    repo = tmp_path / "repo"
+    root, sibling = repo / "c[1]", repo / "c1"
+    manifest = _campaign(root)
+    _campaign(sibling)
+    _git_init(repo)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(sibling, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(repo, "c1: both frozen")
+    freeze_path(sibling).unlink()
+    _git_commit(repo, "c2: the sibling's freeze deleted", add=("-A",))
+
+    assert freeze_problems(root) == []
+    _tamper_hash(root, manifest, "theorem thm_Node_A : 9 = 9")
+    _git_commit(repo, "c3: tamper")
+    assert any("without a version bump" in p for p in freeze_problems(root))
+
+
+def test_freeze_history_campaign_in_a_subdirectory_of_the_repo(tmp_path):
+    """Every real campaign lives at `missions/<name>/`, not at the repository root. Round 3
+    ran the walk's git commands from the campaign root with a top-level-relative path, found
+    no history, and reported every such post-cutoff campaign as never committed."""
+    repo = tmp_path / "repo"
+    root = repo / "missions" / "demo"
+    manifest = _campaign(root)
+    _git_init(repo)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(repo, "c1: initial freeze")
+
+    assert freeze_problems(root) == []
+    _tamper_hash(root, manifest, "theorem thm_Node_A : 3 = 3")
+    _git_commit(repo, "c2: tamper")
+    assert any("without a version bump" in p for p in freeze_problems(root))
