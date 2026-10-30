@@ -1508,6 +1508,17 @@ def test_parse_print_axioms_malformed_header_raises():
         parse_print_axioms(out)
 
 
+def test_parse_print_axioms_header_split_across_lines_raises():
+    """Fix round 2 (Ruling 11): a `#print axioms` header split between its closing quote
+    and "depends on axioms" (e.g. by a terminal/log line-wrap unrelated to Lean's own
+    bracket-wrapping, which never splits the header itself -- only the axiom LIST) must
+    raise, not be silently dropped as two unrelated-looking lines (the bare `'T'` line
+    didn't itself contain "depends on axioms", so the earlier check let it through)."""
+    out = "'T'\n depends on axioms: [propext]\n"
+    with pytest.raises(ValueError, match="unrecognised"):
+        parse_print_axioms(out)
+
+
 def test_crosscheck_axioms_type_checks_closure_entries():
     with pytest.raises(ValueError, match="T"):
         crosscheck_axioms({"T": {"propext"}}, {"T": "propext"})  # a str, not a list
@@ -1611,6 +1622,8 @@ def test_cli_audit_crosscheck_malformed_closure_axioms_rejected(tmp_path, capsys
     out = capsys.readouterr().out
     assert "malformed closure audit data" in out and "Traceback" not in out
 
+
+def test_process_runs_git_only_through_the_sanitised_helper():
     """Structural (Ruling 9): no subprocess call in process.py outside `_git`, so no git
     invocation can skip --no-replace-objects or the sanitised environment."""
     import ast

@@ -1104,7 +1104,13 @@ def _validate_module_name(module: str, *, slug: str) -> None:
     runs through `lake env lean`. Unlike a theorem name, a module name is NEVER
     guillemet-quoted here -- an `import` line is not a context this function trusts itself
     to escape -- so anything that is not already a safe plain identifier is refused
-    outright rather than rendered."""
+    outright rather than rendered. Fix round 2 (Ruling 11): `_IDENT_COMPONENT`'s charset is
+    narrower than Lean's actual identifier grammar (it has no general Unicode-letter
+    support beyond the specific ranges Lean itself commonly uses), so this refuses a
+    perfectly legitimate non-ASCII-but-Lean-valid module component too -- deliberately:
+    this function does not attempt to special-case Lean's full identifier grammar, and
+    fails closed on anything it cannot immediately recognise as safe rather than risk
+    admitting a character class later proven unsafe."""
     from ..closure_audit import _IDENT_COMPONENT
 
     for part in module.split("."):
@@ -1201,6 +1207,14 @@ def render_audit_file(root: Path) -> str:
 _HEADER_NONE_RE = re.compile(r"^'(.+)' does not depend on any axioms$")
 _HEADER_LIST_RE = re.compile(r"^'(.+)' depends on axioms: \[(.*)$")
 
+#: A line that is NOTHING but a single quoted name (fix round 2, Ruling 11): the bare
+#: `'<name>'` half of a header whose "depends on axioms"/"does not depend..." half got
+#: split onto a separate line (e.g. by a terminal or log line-wrap unrelated to Lean's own
+#: bracket-wrapping, which never splits the header itself -- only the axiom LIST). Lean's
+#: own output never prints a line that is just one quoted identifier and nothing else, so
+#: this is unambiguously a malformed/split header, not a line to ignore.
+_BARE_QUOTED_NAME_RE = re.compile(r"^'[^']*'$")
+
 
 def _record_axioms(axioms_by_name: Dict[str, Set[str]], name: str, axioms: Set[str]) -> None:
     """Shared by both header shapes: raises `ValueError` if *name* was already recorded
@@ -1240,8 +1254,9 @@ def parse_print_axioms(output: str) -> Dict[str, Set[str]]:
     never a silent absorption. A line that is neither a recognised header nor (while a
     list is open) a continuation -- a warning, an `info:` line, a blank line -- is
     ignored, UNLESS it looks like a header but does not fully match (e.g. a typo'd
-    "depends on axiomss:"), which raises rather than being silently skipped.
-    `str.splitlines()` already treats `\\r\\n` as a single line ending.
+    "depends on axiomss:", or a header whose closing quote and "depends on axioms" land
+    on two different lines -- fix round 2, Ruling 11), which raises rather than being
+    silently skipped. `str.splitlines()` already treats `\\r\\n` as a single line ending.
 
     Raises `ValueError` if the same theorem is printed twice with two DIFFERENT axiom
     sets (see `_record_axioms`)."""
@@ -1277,7 +1292,8 @@ def parse_print_axioms(output: str) -> Dict[str, Set[str]]:
         stripped = line.strip()
         if stripped.startswith("'") and (
                 " depends on axioms" in stripped
-                or "does not depend on any axioms" in stripped):
+                or "does not depend on any axioms" in stripped
+                or _BARE_QUOTED_NAME_RE.match(stripped)):
             raise ValueError(f"unrecognised #print axioms line: {line!r}")
         # else: a warning, an `info:` line, a blank line, ... -- ignored.
     return axioms_by_name
