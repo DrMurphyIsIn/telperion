@@ -39,8 +39,17 @@ A claim reserves a node for one session for a TTL (default: 24 hours). Claims ar
 | `comparator-record <slug> --run-id N --theorem T` | Record a PASSING `missions-comparator` run on a proved node (sidecar; never a status change) |
 | `checks-record <slug> --campaign C --probe-json F --closure-json F --fingerprint-json F` | Record the negation probe, closure audit and statement fingerprint for the node's artifact, read from the checks' own JSON output. A node created on or after 2026-10-28 (or with no `created` date) cannot be granted `proved` without a passing record; see [Checks before grant](#checks-before-grant) |
 | `ci-record <slug> --workflow W --job J --run-id N` | Record a run of a named non-required CI job on the node's CURRENT artifact (head sha + conclusion from `gh run view`, or `--head-sha`/`--conclusion`). A node with `requires_ci_job = "W:J"` cannot be granted, and fails `verify` once proved, without a `success` record on the current artifact digest |
-| `verify [campaign]` | Run the shallow coherence battery locally (node schema, DAG acyclicity, artifact existence, normalized statement containment) — read-only; add `--deep-lean` to also lake-build the campaign's statement package |
+| `freeze <campaign>` | Record a campaign-level statement freeze (`FREEZE.toml`) and write the `DEVIATIONS.md` template if there isn't one yet. A post-cutoff node cannot be granted until its campaign is frozen AND the freeze is committed; see [Statement-first process](#statement-first-process) |
+| `unfreeze <campaign> --author A --reason R --readback-identity I` | Bump a frozen campaign's hashes to the current statements, with a recorded, independently read-back reason (`--readback-identity` must differ from `--author`) |
+| `deviations-readback <campaign>` | Record an independent read-back of `DEVIATIONS.md` (the ledger's sha256 plus who read it and when); required, from an identity/session distinct from a node's own `[author]`, before that node can be granted post-cutoff |
+| `audit-file <campaign>` | Write `<campaign>/lean/Audit.lean`: one `import` per proved node's artifact module, then one `#print axioms <theorem>` per proved node |
+| `audit-crosscheck --print-axioms-out F --closure-json F` | Cross-check a captured `lake env lean Audit.lean` transcript against a closure audit's per-target axiom lists |
+| `verify [campaign]` | Run the shallow coherence battery locally (node schema, DAG acyclicity, artifact existence, normalized statement containment, the campaign freeze and its git history) — read-only; add `--deep-lean` to also lake-build the campaign's statement package |
 | `graph [campaign]` | Emit DOT export of the dependency DAG with node statuses |
+
+One more verb lives outside `mission` (it operates on a campaign directory directly, not through `--missions-root`):
+`telperion lint-provenance <campaign-root>`, the provenance header lint (spec 7.4). See
+[Statement-first process](#statement-first-process).
 
 ## Five-Minute Quickstart
 
@@ -445,6 +454,158 @@ hand (workflow_dispatch), once a week on a schedule, and on a push or pull reque
 checks), the three test files above, `tests/test_missions_checks.py`, the test helpers `tests/lean_env.py` and
 `tests/fake_lean_cli.py`, or the workflow file itself. The weekly run is the backstop: a new runner image, or anything
 else outside those paths, can break the controls without touching them, and a path filter would never notice.
+
+## Statement-first process
+
+Spec 7 adds a second layer on top of "checks before grant": the campaign's statements themselves are frozen, and any
+departure from an informal source is written down and read back, before a post-cutoff node can be granted. Where the
+checks above ask "does this artifact actually prove what it claims?", this section asks "is the claim itself the one
+everyone agreed to, and did anyone sanity-check the paper trail?" Both layers gate the same thing (`grant`), and both
+are scoped by the same predicate, `provenance.checks_required`: a node is in scope once its `created` date is on or
+after 2026-10-28, or has no `created` date at all (fail-closed). A campaign that predates all of this — every node in
+it created before the cutoff — is `pre-process`: `mission verify`'s freeze check, the deviation ledger, and the
+provenance lint simply have nothing to say about it, and `mission provenance-report` prints that label for it rather
+than silently passing it off as compliant.
+
+The whole shape, end to end, on one node: `add` (writes `[author]`) → `audit` (independent read-back, draft → open) →
+`link` (attach the artifact) → `checks-record` (the step-4 checks) → `freeze` the campaign and commit it → write and
+read back `DEVIATIONS.md` → `grant`. `tests/test_process_e2e.py` runs exactly this on a synthetic campaign and is the
+easiest way to see every message the gate actually raises, in the order it actually raises them.
+
+### Freezing a campaign, and committing it
+
+`telperion mission freeze <campaign> [--identity I] [--session S]` writes `<campaign>/FREEZE.toml`: a version number
+(1, the first time), who froze it, and the sha256 of every node's current statement body. From then on, a post-cutoff
+node cannot be granted `proved` unless its statement's hash still matches what FREEZE.toml recorded — the freeze is
+what makes a later edit to a statement *visible* as drift, rather than just a silent change nobody has to answer for.
+`freeze` also writes `DEVIATIONS.md` from a template if the campaign does not have one yet (see below), so a freshly
+frozen campaign is never one file short of being grantable.
+
+**Commit it.** `mission freeze` only writes the file; it does not commit it, and a post-cutoff grant needs the freeze
+to be committed. The reason is `freeze_history_problems` (`process.py`): on every grant and on every `verify`, the
+campaign's git history for `FREEZE.toml` is walked and checked for the shape a legitimate `freeze`/`unfreeze` sequence
+always has — version numbers that only go up, one `[[unfreeze]]` entry per version bump, no self-read-back
+`[[unfreeze]]` entry, the file never deleted or symlinked along the way. An uncommitted `FREEZE.toml` has no history to
+check at all, so inside a git repository it is refused outright for a post-cutoff campaign; outside one it is refused
+too (there is nothing to anchor the freeze to). Commit with an explicit identity rather than depending on whatever the
+ambient git config happens to be:
+
+```bash
+telperion mission freeze demo
+git -C missions/demo add FREEZE.toml DEVIATIONS.md
+git -C missions/demo commit -m "freeze demo campaign"
+```
+
+If a statement changes after the freeze, `mission freeze` itself refuses to run again (it would silently throw away
+the unfreeze history) — use `unfreeze` instead:
+
+```bash
+telperion mission unfreeze demo --author you@example.com --reason "why the statement moved" \
+    --readback-identity someone-else@example.com
+git -C missions/demo add FREEZE.toml
+git -C missions/demo commit -m "unfreeze demo campaign: <reason>"
+```
+
+`unfreeze` re-hashes every current statement, bumps the version, and appends an `[[unfreeze]]` entry recording who
+asked for the change, why, and who read the new hashes back before they were recorded. `--readback-identity` must
+differ from `--author` — refused otherwise, the same "testimony from a different principal" rule as the node read-back
+above — and that read-back identity has nothing to do with any node's own `[author]`; it is independence of the
+*freeze bump itself*, a campaign-level fact, not a per-node one. Forget to commit the unfreeze and `verify` keeps
+reporting the old drift: the working tree has the new hash, but the history walk a post-cutoff grant and `verify` both
+run sees only what git has recorded.
+
+### The deviation ledger, and its read-back
+
+`DEVIATIONS.md`, at the campaign root, records every place a formal statement departs from whatever informal source
+motivated it — a missing side condition tightened into a hypothesis, a weaker conclusion than the original claim,
+anything a reader of the informal statement would want flagged rather than discovered later. Its format is either the
+single word `none` (case-insensitive, a trailing `.` allowed — the template `mission freeze` writes), or one or more
+lines `- YYYY-MM-DD | what departs | why`. A bare `N/A` is refused with a pointed hint to write `none` instead:
+"not applicable" and "I checked and there are none" are different claims, and the ledger should never leave which one
+is meant to guesswork. A deviation dated in the future is refused too — a deviation is something that already
+happened, not something scheduled.
+
+Parsing the ledger is not the same as it being *read back*, and spec 7.3 asks for both: someone has to have actually
+looked at the current ledger and said so. `telperion mission deviations-readback <campaign> --identity I --session S`
+writes `DEVIATIONS.readback.toml`, recording the sha256 of the ledger's exact current bytes plus who read it and when.
+A post-cutoff grant refuses without this file, refuses if the ledger has changed since the recorded sha256 (read it
+back again), and refuses if the read-back's identity or session matches the node's own `[author]` — the same
+self-audit comparison the node-level read-back uses, so the two checks cannot drift apart from each other. There is no
+`--campaign`-scoped node argument here on purpose: the ledger is campaign-wide, so one read-back covers every node in
+it, not just the one you happen to be granting next.
+
+### Grant
+
+`telperion mission grant <slug> --campaign C [--identity I] [--session S]` is unchanged in shape from before this
+step — it is still the only verb that flips `open` to `proved`/`refuted`, and it is still a syntactic, local gate, not
+a Lean rebuild. What changed is how many preconditions a post-cutoff `proved` grant now carries, and the order the
+gate actually checks them in (`verify.grant_status`): the usual open/proof-link/artifact/statement-match checks first,
+then — once the gate already knows the grant would be `proved` — in this order: a passing, current `[checks]` record;
+an `[author]` block (refused outright if absent, since a post-cutoff node always gets one from `add`, so a missing one
+can only mean a hand edit); the campaign's freeze (with the full git-history walk); the deviation ledger and its
+read-back. Each layer's refusal names itself plainly — `[checks]`, "frozen" / FREEZE.toml, `DEVIATIONS.readback.toml`
+— so a refused grant tells you which of the four to go satisfy next, in the order the gate will actually ask for them.
+A `refuted` grant skips all four: a refutation does not rest on a passing `[checks]` record, a frozen statement, or a
+deviation ledger read-back, the same way it already skips the heavy-node re-judge.
+
+### Audit.lean and the provenance cross-check
+
+`telperion mission audit-file <campaign>` writes `<campaign>/lean/Audit.lean`: one `import` per distinct proved-node
+artifact module (sorted, de-duplicated), then one `#print axioms <theorem>` per proved node, so that running it
+through `lake env lean` gives one transcript naming every axiom every proved node in the campaign actually rests on.
+Capture that transcript and cross-check it against a closure audit's own JSON with:
+
+```bash
+lake env lean lean/Audit.lean > print_axioms.txt
+telperion audit-closure --json closure.json   # per node, or however your CI already runs it
+telperion mission audit-crosscheck --print-axioms-out print_axioms.txt --closure-json closure.json
+```
+
+A theorem on only one side — printed by `Audit.lean` but never closure-audited, or the reverse — is reported as a
+problem, same as an axiom set that differs between the two. This is a drift net across the WHOLE campaign's proved
+nodes in one pass, independent of the per-node, per-grant checks `checks-record` already ran.
+
+### The provenance lint
+
+`telperion lint-provenance <campaign-root>` enforces spec 7.4 on every `.lean` file under the campaign: a file counts
+as "ported" either because its own first 30 lines mention `ported from`, `adapted from` or `copied from` (inside a
+Lean comment, never inside a string or in code), or because `<dir>/PORTED.toml` names it explicitly in a `files =
+[...]` list — a hand-curated declaration for a file ported verbatim with its original header already stripped, which
+the mention scan alone would miss. Every file counted as ported must then carry, in that same 30-line window, a line
+matching `-- Provenance: repo=... file=... commit=<40 lowercase hex>`. Clean exits 0 with one `OK` line; any problem
+exits 1 and lists every file by name; a path that does not exist, or is not a directory, exits 2 rather than printing
+a silent, misleadingly clean `OK` for a typo'd path.
+
+### Known limitations, stated plainly
+
+- **Local `.git` contents, including its history, are not fully trustworthy inputs on their own.** The freeze-history
+  walk (`freeze_history_problems`) refuses `git replace` refs, grafts, alternates, and a shallow clone outright, and
+  it reads through one hardened `_git` helper with a sanitised environment and `--no-replace-objects` — but rewriting
+  history to a single, internally consistent commit (amending a freeze and its statement together, with the version
+  left unchanged) is inherent to local git and cannot be detected by anything that only looks at the repository doing
+  the claiming. The anchor for all of this is a PROTECTED remote branch (no force push) plus a `verify` run in CI
+  against a FULL clone of it — never the local repository alone.
+- **A shallow clone, or a repository using grafts or alternates, is refused for a post-cutoff campaign**, not silently
+  tolerated with a partial history: `git rev-parse --is-shallow-repository`, and the presence of `info/grafts` or
+  `objects/info/alternates` (checked in both the git directory and, for a linked worktree, the common directory), are
+  each a hard refusal. Fetch full history (`fetch-depth: 0`) and drop grafts/alternates before freezing or granting.
+- **Git 2.31 or newer is required.** The history walk pins `log.follow=false` and relies on `git log --first-parent
+  --raw --no-abbrev` behaving the documented way; an older git is not tested against this and may not refuse the
+  things it is meant to refuse.
+- **The deviation ledger's own git history is not yet checked.** `DEVIATIONS.md` and its read-back are checked
+  against the WORKING TREE only (present, readable, parsed, read back, current) — unlike `FREEZE.toml`, there is no
+  walk of its git history yet, so the same "rewrite history to a consistent commit" class of tampering that the
+  freeze's own history walk cannot catch either, applies here with nothing watching for it at all. A tracked
+  follow-up, not a gap specific to this step.
+- **Module names in the generated `Audit.lean` are ASCII-only.** `_validate_module_name` refuses any module component
+  outside a plain ASCII Lean-identifier charset — deliberately narrower than Lean's real identifier grammar, which
+  does allow non-ASCII letters in some ranges. A real island's modules are ASCII in practice, so this fails closed
+  (refuses and names the node) rather than risk later discovering a character class it should not have trusted.
+- **A Unicode homoglyph can hide a "ported from" mention.** The provenance lint's "ported" detection
+  (`_PORTED_MENTION_RE`) is a literal ASCII match on `ported`/`adapted`/`copied from`, exactly spec 7.4's own wording.
+  Swap the Latin `a` in "from" for a Cyrillic `а` (U+0430) and the file is never classified as ported at all, so no
+  provenance header is ever required of it — not a bug relative to the brief, which defines "ported" by that exact
+  regex, but a real, cheap way to dodge the control, deliberately or by copying a header that already carries one.
 
 ## MCP Tools (for Claude Code / agents)
 
