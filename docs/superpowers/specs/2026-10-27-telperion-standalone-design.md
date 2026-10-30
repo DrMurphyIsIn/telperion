@@ -126,6 +126,21 @@ on numeral size). On Arda main, 133 Lean projects are pinned to v4.32.0, which p
   verdict is recorded in that node's provenance. A rejection sends the node back to unproved and is reported to the owner
   immediately.
 
+**Amendment (2026-10-30; step 3 Ruling 3, the owner's rule).** "A judge config with nanoda off fails validation, the
+heavy judge included" is replaced by: nanoda may be off ONLY for a heavy node, meaning one with `heavy_certificates` or
+`judge_via = "heavy"`. Those are exactly the nodes for which a local nanoda re-judge is mandatory (a proved heavy node
+stays proved only with a passing local re-judge on its current artifact), so the second kernel is still applied to them,
+locally rather than in the Comparator run. `kernel_policy.judge_config_problems` enforces this: nanoda off on any other
+node is a validation failure.
+
+**Amendment (2026-10-30; step 4 Ruling 1).**
+- `unpermitted_axiom_hard_error` is not a field of the Comparator config (`comparator.challenge_config` has no such
+  key), so it is not checked as one. The axiom whitelist is checked instead: `permitted_axioms` must be exactly the
+  three standard axioms. Whether a hard-error setting is needed is left as a note for steps 5 and 6.
+- "The list can only shrink" is enforced mechanically: `telperion kernel-policy check --base REF` fails if a project is
+  ADDED to the exception list or an entry's toolchain is LOWERED relative to REF, and the CI `kernel-policy` job passes
+  `--base origin/<base branch>` on every pull request.
+
 ### 5.2 Checks (`src/telperion/checks/`)
 
 These are native implementations. Nothing is sent to Axiom's AXLE service. Each check is a small Lean meta-program plus a
@@ -156,6 +171,55 @@ Python wrapper. Each writes a verdict into the node's provenance, and each ships
 
 **Grant rule.** No node is granted unless the negation probe passes (or is `probe-only` with sign-off) and the closure audit
 is clean. The fingerprint is recorded at grant time.
+
+**Amendment (2026-10-30; owner decision "Replay-isolate" of 2026-10-29, step 4 Rulings 7, 9 and 10). How the probe and
+the fingerprint load the statement.** Both checks work on the theorem's ELABORATED constant, never on re-rendered text
+(Ruling 7), and neither imports the untrusted module. Importing it runs its `initialize` blocks and lets its
+`command_elab`, `tactic` and macro registrations elaborate the check's own commands; a re-review used exactly that to
+forge verdicts. Instead (`src/telperion/checks/lean_replay.py`, the Comparator / lean4checker approach):
+- the Lean process imports trusted modules only, from a pinned env whose files are verified against a sha256 manifest
+  stored OUTSIDE the env (`telperion trusted-manifest build/verify`; `build` refuses to overwrite without `--force`);
+- the untrusted module and its untrusted import closure are read as data, from private copies, and every constant is
+  added through the kernel (`addDeclCore` with the kernel check on), so no initializer, elaborator, attribute or other
+  extension of theirs is loaded, and no untrusted code with effects runs in the check's process;
+- the check runs as a callback in that replayed environment;
+- any `axiom` declared in the untrusted closure is refused (Ruling 10): the probe reports ERROR, and the fingerprint
+  refuses;
+- both checks report `olean_sha256`, the digest of the replayed closure's [module, part, sha256] list, and
+  `mission checks-record` refuses a probe and a fingerprint that ran on different closures (Ruling 9).
+
+**Amendment (2026-10-30; step 4 Rulings 5, 7 and 9). The negation probe as built.** "Prove the negation of the
+conclusion" became a counterexample search: plausible's `Testable.checkIO` with a fixed seed (271828), and REFUTED is
+read from the `TestResult` VALUE it returns (its `failure` constructor), never from printed text. The verdicts are
+VACUOUS, REFUTED, PROBE_ONLY, WITNESSED and ERROR. A heartbeat timeout in a probe is PROBE_ONLY, never a verdict
+(Ruling 5). WITNESSED needs a caller-supplied term proving the existential closure of the type's full, non-reducing
+forall-telescope (every antecedent, the conclusion's arrows included, satisfiable at once). The `probe-only` label of
+the text above is the PROBE_ONLY verdict, and the sign-off is a `signoff: <who>` in the `[checks]` note.
+
+**Amendment (2026-10-30; step 4 plan Task 4, Rulings 2, 11, 12 and 13). Where the record lives and when it is
+required.** The fingerprint is not stored in `[grant]`. The probe verdict, the closure verdict, the fingerprint, the
+`olean_sha256` and the artifact's source sha256 are stored together in one `[checks]` record, written by
+`mission checks-record` from the checks' own JSON output; a `[checks]` table with an unknown key is a schema error
+(Ruling 12).
+The probe and fingerprint JSONs also name the `theorem` they checked and the `source_sha256` of the `--file` they were
+given, and `checks-record` refuses a probe of another theorem or a source that is not the artifact's current sha256 (an
+absent value only with `--allow-missing-source`, which the note records; Ruling 12). The grant rule applies to nodes
+created on or after 2026-10-28; a node whose `created` is empty or is not, as a whole, an ISO date is treated as created
+after it (Rulings 2 and 12, fail-closed). A grant that required checks records `checks_required = true` in `[grant]`,
+and from then on the node requires them whatever its `created` says (Ruling 13: the decision is recorded, not read off
+`gate_version`, because every new grant carries the new version, pre-cutoff nodes included). `mission verify` re-checks
+the record on every proved node the rule covers, and `GATE_VERSION` is `2026-10-29.1` (Ruling 11). Known limitations
+recorded by Rulings 11 and 12: the sign-off is free text; the closure audit, which imports rather than replays, is tied
+to the other two checks by the theorem name only; and a `created` back-dated before a node's first grant is not caught.
+
+**Amendment (2026-10-30; step 4 Ruling 9 and the caveat recorded with the fingerprint re-review). These checks are NOT A
+SANDBOX.** Replay isolation keeps the submission's code out of the check's process, and nothing more. Building the
+submission (`lake build`, or compiling a submitted text for the fingerprint) runs its code with the caller's
+permissions, and so does `audit-closure`, which imports it. The `.olean` reader trusts its input bytes (a crafted file
+is a memory-safety attack on the reading process), the memory bound is Lean's own best-effort `--memory`, and a
+same-user process can still reach the private copies during a run. Untrusted submissions must therefore be built and
+checked inside a sandbox, for example Comparator's sandbox on Linux CI. Providing that sandbox is the owner's separate
+decision.
 
 ## 6. Library islands (`islands/`)
 

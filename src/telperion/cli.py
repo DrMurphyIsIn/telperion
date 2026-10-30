@@ -2755,8 +2755,10 @@ def cmd_probe_negation(args) -> int:
 
 def cmd_fingerprint(args) -> int:
     """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target, or with
-    --json {"fingerprints": {...}, "olean_sha256": <closure digest>, "olean_closure": [[module, part, sha256], ...]}. The modules are KERNEL-REPLAYED into the pinned
-    trusted env, never imported.
+    --json {"fingerprints": {...}, "olean_sha256": <closure digest>, "olean_closure": [[module, part, sha256], ...],
+    "module": ..., "theorem": ..., "source_sha256": <sha256 of --file, or null>} (module and theorem are null unless
+    there is exactly one --import and one --target). The modules are KERNEL-REPLAYED into the pinned trusted env,
+    never imported.
 
     Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
     env or manifest). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project."""
