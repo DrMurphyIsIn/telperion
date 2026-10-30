@@ -205,7 +205,10 @@ The probe and fingerprint JSONs also name the `theorem` they checked and the `so
 given, and `checks-record` refuses a probe of another theorem or a source that is absent or not the artifact's current
 sha256 (Ruling 12; the final review removed the `--allow-missing-source` waiver). The final review also requires the
 target to be the node's registered theorem (`guard_anchors.resolve_theorem`), and the probe and fingerprint JSONs to
-carry the replay's axiom list, equal, standard, and including the closure audit's axioms for the target. The grant rule applies to nodes
+carry the replay's axiom list, equal, standard, and including the closure audit's axioms for the target. That
+cross-check is the interim guard for a known gap: `audit-closure` still imports the submission, so its output can be
+forged by an imported module. The owner accepted the gap for this merge (2026-10-30), and porting the closure audit to
+a replay callback is a step-5 follow-up. The grant rule applies to nodes
 created on or after 2026-10-28; a node whose `created` is empty or is not, as a whole, an ISO date is treated as created
 after it (Rulings 2 and 12, fail-closed). A grant that required checks records `checks_required = true` in `[grant]`,
 and from then on the node requires them whatever its `created` says (Ruling 13: the decision is recorded, not read off

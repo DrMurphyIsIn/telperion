@@ -168,8 +168,11 @@ The negation probe still has to evaluate the statement to test it. It does that 
 is reported as PROBE_ONLY with a note, never REFUTED.
 
 One check is NOT isolated this way: the closure audit. `audit-closure` still runs `lake env lean` in the submission's
-project and imports its modules. That runs the project's lakefile and the modules' initializers, so it should be
-treated like a build of untrusted code (see the limitations below).
+project and imports its modules. That runs the project's lakefile and the modules' initializers, so an imported module
+can forge the closure audit's output, and it should be treated like a build of untrusted code. This is a known gap,
+accepted by the owner for this merge (2026-10-30). The interim guard is the replay axiom cross-check that
+`checks-record` applies (see "One closure, bound across the probe and the fingerprint"). Porting the closure audit to a
+replay callback is the step-5 follow-up (see the limitations below).
 
 ### The trusted manifest
 
