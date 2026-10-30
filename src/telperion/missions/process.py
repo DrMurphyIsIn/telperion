@@ -1405,19 +1405,31 @@ _DEVIATIONS_ENTRY_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}) \| (.+?) \| (.+)$")
 _DEVIATIONS_NONE_HINT = "write `none` if there are no deviations to record."
 
 
-def _is_real_date(text: str) -> bool:
+def _parsed_date(text: str) -> Optional[datetime.date]:
+    """*text* as a real calendar `datetime.date`, or `None` if it is not one (`2026-02-30`
+    is the right SHAPE but not a real date; `datetime.date.fromisoformat` is what actually
+    catches that, a plain regex would not)."""
     try:
-        datetime.date.fromisoformat(text)
+        return datetime.date.fromisoformat(text)
     except ValueError:
-        return False
-    return True
+        return None
 
 
 def _strip_deviations_header(lines: List[str]) -> List[Tuple[int, str]]:
     """*lines* (1-indexed against the ORIGINAL text by the caller), with the header HTML
-    comment block -- the first run of lines from one starting with `<!--` through one
-    containing `-->` -- and every blank line removed; every remaining line keeps its
-    original 1-based line number, so a later error can point straight at it.
+    comment -- the first run from a `<!--` through the first `-->` after it -- and every
+    blank line removed; every remaining line keeps its original 1-based line number, so a
+    later error can point straight at it.
+
+    Fix round 1 (reviewer-found Critical): content sharing a PHYSICAL line with the
+    comment markers is never discarded along with them. Text before the opening `<!--`,
+    and text after the closing `-->` (whether that close is on the opening line itself or
+    on a later one), is kept as a body line at that same line number, stripped of the
+    incidental leading/trailing whitespace the cut left behind --
+    `parse_deviations("<!-- header --> - 2026-10-28 | real entry | why\\n")` used to
+    silently discard the entry; it now parses it (or rejects it if malformed), same as any
+    other line. Only the FIRST `<!--` is ever treated as a header open; a `<!--` appearing
+    later (e.g. inside an entry's own text) is left as ordinary body text.
 
     Raises `ValueError` if a `<!--` is ever opened and never closed: an unterminated
     comment is malformed, not silently "the rest of the file is a comment" (the rule this
@@ -1428,15 +1440,31 @@ def _strip_deviations_header(lines: List[str]) -> List[Tuple[int, str]]:
     comment_start = 0
     for lineno, line in enumerate(lines, start=1):
         if in_comment:
-            if "-->" in line:
-                in_comment = False
+            idx = line.find("-->")
+            if idx == -1:
+                continue
+            in_comment = False
+            after = line[idx + 3:].strip()
+            if after:
+                body.append((lineno, after))
             continue
+        if not seen_comment:
+            open_idx = line.find("<!--")
+            if open_idx != -1:
+                seen_comment = True
+                comment_start = lineno
+                before = line[:open_idx].strip()
+                if before:
+                    body.append((lineno, before))
+                close_idx = line.find("-->", open_idx + 4)
+                if close_idx == -1:
+                    in_comment = True
+                else:
+                    after = line[close_idx + 3:].strip()
+                    if after:
+                        body.append((lineno, after))
+                continue
         if not line.strip():
-            continue
-        if not seen_comment and line.lstrip().startswith("<!--"):
-            seen_comment = True
-            comment_start = lineno
-            in_comment = "-->" not in line
             continue
         body.append((lineno, line))
     if in_comment:
@@ -1447,7 +1475,7 @@ def _strip_deviations_header(lines: List[str]) -> List[Tuple[int, str]]:
     return body
 
 
-def parse_deviations(text: str) -> List[dict]:
+def parse_deviations(text: str, *, today: Optional[datetime.date] = None) -> List[dict]:
     """*text* (`DEVIATIONS.md`'s content) parsed into a list of deviation entries, each
     `{"date": ..., "what": ..., "why": ...}`, in file order; `[]` for a ledger that says
     `none`. Raises `ValueError`, naming the offending line number, on anything else.
@@ -1455,9 +1483,14 @@ def parse_deviations(text: str) -> List[dict]:
     After `_strip_deviations_header` removes the header comment and blank lines, what is
     left must be either exactly one line reading `none` (case-insensitively, a trailing
     `.` allowed), or one or more lines matching `_DEVIATIONS_ENTRY_RE`, each with a real
-    calendar date and a non-empty `what` and `why` once stripped. Everything else raises;
-    a bare `N/A` or a wholly empty body (no content lines at all) gets a dedicated hint to
-    write `none` instead, rather than the generic malformed-line message."""
+    calendar date no later than *today* (`datetime.date.today()` if not given -- a fixed
+    value lets a test pin "future" without depending on the clock) and a non-empty `what`
+    and `why` once stripped. Everything else raises; a bare `N/A` or a wholly empty body
+    (no content lines at all) gets a dedicated hint to write `none` instead, rather than
+    the generic malformed-line message. A body holding BOTH a `none` line and a real entry
+    is not "exactly one line reading `none`", so it is malformed too -- the `none` line
+    itself is reported, naming its line number."""
+    today = today if today is not None else datetime.date.today()
     body = _strip_deviations_header(text.splitlines())
 
     if not body:
@@ -1471,10 +1504,16 @@ def parse_deviations(text: str) -> List[dict]:
         m = _DEVIATIONS_ENTRY_RE.match(line)
         if m:
             raw_date, what, why = m.groups()
-            if not _is_real_date(raw_date):
+            entry_date = _parsed_date(raw_date)
+            if entry_date is None:
                 raise ValueError(
                     f"{DEVIATIONS_FILENAME}:{lineno}: {raw_date!r} is not a real calendar "
                     "date."
+                )
+            if entry_date > today:
+                raise ValueError(
+                    f"{DEVIATIONS_FILENAME}:{lineno}: {raw_date!r} is after today "
+                    f"({today.isoformat()}); a deviation cannot be dated in the future."
                 )
             what, why = what.strip(), why.strip()
             if not what or not why:
@@ -1556,13 +1595,135 @@ def write_deviations_template_if_missing(root: Path) -> bool:
     return True
 
 
+#: Name of the campaign-level read-back record for DEVIATIONS.md, at the campaign root.
+DEVIATIONS_READBACK_FILENAME = "DEVIATIONS.readback.toml"
+
+
+def deviations_readback_path(root: Path) -> Path:
+    """`<root>/DEVIATIONS.readback.toml`: who read DEVIATIONS.md back, and the sha256 of
+    the exact bytes they read (spec 7.3's "present and read back" -- distinct from merely
+    PARSING the ledger, which `deviations_grant_problem` already required before this
+    existed; fix round 1, reviewer-found Important)."""
+    return Path(root) / DEVIATIONS_READBACK_FILENAME
+
+
+def _parse_deviations_readback_bytes(data: bytes) -> Tuple[Optional[dict], Optional[str]]:
+    """`(doc, None)`, or `(None, why)` completing "DEVIATIONS.readback.toml ...". Same
+    small, fixed-shape TOML record as FREEZE.toml's own fields (`_parse_freeze_bytes`),
+    just four required non-empty string fields, one of them a 64-hex-digit sha256."""
+    if len(data) > DEVIATIONS_MAX_BYTES:
+        return None, f"is larger than {DEVIATIONS_MAX_BYTES} bytes"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "is not valid UTF-8"
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
+    try:
+        doc = tomllib.loads(text)
+    except Exception as exc:  # TOMLDecodeError, or whatever else a hostile file provokes
+        return None, f"is not valid TOML ({exc})"
+    for key in ("ledger_sha256", "auditor_identity", "auditor_session", "date"):
+        if not isinstance(doc.get(key), str) or not doc[key].strip():
+            return None, f"has no non-empty string {key!r}"
+    if not re.fullmatch(r"[0-9a-f]{64}", doc["ledger_sha256"]):
+        return None, "has a ledger_sha256 that is not 64 lowercase hex digits"
+    return doc, None
+
+
+def _load_deviations_readback_safe(root: Path) -> Tuple[Optional[dict], Optional[str]]:
+    """The guarded reader of DEVIATIONS.readback.toml: the same refusals as
+    `_load_deviations_safe` (symlink refused via `lstat` before any read, `O_NOFOLLOW` as a
+    second line of defense, non-regular files and anything over `DEVIATIONS_MAX_BYTES`
+    refused, a decode error turned into a returned string), plus the TOML/shape check
+    (`_parse_deviations_readback_bytes`). Returns `(doc, None)`; `(None, None)` if nothing
+    is there yet; `(None, problem)` for anything this refuses. Never raises."""
+    path = deviations_readback_path(root)
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, (f"{DEVIATIONS_READBACK_FILENAME} could not be read "
+                      f"({exc.strerror or exc}).")
+    if stat.S_ISLNK(st.st_mode):
+        return None, (f"{DEVIATIONS_READBACK_FILENAME} is a symlink in the working tree; "
+                      "refusing to trust it.")
+    if not stat.S_ISREG(st.st_mode):
+        return None, (f"{DEVIATIONS_READBACK_FILENAME} in the working tree is not a "
+                      "regular file (a directory, e.g. a submodule checkout, or a special "
+                      "file); refusing to trust it.")
+    if st.st_size > DEVIATIONS_MAX_BYTES:
+        return None, (f"{DEVIATIONS_READBACK_FILENAME} is larger than "
+                      f"{DEVIATIONS_MAX_BYTES} bytes; refusing to trust it.")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None, (f"{DEVIATIONS_READBACK_FILENAME} changed while being read; "
+                              "refusing to trust it.")
+            data = fh.read(DEVIATIONS_MAX_BYTES + 1)
+    except OSError as exc:
+        return None, (f"{DEVIATIONS_READBACK_FILENAME} could not be read "
+                      f"({exc.strerror or exc}).")
+    doc, why = _parse_deviations_readback_bytes(data)
+    if why:
+        return None, f"{DEVIATIONS_READBACK_FILENAME} {why}; refusing to trust it."
+    return doc, None
+
+
+def write_deviations_readback(root: Path, *, identity: str, session: str, date: str) -> dict:
+    """`mission deviations-readback`: validates `<root>/DEVIATIONS.md` -- must exist, be
+    safely readable (`_load_deviations_safe`), and parse (`parse_deviations`) -- then
+    writes `<root>/DEVIATIONS.readback.toml` recording its sha256 and the auditor's
+    identity/session/date. Raises `ValueError` (and writes nothing) if *identity* or
+    *session* is empty, or if the ledger is missing, untrusted, or malformed: a read-back
+    must never be recorded against a ledger `deviations_grant_problem` would itself refuse
+    to read, and this command does not know which node's author to compare the auditor
+    against (DEVIATIONS.md is campaign-wide) -- that self-audit refusal happens at grant
+    time instead, per node, in `deviations_grant_problem`."""
+    root = Path(root)
+    identity = (identity or "").strip()
+    session = (session or "").strip()
+    if not identity:
+        raise ValueError("deviations-readback: identity must be non-empty.")
+    if not session:
+        raise ValueError("deviations-readback: session must be non-empty.")
+    text, problem = _load_deviations_safe(root)
+    if problem:
+        raise ValueError(problem)
+    if text is None:
+        raise ValueError(f"no {DEVIATIONS_FILENAME} at the campaign root; nothing to read back.")
+    parse_deviations(text)  # raises ValueError, naming the offending line, if malformed
+    doc = {
+        "ledger_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "auditor_identity": identity,
+        "auditor_session": session,
+        "date": date,
+    }
+    lines = [f"{key} = {_quote(value)}" for key, value in doc.items()]
+    atomic_write_text(deviations_readback_path(root), "\n".join(lines) + "\n")
+    return doc
+
+
 def deviations_grant_problem(root: Path, node) -> str:
     """"" unless *node* is post-cutoff (`provenance.checks_required`, the same predicate
-    `freeze_grant_problem` uses); else why the grant gate must refuse it: no
-    DEVIATIONS.md at the campaign root, the file cannot be trusted (`_load_deviations_safe`),
-    or its content does not parse (`parse_deviations`). Spec 7.3's "present and read back"
-    rule: a grant must not merely see the file exists, but actually read and validate it."""
-    from .provenance import checks_required
+    `freeze_grant_problem` uses); else why the grant gate must refuse it.
+
+    Three layers, in order: (1) DEVIATIONS.md must exist, be trustworthy
+    (`_load_deviations_safe`), and parse (`parse_deviations`); (2) spec 7.3 also says
+    "read back" -- which parsing alone does NOT satisfy (fix round 1, reviewer-found
+    Important: the original docstring here claimed otherwise) -- so
+    DEVIATIONS.readback.toml must exist, be trustworthy, and record the sha256 of the
+    ledger's CURRENT content, not a stale one; (3) its auditor must not be the node's own
+    author (`provenance._auditor_matches`, the exact comparison
+    `readback_is_self_audit` uses for a node's own `[readback]` block, reused rather than
+    re-implemented so the two self-audit checks can never drift apart) -- undecidable, and
+    so not checked, when the node carries no `[author]` block at all."""
+    from .provenance import _auditor_matches, checks_required
 
     if not checks_required(node):
         return ""
@@ -1580,5 +1741,31 @@ def deviations_grant_problem(root: Path, node) -> str:
         parse_deviations(text)
     except ValueError as exc:
         return str(exc)
+
+    readback, rb_problem = _load_deviations_readback_safe(root)
+    if rb_problem:
+        return rb_problem
+    if readback is None:
+        return (
+            f"no {DEVIATIONS_READBACK_FILENAME} at the campaign root; a post-cutoff node "
+            "may not be granted until DEVIATIONS.md has an independent read-back on "
+            "record (`mission deviations-readback`)."
+        )
+    current_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if readback["ledger_sha256"] != current_sha:
+        return (
+            f"{DEVIATIONS_READBACK_FILENAME}: the ledger changed since its read-back "
+            f"(recorded sha256 {readback['ledger_sha256'][:16]}..., current "
+            f"{current_sha[:16]}...); read it back again (`mission deviations-readback`)."
+        )
+    author = node.author
+    if author is not None and _auditor_matches(
+            readback["auditor_identity"], readback["auditor_session"],
+            author.identity, author.session):
+        return (
+            f"{DEVIATIONS_READBACK_FILENAME}: its auditor (identity "
+            f"{readback['auditor_identity']!r}, session {readback['auditor_session']!r}) "
+            "is the node's own author; a self-read-back cannot support a grant."
+        )
     return ""
 

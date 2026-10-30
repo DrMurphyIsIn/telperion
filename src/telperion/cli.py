@@ -1532,6 +1532,32 @@ def cmd_mission_freeze(args) -> int:
     return 0
 
 
+def cmd_mission_deviations_readback(args) -> int:
+    from datetime import date as _date
+
+    from .missions.process import write_deviations_readback
+    from .missions.provenance import git_identity, session_id
+
+    camp_root = _missions_root(args) / args.campaign
+    if not camp_root.is_dir():
+        print(f"Campaign {args.campaign!r} not found at {camp_root}")
+        return 1
+
+    identity = (getattr(args, "identity", None) or "").strip() or git_identity(camp_root)
+    session = session_id(getattr(args, "session", None))
+    date = (getattr(args, "date", None) or "").strip() or _date.today().isoformat()
+    try:
+        doc = write_deviations_readback(camp_root, identity=identity, session=session, date=date)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"{args.campaign}/DEVIATIONS.md read back by {doc['auditor_identity']} "
+          f"(session {doc['auditor_session']}) on {doc['date']}; ledger sha256 "
+          f"{doc['ledger_sha256'][:16]}...")
+    return 0
+
+
 def cmd_mission_unfreeze(args) -> int:
     from datetime import date as _date
 
@@ -3503,6 +3529,23 @@ def main(argv=None) -> int:
                    help="freezing identity (default: `git config user.email`); recorded in "
                         "FREEZE.toml")
     p.set_defaults(mission_fn=cmd_mission_freeze)
+
+    # deviations-readback CAMPAIGN [--session S] [--identity I] [--date D]
+    p = msub.add_parser("deviations-readback",
+                        help="record an independent read-back of DEVIATIONS.md (spec "
+                             "7.3); required, from an identity/session distinct from a "
+                             "node's own author, before that node can be granted "
+                             "post-cutoff")
+    p.add_argument("campaign")
+    p.add_argument("--session", default=None,
+                   help="auditing session id (default: $CLAUDE_SESSION_ID); recorded in "
+                        "DEVIATIONS.readback.toml")
+    p.add_argument("--identity", default=None,
+                   help="auditing identity (default: `git config user.email`); recorded "
+                        "in DEVIATIONS.readback.toml")
+    p.add_argument("--date", default=None,
+                   help="read-back date (default: today)")
+    p.set_defaults(mission_fn=cmd_mission_deviations_readback)
 
     # unfreeze CAMPAIGN --author A --reason R --readback-identity I
     p = msub.add_parser("unfreeze",

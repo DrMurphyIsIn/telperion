@@ -143,6 +143,24 @@ def independence_of(author: Optional[Author], identity: str, session: str) -> st
     return "independent"
 
 
+def _auditor_matches(a_identity: str, a_session: str, b_identity: str, b_session: str) -> bool:
+    """True iff two (identity, session) pairs name the same actor: an equal session
+    (stripped), or an equal identity (stripped, case-insensitive). Either `a_session` or
+    `a_identity` being empty just means that field can't match (never raises, never treats
+    "" == "" as a match).
+
+    This is the self-audit comparison itself, factored out so it exists in exactly one
+    place: `readback_is_self_audit` (a node's structured `[readback]` vs. its `[author]`)
+    and `process.deviations_grant_problem` (a DEVIATIONS.readback.toml auditor vs. a
+    node's `[author]`, fix round 1) both call this rather than each re-implementing the
+    comparison, so the two self-audit checks cannot drift apart from each other."""
+    if a_session and a_session.strip() == b_session.strip():
+        return True
+    if a_identity and a_identity.strip().lower() == b_identity.strip().lower():
+        return True
+    return False
+
+
 def readback_is_self_audit(node: Node) -> bool:
     """True iff the stored read-back names the author's session or identity.
 
@@ -155,11 +173,7 @@ def readback_is_self_audit(node: Node) -> bool:
         return False
     if rb.independence == "self":
         return True
-    if rb.auditor_session and rb.auditor_session.strip() == au.session.strip():
-        return True
-    if rb.auditor_identity and rb.auditor_identity.strip().lower() == au.identity.strip().lower():
-        return True
-    return False
+    return _auditor_matches(rb.auditor_identity, rb.auditor_session, au.identity, au.session)
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from telperion.cli import main  # noqa: E402
 from telperion.closure_audit import AuditResult, TargetInfo  # noqa: E402
 from telperion.missions.process import (  # noqa: E402
-    DEVIATIONS_TEMPLATE, deviations_path, freeze, freeze_path,
+    DEVIATIONS_TEMPLATE, deviations_path, deviations_readback_path, freeze, freeze_path,
+    write_deviations_readback,
 )
 from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
@@ -245,6 +246,13 @@ def _grant(root: Path) -> Node:
     # unless a test already put one in place.
     if not deviations_path(root).exists():
         deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
+    # Fix round 1: and, now, an independent read-back of it (deviations_grant_problem's
+    # second layer) -- a DISTINCT identity/session from the gate's own and from anything a
+    # test might set as the node's [author], so this fixture's grant is never accidentally
+    # refused as a self-read-back.
+    if not deviations_readback_path(root).exists():
+        write_deviations_readback(root, identity="deviations-auditor@test",
+                                  session="deviations-auditor-session", date="2026-10-29")
     return grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
                         session="gate-session")
 

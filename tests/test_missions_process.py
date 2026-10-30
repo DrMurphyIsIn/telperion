@@ -2,11 +2,13 @@
 and the drift check (`freeze_problems`)."""
 from __future__ import annotations
 
+import dataclasses
+import datetime
 import hashlib
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 import pytest
 
@@ -14,14 +16,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from telperion.missions.registry import load_campaign  # noqa: E402
 from telperion.missions.schema import (  # noqa: E402
-    MissionManifest, Node, Proof, load_node, save_manifest, save_node,
+    Author, MissionManifest, Node, Proof, load_node, save_manifest, save_node,
 )
 from telperion.missions.statements import statement_body, write_statement  # noqa: E402
 from telperion.missions.verify import GateError, grant_status  # noqa: E402
 from telperion.missions.process import (  # noqa: E402
     DEVIATIONS_TEMPLATE, _dump_freeze, _load_freeze, crosscheck_axioms, deviations_grant_problem,
-    deviations_path, freeze, freeze_grant_problem, freeze_history_problems, freeze_path,
-    freeze_problems, parse_deviations, parse_print_axioms, render_audit_file, unfreeze,
+    deviations_path, deviations_readback_path, freeze, freeze_grant_problem,
+    freeze_history_problems, freeze_path, freeze_problems, parse_deviations, parse_print_axioms,
+    render_audit_file, unfreeze, write_deviations_readback,
 )
 from telperion.cli import main  # noqa: E402
 
@@ -572,6 +575,8 @@ def test_post_cutoff_grant_passes_with_clean_committed_freeze(tmp_path):
     freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
     _git_commit(root, "initial freeze")
     deviations_path(root).write_text(DEVIATIONS_TEMPLATE)  # Step 5 Task 3's ledger gate
+    write_deviations_readback(root, identity="auditor@example.com",  # fix round 1's read-back gate
+                              session="auditor-session", date="2026-10-29")
 
     node = load_node(root / "nodes" / "Demo_ck.toml")
     _with_checks(root, _rec(_art_sha(root, node)))
@@ -736,6 +741,8 @@ def _post_cutoff_frozen_grant_campaign(parent: Path, campaign: str = "campaign")
     freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
     _git_commit(root, "initial freeze")
     deviations_path(root).write_text(DEVIATIONS_TEMPLATE)  # Step 5 Task 3's ledger gate
+    write_deviations_readback(root, identity="auditor@example.com",  # fix round 1's read-back gate
+                              session="auditor-session", date="2026-10-29")
     return root
 
 
@@ -1739,6 +1746,8 @@ def test_post_cutoff_grant_requires_ledger(tmp_path):
     assert "DEVIATIONS.md" in deviations_grant_problem(root, node)
 
     deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
+    write_deviations_readback(root, identity="auditor@example.com",  # fix round 1's read-back gate
+                              session="auditor-session", date="2026-10-29")
 
     granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
                            session="gate-session")
@@ -1806,3 +1815,173 @@ def test_cli_freeze_does_not_overwrite_existing_deviations(tmp_path):
               "--identity", "alice@example.com", "--session", "s1"])
     assert rc == 0
     assert "custom" in dpath.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 3, fix round 1 (a): content sharing a line with the header comment's `<!--`
+# / `-->` markers is parsed, not silently dropped.
+# ---------------------------------------------------------------------------
+
+def test_same_line_comment_entry_mixed_with_none_raises():
+    """The reviewer's repro: a real entry hiding after the header's closing `-->` on the
+    SAME physical line used to vanish entirely (the ledger parsed as plain `none`). It
+    must now be seen -- and a body holding both `none` and a real entry is malformed."""
+    text = "<!-- header --> - 2026-10-28 | hidden entry | sneaky\nnone\n"
+    with pytest.raises(ValueError, match="DEVIATIONS.md:2"):
+        parse_deviations(text)
+
+
+def test_same_line_comment_entry_parses_without_none():
+    text = "<!-- header --> - 2026-10-28 | real entry | because it matters\n"
+    assert parse_deviations(text) == [
+        {"date": "2026-10-28", "what": "real entry", "why": "because it matters"},
+    ]
+
+
+def test_content_before_comment_opener_parses():
+    """Symmetric with the "after `-->`" case: text before the opening `<!--` on that same
+    line is kept too, not discarded along with the comment that follows it."""
+    text = "- 2026-10-28 | what | why <!-- trailing note -->\n"
+    assert parse_deviations(text) == [
+        {"date": "2026-10-28", "what": "what", "why": "why"},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 3, fix round 1 (b): DEVIATIONS.md must be READ BACK (spec 7.3), not merely
+# parsed -- `mission deviations-readback` writes DEVIATIONS.readback.toml, and the grant
+# gate requires it, current, and from an auditor who is not the node's own author.
+# ---------------------------------------------------------------------------
+
+def _ready_for_deviations_readback(tmp_path: Path, *, author: Optional[Author] = None) -> Path:
+    """A post-cutoff Demo_ck: passing [checks], a clean committed freeze, and a
+    DEVIATIONS.md template on disk -- grantable except for fix round 1's new
+    DEVIATIONS.readback.toml requirement, which every test below exercises. *author*, if
+    given, replaces the node's (absent-by-default) [author] block, so the self-read-back
+    refusal has something to compare the auditor against."""
+    from test_missions_checks import _art_sha, _grant_campaign, _rec, _with_checks
+
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    p = root / "nodes" / "Demo_ck.toml"
+    node = load_node(p)
+    if author is not None:
+        node = dataclasses.replace(node, author=author)
+        save_node(node, p)
+    _with_checks(root, _rec(_art_sha(root, node)))
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "initial freeze")
+    deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
+    return root
+
+
+def test_deviations_grant_requires_readback(tmp_path):
+    root = _ready_for_deviations_readback(tmp_path)
+
+    with pytest.raises(GateError, match="DEVIATIONS.readback.toml"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+    write_deviations_readback(root, identity="auditor@example.com",
+                              session="auditor-session", date="2026-10-29")
+
+    granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                           session="gate-session")
+    assert granted.status == "proved"
+
+
+def test_deviations_readback_stale_sha_blocks_grant(tmp_path):
+    root = _ready_for_deviations_readback(tmp_path)
+    write_deviations_readback(root, identity="auditor@example.com",
+                              session="auditor-session", date="2026-10-29")
+    # The ledger changes AFTER the read-back was recorded; its sha256 no longer matches.
+    deviations_path(root).write_text(
+        "<!-- header -->\n- 2026-10-29 | edited after read-back | drift\n"
+    )
+
+    with pytest.raises(GateError, match="changed since its read-back"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_deviations_self_readback_by_identity_blocked(tmp_path):
+    author = Author(identity="author@example.com", session="author-session", date="2026-10-29")
+    root = _ready_for_deviations_readback(tmp_path, author=author)
+    # Same identity as the author, a DIFFERENT session: still a self-audit.
+    write_deviations_readback(root, identity="author@example.com",
+                              session="someone-elses-session", date="2026-10-29")
+
+    with pytest.raises(GateError, match="own author"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_deviations_self_readback_by_session_blocked(tmp_path):
+    author = Author(identity="author@example.com", session="author-session", date="2026-10-29")
+    root = _ready_for_deviations_readback(tmp_path, author=author)
+    # Same session as the author, a DIFFERENT identity: still a self-audit.
+    write_deviations_readback(root, identity="someone-else@example.com",
+                              session="author-session", date="2026-10-29")
+
+    with pytest.raises(GateError, match="own author"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                     session="gate-session")
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_deviations_readback_independent_of_author_passes(tmp_path):
+    author = Author(identity="author@example.com", session="author-session", date="2026-10-29")
+    root = _ready_for_deviations_readback(tmp_path, author=author)
+    write_deviations_readback(root, identity="auditor@example.com",
+                              session="auditor-session", date="2026-10-29")
+
+    granted = grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                           session="gate-session")
+    assert granted.status == "proved"
+
+
+def test_cli_deviations_readback_writes_file(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    root = mroot / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
+
+    rc = main(["mission", "--missions-root", str(mroot), "deviations-readback", "demo",
+              "--identity", "auditor@example.com", "--session", "auditor-session"])
+    assert rc == 0
+    assert deviations_readback_path(root).exists()
+    assert "read back" in capsys.readouterr().out
+
+
+def test_cli_deviations_readback_refuses_malformed_ledger(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    root = mroot / "demo"
+    _campaign(root)
+    deviations_path(root).write_text("N/A\n")
+
+    rc = main(["mission", "--missions-root", str(mroot), "deviations-readback", "demo",
+              "--identity", "auditor@example.com", "--session", "auditor-session"])
+    assert rc == 1
+    assert "DEVIATIONS.md" in capsys.readouterr().out
+    assert not deviations_readback_path(root).exists()
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 3, fix round 1 (c): a deviation cannot be dated in the future.
+# ---------------------------------------------------------------------------
+
+def test_future_dated_entry_rejected():
+    with pytest.raises(ValueError, match="is after today"):
+        parse_deviations("<!-- header -->\n- 2026-12-01 | future thing | why\n",
+                         today=datetime.date(2026, 10, 30))
+
+
+def test_entry_dated_today_is_allowed():
+    assert parse_deviations("<!-- header -->\n- 2026-10-30 | today's thing | why\n",
+                            today=datetime.date(2026, 10, 30)) == [
+        {"date": "2026-10-30", "what": "today's thing", "why": "why"},
+    ]
