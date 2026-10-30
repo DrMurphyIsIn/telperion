@@ -108,15 +108,22 @@ saw.
 Spec 5.2 names four checks. Three of them feed the `[checks]` record; the fourth is a classification in the Lean
 verifier.
 
-1. **The negation probe** (`telperion probe-negation`, `src/telperion/checks/negation_probe.py`). It opens the theorem's
-   elaborated type and tries three things, each with its own budget of 200000 heartbeats:
+1. **The negation probe** (`telperion probe-negation`, `src/telperion/checks/negation_probe.py`). The target must be a
+   THEOREM (a `def` or anything else is ERROR). The probe opens its elaborated type, first unfolding every NON-library
+   definition at the head of the statement and of each ∀-body (so `theorem foo : Stmt` with `def Stmt : Prop := ...`
+   is probed as what `Stmt` says), and tries three things, each with its own budget of 200000 heartbeats:
    - `false`: prove `False` from the premises alone, with a fixed tactic battery. A closed, kernel-checked proof with
      only the standard axioms means the hypotheses contradict each other: **VACUOUS**.
    - `negation`: ask plausible for a counterexample (`Plausible.Testable.checkIO`, seed 271828). A counterexample means
      the statement is false: **REFUTED**.
    - `witness`: only if you pass `--witness`. Your term must prove that every antecedent of the statement can hold at
-     once (the ∃-closure of the full, non-reducing ∀-telescope of the type, conclusion arrows included). If it
-     elaborates, kernel-checks and uses only the standard axioms: **WITNESSED**.
+     once (the ∃-closure of the full ∀-telescope of the unfolded type, conclusion arrows included). If it elaborates,
+     the KERNEL accepts it (checked before the result is printed) and it uses only the standard axioms:
+     **WITNESSED**. A statement with no Prop-typed antecedent at all (`True`, a bare conjunction) has nothing to
+     witness, and gives PROBE_ONLY with a note instead.
+   - The witness is TRUSTED input: it is elaborated with the full elaborator inside the check process, so a term like
+     `by run_tac ...` can do arbitrary IO there and forge result lines. Write it yourself, and never paste one from a
+     submission unread.
 2. **The statement fingerprint** (`telperion fingerprint`, `src/telperion/checks/fingerprint.py`). A sha256 of what the
    theorem's type says after every non-library definition has been unfolded (`deltaExpand`). It is serialized
    structurally, so renaming a bound variable or a universe parameter keeps the hash, while a shadowed or edited local
@@ -181,8 +188,10 @@ telperion trusted-manifest verify --env ~/telperion-tools/lean-env
 
 - **Where it lives.** By default `$TELPERION_TRUSTED_MANIFEST`, else
   `~/telperion-tools/trusted-manifests/<sha256 of the env's lean-toolchain and lake-manifest.json>.json`. That is
-  deliberately OUTSIDE the env: a file that says what the env should contain must not be writable by anything built in
-  the env, or in a submission. `--out FILE` picks another path for both `build` and `verify`.
+  deliberately OUTSIDE the env, so that building in the env does not touch it. But it is protected only as far as the
+  file system protects it: a build of a submission running as YOU can write `~/telperion-tools` like anything else of
+  yours. The location is safe only under a sandbox, or when the checks run as a different user from the builds.
+  `--out FILE` picks another path for both `build` and `verify`.
 - **`--force`.** `build` refuses to overwrite an existing manifest (exit 2) unless you pass `--force`. Rebuilding is a
   statement that the env as it is now is the trusted one, so it is meant to be a deliberate act, not a side effect.
 - **When to rebuild.** Only when you deliberately change the env (a new toolchain or Mathlib). If `verify` fails and you
@@ -202,22 +211,35 @@ exactly the bytes the check saw.
 That is how you know both checks ran on the same build. Rebuild between the two runs and the record is refused; run
 both again.
 
-The olean digest says which BUILD the checks saw. It does not say which SOURCE that build came from, so the JSON carries
-that too (Ruling 12). Both `--json` outputs name the `module` and `theorem` they checked (the fingerprint names them
-only when it was given exactly one `--import` and one `--target`), and `source_sha256`, the sha256 of the file passed
-as `--file` (or `null` with no `--file`). `checks-record` then insists on three things:
-- the probe's `theorem` is the fingerprinted theorem, which must also be one of the closure audit's targets (and the
-  fingerprint's `theorem`, when it names one, is the same);
-- each `source_sha256` equals the sha256 of the node's artifact as it is on disk NOW;
-- a WRONG value is always refused. An ABSENT one (an older JSON, or a run without `--file`) is refused too, unless you
-  pass `--allow-missing-source`, and then the record's note says which values were absent, so a reader can see that
-  the tie to the source was not checked.
+The olean digest says which BUILD the checks saw. Both `--json` outputs also name the `module` and `theorem` they
+checked (the fingerprint names them only when it was given exactly one `--import` and one `--target`), and
+`source_sha256`, the sha256 of the file you passed as `--file` (or `null` with no `--file`). Be clear about what that
+last one is: it is YOUR ASSERTION that this file is the source of the build, not a proof. Nothing shows that the
+`.olean` was compiled from it, or even that it is the file for `--module`. The realistic failure is an honest one:
+you edit the artifact, forget to rebuild, and run the checks on the old build with the new file. To catch that, the
+probe and the fingerprint compare the `--file` with the module's built `.olean` (the one an import resolves in
+`<project>/.lake/build/lib/lean` and the `--olean-dir` dirs): when the file is NEWER than the olean, the probe is
+ERROR and the fingerprint exits 2 ("a stale build; rebuild"), and the JSON records both times (`source_mtime`,
+`olean_mtime`, `stale`). That catches a forgotten rebuild, not an adversary (mtimes can be set). **Rebuild immediately
+before running the checks.**
 
-So **always run `probe-negation` and `fingerprint` with `--file` pointing at the node's artifact**. That is what puts a
-real `source_sha256` into the JSON, and it is the only way the record can show that the checks were run on the source
-the node actually links. `--allow-missing-source` exists for legacy JSON written before the field existed, not as a
-shortcut: the note it writes ("recorded with --allow-missing-source (absent: ...)") stays in the `[checks]` record,
-where anyone auditing the grant will see it.
+`checks-record` then insists on all of these, and refuses (exit 2) otherwise:
+- the target is the node's REGISTERED theorem: the artifact declaration the grant gate matches against the node's
+  statement (`guard_anchors.resolve_theorem`). A record for a helper lemma in the same file, or one copied from a
+  sibling node, is refused, and so is a `--target` naming anything else. The grant gate and `mission verify` check the
+  same thing, and also that the record's theorem is the Comparator record's, once there is one;
+- the probe's `theorem` is that theorem, it is one of the closure audit's targets, and the fingerprint's `theorem`,
+  when it names one, is the same;
+- each `source_sha256` is PRESENT and equals the sha256 of the node's artifact as it is on disk NOW. There is no
+  waiver: a JSON without one (a run without `--file`) is refused, so re-run the check with `--file`. (`--file` stays
+  optional for interactive runs of the probe and the fingerprint.) A JSON that says `stale` is refused too;
+- both JSONs carry the replay's axiom list (`axioms`, `collectAxioms` over every constant of the target module, which
+  an imported module cannot forge, since the replay imports nothing untrusted). The two lists must be equal and a
+  subset of `propext`, `Quot.sound` and `Classical.choice`, and they must include the closure audit's axioms for the
+  target. The list is recorded, and the gate checks it again. This is the interim cross-check on the closure audit,
+  which still imports the submission (see the limitations).
+
+So **always run `probe-negation` and `fingerprint` with `--file` pointing at the node's artifact**, on a fresh build.
 
 ### What the verdicts mean
 
@@ -296,8 +318,11 @@ declaring theorem `Demo.my_thm`.
      --theorem Demo.my_thm --witness "⟨2, by norm_num, trivial⟩" --json > probe.json
    ```
    Exit 0 means PROBE_ONLY or WITNESSED, 1 means VACUOUS or REFUTED, 2 means ERROR. With `--json`, stdout is one object
-   with `verdict`, `detail`, `module`, `theorem` and `source_sha256`, plus `olean_sha256` and `olean_closure` when
-   the module was replayed, and it is written whatever the exit code. Other options: `--import MODULE` adds a trusted
+   with `verdict`, `detail`, `module`, `theorem` and `source_sha256`, plus `olean_sha256`, `olean_closure` and
+   `axioms` when the module was replayed and `source_mtime`, `olean_mtime` and `stale` when `--file` and a built
+   olean were found, and it is written whatever the exit code. The theorem name must be a plain dotted identifier: a
+   name qualified from `--file` is read with comments and string literals blanked, and anything that is not a plain
+   identifier is ERROR, never spliced into the check. Other options: `--import MODULE` adds a trusted
    tactic module (default `Mathlib`), `--olean-dir DIR` adds another untrusted olean dir, `--memory-mb MB` sets
    Lean's `--memory` bound (default 8192, 0 for none), `--timeout` (default 1800 s), and `--wrapper` sets the command
    prefix before the pinned `lean` (default: leanlock with one slot when `~/hodge-engine/leanlock.sh` exists, nothing
@@ -309,7 +334,8 @@ declaring theorem `Demo.my_thm`.
    ```
    Exit 0 when every target was fingerprinted, 2 otherwise. With `--json`, stdout is
    `{"fingerprints": {...}, "olean_sha256": ..., "olean_closure": [...], "module": ..., "theorem": ...,
-   "source_sha256": ...}`, or `{"error": ...}`. Here `--file` is only hashed, into `source_sha256`. It takes the same
+   "source_sha256": ..., "axioms": [...]}` (plus `source_mtime`, `olean_mtime` and `stale` as for the probe), or
+   `{"error": ...}`. Here `--file` is only hashed, into `source_sha256`. It takes the same
    `--trusted-env`, `--trusted-manifest`, `--olean-dir`, `--memory-mb`, `--wrapper` and `--timeout` options. The project
    (outside `.lake` and `.git`) must contain no symlink and no directory or `.lean` file named after a library root.
 3. **Closure audit.** Note that `--json` takes a FILE here, unlike the other two:
@@ -324,11 +350,13 @@ declaring theorem `Demo.my_thm`.
      --probe-json probe.json --closure-json closure.json --fingerprint-json fingerprint.json \
      --note "signoff: <reviewer> read the statement; hypotheses are satisfiable by inspection"
    ```
-   Every verdict is read from those JSON files, never from a flag. It refuses (exit 2, nothing written) on an unreadable
-   or malformed JSON, an unknown probe verdict, a missing or mismatched `olean_sha256`, a fingerprinted theorem that
-   the closure audit did not audit, an ambiguous fingerprint target (pass `--target`), a probe of a different
-   theorem, a `source_sha256` that is not the artifact's current sha256 (or an absent one, without
-   `--allow-missing-source`), a missing artifact, or a node that is `deprecated` or `refuted`. Otherwise it writes
+   Every verdict is read from those JSON files, never from a flag. They are unsigned files you produced: reading the
+   verdicts from them guards against mistakes, not against an operator who writes them by hand. It refuses (exit 2,
+   nothing written) on an unreadable or malformed JSON, an unknown probe verdict, a missing or mismatched
+   `olean_sha256`, a target that is not the node's registered theorem, a fingerprinted theorem that the closure audit
+   did not audit, a probe of a different theorem, a `source_sha256` that is absent or not the artifact's current
+   sha256, a stale build, missing, unequal or non-standard replay `axioms`, a missing artifact, or a node that is
+   `deprecated` or `refuted`. Otherwise it writes
    the record and exits 0 if it passes, 1 if it does not (VACUOUS, or PROBE_ONLY with no sign-off, for example). It
    never changes the node's status; `mission grant` does that.
 
@@ -354,14 +382,24 @@ These are real, and you should know them before you rely on a `[checks]` record.
 - **The sign-off is free text.** `signoff: <who>` is a string in the note, written by whoever runs `checks-record`.
   Nothing checks that the reviewer is a different person or session from the author. Treat it as an honest
   declaration, and keep the read-back discipline below in mind: a self sign-off is no better than a self-audit.
-- **The closure audit is tied by name.** The probe and the fingerprint are bound to each other by `olean_sha256`, but
-  the closure audit imports rather than replays and its JSON carries no olean digest. Its only tie to the other two is
-  the theorem name: `checks-record` insists that the fingerprinted theorem is one of the audit's targets, and nothing
-  more. Run all three on the same build.
-- **`created` is unprotected before the first grant.** The cutoff keys on `created`, and nothing guards that field
-  while a node is still unproved: a node back-dated to before 2026-10-28 before its first grant is granted without
-  checks. Once a grant has recorded `checks_required = true`, the requirement holds whatever `created` says. Review any
-  diff that changes an existing `created`.
+- **The closure audit still imports the submission.** The probe and the fingerprint are bound to each other by
+  `olean_sha256`, but `audit-closure` imports rather than replays, so an imported module could forge its output, and
+  its JSON carries no olean digest. Its ties to the other two are the theorem name and the interim axiom cross-check:
+  its axioms for the target must be among the REPLAY's axioms, which must be standard. A forged closure PASS can then
+  no longer hide a non-standard axiom, but it can still hide a forbidden constant that is not an axiom. Porting the
+  closure audit to a replay callback is a tracked step-5 follow-up, pending the owner's explicit acceptance. Run all
+  three on the same build.
+- **The node file can be hand-edited.** The cutoff keys on `created`, and nothing guards that field while a node is
+  still unproved: a node back-dated to before 2026-10-28 before its first grant is granted without checks. Deleting
+  `checks_required` from a `[grant]` together with back-dating `created` is the same class of hand edit, with the same
+  effect on a re-grant. Once a grant has recorded `checks_required = true` and the file is left alone, the
+  requirement holds whatever `created` says. Review any diff that changes an existing `created` or removes
+  `checks_required`; a CI check for both is planned for step 5.
+- **A conclusion with NAMED ∀ binders reads as premises.** `theorem t : ∀ (m : ℕ) (h : m < 0), False` is probed as if
+  `m` and `h` were hypotheses, so the false probe proves `False` from `h` and reports VACUOUS for what is really a
+  true statement about the conclusion. That fails closed (VACUOUS blocks the grant), but it blocks a good node. The
+  workaround: write the conclusion with arrows (`∀ m : ℕ, m < 0 → False`), or restate the binders as hypotheses of the
+  theorem.
 
 ### In CI
 

@@ -202,8 +202,10 @@ required.** The fingerprint is not stored in `[grant]`. The probe verdict, the c
 `mission checks-record` from the checks' own JSON output; a `[checks]` table with an unknown key is a schema error
 (Ruling 12).
 The probe and fingerprint JSONs also name the `theorem` they checked and the `source_sha256` of the `--file` they were
-given, and `checks-record` refuses a probe of another theorem or a source that is not the artifact's current sha256 (an
-absent value only with `--allow-missing-source`, which the note records; Ruling 12). The grant rule applies to nodes
+given, and `checks-record` refuses a probe of another theorem or a source that is absent or not the artifact's current
+sha256 (Ruling 12; the final review removed the `--allow-missing-source` waiver). The final review also requires the
+target to be the node's registered theorem (`guard_anchors.resolve_theorem`), and the probe and fingerprint JSONs to
+carry the replay's axiom list, equal, standard, and including the closure audit's axioms for the target. The grant rule applies to nodes
 created on or after 2026-10-28; a node whose `created` is empty or is not, as a whole, an ISO date is treated as created
 after it (Rulings 2 and 12, fail-closed). A grant that required checks records `checks_required = true` in `[grant]`,
 and from then on the node requires them whatever its `created` says (Ruling 13: the decision is recorded, not read off
