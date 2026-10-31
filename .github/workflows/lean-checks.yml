@@ -1,5 +1,5 @@
 name: telperion-lean-checks
-# The step 4 checks' Lean tests in their own workflow, so that a path filter can apply to them alone: a full run builds
+# The step 4 checks' Lean tests, and step 5's statement tie, in their own workflow, so that a path filter can apply to them alone: a full run builds
 # the Mathlib env and takes on the order of an hour or two, which every push and pull request should not pay (Ruling 14).
 # It runs on demand, once a week (the backstop for the path filter: Lean, Mathlib or a runner image can break the
 # controls with no change here), and on a push or pull request that touches the checks, the missions gate, these tests,
@@ -20,7 +20,10 @@ on:
       - "tests/test_fingerprint.py"
       - "tests/test_lean_replay.py"
       - "tests/test_closure_audit_replay.py"
+      - "tests/test_statement_tie_lean.py"
       - "tests/test_missions_checks.py"
+      # The gate's lexer and resolver, which the statement tie and the evasion tests depend on.
+      - "scripts/guard_anchors.py"
       # The shared helpers those tests import.
       - "tests/lean_env.py"
       - "tests/fake_lean_cli.py"
@@ -37,7 +40,10 @@ on:
       - "tests/test_fingerprint.py"
       - "tests/test_lean_replay.py"
       - "tests/test_closure_audit_replay.py"
+      - "tests/test_statement_tie_lean.py"
       - "tests/test_missions_checks.py"
+      # The gate's lexer and resolver, which the statement tie and the evasion tests depend on.
+      - "scripts/guard_anchors.py"
       # The shared helpers those tests import.
       - "tests/lean_env.py"
       - "tests/fake_lean_cli.py"
@@ -47,14 +53,16 @@ permissions:
 jobs:
   lean-checks:
     # The step 4 checks' Lean tests: the negation probe, the statement fingerprint, and the kernel replay both of them
-    # run on. Those tests skip unless TELPERION_LEAN_ENV points at a built env, so without this job every must-fail
+    # run on; and step 5's statement tie (tests/test_statement_tie_lean.py: freeze --fingerprints, the five resolver
+    # evasions refused, the attack chain refused at the freeze, the Lean e2e). Those tests skip unless TELPERION_LEAN_ENV points at a built env, so without this job every must-fail
     # control (the evil-module, shadowed-definition, axiom and vacuous-statement cases) would sit skipped in CI and
     # ci.yml's test job would still be green. The env is built the way ~/telperion-tools/lean-env is built locally: a
     # bare Lake project that requires Mathlib v4.35.0 on Lean v4.35.0, with Mathlib's oleans from `lake exe cache get`.
     # There is no leanlock on the Linux runner, and none is needed: lean_replay.default_wrapper() uses
     # ~/hodge-engine/leanlock.sh only when that file exists, and runs the pinned lean with no prefix otherwise.
     runs-on: ubuntu-latest
-    # The three files took 21.5 minutes on the owner's machine (151 tests); a hosted runner is slower.
+    # The step 4 files took 21.5 minutes on the owner's machine (151 tests), and the statement-tie file about 8 more;
+    # a hosted runner is slower.
     timeout-minutes: 180
     env:
       LEAN_TOOLCHAIN: "leanprover/lean4:v4.35.0"
@@ -149,18 +157,57 @@ jobs:
             exit 1
           fi
 
-      - name: Lean controls (negation probe, fingerprint, kernel replay, replayed closure audit)
-        # Each test process builds its own copy of the manifest in a temp dir (tests/lean_env.py,
-        # session_trusted_manifest), so the tests do not depend on the one built above; that step is the CLI's own
-        # check. With the env set, nothing in these four files has a reason to skip, so any skip fails the job:
-        # a skipped must-fail control is a control that did not run.
+      # One step per file, for per-file timings (Task 6 fix round 1). Each test process builds its own copy of the
+      # manifest in a temp dir (tests/lean_env.py, session_trusted_manifest), so the tests do not depend on the one
+      # built above; that step is the CLI's own check. With the env set, nothing in these files has a reason to skip,
+      # so any skip fails its step: a skipped must-fail control is a control that did not run.
+      - name: Lean controls, negation probe (tests/test_negation_probe.py)
         shell: bash
         env:
           PYTHONFAULTHANDLER: "1"
         run: |
-          python -X faulthandler -m pytest tests/test_negation_probe.py tests/test_fingerprint.py \
-            tests/test_lean_replay.py tests/test_closure_audit_replay.py -q -rs 2>&1 | tee "$RUNNER_TEMP/lean-checks.out"
-          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/lean-checks.out"; then
-            echo "Lean tests were skipped with TELPERION_LEAN_ENV set; every control must run here."
+          python -X faulthandler -m pytest tests/test_negation_probe.py -q -rs 2>&1 | tee "$RUNNER_TEMP/test_negation_probe.out"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/test_negation_probe.out"; then
+            echo "Lean tests in tests/test_negation_probe.py were skipped with TELPERION_LEAN_ENV set; every control must run here."
+            exit 1
+          fi
+      - name: Lean controls, statement fingerprint (tests/test_fingerprint.py)
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -X faulthandler -m pytest tests/test_fingerprint.py -q -rs 2>&1 | tee "$RUNNER_TEMP/test_fingerprint.out"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/test_fingerprint.out"; then
+            echo "Lean tests in tests/test_fingerprint.py were skipped with TELPERION_LEAN_ENV set; every control must run here."
+            exit 1
+          fi
+      - name: Lean controls, kernel replay (tests/test_lean_replay.py)
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -X faulthandler -m pytest tests/test_lean_replay.py -q -rs 2>&1 | tee "$RUNNER_TEMP/test_lean_replay.out"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/test_lean_replay.out"; then
+            echo "Lean tests in tests/test_lean_replay.py were skipped with TELPERION_LEAN_ENV set; every control must run here."
+            exit 1
+          fi
+      - name: Lean controls, replayed closure audit (tests/test_closure_audit_replay.py)
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -X faulthandler -m pytest tests/test_closure_audit_replay.py -q -rs 2>&1 | tee "$RUNNER_TEMP/test_closure_audit_replay.out"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/test_closure_audit_replay.out"; then
+            echo "Lean tests in tests/test_closure_audit_replay.py were skipped with TELPERION_LEAN_ENV set; every control must run here."
+            exit 1
+          fi
+      - name: Lean controls, statement tie (step 5) (tests/test_statement_tie_lean.py)
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -X faulthandler -m pytest tests/test_statement_tie_lean.py -q -rs 2>&1 | tee "$RUNNER_TEMP/test_statement_tie_lean.out"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/test_statement_tie_lean.out"; then
+            echo "Lean tests in tests/test_statement_tie_lean.py were skipped with TELPERION_LEAN_ENV set; every control must run here."
             exit 1
           fi
