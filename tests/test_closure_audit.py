@@ -345,8 +345,9 @@ def test_cli_render_only_and_spec_file(tmp_path, capsys):
     from telperion.cli import main
 
     out = tmp_path / "a.lean"
-    rc = main(["audit-closure", "--project", str(tmp_path), "--import", "A.B", "--target", "A.t",
-               "--scan", "Heegner", "--absent-module", "Neg", "--no-recursors",
+    # the import path's script (`--legacy-import`); the default renders the replay callback
+    rc = main(["audit-closure", "--legacy-import", "--project", str(tmp_path), "--import", "A.B",
+               "--target", "A.t", "--scan", "Heegner", "--absent-module", "Neg", "--no-recursors",
                "--render-only", str(out)])
     assert rc == 0
     text = out.read_text()
@@ -358,8 +359,8 @@ def test_cli_render_only_and_spec_file(tmp_path, capsys):
     spec_file.write_text(json.dumps({"imports": ["X"], "targets": ["X.y"],
                                      "absent_module_prefixes": ["X.Neg"]}))
     out2 = tmp_path / "b.lean"
-    assert main(["audit-closure", "--project", str(tmp_path), "--spec", str(spec_file),
-                 "--render-only", str(out2)]) == 0
+    assert main(["audit-closure", "--legacy-import", "--project", str(tmp_path), "--spec",
+                 str(spec_file), "--render-only", str(out2)]) == 0
     assert "def absentModulePrefixes : List Name := [`X.Neg]" in out2.read_text()
 
 
@@ -378,8 +379,9 @@ def test_cli_exit_codes_follow_the_verdict(tmp_path, monkeypatch, capsys):
     env = _fake_lake(tmp_path, _canned(tmp_path, "audit_fail_missing_targets.txt"))
     monkeypatch.setenv("PATH", env["PATH"])
     js = tmp_path / "r.json"
-    rc = main(["audit-closure", "--project", str(proj), "--import", "A", "--target", "A.t",
-               "--json", str(js)])
+    # the fake `lake` stands in for the import path (`--legacy-import`)
+    rc = main(["audit-closure", "--legacy-import", "--project", str(proj), "--import", "A",
+               "--target", "A.t", "--json", str(js)])
     assert rc == 1
     d = json.loads(js.read_text())
     assert d["verdict"] == "FAIL" and d["closure_size"] == 629
@@ -389,10 +391,11 @@ def test_cli_exit_codes_follow_the_verdict(tmp_path, monkeypatch, capsys):
     two.mkdir()
     env = _fake_lake(two, _canned(two, "audit_pass_v4341.txt"))
     monkeypatch.setenv("PATH", env["PATH"])
-    assert main(["audit-closure", "--project", str(proj), "--import", "A", "--target", "A.t"]) == 0
+    assert main(["audit-closure", "--legacy-import", "--project", str(proj), "--import", "A",
+                 "--target", "A.t"]) == 0
     # scan hits are informational unless asked to fail on them
-    assert main(["audit-closure", "--project", str(proj), "--import", "A", "--target", "A.t",
-                 "--fail-on-scan-hit"]) == 1
+    assert main(["audit-closure", "--legacy-import", "--project", str(proj), "--import", "A",
+                 "--target", "A.t", "--fail-on-scan-hit"]) == 1
 
 
 # ---------------------------------------------------------------- the example

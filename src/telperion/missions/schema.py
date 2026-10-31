@@ -459,10 +459,17 @@ class ChecksRecord:
     #: fingerprint JSONs must both carry and agree on (final review I3). None: an older record, which
     #: `provenance.checks_problem` refuses.
     axioms: Optional[Tuple[str, ...]] = None
+    #: True when the closure audit ran as a kernel-replay callback (`audit-closure` without --legacy-import) on the
+    #: same replayed closure as the probe and the fingerprint (its JSON's `olean_sha256` is `olean_sha256`; step 5
+    #: Task 7). False: the audit imported the submission (`--legacy-import`, or a record from before step 5), which
+    #: `provenance.checks_problem` refuses. Written only when true.
+    closure_isolated: bool = False
 
     def __post_init__(self):
         if not str(self.date).strip():
             raise SchemaError("checks.date must be non-empty")
+        if not isinstance(self.closure_isolated, bool):
+            raise SchemaError(f"checks.closure_isolated must be true or false, not {self.closure_isolated!r}")
         for f in ("artifact_sha256", "olean_sha256", "statement_fingerprint"):
             if not _SHA256_RE.fullmatch(str(getattr(self, f))):
                 raise SchemaError(f"checks.{f} must be 64 lowercase hex characters, "
@@ -780,6 +787,8 @@ def _node_to_doc(node: Node) -> dict:
             doc["checks"]["note"] = k.note
         if k.axioms is not None:
             doc["checks"]["axioms"] = list(k.axioms)
+        if k.closure_isolated:
+            doc["checks"]["closure_isolated"] = True
     return doc
 
 
@@ -870,7 +879,8 @@ def _doc_to_node(doc: dict, path: Path) -> Node:
                 closure_verdict=k["closure_verdict"],
                 statement_fingerprint=k["statement_fingerprint"],
                 theorem=k.get("theorem", ""), note=k.get("note", ""),
-                axioms=tuple(k["axioms"]) if isinstance(k.get("axioms"), list) else k.get("axioms"))
+                axioms=tuple(k["axioms"]) if isinstance(k.get("axioms"), list) else k.get("axioms"),
+                closure_isolated=k.get("closure_isolated", False))
         compose = None
         if "compose" in doc:
             c = doc["compose"]

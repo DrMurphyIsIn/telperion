@@ -34,6 +34,7 @@ from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from .process import CUTOFF as CHECKS_CUTOFF
 from .schema import Author, ComparatorRecord, Grant, Node, Readback, SchemaError, load_node, save_node
 from .statements import statement_path
 
@@ -44,7 +45,19 @@ from .statements import statement_path
 #:   2026-10-29.1  grants of nodes created on or after 2026-10-28 (or with no created date)
 #:                 require a passing [checks] record (probe + closure + fingerprint, one olean
 #:                 closure). Existing grants keep their recorded version.
-GATE_VERSION = "2026-10-29.1"
+#:   2026-10-31.1  step 5 (statement-first process), for the same post-cutoff nodes:
+#:                 - the campaign must be frozen (FREEZE.toml records the node's statement,
+#:                   committed, with a clean git history: process.freeze_grant_problem);
+#:                 - DEVIATIONS.md must be present and valid, and read back by an identity
+#:                   other than the node's author (process.deviations_grant_problem);
+#:                 - the node must have an [author] block;
+#:                 - the [checks] closure audit must be ISOLATED (a kernel-replay callback
+#:                   on the probe's and the fingerprint's closure: closure_isolated);
+#:                 - the [checks] statement fingerprint must equal the node's FROZEN
+#:                   statement fingerprint (the semantic theorem tie; FREEZE.toml
+#:                   [fingerprints]).
+#:                 `checks_required = true` in [grant] keeps meaning what it did (Ruling 13).
+GATE_VERSION = "2026-10-31.1"
 
 #: A read-back shorter than this is not a rendering of a formal statement; it is a label.
 #: The shortest genuine read-back in the live registry on 2026-09-23 was 262 characters.
@@ -142,6 +155,24 @@ def independence_of(author: Optional[Author], identity: str, session: str) -> st
     return "independent"
 
 
+def _auditor_matches(a_identity: str, a_session: str, b_identity: str, b_session: str) -> bool:
+    """True iff two (identity, session) pairs name the same actor: an equal session
+    (stripped), or an equal identity (stripped, case-insensitive). Either `a_session` or
+    `a_identity` being empty just means that field can't match (never raises, never treats
+    "" == "" as a match).
+
+    This is the self-audit comparison itself, factored out so it exists in exactly one
+    place: `readback_is_self_audit` (a node's structured `[readback]` vs. its `[author]`)
+    and `process.deviations_grant_problem` (a DEVIATIONS.readback.toml auditor vs. a
+    node's `[author]`, fix round 1) both call this rather than each re-implementing the
+    comparison, so the two self-audit checks cannot drift apart from each other."""
+    if a_session and a_session.strip() == b_session.strip():
+        return True
+    if a_identity and a_identity.strip().lower() == b_identity.strip().lower():
+        return True
+    return False
+
+
 def readback_is_self_audit(node: Node) -> bool:
     """True iff the stored read-back names the author's session or identity.
 
@@ -154,11 +185,7 @@ def readback_is_self_audit(node: Node) -> bool:
         return False
     if rb.independence == "self":
         return True
-    if rb.auditor_session and rb.auditor_session.strip() == au.session.strip():
-        return True
-    if rb.auditor_identity and rb.auditor_identity.strip().lower() == au.identity.strip().lower():
-        return True
-    return False
+    return _auditor_matches(rb.auditor_identity, rb.auditor_session, au.identity, au.session)
 
 
 # ---------------------------------------------------------------------------
@@ -839,7 +866,11 @@ def rejudge_problem(campaign_root: Path, node: Node) -> str:
 
 #: Nodes created on or after this date are granted `proved` only with a passing `[checks]`
 #: record (spec 5.2 grant rule, step 4 Task 4). Earlier nodes are "pre-process".
-CHECKS_CUTOFF = "2026-10-28"
+#:
+#: Controller Ruling 1 (step 5 Task 1, 2026-10-30): `process.CUTOFF` is now the single
+#: source of truth for this date (imported at the top of this file as `CHECKS_CUTOFF`,
+#: kept under its old name so every existing caller, and the field name in [grant], is
+#: unchanged).
 
 
 def checks_required(node: Node) -> bool:
@@ -872,8 +903,11 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
 
     Passing: probe verdict WITNESSED, or PROBE_ONLY with a reviewer's `signoff: <who>` in the
     note (the probe is one-sided, spec 5.2); VACUOUS, REFUTED and ERROR block. The closure
-    verdict must be PASS. Currency is checked by the artifact SOURCE digest only: the record's
-    `olean_sha256` (the replayed closure the probe and fingerprint both ran on) cannot be
+    verdict must be PASS, and the closure audit must have been ISOLATED (`closure_isolated`: run
+    as a kernel-replay callback on the same replayed closure as the probe and the fingerprint,
+    step 5 Task 7); a record whose audit imported the submission (`--legacy-import`, or a record
+    from before step 5) does not pass. Currency is checked by the artifact SOURCE digest only:
+    the record's `olean_sha256` (the replayed closure all three checks ran on) cannot be
     recomputed without a build, so it is recorded for the reader and a changed source is what
     makes the record stale. Does not look at the cutoff; the gate (and `mission verify`, for
     proved nodes, Ruling 11) applies `checks_required`.
@@ -882,22 +916,35 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     - the sign-off is free text in the note, written by whoever runs `checks-record`; nothing
       checks that the reviewer is independent of the author. A later step could require a
       sign-off identity distinct from the `[author]`, as the read-back rule does;
-    - the closure audit is tied to the probe and fingerprint by the theorem name and the interim
-      axiom cross-check:
-      `audit-closure` still IMPORTS the submission rather than replaying it, so its JSON carries
-      no olean digest and an imported module could forge it. The interim cross-check (final
-      review I3): the record carries the REPLAY's axiom list, which the probe and fingerprint
-      must agree on, which must be a subset of CLEAN_AXIOMS, and which must include the closure
-      audit's per-target axioms. The owner accepted this gap for this merge (2026-10-30); porting
-      the closure audit to a replay callback is step-5 work;
-    - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
-      declaration the grant gate matched) and of the Comparator record's theorem when there is
-      one (final review I1). The resolver is the gate's SYNTACTIC one, so a non-adversarial
-      artifact cannot pass a helper lemma's checks; an adversarial artifact still has known
-      ways to fool the resolver, all of which predate step 4: `s!`-interpolated strings, quotes
-      inside `«»` names, declaration text inside `«»`, `#exit`, and `(command| ...)`
-      quotations. The sound fix, tying the target's statement fingerprint to the node's
-      statement file, is step 5;
+    - CLOSED IN STEP 5 (Task 7): the closure audit used to IMPORT the submission, so an imported
+      module could forge it (the gap the owner accepted on 2026-10-30). It now runs as a
+      kernel-replay callback, `checks-record` requires its JSON to say `isolated: true` with the
+      probe's and the fingerprint's `olean_sha256`, and this check requires `closure_isolated`.
+      The interim axiom cross-check (final review I3) stays as a second line: the record carries
+      the REPLAY's axiom list, which the probe and fingerprint must agree on, which must be a
+      subset of CLEAN_AXIOMS, and which must include the closure audit's per-target axioms;
+    - the theorem tie is semantic for frozen campaigns (frozen statement fingerprint); the name
+      resolver remains a readable cross-check (step 5 Task 6). For a node the grant rule covers
+      (`checks_required`), the record's `statement_fingerprint` must equal the
+      node's frozen statement fingerprint (`process.statement_fingerprint_problem`, from
+      FREEZE.toml's `[fingerprints]`, which `mission freeze --fingerprints` records); a missing
+      one is refused ("statement fingerprint not frozen"). So an adversarial artifact that
+      fools the syntactic resolver below (`s!`-interpolated strings, quotes inside `«»` names,
+      declaration text inside `«»`, `#exit`, `(command| ...)` quotations, all predating step 4)
+      gets the checks of a declaration whose statement differs, and is refused. The name
+      resolver (`guard_anchors.resolve_theorem`, the declaration the grant gate matched)
+      remains a readable cross-check, with the Comparator record's theorem when there is one
+      (final review I1). The tie is as good as the frozen fingerprint: it is computed by
+      whoever froze the campaign and cannot be recomputed here without Lean, so its git
+      history (`process.freeze_history_problems`) is what protects it once frozen. The frozen
+      fingerprint is exactly what Lean elaborated from the statement layer (the statement file
+      and the project modules it imports, recorded in FREEZE.toml `[imports]`); that layer is
+      trusted content, since compiling it runs code (Ruling 20); the operator and the node's
+      reader are expected to have read it, but no record yet binds that reading to the frozen
+      hashes (the node `[readback]` approves the text only; a FREEZE read-back is a follow-up). The freeze's
+      grammar, declaration-range and accounted-for checks stop accidental and casual mismatches
+      between its text and what Lean elaborates, not an adversarial author: freeze an untrusted
+      campaign inside the sandbox;
     - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
       of the statement and of each forall-body, but a vacuous sub-proposition under any other
       conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
@@ -923,6 +970,10 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
         return f"negation probe verdict is {k.probe_verdict} (recorded {k.date})"
     if k.closure_verdict != "PASS":
         return f"closure audit verdict is {k.closure_verdict} (recorded {k.date})"
+    if not k.closure_isolated:
+        return ("the closure audit was not isolated: it imported the submission (`audit-closure "
+                "--legacy-import`, or a record from before step 5), which could forge it; re-run "
+                "`telperion audit-closure` without --legacy-import and `mission checks-record`")
     if node.proof is None:
         return "[checks] recorded but the node has no artifact"
     art = Path(campaign_root) / node.proof.artifact
@@ -940,8 +991,17 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     bad = [a for a in k.axioms if a not in CLEAN_AXIOMS]
     if bad:
         return f"the replayed module uses non-standard axioms {bad} (recorded {k.date})"
-    # Final review I1: the record must be of the node's OWN theorem, the declaration the grant
-    # gate matched in the artifact, and of the Comparator record's theorem once there is one.
+    # Step 5 Task 6: the SEMANTIC tie. For a node the grant rule covers, the checked theorem's
+    # statement fingerprint must be the node's frozen statement fingerprint, whatever name the
+    # resolver below reads out of the artifact.
+    if checks_required(node):
+        from .process import statement_fingerprint_problem
+        fp_problem = statement_fingerprint_problem(Path(campaign_root), node, k.statement_fingerprint)
+        if fp_problem:
+            return fp_problem
+    # Final review I1, kept as a readable cross-check: the record must be of the node's OWN
+    # theorem, the declaration the grant gate matched in the artifact, and of the Comparator
+    # record's theorem once there is one.
     from .judge import _guard_anchors
     ga = _guard_anchors()
     try:

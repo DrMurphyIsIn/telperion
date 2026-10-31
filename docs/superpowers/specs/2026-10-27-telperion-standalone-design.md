@@ -206,23 +206,39 @@ given, and `checks-record` refuses a probe of another theorem or a source that i
 sha256 (Ruling 12; the final review removed the `--allow-missing-source` waiver). The final review also requires the
 target to be the node's registered theorem (`guard_anchors.resolve_theorem`), and the probe and fingerprint JSONs to
 carry the replay's axiom list, equal, standard, and including the closure audit's axioms for the target. That
-cross-check is the interim guard for a known gap: `audit-closure` still imports the submission, so its output can be
-forged by an imported module. The owner accepted the gap for this merge (2026-10-30), and porting the closure audit to
-a replay callback is a step-5 follow-up. The grant rule applies to nodes
+cross-check was the interim guard for a known gap: `audit-closure` imported the submission, so its output could be
+forged by an imported module. The owner accepted the gap for the step 4 merge (2026-10-30). **Closed in step 5
+(Task 7):** the closure audit runs as a kernel-replay callback on the same replayed closure as the probe and the
+fingerprint, its JSON carries `isolated: true` and their `olean_sha256`, `checks-record` refuses a non-isolated
+closure JSON (`audit-closure --legacy-import`, the old import path, kept and documented as NOT isolated) for nodes
+that need checks, and the record's `closure_isolated` is a grant condition; the axiom cross-check stays as a second
+line. The grant rule applies to nodes
 created on or after 2026-10-28; a node whose `created` is empty or is not, as a whole, an ISO date is treated as created
 after it (Rulings 2 and 12, fail-closed). A grant that required checks records `checks_required = true` in `[grant]`,
 and from then on the node requires them whatever its `created` says (Ruling 13: the decision is recorded, not read off
 `gate_version`, because every new grant carries the new version, pre-cutoff nodes included). `mission verify` re-checks
 the record on every proved node the rule covers, and `GATE_VERSION` is `2026-10-29.1` (Ruling 11). Known limitations
-recorded by Rulings 11 and 12: the sign-off is free text; the closure audit, which imports rather than replays, is tied
-to the other two checks by the theorem name and the interim axiom cross-check; and a `created` back-dated before a node's first grant is not caught.
+recorded by Rulings 11 and 12: the sign-off is free text; and a `created` back-dated before a node's first grant is
+not caught. (A third, that the closure audit imported rather than replayed and was tied to the other two checks only
+by the theorem name and the interim axiom cross-check, was closed in step 5.)
+
+**Amendment (2026-10-31; step 5 Task 6). The theorem tie is semantic for frozen campaigns (frozen statement
+fingerprint); the name resolver remains a readable cross-check.** The name tie above (`guard_anchors.resolve_theorem`)
+reads the artifact's text, and an adversarial artifact can make it name a decoy (step 4's final re-review: `s!`
+interpolation, a quote inside `«»`, declaration text inside `«»`, `#exit`, a `(command| ...)` quotation). So, for
+nodes the grant rule covers, `checks-record` and the gate also require the record's fingerprint to EQUAL the node's
+frozen statement fingerprint (FREEZE.toml `[fingerprints]`, section 7), and refuse a node with none ("statement
+fingerprint not frozen"). The fingerprint gained a VALUE mode for this: a `def S : Prop`'s value, unfolded and
+serialized as type mode treats a theorem's type, so `theorem t : S`, `theorem t : body` and `S` agree. The checked
+fingerprint must be a type-mode one. `GATE_VERSION` is `2026-10-31.1`, step 5's one bump: the freeze, the deviation
+ledger and its read-back, the required `[author]`, the isolated closure audit and this tie.
 
 **Amendment (2026-10-30; step 4 Ruling 9 and the caveat recorded with the fingerprint re-review). These checks are NOT A
 SANDBOX.** Replay isolation keeps the submission's code out of the check's process, and nothing more. Building the
 submission (`lake build`, or compiling a submitted text for the fingerprint) runs its code with the caller's
-permissions, and so does `audit-closure`, which imports it. The `.olean` reader trusts its input bytes (a crafted file
-is a memory-safety attack on the reading process), the memory bound is Lean's own best-effort `--memory`, and a
-same-user process can still reach the private copies during a run. Untrusted submissions must therefore be built and
+permissions, and so does `audit-closure --legacy-import`, which imports it. The `.olean` reader trusts its input bytes
+(a crafted file is a memory-safety attack on the reading process), the memory bound is Lean's own best-effort
+`--memory`, and a same-user process can still reach the private copies during a run. Untrusted submissions must therefore be built and
 checked inside a sandbox, for example Comparator's sandbox on Linux CI. Providing that sandbox is the owner's separate
 decision.
 
@@ -276,6 +292,34 @@ Islands are a generic mechanism, and these two are its reference entries. RH-spe
    - A grant requires the ledger to be present and read back. An empty ledger must say "none" explicitly.
 4. **Provenance headers.** Every ported file names its source repository, file and commit. A lint check enforces this,
    islands included.
+
+**Amendment (2026-10-31; step 5, Ruling 4 and Task 6). Where the freeze lives.** The freeze is campaign-level:
+`<campaign>/FREEZE.toml` records the sha256 of every node's statement file in `[statements]` and, with `mission freeze
+--fingerprints`, every node's statement fingerprint in `[fingerprints]`, not in `[grant]` (each grant still records
+its own `statement_sha256`). A statement file declares exactly one statement constant: one `theorem`, fingerprinted in
+type mode (the form statement files have so far), or, with none, one closed `def … : Prop`, fingerprinted in value mode
+(the form item 1 describes; the containment match and the name resolver do not handle it yet). Statement files
+follow a strict whitelist grammar (Task 6 fix round 2): only `import`, `namespace`/`end`/`section`, `open`,
+`universe`, `variable`, the statement and supporting `def`/`abbrev`/`structure`/`inductive`/`class` commands, each at
+a line start; no string or char literal, no attribute, no syntax extension, generator, `#` command or `set_option`.
+`by` appears only as the statement's terminal `:= by sorry`, and a doc comment on the statement is refused. The
+constant is then chosen semantically: the replayed statement module must declare exactly that statement constant,
+every constant it declares must be accounted for by a textual declaration, the gate's statement reader must agree,
+and the declaration range Lean recorded for it (read as data from the compiled olean) must start at the textual
+declaration's line. Every imported project module is recorded, by source sha256, in `[imports]`. **Trust (Task 6 fix
+round 3, Ruling 20):** the freeze fingerprints exactly what Lean elaborates; these checks stop accidental and casual
+mismatches between the statement text and that elaboration. The statement layer (the statement file and the project
+modules it imports) is trusted content, because compiling it runs code; the operator and the node's independent reader
+are expected to have read it. That is not yet a record (step 5 final review I6): the node `[readback]` approves the
+statement text and carries no digest, the first freeze has no separate read-back, and `[imports]` and `[fingerprints]`
+are bound to no auditor; a `FREEZE.readback.toml` is a tracked follow-up. A campaign from an untrusted author must be
+frozen inside the sandbox. A node added after the freeze is recorded at the same version with `mission freeze --add`,
+and an uncommitted change to FREEZE.toml counts for nothing. `fingerprints_env` records the trusted env digest the fingerprints were computed under (machine-independent
+within a platform), which the fingerprint JSON at `checks-record` must match, and the `frozen` date never changes. CI's
+"fails if the file changes" is `mission verify`'s walk of FREEZE.toml's git history: at an unchanged version neither
+table may change, except for nodes added with it; any other change needs a version bump with an `[[unfreeze]]` entry
+read back by someone other than its author. `unfreeze` records fingerprints only when given `--fingerprints` and never
+carries them forward.
 
 **Scope.** These rules apply to new missions only. Existing proved nodes are recorded as `pre-process`. KC-1's F0
 (`KC1Statement_F0_FROZEN_558248cd.lean`) already conforms and becomes the first mission to use the full flow.

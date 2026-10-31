@@ -30,6 +30,13 @@ from .coverage import (
     ci_covered_lean_files,
     islands_with_lean,
 )
+from .process import (
+    campaign_requires_process,
+    deviations_grant_problem,
+    freeze_grant_problem,
+    freeze_problems,
+    provenance_problems,
+)
 from .provenance import (
     CHECKS_CUTOFF,
     ProvenanceError,
@@ -597,6 +604,38 @@ def grant_status(campaign: Campaign, slug: str, universe=None, *,
                 f"Node {slug!r}: [checks] required (created {node.created or '(empty)'}, "
                 f"cutoff {CHECKS_CUTOFF}): {ck}")
 
+    # Fix round 2 (Ruling 13): a post-cutoff node with no [author] block silently defeats
+    # BOTH independent-read-back checks -- the node-level one just above
+    # (`readback_is_self_audit` returns False, "undecidable", when `node.author is None`)
+    # and `deviations_grant_problem`'s own auditor check below -- letting a single identity
+    # write a read-back and perform the grant with no refusal at all. `mission add` always
+    # writes [author] through the governed path, so a post-cutoff node missing it can only
+    # mean a hand edit; refuse outright rather than silently skip the independence check it
+    # disables. Scoped like the checks/freeze/deviations gates: `proved` only, post-cutoff
+    # only (a refutation does not rest on who read anything back).
+    if new_status == "proved" and checks_required(node) and node.author is None:
+        raise GateError(
+            f"Node {slug!r}: no [author] block on record; a post-cutoff node must have "
+            "one so its read-back's independence can be checked (`mission add` always "
+            "writes one; this node's record appears to have been edited by hand)."
+        )
+
+    # Step 5 Task 1: a post-cutoff node may not be granted `proved` until the campaign has
+    # a FREEZE.toml recording this node's statement. Scoped to `proved` like the checks and
+    # re-judge gates above -- a refutation does not rest on the frozen statement's hash.
+    if new_status == "proved":
+        fz = freeze_grant_problem(campaign.root, node)
+        if fz:
+            raise GateError(f"Node {slug!r}: {fz}")
+
+    # Step 5 Task 3: a post-cutoff node may not be granted `proved` until the campaign has
+    # a valid DEVIATIONS.md ledger (spec 7.3) -- same post-cutoff predicate and the same
+    # "proved only" scoping as the freeze check just above.
+    if new_status == "proved":
+        dv = deviations_grant_problem(campaign.root, node)
+        if dv:
+            raise GateError(f"Node {slug!r}: {dv}")
+
     # 6. A reduction proof may not be granted over an unproved premise.
     if node.proof.via == "reduction":
         from .registry import parse_dep
@@ -823,6 +862,15 @@ def verify_campaign(
             if ck:
                 errors.append(f"Node {sl!r}: status is 'proved' but [checks] are required "
                               f"(created {node.created or '(empty)'}, cutoff {CHECKS_CUTOFF}): {ck}")
+            # Step 5 final review I1: re-check post-grant what the grant checked, as for
+            # [checks]: the deviation ledger, its read-back and independence, and [author]
+            # (without which the read-back independence checks are silently skipped).
+            if node.author is None:
+                errors.append(f"Node {sl!r}: status is 'proved' (post-cutoff) but it has no "
+                              "[author] block, so its read-back's independence cannot be checked.")
+            dv = deviations_grant_problem(root, node)
+            if dv:
+                errors.append(f"Node {sl!r}: status is 'proved' (post-cutoff) but {dv}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":
@@ -904,6 +952,19 @@ def verify_campaign(
                 f"Claim on non-open node {claim_slug!r} "
                 f"(status: {node.status!r})."
             )
+
+    # 4b. Campaign statement freeze (step 5 Task 1): drift, nodes added since the freeze,
+    # an incomplete unfreeze history, and self-read-back unfreezes. A missing FREEZE.toml is
+    # only reported when a PROVED post-cutoff node exists to require one.
+    errors.extend(freeze_problems(root))
+
+    # 4c. Provenance-header lint (step 5 Task 4, spec 7.4): every ported file names its
+    # source repository, file and commit. Scoped by the one "this campaign is under the
+    # process" predicate (`campaign_requires_process`, final review M1): FREEZE.toml's
+    # `frozen` date is on or after the cutoff, or a post-cutoff node is proved -- the same
+    # predicate the freeze history walk uses.
+    if campaign_requires_process(root, campaign):
+        errors.extend(provenance_problems(root))
 
     # 5. Attempts ledger (if it exists)
     ledger_path = root / "attempts.jsonl"
