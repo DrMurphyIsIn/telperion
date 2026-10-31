@@ -33,7 +33,12 @@ environment census is the trusted imports' modules plus the replayed ones.  The 
 STATEMENT strings are pretty-printed without the untrusted modules' extensions, so a statement
 that uses the submission's own notation or unexpanders prints in plain form; they are for a
 reader, and nothing compares them.  Per-target ``collectAxioms`` re-walks a replayed constant
-instead of reading a cached record, so the consistency cross-check compares two walks.
+instead of reading a cached record, so the consistency cross-check compares two walks.  When an
+untrusted module declares a theorem identical (name, type, universe parameters) to a trusted
+one already present, replay keeps the trusted constant, so the audit walks the TRUSTED proof
+and counts it as library: sound for the statement, but the absence checks then describe that
+proof, not the submission's.  A bare-digit name component in the spec is a numeric one (the
+``0`` of ``_private.Foo.0.Foo.bar``), as ``Name.toString`` prints it; see `lean_name_data`.
 
 What the audit does
 -------------------
@@ -466,15 +471,24 @@ loaded by an import.  Every protocol line goes out through TelperionReplay.line 
 namespace TelperionClosureAudit
 open Lean Meta
 
-/-- A name from its components, which the renderer passes as string data, never as syntax. -/
-def mkName (cs : List String) : Name := cs.foldl Name.mkStr Name.anonymous
+/-- One name component as the renderer passes it, as data: a string, or a number (a bare-digit component, which is
+how Name.toString prints a numeric one, such as the 0 of a private name). -/
+inductive NameComp where
+  | str (s : String)
+  | num (n : Nat)
 
-def targets : List Name := (__TARGETS__ : List (List String)).map mkName
-def libraryRoots : List Name := (__LIBRARY_ROOTS__ : List (List String)).map mkName
+/-- A name from its components, never from syntax. -/
+def mkName (cs : List NameComp) : Name :=
+  cs.foldl (fun n c => match c with
+    | .str s => Name.mkStr n s
+    | .num k => Name.mkNum n k) Name.anonymous
+
+def targets : List Name := (__TARGETS__ : List (List NameComp)).map mkName
+def libraryRoots : List Name := (__LIBRARY_ROOTS__ : List (List NameComp)).map mkName
 def scanPatterns : List String := __SCAN_PATTERNS__
-def absentConstants : List Name := (__ABSENT_CONSTANTS__ : List (List String)).map mkName
-def absentModulePrefixes : List Name := (__ABSENT_MODULE_PREFIXES__ : List (List String)).map mkName
-def allowedAxioms : List Name := (__ALLOWED_AXIOMS__ : List (List String)).map mkName
+def absentConstants : List Name := (__ABSENT_CONSTANTS__ : List (List NameComp)).map mkName
+def absentModulePrefixes : List Name := (__ABSENT_MODULE_PREFIXES__ : List (List NameComp)).map mkName
+def allowedAxioms : List Name := (__ALLOWED_AXIOMS__ : List (List NameComp)).map mkName
 def includeRecursors : Bool := __INCLUDE_RECURSORS__
 def closureOut : Option String := __CLOSURE_OUT__
 def nonce : String := __NONCE__
@@ -532,7 +546,8 @@ def closureOf (env : Environment) (roots : List Name) : NameSet := Id.run do
   return visited
 
 def emit (key : String) (fields : List String) : IO Unit :=
-  TelperionReplay.line ("@@" ++ nonce ++ "\t" ++ key ++ String.join (fields.map (fun f => "\t" ++ f)))
+  TelperionReplay.line ("@@" ++ nonce ++ "\t" ++ key ++
+    String.join (fields.map (fun f => "\t" ++ f.replace "\t" " ")))
 
 end TelperionClosureAudit
 
@@ -652,13 +667,29 @@ def TelperionReplay.callback (c : TelperionReplay.Closure) : TermElabM Unit := d
 
 
 def lean_name_data(name: str) -> str:
-    """Lean source for the components of the dotted name `name`, as a list of string literals: DATA, which the
-    callback joins with ``Name.mkStr``.  Any character may appear in a component; only an empty one is refused."""
+    """Lean source for the components of the dotted name `name`, as DATA the callback joins into a ``Name``: a list
+    of ``.str "<literal>"`` and ``.num <digits>`` components.
+
+    A bare-digit component is a NUMERIC component (``Name.mkNum``). That is how Lean's ``Name.toString`` prints one,
+    and how the audit's own output names one: the ``0`` of a private constant ``_private.Foo.0.Foo.bar`` is a
+    ``Name.num``, and a STRING component ``"0"`` would print as ``«0»``. As a string it could never match, so an
+    absence check on such a name would pass vacuously. A digit string with a leading zero (``007``) is printed by
+    ``Name.toString`` for neither kind, so it is refused rather than guessed. Any other character may appear in a
+    string component; only an empty component is refused."""
     from .checks.negation_probe import _lean_string
     parts = name.split(".")
     if any(p == "" for p in parts):
         raise ValueError(f"malformed Lean name {name!r}")
-    return "[" + ", ".join(_lean_string(p) for p in parts) + "]"
+    comps = []
+    for p in parts:
+        if re.fullmatch(r"[0-9]+", p):
+            if p != str(int(p)):
+                raise ValueError(f"Lean name {name!r}: component {p!r} has a leading zero, so it is neither a "
+                                 "numeric component nor a string one as Lean prints names; refusing")
+            comps.append(f".num {int(p)}")
+        else:
+            comps.append(".str " + _lean_string(p))
+    return "[" + ", ".join(comps) + "]"
 
 
 def render_audit_callback(spec: AuditSpec, nonce: str) -> str:
@@ -948,7 +979,8 @@ def replayed_audit_result(r, nonce: str) -> AuditResult:
     """The AuditResult of a replay run (a ``lean_replay.ReplayResult``) of `render_audit_callback`'s callback.
 
     OK: the callback's lines must ALL be this audit's protocol lines (``@@<nonce>``), the verdict line must be the
-    last, and `parse_audit_output`'s integrity rules apply; anything else is an ``integrity`` FAIL. The result carries
+    last, and `parse_audit_output`'s integrity rules apply; anything else is an ``integrity`` FAIL. A malformed
+    protocol line gives no verdict (never an exception). The result carries
     the replay's ``olean_sha256``/``olean_closure``. A refused replay is a FAIL: an untrusted axiom (Ruling 10: the
     replay refuses it before anything runs) is named, as is a kernel rejection or a re-declared constant. A module
     that is not built, or a replay that did not run (no trusted env or manifest, a Lean crash, a failed callback),
@@ -956,7 +988,12 @@ def replayed_audit_result(r, nonce: str) -> AuditResult:
     tail = "\n".join((r.output or "").splitlines()[-20:])
     if r.status == "OK":
         prefix = PROTOCOL_PREFIX + nonce + "\t"
-        res = parse_audit_output("\n".join(r.lines), nonce=nonce)
+        try:
+            res = parse_audit_output("\n".join(r.lines), nonce=nonce)
+        except ClosureAuditError as exc:
+            res = AuditResult(nonce=nonce, isolated=True, raw_tail=tail)
+            res.failures.append(f"the audit callback printed a malformed protocol line, so no verdict is read: {exc}")
+            return res
         problems = []
         stray = [ln for ln in r.lines if not ln.startswith(prefix)]
         if stray:

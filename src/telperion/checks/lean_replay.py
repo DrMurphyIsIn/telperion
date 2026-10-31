@@ -107,6 +107,8 @@ TRUSTED_SUFFIXES = (".olean", ".olean.server", ".olean.private", ".ir", ".ir.sig
 
 _MODULE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*")
 _TOOLCHAIN_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+")
+#: A `__UPPER__` placeholder of the script template; `render_replay_script` substitutes them in one pass.
+_PLACEHOLDER_RE = re.compile(r"__[A-Z_]+__")
 
 
 @dataclass
@@ -138,6 +140,8 @@ class PinnedEnv:
 def _module(name: str) -> str:
     if not _MODULE_RE.fullmatch(name):
         raise ValueError(f"not a plain Lean module name: {name!r}")
+    if any(_PLACEHOLDER_RE.fullmatch(c) for c in name.split(".")):
+        raise ValueError(f"module name {name!r} has a component spelled like a script placeholder; refusing")
     return name
 
 
@@ -628,19 +632,22 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
     targets = [_module(m) for m in _targets(target_module)]
     expect = expect_oleans or {}
     pairs = ", ".join(f"({lean_name_literal(m)}, {json.dumps(str(expect.get(m, '')))})" for m in targets)
-    return (_SCRIPT.replace("__IMPORTS__", imports)
-            .replace("__TAG__", json.dumps(nonce))
-            .replace("__TARGETS__", "[" + ", ".join(lean_name_literal(m) for m in targets) + "]")
-            .replace("__EXPECT__", f"[{pairs}]")
-            .replace("__ALLOW_AXIOMS__", "true" if allow_axioms else "false")
-            .replace("__ALLOW_SORRY__", "true" if allow_sorry else "false")
-            .replace("__LIST_ONLY__", "true" if list_only else "false")
-            .replace("__PREFIXES__", _lean_strings(_realpath(p).rstrip("/") or "/" for p in trusted_prefixes))
-            .replace("__SEARCH__", _lean_strings(search_path))
-            .replace("__HEARTBEATS__", str(int(heartbeats)))
-            .replace("__CALLBACK_CALL__", "TelperionReplay.callback c" if callback_takes_closure
-                     else "TelperionReplay.callback")
-            .replace("__CALLBACK__", callback_src))
+    repl = {
+        "__IMPORTS__": imports,
+        "__TAG__": json.dumps(nonce),
+        "__TARGETS__": "[" + ", ".join(lean_name_literal(m) for m in targets) + "]",
+        "__EXPECT__": f"[{pairs}]",
+        "__ALLOW_AXIOMS__": "true" if allow_axioms else "false",
+        "__ALLOW_SORRY__": "true" if allow_sorry else "false",
+        "__LIST_ONLY__": "true" if list_only else "false",
+        "__PREFIXES__": _lean_strings(_realpath(p).rstrip("/") or "/" for p in trusted_prefixes),
+        "__SEARCH__": _lean_strings(search_path),
+        "__HEARTBEATS__": str(int(heartbeats)),
+        "__CALLBACK_CALL__": "TelperionReplay.callback c" if callback_takes_closure else "TelperionReplay.callback",
+        "__CALLBACK__": callback_src,
+    }
+    # ONE pass: a substituted value (a path, the callback source) is never scanned for placeholders again.
+    return _PLACEHOLDER_RE.sub(lambda m: repl[m.group(0)], _SCRIPT)
 
 
 def parse_replay_output(output: str, nonce: str, rc: int = 0) -> tuple[str, str, list[str], list[str]]:

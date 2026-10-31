@@ -132,6 +132,46 @@ def test_replay_script_passes_the_closure_to_a_closure_callback():
     assert "moduleOf := out.moduleOf.insert c.name m" in default
 
 
+def test_callback_numeric_components_are_name_num():
+    """Cleanup M5: a bare-digit component is a `Name.num`, as Lean's own `Name.toString` prints one (a STRING
+    component "0" prints as `«0»`). So a private constant `_private.Foo.0.Foo.bar` can be named in absent_constants,
+    absent_module_prefixes and targets; with string components it could never match (vacuously "absent")."""
+    text = render_audit_callback(_spec(targets=("_private.Foo.0.Foo.bar",), absent_constants=("_private.Foo.0.x",),
+                                       absent_module_prefixes=("A.12",)), NONCE)
+    assert '[.str "_private", .str "Foo", .num 0, .str "Foo", .str "bar"]' in text
+    assert '[.str "_private", .str "Foo", .num 0, .str "x"]' in text and '[.str "A", .num 12]' in text
+    assert '.str "0x"' in render_audit_callback(_spec(targets=("A.0x",)), NONCE)
+    for odd in ("A.007", "A.00"):
+        with pytest.raises(ValueError, match="leading zero"):
+            render_audit_callback(_spec(targets=(odd,)), NONCE)
+
+
+def test_callback_emit_flattens_tabs_in_fields():
+    """Cleanup M3: a field (an untrusted constant or module name) cannot split a protocol line into more fields."""
+    text = render_audit_callback(_spec(), NONCE)
+    assert '(fields.map (fun f => "\\t" ++ f.replace "\\t" " "))' in text
+
+
+def test_replay_render_is_single_pass_and_refuses_placeholder_modules():
+    """Cleanup M1: a value (a search-path entry, an expected olean path) that spells a placeholder is not rescanned,
+    and a module component that spells one is refused before anything is rendered."""
+    cb = "def TelperionReplay.callback : Lean.Elab.Term.TermElabM Unit := pure () -- CB-MARK\n"
+    text = render_replay_script(["Lean"], "Foo", ["/t"], cb, "TR" + "0" * 32,
+                                search_path=["/tmp/__CALLBACK__/x", "/tmp/__HEARTBEATS__"],
+                                expect_oleans={"Foo": "/tmp/__ALLOW_SORRY__.olean"})
+    assert text.count("CB-MARK") == 1
+    assert '"/tmp/__CALLBACK__/x"' in text and '"/tmp/__HEARTBEATS__"' in text
+    assert '"/tmp/__ALLOW_SORRY__.olean"' in text
+    for bad in ("Evil.__CALLBACK__", "__TARGETS__", "Evil.__ALLOW_SORRY__.X"):
+        with pytest.raises(ValueError):
+            lean_replay._module(bad)
+        with pytest.raises(ValueError):
+            render_replay_script(["Lean"], bad, ["/t"], cb, "TR" + "0" * 32)
+        with pytest.raises(ValueError):
+            render_replay_script([bad], "Foo", ["/t"], cb, "TR" + "0" * 32)
+    lean_replay._module("Evil.__init")          # an ordinary dunder-ish name is still fine
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Pure: a replay result as an AuditResult.
 def _lines(nonce: str, *rows) -> list[str]:
@@ -184,6 +224,16 @@ def test_replay_callback_lines_outside_the_protocol_fail_integrity(mutate, why):
 def test_replay_ok_without_a_verdict_is_no_verdict():
     res = replayed_audit_result(_ok(_ok_lines(NONCE)[:-1]), NONCE)
     assert res.verdict == "" and not res.ok and any("no verdict" in f for f in res.failures)
+
+
+def test_replay_ok_with_a_malformed_protocol_line_is_no_verdict():
+    """Cleanup M3: a malformed line (e.g. an untrusted module name with a TAB shifting a count) is a no-verdict
+    result, never an exception out of `replayed_audit_result` (which the library promises)."""
+    lines = _ok_lines(NONCE)
+    lines.insert(5, "@@" + NONCE + "\tper_root\tEvil\tnot-a-number")
+    res = replayed_audit_result(_ok(lines), NONCE)
+    assert res.verdict == "" and not res.ok and res.isolated
+    assert any("malformed" in f for f in res.failures), res.failures
 
 
 @pytest.mark.parametrize("status, detail, verdict, why", [
@@ -305,7 +355,7 @@ def test_cli_render_only_writes_the_callback(tmp_path):
     assert main(["audit-closure", "--project", str(tmp_path), "--import", "A.B", "--target", "A.t",
                  "--render-only", str(out)]) == 0
     text = out.read_text()
-    assert "def TelperionReplay.callback (c : TelperionReplay.Closure)" in text and '"A", "t"' in text
+    assert "def TelperionReplay.callback (c : TelperionReplay.Closure)" in text and '.str "A", .str "t"' in text
     assert "import A.B" not in text
 
 
@@ -396,6 +446,54 @@ def test_lean_parity_with_the_legacy_audit_on_a_clean_module(lib, manifest, recu
     assert sorted(new.scan_module_hits) == sorted(old.scan_module_hits)
     assert sorted(new.unused_nonlib_modules) == sorted(old.unused_nonlib_modules)
     assert set(new.closure_axioms) <= set(CLEAN_AXIOMS)
+
+
+# Cleanup M6: what HONEST lacks. A private def (a mangled `_private.<Module>.0.<name>` constant), an `opaque`, and a
+# `module`-system file, whose private part holds the non-public def.
+PRIV = """namespace TpPriv
+private def hidden (n : Nat) : Nat := n + n
+opaque secret : Nat
+theorem t : hidden 2 = 4 ∧ secret = secret := ⟨rfl, rfl⟩
+end TpPriv
+"""
+MODULE_SYSTEM = """module
+def TpModP.hidden : Nat := 3
+public theorem TpModP.t : True := let _ := TpModP.hidden; trivial
+"""
+
+
+@lean
+@pytest.mark.parametrize("module, body, target", [("TpPriv", PRIV, "TpPriv.t"),
+                                                  ("TpModP", MODULE_SYSTEM, "TpModP.t")])
+def test_lean_parity_private_opaque_and_module_file(lib, manifest, module, body, target):
+    _build(lib, module, body)
+    spec = dict(imports=(module,), targets=(target,))
+    old = _legacy(lib, AuditSpec(**spec, closure_out=str(lib / "legacy.txt")))
+    new = _replayed(lib, manifest, AuditSpec(**spec, closure_out=str(lib / "replayed.txt")))
+    assert old.verdict == new.verdict == "PASS", (old.failures, new.failures, new.raw_tail)
+    assert (lib / "replayed.txt").read_text() == (lib / "legacy.txt").read_text()
+    for f in ("closure_size", "per_root", "closure_axioms", "axioms_consistent", "absent_constants",
+              "env_modules_per_root"):
+        assert getattr(new, f) == getattr(old, f), f
+    assert {m: sorted(cs) for m, cs in new.nonlib_modules.items()} == \
+        {m: sorted(cs) for m, cs in old.nonlib_modules.items()}
+    private = f"_private.{module}.0.{module}.hidden"
+    assert private in new.nonlib_modules[module], new.nonlib_modules
+    if module == "TpPriv":
+        assert "TpPriv.secret" in new.nonlib_modules[module]
+
+
+@lean
+def test_lean_private_constant_is_matched_by_its_numeric_component(lib, manifest):
+    """Cleanup M5: `_private.TpPriv.0.TpPriv.hidden` (a `Name.num` 0) is found as a target and as a forbidden
+    constant; with string components the absence check passed vacuously."""
+    _build(lib, "TpPriv", PRIV)
+    private = "_private.TpPriv.0.TpPriv.hidden"
+    r = _replayed(lib, manifest, AuditSpec(imports=("TpPriv",), targets=("TpPriv.t",), absent_constants=(private,)))
+    assert r.verdict == "FAIL" and r.absent_constants == {private: True}, (r.failures, r.raw_tail)
+    assert f"forbidden constant {private} is in the closure" in r.failures
+    r = _replayed(lib, manifest, AuditSpec(imports=("TpPriv",), targets=(private,)))
+    assert r.verdict == "PASS" and [(t.name, t.kind) for t in r.targets] == [(private, "definition")], r.failures
 
 
 @lean

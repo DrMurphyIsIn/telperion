@@ -184,9 +184,10 @@ submission's project on a script that imported its modules, so the project's lak
 and elaborators ran inside the audit. A module that replaces `#eval` can read the audit's per-run tag out of the
 script and print a forged PASS for a theorem proved by `sorry` (`tests/test_closure_audit_replay.py` builds exactly
 that module and shows it). The owner accepted that gap for the step 4 merge (2026-10-30), and **it was closed in
-step 5**: the closure audit's walk now runs as a replay callback, so the submission never reaches the audit process,
-an `axiom` in its closure is refused by the replay (an audit FAIL that names it), and the audit's JSON says
-`"isolated": true` and carries the same `olean_sha256` as the other two checks.
+step 5**: the closure audit's walk now runs as a replay callback, so the submission's code never runs in the audit
+process (its `.olean` bytes are still read there; see the limitations), an `axiom` in its closure is refused by the
+replay (an audit FAIL that names it), and the audit's JSON says `"isolated": true` and carries the same
+`olean_sha256` as the other two checks.
 
 The old path is still there as `audit-closure --legacy-import`, for comparing against old records and for projects
 outside a pinned env. It is NOT isolated: it prints a warning saying so, its JSON says `"isolated": false`, and

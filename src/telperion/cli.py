@@ -2152,8 +2152,12 @@ def cmd_mission_checks_record(args) -> int:
                       "IMPORTS the submission, whose code can forge it; a node created on or after "
                       f"{CHECKS_CUTOFF} needs the kernel-replayed audit (`telperion audit-closure` without "
                       "--legacy-import)")
-    if c_isolated and closure.get("olean_sha256") != p_olean:
-        return refuse(f"the closure audit ran on olean_sha256 {str(closure.get('olean_sha256'))[:12]}... but "
+    if c_isolated and not closure.get("olean_sha256"):
+        return refuse("the closure JSON says isolated but its olean_sha256 is missing (no replayed closure to "
+                      "compare with the probe's and the fingerprint's); re-run `telperion audit-closure` on the "
+                      "same build")
+    if c_isolated and closure["olean_sha256"] != p_olean:
+        return refuse(f"the closure audit ran on olean_sha256 {str(closure['olean_sha256'])[:12]}... but "
                       f"the probe and the fingerprint on {str(p_olean)[:12]}...; run all three checks on the "
                       "same build")
 

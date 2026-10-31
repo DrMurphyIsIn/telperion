@@ -885,3 +885,20 @@ def test_cli_legacy_closure_json_accepted_for_pre_cutoff_node(tmp_path):
     _record(mroot, _write_jsons(tmp_path, isolated=False))
     c = _node(mroot).checks
     assert c is not None and c.closure_isolated is False and c.closure_verdict == "PASS"
+
+
+@pytest.mark.parametrize("how", ["null", "absent"])
+def test_cli_isolated_closure_without_olean_refused_as_missing(tmp_path, how, capsys):
+    """Cleanup M6: an isolated closure JSON with no olean_sha256 is refused, and the message says it is missing."""
+    mroot = _cli_campaign(tmp_path)
+    paths = _write_jsons(tmp_path)
+    doc = json.loads(paths["closure"].read_text())
+    if how == "null":
+        doc["olean_sha256"] = None
+    else:
+        del doc["olean_sha256"]
+    paths["closure"].write_text(json.dumps(doc))
+    assert _record(mroot, paths) == 2
+    assert _node(mroot).checks is None
+    err = capsys.readouterr().err
+    assert "missing" in err and "None" not in err, err
