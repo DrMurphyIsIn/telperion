@@ -152,10 +152,26 @@ def _checks_record(mroot: Path, paths: dict, *extra: str) -> int:
 
 
 @pytest.fixture(scope="module")
-def frozen_statement_fp():
-    """The statement's fingerprint as `mission freeze --fingerprints` computes it (statement file text, type mode)."""
-    from telperion.checks.fingerprint import run_fingerprint_on_text
-    return run_fingerprint_on_text(Path(LEAN_ENV), "-- statement\n" + STATEMENT + " := by sorry\n", "main_thm")
+def frozen_statement():
+    """The statement's fingerprint and trusted env as `mission freeze --fingerprints` computes them (statement file
+    text, type mode, the module's own declarations listed)."""
+    from telperion.checks.fingerprint import run_statement_fingerprint
+    fps = run_statement_fingerprint(Path(LEAN_ENV), "-- statement\n" + STATEMENT + " := by sorry\n", "main_thm",
+                                    mode="type")
+    assert fps.declared == {"theorem": ["main_thm"], "propdef": []}
+    return fps["main_thm"], fps.trusted_env_sha256
+
+
+@pytest.fixture(scope="module")
+def frozen_statement_fp(frozen_statement):
+    return frozen_statement[0]
+
+
+def _freeze_with(root: Path, frozen_statement) -> None:
+    from telperion.missions.process import StatementFingerprints, freeze
+    fp, env = frozen_statement
+    freeze(root, identity=GATE[0], session=GATE[1], date="2026-10-30",
+           fingerprints=StatementFingerprints({"Demo_ck": fp}, env))
 
 
 def _load_freeze(root: Path) -> dict:
@@ -183,22 +199,85 @@ def test_freeze_fingerprints_agree_with_the_artifact_theorem(tmp_path, capsys, f
                "--session", GATE[1], "--fingerprints"])
     out = capsys.readouterr().out
     assert rc == 0 and "2 statement fingerprint(s) recorded" in out, out
-    fps = _load_freeze(root)["fingerprints"]
+    doc = _load_freeze(root)
+    fps = doc["fingerprints"]
     olean_dir = _compile(HONEST, tmp_path / "lib")
     art_fp = _fingerprint_json(capsys, olean_dir, "main_thm", root / "proof" / "Demo_ck.lean")
     assert fps == {"Demo_ck": art_fp["fingerprints"]["main_thm"], "Demo_def": art_fp["fingerprints"]["main_thm"]}
     assert fps["Demo_ck"] == frozen_statement_fp
+    # fix round 1 (M2): the freeze names the trusted env, and so does the artifact's fingerprint JSON
+    assert doc["fingerprints_env"] == art_fp["trusted_env_sha256"] and len(doc["fingerprints_env"]) == 64
 
 
 def test_freeze_fingerprints_refuses_a_statement_it_cannot_fingerprint(tmp_path, capsys):
-    """A def-form statement whose type is not Prop is refused in value mode, and the freeze writes nothing."""
+    """A statement Lean refuses to fingerprint (a `sorry` in the statement itself) fails the whole freeze, which
+    writes nothing."""
     mroot = tmp_path / "missions"
-    _campaign(mroot, "import Mathlib\n\ndef StmtN : ℕ := 3", HONEST)
+    _campaign(mroot, "import Mathlib\n\ntheorem main_thm : (sorry : ℕ) = 0", HONEST)
     rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
                "--session", GATE[1], "--fingerprints"])
     out = capsys.readouterr().out
-    assert rc == 1 and "value-mode-not-prop" in out and "'Demo_ck'" in out, out
+    assert rc == 1 and "sorry" in out and "'Demo_ck'" in out, out
     assert not (mroot / "demo" / "FREEZE.toml").exists()
+
+
+# Fix round 1 (Ruling 18, I1): the freeze picks the statement constant SEMANTICALLY, with a textual backstop.
+#: The review's attack chain: the statement file declares `A.main : 1 = 1`, while the text after `#exit` (what the
+#: gate's needle is read from) says `1 = 2`; the artifact proves `A.main : 1 = 1` and hides the needle after `#exit`.
+CHAIN_STATEMENT = ("namespace A\ntheorem main : 1 = 1 := by sorry\nend A\n#exit\nnamespace A\n"
+                   "theorem main : 1 = 2")
+CHAIN_ARTIFACT = ("namespace A\ntheorem main : 1 = 1 := rfl\nend A\n#exit\nnamespace A\n"
+                  "theorem main : 1 = 2 := by rfl\nend A\n")
+
+
+def test_attack_chain_refused_at_the_freeze(tmp_path, capsys):
+    from telperion.missions import judge
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, CHAIN_STATEMENT, CHAIN_ARTIFACT)
+    stmt = statement_path(root, load_node(root / "nodes" / "Demo_ck.toml")).read_text()
+    assert judge._guard_anchors().resolve_theorem(CHAIN_ARTIFACT, stmt) == "A.main"   # the name tie alone: fooled
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
+               "--session", GATE[1], "--fingerprints"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "`#exit`" in out, out
+    assert not (root / "FREEZE.toml").exists()
+
+
+@pytest.mark.parametrize("stmt,why", [
+    # the only `theorem` the text shows is inside an `s!` interpolation: Lean declares no theorem at all
+    ('def s : String := s!"{"\ntheorem main_thm : 1 + 1 = 2 := by sorry\n"}"', "target not found: main_thm"),
+    # Lean declares theorems the text does not show (a structure's `mk.injEq`, `mk.inj`, ...): the module must
+    # declare exactly the one statement constant the text reads
+    ("structure Box where\n  val : Nat\ntheorem main_thm : 1 + 1 = 2", "as Lean elaborates it, declares the theorem(s)"),
+])
+def test_statement_lean_reads_differently_is_refused_at_the_freeze(tmp_path, capsys, stmt, why):
+    """The semantic half, with no backstop token in the text (real Lean)."""
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, stmt, HONEST)
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
+               "--session", GATE[1], "--fingerprints"])
+    out = capsys.readouterr().out
+    assert rc == 1 and why in out, out
+    assert not (root / "FREEZE.toml").exists()
+
+
+def test_decoy_stating_the_frozen_proposition_is_accepted(tmp_path, capsys, frozen_statement, frozen_statement_fp):
+    """Fix round 1 (M4): the boundary of the tie, pinned. A declaration that STATES the frozen proposition is as good
+    as any other, by design, even when the resolver found it through an evasion: it proves the statement."""
+    from telperion.missions import judge
+    text = ("theorem Helper.main_thm : 1 + 1 = 2 := rfl\n#exit\nnamespace Helper\n"
+            "theorem main_thm : 1 + 1 = 2 := by rfl\nend Helper\n")
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, STATEMENT, text)
+    art = root / "proof" / "Demo_ck.lean"
+    assert judge._guard_anchors().resolve_theorem(text, statement_path(root, load_node(
+        root / "nodes" / "Demo_ck.toml")).read_text()) == "Helper.main_thm"
+    _freeze_with(root, frozen_statement)
+    olean_dir = _compile(text, tmp_path / "lib")
+    fp = _fingerprint_json(capsys, olean_dir, "Helper.main_thm", art)
+    assert fp["fingerprints"]["Helper.main_thm"] == frozen_statement_fp
+    paths = _synthetic_probe_and_closure(tmp_path, fp, "Helper.main_thm", art)
+    assert _checks_record(mroot, paths, "--note", "signoff: test") == 0, capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -206,9 +285,8 @@ def test_freeze_fingerprints_refuses_a_statement_it_cannot_fingerprint(tmp_path,
 # ---------------------------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("case", sorted(EVASIONS))
-def test_evasion_refused_by_fingerprint_inequality(tmp_path, capsys, case, frozen_statement_fp):
+def test_evasion_refused_by_fingerprint_inequality(tmp_path, capsys, case, frozen_statement, frozen_statement_fp):
     from telperion.missions import judge
-    from telperion.missions.process import freeze
     text = EVASIONS[case]
     mroot = tmp_path / "missions"
     root = _campaign(mroot, STATEMENT, text)
@@ -216,7 +294,7 @@ def test_evasion_refused_by_fingerprint_inequality(tmp_path, capsys, case, froze
     # the syntactic resolver is still fooled: it names the decoy (what the name tie alone would accept)
     assert judge._guard_anchors().resolve_theorem(text, statement_path(root, load_node(
         root / "nodes" / "Demo_ck.toml")).read_text()) == "Helper.main_thm"
-    freeze(root, identity=GATE[0], session=GATE[1], date="2026-10-30", fingerprints={"Demo_ck": frozen_statement_fp})
+    _freeze_with(root, frozen_statement)
 
     try:
         olean_dir = _compile(text, tmp_path / "lib")
@@ -231,13 +309,12 @@ def test_evasion_refused_by_fingerprint_inequality(tmp_path, capsys, case, froze
     assert load_node(root / "nodes" / "Demo_ck.toml").checks is None
 
 
-def test_honest_artifact_passes_the_fingerprint_tie(tmp_path, capsys, frozen_statement_fp):
+def test_honest_artifact_passes_the_fingerprint_tie(tmp_path, capsys, frozen_statement, frozen_statement_fp):
     """The control for the evasions: the same campaign with an honest artifact records (synthetic probe/closure)."""
-    from telperion.missions.process import freeze
     mroot = tmp_path / "missions"
     root = _campaign(mroot, STATEMENT, HONEST)
     art = root / "proof" / "Demo_ck.lean"
-    freeze(root, identity=GATE[0], session=GATE[1], date="2026-10-30", fingerprints={"Demo_ck": frozen_statement_fp})
+    _freeze_with(root, frozen_statement)
     olean_dir = _compile(HONEST, tmp_path / "lib")
     fp = _fingerprint_json(capsys, olean_dir, "main_thm", art)
     assert fp["fingerprints"]["main_thm"] == frozen_statement_fp
@@ -281,6 +358,7 @@ def test_lean_e2e_freeze_checks_and_grant(tmp_path, capsys):
     # freeze --fingerprints (real Lean), committed
     assert cli("freeze", "demo", "--identity", GATE[0], "--session", GATE[1], "--fingerprints") == 0
     frozen = _load_freeze(croot)["fingerprints"]["Demo_ck"]
+    frozen_env = _load_freeze(croot)["fingerprints_env"]
     subprocess.run(["git", "-C", str(croot), "init", "-q"], check=True, capture_output=True)
     _git(croot, "add", "-A")
     _git(croot, "commit", "-q", "-m", "freeze")
@@ -292,7 +370,7 @@ def test_lean_e2e_freeze_checks_and_grant(tmp_path, capsys):
     main(["probe-negation", *common, "--module", ART_MODULE, "--theorem", "lemma_ck", "--file", str(art), "--json"])
     probe = capsys.readouterr().out
     fp = _fingerprint_json(capsys, olean_dir, "lemma_ck", art)
-    assert fp["fingerprints"]["lemma_ck"] == frozen
+    assert fp["fingerprints"]["lemma_ck"] == frozen and fp["trusted_env_sha256"] == frozen_env
     closure_json = tmp_path / "closure.json"
     rc = main(["audit-closure", *common, "--import", ART_MODULE, "--target", "lemma_ck", "--json", str(closure_json)])
     assert rc == 0, capsys.readouterr().out

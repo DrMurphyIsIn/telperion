@@ -296,9 +296,13 @@ Islands are a generic mechanism, and these two are its reference entries. RH-spe
 **Amendment (2026-10-31; step 5, Ruling 4 and Task 6). Where the freeze lives.** The freeze is campaign-level:
 `<campaign>/FREEZE.toml` records the sha256 of every node's statement file in `[statements]` and, with `mission freeze
 --fingerprints`, every node's statement fingerprint in `[fingerprints]`, not in `[grant]` (each grant still records
-its own `statement_sha256`). The fingerprinted constant is the statement file's last `theorem`, in type mode (the form
-statement files have so far, and the one the gate reads), or, with no theorem, its last `def … : Prop`, in value mode
-(the form item 1 describes; the containment match and the name resolver do not handle it yet). CI's
+its own `statement_sha256`). A statement file declares exactly one statement constant: one `theorem`, fingerprinted in
+type mode (the form statement files have so far), or, with none, one closed `def … : Prop`, fingerprinted in value mode
+(the form item 1 describes; the containment match and the name resolver do not handle it yet). It is chosen
+semantically (Task 6 fix round 1): the replayed statement module must declare exactly that constant, and the gate's
+statement reader must agree; `#exit`, `«»` names, syntax quotations and a keyword inside a string are refused
+outright. `fingerprints_env` records the trusted env digest the fingerprints were computed under, which the
+fingerprint JSON at `checks-record` must match, and the `frozen` date never changes. CI's
 "fails if the file changes" is `mission verify`'s walk of FREEZE.toml's git history: at an unchanged version neither
 table may change, except for nodes added with it; any other change needs a version bump with an `[[unfreeze]]` entry
 read back by someone other than its author. `unfreeze` records fingerprints only when given `--fingerprints` and never

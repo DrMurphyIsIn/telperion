@@ -71,6 +71,35 @@ def test_cli_mode_value_reaches_the_run_and_the_json(monkeypatch, capsys):
         cli.main(["fingerprint", "--project", ".", "--import", "M", "--target", "S", "--mode", "values"])
 
 
+# Task 6 fix round 1: the statement module's own declarations (I1) and the trusted env digest (M2).
+def test_render_list_declared_takes_the_closure():
+    plain = render_fingerprint_callback(["foo"], N)
+    listed = render_fingerprint_callback(["foo"], N, list_declared=True)
+    assert "def TelperionReplay.callback : TermElabM Unit" in plain and "FP-DECL" not in plain
+    assert "def TelperionReplay.callback (c : TelperionReplay.Closure) : TermElabM Unit" in listed
+    assert "for n in c.target do" in listed and "n.isInternal" in listed
+
+
+def test_parse_declared_reads_only_this_runs_lines():
+    from telperion.checks.fingerprint import parse_declared
+    out = (f"FP-DECL {N} theorem A.main\nFP-DECL {N} propdef S\nFP-DECL {'f' * 32} theorem forged\n"
+           f"FP-DECL {N} inductive X\nnoise FP-DECL {N} theorem nope\n")
+    assert parse_declared(out, N) == {"theorem": ["A.main"], "propdef": ["S"]}
+
+
+def test_trusted_env_digest_is_machine_independent(tmp_path):
+    from telperion.checks.lean_replay import build_trusted_manifest, pinned_env, trusted_env_digest
+    digests = []
+    for name in ("one", "two"):
+        env, elan, manifest = fake_trusted_env(tmp_path / name)
+        digests.append(trusted_env_digest(pinned_env(env, elan), manifest))
+    assert digests[0] == digests[1] and len(digests[0]) == 64       # same content, other absolute paths
+    env, elan, _m = fake_trusted_env(tmp_path / "three")
+    (env / ".lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean").write_bytes(b"another mathlib")
+    m3 = build_trusted_manifest(env, tmp_path / "three" / "m3.json", elan)
+    assert trusted_env_digest(pinned_env(env, elan), m3) != digests[0]
+
+
 LEAN_ENV = os.environ.get("TELPERION_LEAN_ENV")
 lean = pytest.mark.skipif(not LEAN_ENV, reason="TELPERION_LEAN_ENV not set")
 
@@ -586,7 +615,8 @@ def test_cli_json_includes_olean_sha256(monkeypatch, capsys):
                                                    "olean_closure": [["M", "olean", "c" * 64]],
                                                    "module": "M", "theorem": "foo", "source_sha256": None,
                                                    "axioms": ["propext"],      # final review I3: the replay's axioms
-                                                   "mode": "type"}             # step 5 Task 6
+                                                   "mode": "type",             # step 5 Task 6
+                                                   "trusted_env_sha256": None}  # fix round 1 (M2)
 
 
 def test_cli_trusted_manifest_build_verify(tmp_path, monkeypatch, capsys):

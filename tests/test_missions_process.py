@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +28,7 @@ from telperion.missions.process import (  # noqa: E402
     render_audit_file, unfreeze, write_deviations_readback,
 )
 from telperion.cli import main  # noqa: E402
-from test_missions_checks import FROZEN_FP  # noqa: E402  (step 5 Task 6: the frozen statement fingerprints)
+from test_missions_checks import FP_ENV, FROZEN_FP, _fps  # noqa: E402  (step 5 Task 6: the frozen statement fingerprints)
 
 
 # ---------------------------------------------------------------------------
@@ -2429,7 +2430,7 @@ def _frozen_with_fps(root: Path, fps=None, date: str = "2026-10-29") -> None:
     _campaign(root)
     _git_init(root)
     freeze(root, identity="alice@example.com", session="s1", date=date,
-           fingerprints={"Node_A": FP_A, "Node_B": FP_B} if fps is None else fps)
+           fingerprints=_fps({"Node_A": FP_A, "Node_B": FP_B} if fps is None else fps))
     _git_commit(root, "initial freeze")
 
 
@@ -2470,7 +2471,7 @@ def test_unfreeze_records_exactly_the_given_fingerprints(tmp_path):
     root = tmp_path / "demo"
     _frozen_with_fps(root)
     doc = unfreeze(root, author="alice@example.com", reason="r", readback_identity="bob@example.com",
-                   date="2026-10-30", fingerprints={"Node_A": FP_C})
+                   date="2026-10-30", fingerprints=_fps({"Node_A": FP_C}))
     assert doc["fingerprints"] == {"Node_A": FP_C}                  # never carried forward
     _git_commit(root, "unfreeze with a new fingerprint")
     assert freeze_problems(root) == []                              # a version bump may change them
@@ -2483,7 +2484,7 @@ def test_freeze_problems_flags_hand_edited_fingerprint_entries(tmp_path):
     root = tmp_path / "demo"
     _campaign(root)
     freeze(root, identity="alice@example.com", session="s1", date="2026-10-01",
-           fingerprints={"Node_A": FP_A})
+           fingerprints=_fps({"Node_A": FP_A}))
     _hand_edit_freeze(root, lambda d: d["fingerprints"].update({"Ghost": FP_B, "Node_B": "XYZ"}))
     problems = freeze_problems(root)
     assert any("'Ghost', which has no [statements] entry" in p for p in problems), problems
@@ -2540,7 +2541,7 @@ def test_freeze_history_fingerprints_changed_by_unfreeze_clean(tmp_path):
     root = tmp_path / "demo"
     _frozen_with_fps(root)
     unfreeze(root, author="alice@example.com", reason="re-fingerprint", readback_identity="bob@example.com",
-             date="2026-10-30", fingerprints={"Node_A": FP_C, "Node_B": FP_B})
+             date="2026-10-30", fingerprints=_fps({"Node_A": FP_C, "Node_B": FP_B}))
     _git_commit(root, "unfreeze")
     assert freeze_problems(root) == []
 
@@ -2560,30 +2561,67 @@ def _stmt_target(tmp_path: Path, body: str):
     ("import Mathlib\n\ndef Stmt : Prop := ∀ n : ℕ, n + 0 = n", ("Stmt", "value")),
     ("def Stmt.{u} : Prop := ∀ (α : Sort u) (a : α), a = a", ("Stmt", "value")),
     ("noncomputable abbrev Stmt:Prop := True", ("Stmt", "value")),
-    # the LAST declaration, namespace-qualified; comments and strings blanked
-    ("namespace Demo\ndef helper : ℕ := 3\n-- theorem fake : False\ntheorem main : helper = 3 := by sorry\nend Demo",
-     ("Demo.main", "type")),
-    ("namespace Demo\ntheorem main : True := by sorry\nend Demo\ndef S : Prop := True", ("Demo.main", "type")),
+    # supporting definitions that are not closed Props are fine; comments are blanked
+    ("namespace Demo\ndef helper : ℕ := 3\ndef Good (n : ℕ) : Prop := n = 3\n-- theorem fake : False\n"
+     "theorem main : Good helper := by sorry\nend Demo", ("Demo.main", "type")),
     ("namespace Demo\ntheorem _root_.top : True", ("top", "type")),
-    ('def s : String := "\ntheorem fake : False := sorry\n"\ndef S : Prop := True', ("S", "value")),
-    # a theorem wins over a later def: the frozen fingerprint is of the theorem the gate's needle is read from
-    ("def S : Prop := True\ntheorem main : S := by sorry\ndef after : Prop := False", ("main", "type")),
     ("theorem poly.{u} (α : Sort u) (a : α) : a = a", ("poly", "type")),
+    # a theorem after `set_option ... in`, attributes or `nonrec` is still THE theorem (review I1 (a))
+    ("set_option maxHeartbeats 400000 in theorem main : 1 = 2", ("main", "type")),
+    ("@[simp] @[reducible] theorem main : 1 = 2", ("main", "type")),
+    ("nonrec theorem main : 1 = 2", ("main", "type")),
+    # comments mentioning the forbidden tokens are harmless
+    ("-- no #exit, no «» and no `( here\ntheorem main : True", ("main", "type")),
 ])
 def test_statement_fingerprint_target(tmp_path, body, want):
     assert _stmt_target(tmp_path, body) == want
 
 
 @pytest.mark.parametrize("body,why", [
+    # review I1 (a): a closed Prop def beside a theorem the line-anchored regex used to miss
+    ("def Weak : Prop := True\nset_option maxHeartbeats 400000 in theorem main : 1 = 2", "both a theorem and"),
+    ("def Weak : Prop := True\n@[simp] @[reducible] theorem main : 1 = 2", "both a theorem and"),
+    ("abbrev Weak : Prop := True\nnonrec theorem main : 1 = 2", "both a theorem and"),
+    # review I1 (b): two theorems, in two namespaces
+    ("namespace A\ntheorem main : 1 = 1\nend A\nnamespace B\nset_option maxHeartbeats 400000 in "
+     "theorem main : 1 = 2", "2 `theorem`/`lemma` keywords"),
+    # review I1 (c): text Lean never elaborates
+    ("namespace A\ntheorem main : 1 = 1 := by sorry\nend A\n#exit\nnamespace A\ntheorem main : 1 = 2",
+     "`#exit`"),
+    ("namespace A\ntheorem main : 1 = 1 := by sorry\nend A\nnamespace A\n"
+     "def q : Lean.MacroM Lean.Syntax := `(command| theorem main : 1 = 2 := by sorry)\nend A\ndef x : ℕ := 0",
+     "syntax quotation"),
+    ('def «"» : String := "\ntheorem main : 1 = 2 := by sorry\n"\ndef «"x» : Prop := True', "`«»`-quoted name"),
+    ('theorem real : True\ndef s : String := " theorem fake : False"', "inside a string literal"),
+    ('def S : Prop := True\ndef s : String := s!"{"\ntheorem main : 1 = 2\n"}"', "both a theorem and"),
+    ("def S : Prop := True\ntheorem main : S := by sorry", "both a theorem and"),
+    ("def A : Prop := True\ndef B : Prop := False", "2 closed `def … : Prop`s"),
     ("private theorem t : True", "private"),
-    ("def «my stmt» : Prop := True", "not a plain dotted Lean identifier"),
-    ("example : True", "declares no theorem, lemma, def or abbrev"),
-    # the gate's statement_decl does not blank strings, so it would read `fake` as the statement
-    ('theorem real : True\ndef s : String := " theorem fake : False"', "ambiguous statement file"),
+    ("example : True", "declares no theorem, lemma or closed `def … : Prop`"),
+    ("def N : ℕ := 3", "declares no theorem, lemma or closed `def … : Prop`"),
+    # the gate's reader drops `open ...` lines, so it never sees this theorem
+    ("open Nat in theorem main : True", "the gate's statement reader finds no theorem"),
 ])
 def test_statement_fingerprint_target_refusals(tmp_path, body, why):
-    with pytest.raises(ValueError, match=why):
+    with pytest.raises(ValueError, match=re.escape(why)):
         _stmt_target(tmp_path, body)
+
+
+def _fake_statement_run(declared_for, env=FP_ENV, calls=None):
+    """A stand-in for `fingerprint.run_statement_fingerprint`: FP_A/FP_B by target, the replay's declarations from
+    `declared_for(target)` and the trusted env digest `env`."""
+    from telperion.checks.fingerprint import Fingerprints
+
+    def fake(project, text, target, *, mode, **kw):
+        if calls is not None:
+            calls.append((project, target, mode, "DO NOT EDIT" in text, kw))
+        return Fingerprints({target: {"thm_Node_A": FP_A, "StmtB": FP_B}.get(target, FP_C)}, mode=mode,
+                            trusted_env_sha256=env, declared=declared_for(target, mode))
+    return fake
+
+
+def _honest(target, mode):
+    return {"theorem": [target], "propdef": []} if mode == "type" else {"theorem": [], "propdef": [target]}
 
 
 def test_compute_statement_fingerprints_calls_lean_per_node_in_its_mode(tmp_path):
@@ -2592,13 +2630,9 @@ def test_compute_statement_fingerprints_calls_lean_per_node_in_its_mode(tmp_path
     manifest = _campaign(root)
     write_statement(root, load_campaign(root).nodes["Node_B"], "def StmtB : Prop := True", manifest)
     calls = []
-
-    def fake(project, text, target, *, mode, **kw):
-        calls.append((project, target, mode, "DO NOT EDIT" in text, kw))
-        return {"thm_Node_A": FP_A, "StmtB": FP_B}[target]
-
-    out = compute_statement_fingerprints(root, fingerprint_text=fake, timeout=7)
-    assert out == {"Node_A": FP_A, "Node_B": FP_B}
+    out = compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest, calls=calls),
+                                         timeout=7)
+    assert out == {"Node_A": FP_A, "Node_B": FP_B} and out.trusted_env_sha256 == FP_ENV
     assert calls == [(root / "lean", "thm_Node_A", "type", True, {"timeout": 7}),
                      (root / "lean", "StmtB", "value", True, {"timeout": 7})]
 
@@ -2606,6 +2640,46 @@ def test_compute_statement_fingerprints_calls_lean_per_node_in_its_mode(tmp_path
         raise ValueError("refused (...): StmtB value-mode-not-prop")
     with pytest.raises(ValueError, match="node 'Node_A': statement fingerprint of 'thm_Node_A' \\(type mode\\)"):
         compute_statement_fingerprints(root, fingerprint_text=broken)
+
+
+@pytest.mark.parametrize("declared", [
+    {"theorem": [], "propdef": []},                              # Lean declares nothing the text shows (s!, #exit)
+    {"theorem": ["A.thm_Node_A"], "propdef": []},                # another name than the text reads
+    {"theorem": ["thm_Node_A", "hidden"], "propdef": []},        # a second theorem the text does not show
+    {"theorem": ["thm_Node_A"], "propdef": ["Weak"]},            # a closed Prop def beside it
+])
+def test_compute_refuses_when_lean_declares_other_statement_constants(tmp_path, declared):
+    """Fix round 1 (I1): the SEMANTIC half. The replayed module must declare exactly the textual target."""
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    _campaign(root, names=("Node_A",))
+    with pytest.raises(ValueError, match="as Lean elaborates it, declares"):
+        compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(lambda t, m: declared))
+
+
+def test_compute_refuses_value_mode_target_lean_sees_as_a_theorem(tmp_path):
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    manifest = _campaign(root, names=("Node_A",))
+    write_statement(root, load_campaign(root).nodes["Node_A"], "def StmtB : Prop := True", manifest)
+    with pytest.raises(ValueError, match="as Lean elaborates it"):
+        compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(
+            lambda t, m: {"theorem": ["sneaky"], "propdef": [t]}))
+
+
+@pytest.mark.parametrize("envs,why", [((None,), "names no trusted env digest"),
+                                      ((FP_ENV, "8" * 64), "the others under")])
+def test_compute_refuses_missing_or_mixed_trusted_envs(tmp_path, envs, why):
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    _campaign(root)
+    it = iter(envs * 2)
+
+    def fake(project, text, target, *, mode, **kw):
+        from telperion.checks.fingerprint import Fingerprints
+        return Fingerprints({target: FP_A}, mode=mode, trusted_env_sha256=next(it), declared=_honest(target, mode))
+    with pytest.raises(ValueError, match=why):
+        compute_statement_fingerprints(root, fingerprint_text=fake)
 
 
 def test_cli_freeze_and_unfreeze_with_fingerprints(tmp_path, capsys, monkeypatch):
@@ -2616,7 +2690,7 @@ def test_cli_freeze_and_unfreeze_with_fingerprints(tmp_path, capsys, monkeypatch
 
     def fake(root, **kw):
         seen.append(kw)
-        return {"Node_A": FP_A, "Node_B": FP_B}
+        return _fps({"Node_A": FP_A, "Node_B": FP_B})
     monkeypatch.setattr(proc, "compute_statement_fingerprints", fake)
     rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", "alice@example.com",
                "--session", "s1", "--fingerprints", "--trusted-env", "/pinned", "--timeout", "9", "--wrapper", ""])
@@ -2653,3 +2727,76 @@ def test_cli_freeze_fingerprint_failure_writes_nothing(tmp_path, capsys, monkeyp
                "--session", "s1", "--fingerprints"])
     assert rc == 1 and "Node_B" in capsys.readouterr().out
     assert not freeze_path(mroot / "demo").exists()
+
+
+# Fix round 1 (Ruling 18).
+# M2: the fingerprints are bound to the trusted env they were computed under (`fingerprints_env`).
+
+def test_freeze_records_the_fingerprints_trusted_env(tmp_path):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    text = freeze_path(root).read_text()
+    assert f'fingerprints_env = "{FP_ENV}"\n\n[statements]' in text
+    assert _load_freeze_for_test(root)["fingerprints_env"] == FP_ENV and freeze_problems(root) == []
+
+
+def test_freeze_refuses_fingerprints_without_a_trusted_env(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    with pytest.raises(ValueError, match="trusted env digest"):
+        freeze(root, identity="alice@example.com", session="s1", date="2026-10-29", fingerprints={"Node_A": FP_A})
+    assert not freeze_path(root).exists()
+
+
+def test_freeze_problems_flags_fingerprints_without_env(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01", fingerprints=_fps({"Node_A": FP_A}))
+    _hand_edit_freeze(root, lambda d: d.pop("fingerprints_env"))
+    assert any("no `fingerprints_env`" in p for p in freeze_problems(root))
+
+
+def test_freeze_history_fingerprints_env_change_at_unchanged_version_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    _hand_edit_freeze(root, lambda d: d.__setitem__("fingerprints_env", "8" * 64))
+    _git_commit(root, "swap the trusted env")
+    assert any("`fingerprints_env` changed or was removed without a version bump" in p
+               for p in freeze_problems(root))
+
+
+# M1: `frozen` is immutable, and a post-cutoff node needs the history whatever `frozen` says.
+
+def test_freeze_history_frozen_date_change_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    _hand_edit_freeze(root, lambda d: d.__setitem__("frozen", "2026-01-01"))
+    problems = freeze_problems(root)
+    assert any("the `frozen` date changed ('2026-10-29' -> '2026-01-01')" in p for p in problems), problems
+
+
+def test_back_dated_freeze_outside_git_still_refuses_a_post_cutoff_grant(tmp_path):
+    """The review's repro: outside git, `frozen = 2026-01-01` used to silence "freeze history unavailable"."""
+    from test_missions_checks import _grant_campaign
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-01-01", fingerprints=FROZEN_FP)
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    assert "freeze history unavailable" in freeze_grant_problem(root, node)
+    assert freeze_problems(root) == []                    # nothing post-cutoff is proved: no history needed yet
+
+
+def test_back_dated_freeze_in_a_shallow_clone_flagged_once_a_post_cutoff_node_is_proved(tmp_path):
+    from test_missions_checks import _grant_campaign
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    p = root / "nodes" / "Demo_ck.toml"
+    save_node(dataclasses.replace(load_node(p), status="proved"), p)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-01-01", fingerprints=FROZEN_FP)
+    _git_commit(root, "first")
+    (root / "x.txt").write_text("x")
+    _git_commit(root, "second")
+    dest = tmp_path / "shallow"
+    r = subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{root}", str(dest)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert any("shallow clone" in q for q in freeze_problems(dest))

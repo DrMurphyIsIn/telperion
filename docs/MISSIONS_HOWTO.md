@@ -468,10 +468,12 @@ These are real, and you should know them before you rely on a `[checks]` record.
 The `lean-checks` job, in its own workflow `.github/workflows/lean-checks.yml`, builds the same pinned env on a Linux
 runner (Lean v4.35.0, Mathlib v4.35.0 at `56a005855ea17e0b0958f73ec801ae140b0a1679`, `lake exe cache get`), builds its
 trusted manifest with `trusted-manifest build` into a path outside the env, checks that `verify` accepts it and that a
-second `build` without `--force` refuses, and then runs `tests/test_negation_probe.py`, `tests/test_fingerprint.py` and
-`tests/test_lean_replay.py` with `TELPERION_LEAN_ENV` set. Those files hold the must-fail controls (the evil-module
-cases, a shadowed definition, a vacuous and a refuted statement, a declared axiom, a lemma the kernel never checked),
-and they skip without an env, so the job fails if any of them is skipped. It first checks that the runner has at least
+second `build` without `--force` refuses, and then runs `tests/test_negation_probe.py`, `tests/test_fingerprint.py`,
+`tests/test_lean_replay.py`, `tests/test_closure_audit_replay.py` and `tests/test_statement_tie_lean.py` with
+`TELPERION_LEAN_ENV` set, one step per file. Those files hold the must-fail controls (the evil-module cases, a shadowed
+definition, a vacuous and a refuted statement, a declared axiom, a lemma the kernel never checked, the five resolver
+evasions and the freeze-side attack chain), and they skip without an env, so a step fails if any of its tests is
+skipped. It first checks that the runner has at least
 10 GB free, so a full disk fails in seconds rather than an hour in. There is no leanlock on the runner and none is
 needed: the default wrapper is used only when `~/hodge-engine/leanlock.sh` exists. The CI runner is still not a sandbox
 for third-party submissions; it runs only this repository's own test modules.
@@ -557,31 +559,46 @@ git -C missions/demo add FREEZE.toml DEVIATIONS.md
 git -C missions/demo commit -m "freeze demo campaign"
 ```
 
-That adds a `[fingerprints]` table beside `[statements]`, one `"<node>" = "<fingerprint>"` line per node. We chose an
+That adds a `[fingerprints]` table beside `[statements]`, one `"<node>" = "<fingerprint>"` line per node, and a
+`fingerprints_env` line naming the trusted env they were computed under (below). We chose an
 explicit flag over "whenever a Lean env happens to be configured": a freeze is a one-way record, and what it contains
 should not depend on which machine ran it. Without the flag nothing is recorded, the command says so, and every
 post-cutoff `[checks]` record is refused until a freeze records them.
 
 How each fingerprint is computed:
-- The statement file is compiled as its own module with the pinned `lean` (no lake) and replayed into the pinned env
-  like every other check. If it declares a `theorem` or `lemma` (`theorem foo : P := by sorry`, the form statement
-  files have had so far), the last one is fingerprinted by its TYPE, that is `P`. It must be the same theorem the
-  gate reads as the node's statement (`guard_anchors.statement_decl`), or the freeze refuses the file as ambiguous.
-  With no theorem at all, the last `def` or `abbrev` (`def S : Prop := P`, the form spec 7 describes) is fingerprinted
-  by its VALUE, which is `P` again. In both cases every non-library definition is unfolded first, so `theorem t : S`,
-  `theorem t : P` and `S` itself all get the same fingerprint, universe-polymorphic statements included (each
-  numbered by its own level parameters). The rest of the gate (the containment match and the name resolver) still
-  expects a theorem-form statement, so a def-form node can be frozen this way but not yet granted.
+- **One statement constant per file.** A statement file declares exactly one: one `theorem` or `lemma`
+  (`theorem foo : P := by sorry`, the form statement files have had so far), or, with none, one closed `def` or
+  `abbrev … : Prop` (`def S : Prop := P`, the form spec 7 describes). Supporting definitions are fine as long as they
+  are not themselves closed `Prop`s (`def bound : ℕ := 5`, `def Good (n : ℕ) : Prop := …`).
+- **The textual choice.** The constant is read from the code, with comments and strings blanked by the gate's own
+  lexer. In type mode it must be the theorem the gate reads as the node's statement (`guard_anchors.statement_decl`);
+  in value mode the gate must find no theorem at all.
+- **The textual backstop.** A file is refused outright when its code contains `#exit`, a `«»` name or a `` `( ``
+  syntax quotation, when a string spells `theorem` or `lemma`, or when it declares anything `private`. Each of these
+  makes what Lean declares differ from what a reader of the text sees; a comment mentioning them is harmless.
+- **The semantic choice, which is what decides.** The statement file is compiled as its own module with the pinned
+  `lean` (no lake) and replayed into the pinned env like every other check. The replayed module must declare exactly
+  the constant the text named, and nothing else that could be a statement: in type mode its only theorem (and no
+  closed `Prop` definition), in value mode its only closed `Prop` definition (and no theorem). Theorems Lean generates
+  that the text does not show count too: a local structure's `mk.injEq` makes the file ambiguous.
+- **What is hashed.** The theorem is fingerprinted by its TYPE, that is `P`; the definition by its VALUE, which is `P`
+  again. In both cases every non-library definition is unfolded first, so `theorem t : S`, `theorem t : P` and `S`
+  itself all get the same fingerprint. Universe-polymorphic statements are included, with level parameters numbered
+  by their position in each declaration's own list: `theorem t.{v} : S.{v}` matches `def S.{u}`, but an artifact that
+  lists its universes in another order than the statement (`theorem t.{v, u} : S.{u, v}`) gets a different
+  fingerprint and is refused. Declare them in the same order.
+- The rest of the gate (the containment match and the name resolver) still expects a theorem-form statement, so a
+  def-form node can be frozen this way but not yet granted.
 - Imports of other campaign modules resolve from `<campaign>/lean/.lake/build/lib/lean`, or from `--olean-dir`.
-- A statement that cannot be fingerprinted fails the whole freeze, and nothing is written: a local inductive or
-  structure left after unfolding, a `sorry` in the statement itself, a `def` whose type is not `Prop`, a `private`
-  declaration, or a `«»`-quoted name.
+- A statement that cannot be fingerprinted fails the whole freeze, and nothing is written: any refusal above, a local
+  inductive or structure left after unfolding, or a `sorry` in the statement itself.
 - It compiles the statement files, so it is NOT A SANDBOX either; they are the campaign's own files, but the same
   caution applies.
 
 Then, for every node that needs checks, `checks-record` and the gate require the checked theorem's fingerprint (type
 mode) to equal the frozen one. A mismatch reads "statement fingerprint mismatch"; no frozen fingerprint reads
-"statement fingerprint not frozen". `mission verify` re-checks it on every proved node, so moving a node's frozen
+"statement fingerprint not frozen". `checks-record` also requires the fingerprint JSON's `trusted_env_sha256` to be
+the freeze's `fingerprints_env`, and refuses "fingerprint computed under a different trusted env" otherwise. `mission verify` re-checks it on every proved node, so moving a node's frozen
 fingerprint later (an unfreeze that records a different one) makes its `[checks]` stop passing.
 
 The history walk covers `[fingerprints]` with the same rules as `[statements]`: at an unchanged version a fingerprint
@@ -591,10 +608,22 @@ Changing any of them takes a version bump, so `unfreeze --fingerprints`. `unfree
 forward: a fingerprint also depends on the definitions a statement imports, which the statement hash does not cover,
 so each version records its own or none.
 
+**The trusted env.** `fingerprints_env` and the JSON's `trusted_env_sha256` are a digest of the trusted manifest's
+content (`lean_replay.trusted_env_digest`): the toolchain and every trusted file's sha256, keyed by its path inside
+its package rather than by the absolute paths the manifest records, so the same pinned env gives the same digest on
+any machine. It is fixed for a version like the fingerprints are. Library constants are hashed by NAME, not unfolded,
+so a Mathlib bump usually leaves a fingerprint unchanged; it changes one only where elaboration differs (an instance
+path, a renamed lemma). That is exactly why the env is recorded: a freeze under one Mathlib and checks under another
+would otherwise compare equal whenever the names happen to agree. After a bump, re-run the checks and `unfreeze
+--fingerprints`.
+
+**The freeze's own dates and history.** The `frozen` date may never change once committed, because it decides whether
+the history checks fail closed at all. And for a post-cutoff node the gate requires the history to be available
+whatever `frozen` says, so a back-dated freeze outside git, or in a shallow clone, is still refused.
+
 What this does not protect: the grant cannot recompute a frozen fingerprint without Lean, so it takes FREEZE.toml's
-word for it. Its trust is the freeze's trust: whoever froze the campaign, and the committed history after that. A
-fingerprint also depends on the pinned env, since library constants are hashed by name: after a Mathlib bump, re-run
-the checks and `unfreeze --fingerprints`.
+word for it. Its trust is the freeze's trust: whoever froze the campaign, and the committed history after that (a CI
+job that recomputes `[fingerprints]` is a tracked follow-up).
 
 ### The deviation ledger, and its read-back
 

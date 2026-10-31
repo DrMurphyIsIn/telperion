@@ -146,9 +146,10 @@ def _dump_freeze(doc: dict) -> str:
         f"frozen = {_quote(doc['frozen'])}",
         f"identity = {_quote(doc['identity'])}",
         f"session = {_quote(doc['session'])}",
-        "",
-        "[statements]",
     ]
+    if doc.get("fingerprints_env"):
+        lines.append(f"fingerprints_env = {_quote(doc['fingerprints_env'])}")
+    lines += ["", "[statements]"]
     statements = doc.get("statements") or {}
     for slug in sorted(statements):
         lines.append(f"{_quote(slug)} = {_quote(statements[slug])}")
@@ -189,7 +190,7 @@ def _freeze_shape_problem(doc: dict) -> Optional[str]:
         return "has no positive integer `version`"
     if not isinstance(doc.get("frozen"), str):
         return "has no string `frozen` date"
-    for key in ("identity", "session"):
+    for key in ("identity", "session", "fingerprints_env"):
         if key in doc and not isinstance(doc[key], str):
             return f"has a non-string `{key}`"
     statements = doc.get("statements", {})
@@ -313,6 +314,18 @@ def _current_statement_hashes(root: Path, campaign) -> Dict[str, str]:
 # freeze / unfreeze
 # ---------------------------------------------------------------------------
 
+def _fingerprints_env(fingerprints, fingerprints_env: Optional[str]) -> Optional[str]:
+    """The trusted env digest to record with *fingerprints*: *fingerprints_env*, else the one a
+    `StatementFingerprints` carries; `ValueError` when there are fingerprints and no valid one."""
+    env = fingerprints_env or getattr(fingerprints, "trusted_env_sha256", None)
+    if not fingerprints:
+        return None
+    if not isinstance(env, str) or not _SHA256_HEX_RE.fullmatch(env):
+        raise ValueError(f"statement fingerprints need the trusted env digest they were computed "
+                         f"under (64 lowercase hex), not {env!r}.")
+    return env
+
+
 def _checked_fingerprints(fingerprints: Optional[Dict[str, str]],
                           statements: Dict[str, str]) -> Dict[str, str]:
     """*fingerprints* (slug -> sha256 hex) as `freeze`/`unfreeze` record them, or `ValueError`
@@ -330,7 +343,8 @@ def _checked_fingerprints(fingerprints: Optional[Dict[str, str]],
 
 
 def freeze(root: Path, *, identity: str, session: str, date: str,
-           fingerprints: Optional[Dict[str, str]] = None) -> dict:
+           fingerprints: Optional[Dict[str, str]] = None,
+           fingerprints_env: Optional[str] = None) -> dict:
     """Write `<root>/FREEZE.toml`: version 1, the freezing identity/session, and the sha256
     of every node's current statement body. Refuses (`ValueError`) if the campaign is
     already frozen -- re-running `freeze` would silently discard the unfreeze history;
@@ -339,7 +353,9 @@ def freeze(root: Path, *, identity: str, session: str, date: str,
     Step 5 Task 6: *fingerprints* (slug -> statement fingerprint, as
     `compute_statement_fingerprints` returns them) are recorded in `[fingerprints]`; with
     none, nothing is recorded there and the gate refuses every post-cutoff `[checks]` record
-    with "statement fingerprint not frozen"."""
+    with "statement fingerprint not frozen". *fingerprints_env* (default: the one a
+    `StatementFingerprints` carries) is the trusted env they were computed under, recorded as
+    `fingerprints_env`; fingerprints without one are refused."""
     from .provenance import require_identity
 
     require_identity(identity, session, "freeze")
@@ -362,13 +378,15 @@ def freeze(root: Path, *, identity: str, session: str, date: str,
         "session": session.strip(),
         "statements": statements,
         "fingerprints": _checked_fingerprints(fingerprints, statements),
+        "fingerprints_env": _fingerprints_env(fingerprints, fingerprints_env),
     }
     _write_freeze(root, doc)
     return doc
 
 
 def unfreeze(root: Path, *, author: str, reason: str, readback_identity: str, date: str,
-             fingerprints: Optional[Dict[str, str]] = None) -> dict:
+             fingerprints: Optional[Dict[str, str]] = None,
+             fingerprints_env: Optional[str] = None) -> dict:
     """Bump the freeze: re-hash every current statement, append a `[[unfreeze]]` entry, and
     write the new version. Refuses (`ValueError`) a self-read-back -- `readback_identity`
     equal to `author`, compared the way `provenance.independence_of` compares identities
@@ -415,6 +433,7 @@ def unfreeze(root: Path, *, author: str, reason: str, readback_identity: str, da
         "session": doc.get("session", ""),
         "statements": statements,
         "fingerprints": _checked_fingerprints(fingerprints, statements),
+        "fingerprints_env": _fingerprints_env(fingerprints, fingerprints_env),
         "unfreeze": entries,
     }
     _write_freeze(root, new_doc)
@@ -425,7 +444,7 @@ def unfreeze(root: Path, *, author: str, reason: str, readback_identity: str, da
 # freeze_problems / freeze_grant_problem
 # ---------------------------------------------------------------------------
 
-def freeze_problems(root: Path) -> List[str]:
+def freeze_problems(root: Path, *, require_history: bool = False) -> List[str]:
     """Campaign-wide freeze problems for `verify_campaign`'s read-only battery:
 
     - "statement drift" on any node whose current statement hash differs from the one
@@ -456,6 +475,10 @@ def freeze_problems(root: Path) -> List[str]:
     section-2 checks in `verify_campaign`. A draft or open post-cutoff node has not been
     granted yet and so has nothing to freeze; checking it here would fail every freshly
     added node before anyone could even think about granting it.
+
+    Fix round 1 (Ruling 18, M1): the git history is REQUIRED (refused when unavailable, shallow
+    and so on) whenever *require_history* is set (`freeze_grant_problem`, for a post-cutoff
+    node) or a proved node is post-cutoff, whatever FREEZE.toml's own `frozen` date says.
     """
     from .provenance import checks_required
 
@@ -505,7 +528,14 @@ def freeze_problems(root: Path) -> List[str]:
                 f"match the frozen hash {str(recorded)[:16]}... in {FREEZE_FILENAME}."
             )
 
-    # Step 5 Task 6: `[fingerprints]` must describe recorded statements, as sha256 hex.
+    # Step 5 Task 6: `[fingerprints]` must describe recorded statements, as sha256 hex, computed
+    # under one named trusted env (fix round 1, M2: `fingerprints_env`).
+    env = doc.get("fingerprints_env")
+    if doc.get("fingerprints") and not (env and _SHA256_HEX_RE.fullmatch(env)):
+        problems.append(
+            f"{FREEZE_FILENAME} records statement fingerprints but no `fingerprints_env` (the "
+            "trusted env digest they were computed under, 64 lowercase hex)."
+        )
     for slug, fp in sorted((doc.get("fingerprints") or {}).items()):
         if slug not in statements:
             problems.append(
@@ -555,7 +585,9 @@ def freeze_problems(root: Path) -> List[str]:
                 f"version {v}."
             )
 
-    problems.extend(freeze_history_problems(root))
+    require = require_history or any(node.status == "proved" and checks_required(node)
+                                     for node in campaign.nodes.values())
+    problems.extend(freeze_history_problems(root, require=require))
     return problems
 
 
@@ -869,6 +901,15 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
         )
         return problems  # comparisons below assume a sane version; stop here
 
+    # Fix round 1 (Ruling 18, M1): `frozen` decides whether the history checks below fail
+    # closed at all, so it may never move; a back-dated `frozen` would otherwise turn "cannot
+    # verify" into "pre-cutoff, nothing to verify".
+    if cur.get("frozen") != prev.get("frozen"):
+        problems.append(
+            f"{FREEZE_FILENAME} at {label}: the `frozen` date changed ({prev.get('frozen')!r} -> "
+            f"{cur.get('frozen')!r}); it is fixed at the first freeze."
+        )
+
     if cur_entries[:len(prev_entries)] != prev_entries:
         problems.append(
             f"{FREEZE_FILENAME} at {label}: an earlier [[unfreeze]] entry was edited or "
@@ -904,6 +945,12 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
                 f"{', '.join(sorted(fp_removed | fp_changed))!r} changed or were removed "
                 "without a version bump."
             )
+        prev_env, cur_env = prev.get("fingerprints_env"), cur.get("fingerprints_env")
+        if prev_env and cur_env != prev_env:
+            problems.append(
+                f"{FREEZE_FILENAME} at {label}: `fingerprints_env` changed or was removed without "
+                "a version bump."
+            )
         if fp_added_late:
             problems.append(
                 f"{FREEZE_FILENAME} at {label}: statement fingerprint(s) "
@@ -925,7 +972,7 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
     return problems
 
 
-def freeze_history_problems(root: Path) -> List[str]:
+def freeze_history_problems(root: Path, *, require: bool = False) -> List[str]:
     """Walk FREEZE.toml's git history (its state at every commit on the first-parent chain
     from the file's first appearance to HEAD, plus the working tree as the final state) and
     check the invariants `_freeze_transition_problems` describes between every consecutive
@@ -994,7 +1041,9 @@ def freeze_history_problems(root: Path) -> List[str]:
     if doc is None:
         return []
 
-    post_cutoff = str(doc.get("frozen", "")) >= CUTOFF
+    # Fix round 1 (Ruling 18, M1): `require` (a post-cutoff node depends on this freeze) fails
+    # closed whatever the record's own, self-reported `frozen` date says.
+    post_cutoff = require or str(doc.get("frozen", "")) >= CUTOFF
 
     if not _is_git_repo(root):
         if post_cutoff:
@@ -1090,7 +1139,7 @@ def freeze_grant_problem(root: Path, node) -> str:
             f"node {slug!r} is not recorded in {FREEZE_FILENAME}; the campaign must be frozen "
             "or unfrozen to include it before this node can be granted."
         )
-    problems = freeze_problems(root)
+    problems = freeze_problems(root, require_history=True)
     if problems:
         shown = problems[:_GRANT_PROBLEM_PREVIEW]
         more = (f" (+{len(problems) - _GRANT_PROBLEM_PREVIEW} more)"
@@ -1125,70 +1174,144 @@ def freeze_grant_problem(root: Path, node) -> str:
 # adversarial artifact; the fingerprint itself is computed from what Lean elaborated.
 # ---------------------------------------------------------------------------
 
-#: A declaration at the start of a line of blanked statement code: modifiers, then the
-#: keyword, then the dotted name (stopping before a `.{u}` universe list, a binder or a
-#: colon). `private` is refused below (its name is mangled).
-_STATEMENT_DECL_RE = re.compile(
-    r"(?m)^[ \t]*(?:@\[[^\]\n]*\][ \t]*)?((?:(?:noncomputable|private|protected)[ \t]+)*)"
-    r"(theorem|lemma|def|abbrev)[ \t]+([^\s(){}\[\]:,.]+(?:\.[^\s(){}\[\]:,.]+)*)")
+#: A `theorem`/`lemma` keyword token anywhere in code (after `set_option ... in`, an attribute,
+#: `nonrec`, ...), then the dotted name (stopping before a `.{u}` universe list, a binder or a
+#: colon). Not part of an identifier (`my.theorem`, `theorem_1`).
+_KW_NAME = r"[ \t\n]+([^\s(){}\[\]:,.]+(?:\.[^\s(){}\[\]:,.]+)*)"
+_THEOREM_TOKEN_RE = re.compile(r"(?<![\w.'!?])(?:theorem|lemma)(?![\w.'!?])")
+_THEOREM_DECL_RE = re.compile(r"(?<![\w.'!?])(?:theorem|lemma)" + _KW_NAME)
+#: A `def`/`abbrev` keyword token and its name, for the closed `def S : Prop` statement constant.
+_DEF_DECL_RE = re.compile(r"(?<![\w.'!?])(?:def|abbrev)" + _KW_NAME + r"(?:\.\{[^}]*\})?")
+#: Text in a statement file's CODE that makes what Lean declares differ from what a reader of
+#: the text sees (step 4's resolver evasions, turned on the statement file): refused outright.
+_STATEMENT_FORBIDDEN = (("#exit", "`#exit` (Lean ignores everything after it)"),
+                        ("«", "a `«»`-quoted name (it can hide quotes and declaration text)"),
+                        ("`(", "a syntax quotation `` `( ``"))
+
+
+def _statement_text_problem(ga, text: str) -> Optional[str]:
+    """Why *text* (a statement file) cannot be read unambiguously, or None: the textual backstop
+    of `statement_fingerprint_target`. Read with the shared lexer (`guard_anchors.lean_segments`),
+    so a comment mentioning `#exit` is harmless; a `theorem`/`lemma` keyword inside a STRING is
+    not, because the gate's own reader (`guard_anchors.statement_decl`) does not blank strings."""
+    segs = ga.lean_segments(text)
+    code = "".join(t for k, t in segs if k == "code")
+    for needle, what in _STATEMENT_FORBIDDEN:
+        if needle in code:
+            return f"the statement file contains {what}"
+    if any(k in ("string", "raw") and _THEOREM_TOKEN_RE.search(t) for k, t in segs):
+        return ("the statement file has `theorem`/`lemma` inside a string literal (the gate's "
+                "statement reader would see it)")
+    if re.search(r"(?<![\w.'!?])private(?![\w.'!?])", code):
+        return "the statement file declares something `private` (its name is mangled)"
+    return None
+
+
+def _closed_prop_defs(code: str) -> List[re.Match]:
+    """The `def`/`abbrev` declarations in blanked *code* whose header is exactly `: Prop` (no
+    binders): the textual counterpart of a definition whose type is literally `Prop`."""
+    out = []
+    for m in _DEF_DECL_RE.finditer(code):
+        head = re.match(r"\s*:\s*Prop\s*:=", code[m.end():])
+        if head:
+            out.append(m)
+    return out
 
 
 def statement_fingerprint_target(root: Path, node) -> Tuple[str, str]:
     """`(fully qualified name, mode)` of the constant `mission freeze --fingerprints`
-    fingerprints for *node*. When the statement file declares a `theorem`/`lemma`, the LAST one
-    (mode "type"), which must be the declaration the gate's own `guard_anchors.statement_decl`
-    reads as the node's statement (else refused as ambiguous), so the frozen fingerprint is of
-    exactly the theorem whose text the gate matches; otherwise the LAST `def`/`abbrev` (mode
-    "value", spec 7's `def S : Prop`). The name is qualified by the `namespace`s open at it,
-    read with comments and string literals blanked (`guard_anchors.blank_lean_code`).
-    `ValueError` when there is no such declaration, when it is `private`, or when its name is
-    not a plain dotted identifier (a `«»` name is refused rather than re-quoted)."""
+    fingerprints for *node* -- the TEXTUAL half of the choice; `compute_statement_fingerprints`
+    then requires the replayed statement module to declare exactly that one statement constant
+    (fix round 1, Ruling 18, finding I1).
+
+    A statement file declares exactly ONE statement constant: one `theorem`/`lemma` (mode
+    "type"), or, with none, one closed `def`/`abbrev … : Prop` (mode "value", spec 7's
+    `def S : Prop`). Counted over the code, with comments and string literals blanked. In type
+    mode the gate's own reader (`guard_anchors.statement_decl`) must name the same declaration;
+    in value mode it must find no theorem at all. The name is qualified by the `namespace`s open
+    at it (`_namespace_at`). `ValueError`, naming the node, for: a file `_statement_text_problem`
+    refuses (`#exit`, `«`, `` `( ``, a keyword inside a string, `private`); more than one
+    theorem, or more than one statement constant; none at all; a name that is not a plain dotted
+    identifier; a disagreement with the gate's reader."""
     from ..closure_audit import _IDENT_COMPONENT
     from .judge import _guard_anchors
 
     ga = _guard_anchors()
     slug = slug_of(node.name)
     text = statement_path(root, node).read_text(encoding="utf-8")
+
+    def refuse(why: str) -> ValueError:
+        return ValueError(f"node {slug!r}: {why}; refusing to freeze a fingerprint for it.")
+
+    problem = _statement_text_problem(ga, text)
+    if problem:
+        raise refuse(problem)
     code = ga.blank_lean_code(text)
-    decls = list(_STATEMENT_DECL_RE.finditer(code))
-    theorems = [d for d in decls if d.group(2) in ("theorem", "lemma")]
-    if not decls:
-        raise ValueError(f"node {slug!r}: the statement file declares no theorem, lemma, def "
-                         "or abbrev to fingerprint.")
-    last = theorems[-1] if theorems else decls[-1]
-    if "private" in last.group(1).split():
-        raise ValueError(f"node {slug!r}: the statement's declaration is private; its name "
-                         "cannot be fingerprinted by name.")
-    short = last.group(3)
+    theorems = list(_THEOREM_DECL_RE.finditer(code))
+    tokens = _THEOREM_TOKEN_RE.findall(code)
+    prop_defs = _closed_prop_defs(code)
+    if len(tokens) > 1 or len(theorems) != len(tokens):
+        raise refuse(f"the statement file has {len(tokens)} `theorem`/`lemma` keywords; a statement "
+                     "file declares exactly one statement constant")
+    if theorems and prop_defs:
+        raise refuse("the statement file declares both a theorem and a closed `def … : Prop`; a "
+                     "statement file declares exactly one statement constant")
+    if len(prop_defs) > 1:
+        raise refuse(f"the statement file declares {len(prop_defs)} closed `def … : Prop`s; a "
+                     "statement file declares exactly one statement constant")
+    if not theorems and not prop_defs:
+        raise refuse("the statement file declares no theorem, lemma or closed `def … : Prop`")
+    decl = theorems[0] if theorems else prop_defs[0]
+    short = decl.group(1)
     parts = short.split(".")
     if any(not p or p[0].isdigit() or not _IDENT_COMPONENT.match(p) for p in parts):
-        raise ValueError(f"node {slug!r}: the statement's declaration name {short!r} is not a "
-                         "plain dotted Lean identifier; refusing to fingerprint it.")
+        raise refuse(f"its declaration name {short!r} is not a plain dotted Lean identifier")
+    try:
+        gate_short = ga.statement_decl(text)[0]
+    except ga.RegistryError as exc:
+        gate_short = None
+        gate_error = str(exc)
     if theorems:
-        try:
-            gate_short = ga.statement_decl(text)[0]
-        except ga.RegistryError as exc:
-            raise ValueError(f"node {slug!r}: {exc}") from None
+        if gate_short is None:
+            raise refuse(f"the gate's statement reader finds no theorem in it ({gate_error})")
         if gate_short.rstrip(".") != short:      # `foo.{u}` reads as `foo.` there
-            raise ValueError(f"node {slug!r}: the statement's last theorem reads as {short!r} "
-                             f"here but as {gate_short!r} to the gate; refusing an ambiguous "
-                             "statement file.")
+            raise refuse(f"its theorem reads as {short!r} here but as {gate_short!r} to the gate")
+    elif gate_short is not None:
+        raise refuse(f"the gate's statement reader sees a theorem {gate_short!r} that is not in "
+                     "its code")
     if parts[0] == "_root_":
         name = ".".join(parts[1:])
     else:
-        name = ".".join(ga._namespace_at(code, last.start()) + parts)
+        name = ".".join(ga._namespace_at(code, decl.start()) + parts)
     return name, "type" if theorems else "value"
 
 
-def compute_statement_fingerprints(root: Path, *, fingerprint_text=None, **lean_kw) -> Dict[str, str]:
+class StatementFingerprints(dict):
+    """slug -> statement fingerprint, plus ``trusted_env_sha256``: the trusted env
+    (`checks.lean_replay.trusted_env_digest`) every one of them was computed under."""
+
+    def __init__(self, fps=(), trusted_env_sha256: Optional[str] = None):
+        super().__init__(fps)
+        self.trusted_env_sha256 = trusted_env_sha256
+
+
+def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
+                                   **lean_kw) -> StatementFingerprints:
     """slug -> statement fingerprint for every node with a statement file, each computed by
     compiling its statement file as its own module with the pinned `lean`, kernel-replaying it
     and fingerprinting `statement_fingerprint_target` in its mode
-    (`checks.fingerprint.run_fingerprint_on_text`, project `<root>/lean`, so its
+    (`checks.fingerprint.run_statement_fingerprint`, project `<root>/lean`, so its
     `.lake/build/lib/lean` serves any campaign module a statement imports). `lean_kw` goes to
     that function (trusted_env, manifest, wrapper, timeout, memory_mb, untrusted_paths).
     `fingerprint_text` replaces it (tests). `ValueError` naming the node on the first failure:
     a freeze records every node's fingerprint or none.
+
+    The SEMANTIC half of the choice (fix round 1, Ruling 18, finding I1): the replayed
+    statement module must declare exactly one statement constant, and it must be the textual
+    target -- in type mode its only theorem (and no closed `Prop` definition), in value mode its
+    only closed `Prop` definition (and no theorem). So text that Lean never elaborates, or
+    elaborates differently from how it reads, cannot choose what is frozen. Every node's
+    fingerprint must also come from the same trusted env.
 
     NOT A SANDBOX: compiling a statement runs its code (see `checks.fingerprint`); the
     statement files are the campaign's own."""
@@ -1196,9 +1319,9 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None, **lean_
 
     root = Path(root)
     if fingerprint_text is None:
-        from ..checks.fingerprint import run_fingerprint_on_text as fingerprint_text
+        from ..checks.fingerprint import run_statement_fingerprint as fingerprint_text
     campaign = load_campaign(root)
-    out: Dict[str, str] = {}
+    out = StatementFingerprints()
     for slug, node in sorted(campaign.nodes.items()):
         path = statement_path(root, node)
         if not path.exists():
@@ -1208,11 +1331,31 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None, **lean_
         except OSError as exc:
             raise ValueError(f"node {slug!r}: cannot read its statement file ({exc})") from None
         try:
-            out[slug] = fingerprint_text(root / "lean", path.read_text(encoding="utf-8"), target,
-                                         mode=mode, **lean_kw)
+            fps = fingerprint_text(root / "lean", path.read_text(encoding="utf-8"), target,
+                                   mode=mode, **lean_kw)
         except (OSError, ValueError) as exc:
             raise ValueError(f"node {slug!r}: statement fingerprint of {target!r} ({mode} mode) "
                              f"failed: {exc}") from None
+        declared = getattr(fps, "declared", None)
+        if not isinstance(declared, dict):
+            raise ValueError(f"node {slug!r}: the statement fingerprint run did not list the "
+                             "module's declarations")
+        theorems, prop_defs = list(declared.get("theorem", [])), list(declared.get("propdef", []))
+        want = ([target], []) if mode == "type" else ([], [target])
+        if (theorems, prop_defs) != want:
+            raise ValueError(
+                f"node {slug!r}: the statement module, as Lean elaborates it, declares the "
+                f"theorem(s) {theorems} and the closed Prop definition(s) {prop_defs}, but the "
+                f"statement file reads as declaring only {target!r} ({mode} mode); refusing to "
+                "freeze a fingerprint for it.")
+        env = getattr(fps, "trusted_env_sha256", None)
+        if not env or not _SHA256_HEX_RE.fullmatch(env):
+            raise ValueError(f"node {slug!r}: the fingerprint run names no trusted env digest")
+        if out.trusted_env_sha256 not in (None, env):
+            raise ValueError(f"node {slug!r}: fingerprinted under trusted env {env[:12]}..., the "
+                             f"others under {out.trusted_env_sha256[:12]}...")
+        out.trusted_env_sha256 = env
+        out[slug] = fps[target]
     return out
 
 
@@ -1225,11 +1368,18 @@ def frozen_fingerprint(root: Path, node) -> Optional[str]:
     return (doc.get("fingerprints") or {}).get(slug_of(node.name))
 
 
-def statement_fingerprint_problem(root: Path, node, fingerprint: str) -> str:
+_ENV_UNCHECKED = object()
+
+
+def statement_fingerprint_problem(root: Path, node, fingerprint: str,
+                                  trusted_env_sha256=_ENV_UNCHECKED) -> str:
     """"" when *fingerprint* (the checked theorem's, type mode) equals *node*'s frozen statement
     fingerprint; else why not: an untrustworthy FREEZE.toml, no FREEZE.toml or no
-    `[fingerprints]` entry ("statement fingerprint not frozen"), or a mismatch. The caller
-    decides whether the node needs it (`provenance.checks_required`)."""
+    `[fingerprints]` entry ("statement fingerprint not frozen"), or a mismatch. With
+    *trusted_env_sha256* (`mission checks-record`, from the fingerprint JSON) it must also be
+    the frozen `fingerprints_env` ("fingerprint computed under a different trusted env"; fix
+    round 1, M2); `checks_problem` has no env to compare (the record does not keep it). The
+    caller decides whether the node needs it (`provenance.checks_required`)."""
     slug = slug_of(node.name)
     doc, unreadable = _load_freeze_safe(Path(root))
     if unreadable:
@@ -1241,6 +1391,13 @@ def statement_fingerprint_problem(root: Path, node, fingerprint: str) -> str:
         return (f"statement fingerprint not frozen ({where}); a post-cutoff node's checks are "
                 "tied to its frozen statement fingerprint (`mission freeze --fingerprints`, or "
                 "`mission unfreeze --fingerprints`)")
+    if trusted_env_sha256 is not _ENV_UNCHECKED:
+        frozen_env = doc.get("fingerprints_env")
+        if not frozen_env or trusted_env_sha256 != frozen_env:
+            return (f"fingerprint computed under a different trusted env: the fingerprint JSON "
+                    f"names {str(trusted_env_sha256)[:16]}..., the freeze recorded "
+                    f"{str(frozen_env)[:16]}... (`fingerprints_env`); fingerprint the theorem "
+                    "under the pinned env the campaign was frozen with, or unfreeze")
     if str(fingerprint).lower() != frozen:
         return (f"statement fingerprint mismatch: the checked theorem's fingerprint "
                 f"{str(fingerprint)[:16]}... is not the frozen statement fingerprint "

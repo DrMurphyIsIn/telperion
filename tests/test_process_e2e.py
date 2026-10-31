@@ -43,7 +43,7 @@ from telperion.missions.statements import write_statement  # noqa: E402
 # (tmp_path/"missions"/"demo"/"proof"/"Demo_ck.lean") -- which is exactly the layout this
 # test builds below, campaign "demo", node "Demo.ck" / slug "Demo_ck", artifact
 # "proof/Demo_ck.lean". `_record` runs `mission checks-record` through the CLI.
-from test_missions_checks import FPRINT, _record, _write_jsons  # noqa: E402
+from test_missions_checks import FP_ENV, FPRINT, _record, _write_jsons  # noqa: E402
 from telperion.missions.process import _load_freeze_safe, _write_freeze  # noqa: E402
 
 #: Identities and sessions, each pair distinct from every other pair in both fields
@@ -86,6 +86,7 @@ def _inject_frozen_fingerprint(croot: Path, slug: str, fp: str) -> None:
     doc, problem = _load_freeze_safe(croot)
     assert doc is not None and problem is None, problem
     doc["fingerprints"] = {**(doc.get("fingerprints") or {}), slug: fp}
+    doc["fingerprints_env"] = FP_ENV            # the trusted env digest `--fingerprints` records with them
     _write_freeze(croot, doc)
 
 

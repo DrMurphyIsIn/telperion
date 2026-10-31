@@ -2104,7 +2104,8 @@ def cmd_mission_checks_record(args) -> int:
     cross-check; step 5 Task 6 adds the SEMANTIC tie: for a node that needs checks, the
     target's fingerprint (type mode; a `"mode": "value"` JSON is refused) must equal the node's
     frozen statement fingerprint (FREEZE.toml `[fingerprints]`), and a node with none frozen is
-    refused ("statement fingerprint not frozen"). Final review I3 (kept as a second line after step 5): the
+    refused ("statement fingerprint not frozen"); the JSON's `trusted_env_sha256` must be the
+    freeze's `fingerprints_env` ("fingerprint computed under a different trusted env"). Final review I3 (kept as a second line after step 5): the
     probe and fingerprint JSONs' replay `axioms` lists must agree, be a subset of CLEAN_AXIOMS
     and include the closure audit's axioms for the target; the list is recorded.
 
@@ -2228,7 +2229,8 @@ def cmd_mission_checks_record(args) -> int:
                       "is fingerprinted in type mode (`telperion fingerprint` without --mode value)")
     if checks_required(node):
         from .missions.process import statement_fingerprint_problem
-        fp_problem = statement_fingerprint_problem(camp_root, node, str(fps[target]))
+        fp_problem = statement_fingerprint_problem(camp_root, node, str(fps[target]),
+                                                   trusted_env_sha256=fp.get("trusted_env_sha256"))
         if fp_problem:
             return refuse(fp_problem)
     audited = [t.get("name") for t in closure["targets"] if isinstance(t, dict)]
@@ -3191,7 +3193,8 @@ def cmd_fingerprint(args) -> int:
                            "module": args.imports[0] if len(args.imports) == 1 else None,
                            "theorem": args.targets[0] if len(args.targets) == 1 else None,
                            "source_sha256": _source_sha256(args.file),
-                           "axioms": getattr(fps, "axioms", None), "mode": args.mode, **stale}))
+                           "axioms": getattr(fps, "axioms", None), "mode": args.mode,
+                           "trusted_env_sha256": getattr(fps, "trusted_env_sha256", None), **stale}))
         return 0
     for t in args.targets:
         print(f"{t} {fps[t]}")

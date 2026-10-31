@@ -36,8 +36,19 @@ from telperion.missions.verify import GateError, grant_status  # noqa: E402
 
 OLEAN = "d" * 64
 FPRINT = "e" * 64
+#: The trusted env digest the fixtures' fingerprints were "computed under" (FREEZE.toml `fingerprints_env`, the
+#: fingerprint JSON's `trusted_env_sha256`; Task 6 fix round 1, M2).
+FP_ENV = "9" * 64
+
+
+def _fps(fps: dict, env: str = FP_ENV):
+    """Statement fingerprints as `process.compute_statement_fingerprints` returns them, with their trusted env."""
+    from telperion.missions.process import StatementFingerprints
+    return StatementFingerprints(fps, env)
+
+
 #: The fixtures' frozen statement fingerprints (FREEZE.toml [fingerprints]; step 5 Task 6).
-FROZEN_FP = {"Demo_ck": FPRINT}
+FROZEN_FP = _fps({"Demo_ck": FPRINT})
 
 
 def _rec(art_sha: str, *, probe: str = "WITNESSED", closure: str = "PASS",
@@ -120,7 +131,7 @@ def _statement_for(root: Path, node: Node, fingerprint: str | None = FPRINT) -> 
         slug = slug_of(node.name)
         _write_freeze(root, {"version": 1, "frozen": "2026-10-29", "identity": "freezer@test",
                              "session": "freezer-session", "statements": {slug: "0" * 64},
-                             "fingerprints": {slug: fingerprint}})
+                             "fingerprints": {slug: fingerprint}, "fingerprints_env": FP_ENV})
 
 
 def test_checks_current_record_has_no_problem(tmp_path):
@@ -364,7 +375,7 @@ def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "
                  fingerprints=None, targets=("lemma_ck",), lean_exit_code=0,
                  probe_theorem="lemma_ck", fp_theorem=_SAME, probe_src=CUR, fp_src=CUR,
                  probe_axioms=("propext",), fp_axioms=("propext",), closure_axioms=("propext",), stale=None,
-                 closure_olean=OLEAN, isolated=True):
+                 closure_olean=OLEAN, isolated=True, fp_env=FP_ENV):
     """The three JSONs in the exact shapes the checks print: `probe-negation --json`
     (ProbeResult.to_json plus module/theorem/source_sha256, cmd_probe_negation),
     `fingerprint --json` (cmd_fingerprint) and `audit-closure --json` (AuditResult.to_json,
@@ -395,6 +406,8 @@ def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "
         fp["source_sha256"] = cur if fp_src is CUR else fp_src
     if fp_axioms is not None:
         fp["axioms"] = list(fp_axioms)
+    if fp_env is not None:
+        fp["trusted_env_sha256"] = fp_env
     audit = AuditResult(verdict=closure, lean_exit_code=lean_exit_code,
                         targets=[TargetInfo(name=t, kind="theorem", statement="1 + 1 = 2",
                                             axioms=list(closure_axioms)) for t in targets])
@@ -994,7 +1007,7 @@ def test_grant_refused_on_a_fingerprint_that_is_not_the_frozen_one(tmp_path):
     root = _grant_campaign(tmp_path, created="2026-10-29")
     node = load_node(root / "nodes" / "Demo_ck.toml")
     freeze(root, identity="gate@test", session="gate-session", date="2026-10-29",
-           fingerprints={"Demo_ck": "f" * 64})
+           fingerprints=_fps({"Demo_ck": "f" * 64}))
     _with_checks(root, _rec(_art_sha(root, node)))
     with pytest.raises(GateError, match=r"\[checks\] required .*statement fingerprint mismatch"):
         _grant(root)
@@ -1007,13 +1020,13 @@ def test_verify_flags_a_proved_node_whose_frozen_fingerprint_moved(tmp_path):
     root = _proved(tmp_path, created="2026-10-29")
     assert _checks_errors(root) == []
     unfreeze(root, author="owner@test", reason="re-fingerprint", readback_identity="reviewer@test",
-             date="2026-10-30", fingerprints={"Demo_ck": "f" * 64})
+             date="2026-10-30", fingerprints=_fps({"Demo_ck": "f" * 64}))
     errs = _checks_errors(root)
     assert len(errs) == 1 and "statement fingerprint mismatch" in errs[0], errs
 
 
 def test_cli_record_refused_on_a_mismatched_frozen_fingerprint(tmp_path, capsys):
-    mroot = _cli_campaign(tmp_path, fingerprints={"Demo_ck": "f" * 64})
+    mroot = _cli_campaign(tmp_path, fingerprints=_fps({"Demo_ck": "f" * 64}))
     assert _record(mroot, _write_jsons(tmp_path)) == 2
     assert _node(mroot).checks is None
     assert "statement fingerprint mismatch" in capsys.readouterr().err
@@ -1048,3 +1061,12 @@ def test_cli_record_pre_cutoff_node_has_no_fingerprint_tie(tmp_path):
     _grant_campaign(mroot, created="2026-10-01", campaign="demo")    # pre-cutoff, never frozen
     assert _record(mroot, _write_jsons(tmp_path)) == 0
     assert _node(mroot).checks.statement_fingerprint == FPRINT
+
+
+# Task 6 fix round 1 (M2): the fingerprint JSON must name the trusted env the campaign's fingerprints were frozen under.
+@pytest.mark.parametrize("env", ["8" * 64, None])
+def test_cli_record_refuses_a_fingerprint_from_another_trusted_env(tmp_path, capsys, env):
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path, fp_env=env)) == 2
+    assert _node(mroot).checks is None
+    assert "fingerprint computed under a different trusted env" in capsys.readouterr().err

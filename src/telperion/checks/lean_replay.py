@@ -121,6 +121,7 @@ class ReplayResult:
     declared: list[str] = field(default_factory=list)          # OK only: axioms the untrusted closure declares
     olean_sha256: str | None = None    # OK only: closure_digest of the replayed untrusted closure
     olean_closure: list[list[str]] = field(default_factory=list)  # OK only: its [module, part, sha256] list
+    trusted_env_sha256: str | None = None  # OK only: `trusted_env_digest` of the verified trusted manifest
 
 
 @dataclass(frozen=True)
@@ -264,6 +265,36 @@ def verify_trusted_manifest(pinned: PinnedEnv, path) -> None:
     changed = sorted(f for f, h in _hash_all(files).items() if recorded[f] != h)
     if changed:
         raise ValueError(f"trusted files changed since the manifest: {len(changed)} differ (e.g. {changed[:3]})")
+
+
+def trusted_env_digest(pinned: PinnedEnv, path) -> str:
+    """A machine-independent sha256 of a trusted manifest's CONTENT: the toolchain, then every trusted file's sha256
+    keyed by its path relative to its trusted prefix (the toolchain's lib/lean, or a package dir relative to the env
+    root) instead of the absolute paths the manifest itself records. Two machines with the same pinned env get the same
+    digest; a different Mathlib or toolchain gets another. Call it after `verify_trusted_manifest` (step 5 Task 6: the
+    freeze's statement fingerprints and the checked theorem's fingerprint must come from the same trusted env)."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        files = dict(data["files"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"no readable trusted manifest at {path}: {exc}") from None
+    labels = [(pinned.libdir, "toolchain:lib/lean")]
+    labels += [(e, "env:" + os.path.relpath(e, pinned.root)) for e in pinned.entries]
+    labels.sort(key=lambda pl: len(pl[0]), reverse=True)              # the longest prefix first
+    h = hashlib.sha256(f"toolchain\0{pinned.toolchain}\n".encode("utf-8"))
+    keyed = []
+    for f, sha in files.items():
+        if f == pinned.lean:
+            key = "toolchain:bin/lean"
+        else:
+            pre = next(((p, label) for p, label in labels if under_prefix(f, [p])), None)
+            if pre is None:
+                raise ValueError(f"trusted manifest {path} lists {f}, which is under no trusted prefix")
+            key = f"{pre[1]}/{os.path.relpath(f, pre[0])}"
+        keyed.append(f"{key}\0{sha}\n")
+    for line in sorted(keyed):
+        h.update(line.encode("utf-8"))
+    return h.hexdigest()
 
 
 _SCRIPT = r"""__IMPORTS__
@@ -835,6 +866,7 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
         if not mpath.is_file():
             raise ValueError(f"no readable trusted manifest at {mpath}; " + MANIFEST_HINT.format(env=pinned.root))
         verify_trusted_manifest(pinned, mpath)
+        env_sha = trusted_env_digest(pinned, mpath)
         for m in targets:
             _module(m)
     except (OSError, ValueError) as exc:
@@ -931,6 +963,7 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
                 res.declared = parse_declared(detail)
                 res.olean_closure = [list(e) for e in entries]
                 res.olean_sha256 = closure_digest(entries)
+                res.trusted_env_sha256 = env_sha
             return res
         return ReplayResult("ERROR", f"replay needs more trusted modules after one retry: {detail}", [], out)
     finally:

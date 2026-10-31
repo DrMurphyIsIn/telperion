@@ -249,8 +249,9 @@ def tpNonce : String := "__NONCE__"
 def tpValueMode : Bool := __VALUE_MODE__
 
 open Lean Meta Elab Term in
-def TelperionReplay.callback : TermElabM Unit := do
+def TelperionReplay.callback__CLOSURE_PARAM__ : TermElabM Unit := do
   let env ← getEnv
+__LIST_DECLARED__
   for t in (__TARGETS__ : List Name) do
     match env.find? t with
     | none => IO.println s!"FP-MISSING {tpNonce} {t}"
@@ -260,6 +261,17 @@ def TelperionReplay.callback : TermElabM Unit := do
       | .ok s => IO.println s!"FP-BEGIN {tpNonce} {t}\\n{s}\\nFP-END {tpNonce} {t}"
   IO.println s!"FP-DONE {tpNonce}"
 """
+
+# With `list_declared`: before the fingerprints, the target module's OWN statement constants, read from the replayed
+# closure (`TelperionReplay.Closure.target`), one `FP-DECL <nonce> theorem|propdef <name>` line each: every theorem,
+# and every definition whose type is literally `Prop`, whose name is not internal (`_proof_1`, `_private`, ...).
+_LIST_DECLARED = """  for n in c.target do
+    unless n.isInternal do
+      match env.find? n with
+      | some (.thmInfo _) => IO.println s!"FP-DECL {tpNonce} theorem {n}"
+      | some (.defnInfo d) =>
+        if d.type.consumeMData == .sort .zero then IO.println s!"FP-DECL {tpNonce} propdef {n}"
+      | _ => pure ()"""
 
 #: ``type``: a constant's TYPE (what a theorem states). ``value``: a ``def … : Prop``'s VALUE (what a statement
 #: definition says), so that a frozen ``def S : Prop`` and an artifact's ``theorem t : S`` can be compared.
@@ -276,13 +288,28 @@ def _names(names) -> str:
 
 
 def render_fingerprint_callback(targets: list[str], nonce: str,
-                                library_roots: tuple[str, ...] = LIBRARY_ROOTS, mode: str = "type") -> str:
+                                library_roots: tuple[str, ...] = LIBRARY_ROOTS, mode: str = "type",
+                                list_declared: bool = False) -> str:
     """The replay callback that prints, per target, one nonce'd ``FP-BEGIN``/``FP-END`` block, ``FP-REFUSED`` or
-    ``FP-MISSING``, then ``FP-DONE <nonce>``. Trusted code, elaborated before the replay."""
+    ``FP-MISSING``, then ``FP-DONE <nonce>``. Trusted code, elaborated before the replay. With `list_declared` it
+    takes the replayed closure (``callback_takes_closure``) and first prints the target module's own theorems and
+    ``Prop`` definitions (``FP-DECL``; `parse_declared`)."""
     _check_mode(mode)
     return (ROOTS_DEF.replace("__ROOTS__", _names(library_roots)) + HELPERS
             + _CALLBACK.replace("__NONCE__", nonce).replace("__VALUE_MODE__", "true" if mode == "value" else "false")
+            .replace("__CLOSURE_PARAM__", " (c : TelperionReplay.Closure)" if list_declared else "")
+            .replace("__LIST_DECLARED__", _LIST_DECLARED if list_declared else "")
             .replace("__TARGETS__", _names(targets)))           # last: a target name is data, never re-scanned
+
+
+def parse_declared(output: str, nonce: str) -> dict[str, list[str]]:
+    """{"theorem": [...], "propdef": [...]} from the ``FP-DECL <nonce> <kind> <name>`` lines (`list_declared`)."""
+    out: dict[str, list[str]] = {"theorem": [], "propdef": []}
+    for ln in output.splitlines():
+        parts = ln.split(" ", 3)
+        if parts[0] == "FP-DECL" and len(parts) == 4 and parts[1] == nonce and parts[2] in out:
+            out[parts[2]].append(parts[3])
+    return out
 
 
 def parse_fingerprints(output: str, nonce: str) -> dict[str, str]:
@@ -347,9 +374,14 @@ def _precheck(project: Path, library_roots: tuple[str, ...]) -> None:
 class Fingerprints(dict):
     """target -> sha256 of its serialized statement; ``olean_sha256``/``olean_closure`` bind the replayed closure."""
 
-    def __init__(self, fps=(), olean_sha256=None, olean_closure=(), axioms=None, mode="type"):
+    def __init__(self, fps=(), olean_sha256=None, olean_closure=(), axioms=None, mode="type",
+                 trusted_env_sha256=None, declared=None):
         super().__init__(fps)
         self.mode: str = mode
+        #: `lean_replay.trusted_env_digest` of the trusted env the run was verified against.
+        self.trusted_env_sha256: str | None = trusted_env_sha256
+        #: With `list_declared`: the target module's own theorems and Prop definitions (`parse_declared`).
+        self.declared: dict[str, list[str]] | None = declared
         self.olean_sha256: str | None = olean_sha256
         self.olean_closure: list = [list(e) for e in olean_closure]
         self.axioms: list | None = list(axioms) if axioms is not None else None
@@ -380,7 +412,7 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
                  body: str | None = None, trusted: list[str] | None = None, trusted_env: Path | None = None,
                  expect_body_olean: str | None = None, manifest=None, untrusted_paths=(),
                  elan_home=None, memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB,
-                 mode: str = "type") -> Fingerprints:
+                 mode: str = "type", list_declared: bool = False) -> Fingerprints:
     """Compile ``body`` (if given) as a randomly named module in a private temp dir, then replay the untrusted
     imports (or the body) and fingerprint ``targets`` in the replay callback, in ``mode`` (``MODES``). ``trusted``
     and ``expect_body_olean`` override the trusted prefixes given to the script and the expected body olean (tests
@@ -409,11 +441,13 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
             f = resolve_olean(search, m)
             (trusted_imps if f and under_prefix(f, pinned.prefixes) else replayed).append(m)
         nonce = secrets.token_hex(16)                           # only now: the body compile cannot have seen it
-        r = lean_replay.run_replay(replayed, render_fingerprint_callback(targets, nonce, mode=mode), project=None,
+        r = lean_replay.run_replay(replayed, render_fingerprint_callback(targets, nonce, mode=mode,
+                                                                         list_declared=list_declared), project=None,
                                    untrusted_paths=untrusted, trusted_imports=["Mathlib", *trusted_imps],
                                    trusted_env=pinned.root, manifest=manifest, elan_home=elan_home, wrapper=prefix,
                                    timeout=timeout, allow_sorry=True, expect_oleans=expect,
-                                   prefixes_override=trusted, memory_mb=memory_mb)
+                                   prefixes_override=trusted, memory_mb=memory_mb,
+                                   callback_takes_closure=list_declared)
     finally:
         if cdir is not None:
             shutil.rmtree(cdir, ignore_errors=True)
@@ -431,7 +465,9 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
     absent = [t for t, k in keys.items() if k not in fps]
     if absent:
         raise ValueError(f"no fingerprint printed for {', '.join(absent)}:\n{r.output[-4000:]}")
-    return Fingerprints({t: fps[k] for t, k in keys.items()}, r.olean_sha256, r.olean_closure, r.axioms, mode)
+    return Fingerprints({t: fps[k] for t, k in keys.items()}, r.olean_sha256, r.olean_closure, r.axioms, mode,
+                        getattr(r, "trusted_env_sha256", None),
+                        parse_declared(r.output, nonce) if list_declared else None)
 
 
 def _escaped(target: str) -> str:
@@ -452,6 +488,20 @@ def run_fingerprint(project: Path, imports: list[str], targets: list[str], wrapp
     (a ``def … : Prop``'s value; anything else is refused)."""
     return _fingerprint(project, imports, targets, wrapper, timeout, trusted_env=trusted_env, manifest=manifest,
                         untrusted_paths=untrusted_paths, memory_mb=memory_mb, mode=mode)
+
+
+def run_statement_fingerprint(project: Path, text: str, target: str, *, mode: str, wrapper: list[str] | None = None,
+                              timeout: int = 1800, trusted_env: Path | None = None, manifest=None,
+                              memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB,
+                              untrusted_paths=()) -> Fingerprints:
+    """`run_fingerprint_on_text` for a STATEMENT file (step 5 Task 6, `mission freeze --fingerprints`): the whole
+    `Fingerprints` (``trusted_env_sha256`` included) and, in ``declared``, the statement module's own theorems and
+    ``Prop`` definitions as the replay sees them, so the caller can require the target to be its only one.
+
+    NOT A SANDBOX: compiling ``text`` runs its code with the caller's permissions (see the module docstring)."""
+    return _fingerprint(project, [], [target], wrapper, timeout, body=text, trusted_env=trusted_env,
+                        manifest=manifest, memory_mb=memory_mb, mode=mode, untrusted_paths=untrusted_paths,
+                        list_declared=True)
 
 
 def run_fingerprint_on_text(project: Path, text: str, target: str, wrapper: list[str] | None = None,
