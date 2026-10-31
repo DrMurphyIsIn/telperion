@@ -220,3 +220,47 @@ judged by a matching Comparator build.
   - the Comparator-tag open item.
 
   Link it from `README.md`. Commit with the message `docs: ISLANDS.md`.
+
+---
+
+## Amendment, 2026-10-31: owner decisions and the C2 witness (Task 0)
+
+**Owner decisions (2026-10-31):**
+1. **Comparator tag gap: default to v4.35.0.** New projects default to `leanprover/lean4:v4.35.0`. v4.34.1 is
+   documented as having no matching Comparator tag; no Comparator is built from source.
+2. **Island replays run in the contrarian's sandbox** (the remote Linux container with the cap-drop bwrap wrapper), not
+   on the owner's Mac. External library code is never built locally.
+   - Tasks 3-4 change accordingly:
+     - `telperion island add` runs locally, since it only records the registration and copies the challenge by
+       byte;
+     - the replay itself is run by the contrarian at the pinned commit;
+     - bb verifies the logs;
+     - Telperion ingests the result with a new `telperion island record-replay <name> --log <comparator log>
+       --probe-json <...> --fingerprint-json <...>`, which applies exactly the `verified` rules above to the supplied
+       files.
+   - `telperion island replay` stays, for operators who do have a sandbox. Its docs say it must run inside one.
+3. **C2 witness:** the first step-6 item, as Task 0 below.
+
+### Task 0: Downgrade-only reducing-telescope check on the negation probe's witness
+
+**Why.** Step 4's C2 residual is still open. A vacuous sub-proposition sitting under a conclusion head that the probe
+does not expand can reach WITNESSED with a satisfiable pad. Examples of such heads: `id`, a local structure, `∧`, `↔`,
+`¬`, a beta-redex, `let`. A concrete case is `∀ m, m = m → id (∀ n, n < 0 → n = 7)`. WITNESSED skips the human
+sign-off, so a false WITNESSED is the unsound direction.
+
+**Change** (`src/telperion/checks/negation_probe.py`). WITNESSED now additionally requires the witness to close the
+∃-closure built over the REDUCING telescope as well:
+- use `forallTelescopeReducing` at default transparency, after the existing non-library head unfolding;
+- Prop binders exposed only by reduction must also be witnessed.
+
+If the second check fails, or exposes Prop binders the witness does not cover, the verdict drops to PROBE_ONLY with the
+reason "witness does not survive reduction". The check NEVER upgrades a verdict, and it never changes the false probe,
+which keeps Ruling 8's non-reducing premise split.
+
+**Tests** (Lean env, must-fail controls):
+- the example above is not WITNESSED;
+- the same with `∧` / `↔` / `¬` / let / beta-redex heads is not WITNESSED;
+- an honest witnessed statement stays WITNESSED;
+- a timeout in the reducing step gives PROBE_ONLY (fail closed).
+
+**Commit:** `checks: WITNESSED also requires the witness to survive the reducing telescope (downgrade-only)`
