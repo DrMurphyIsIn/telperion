@@ -16,7 +16,8 @@ from lean_env import fake_trusted_env, session_trusted_manifest  # noqa: E402
 # replay's nonce'd lines (tag stripped here): `PREMISES n`, then one `FALSE`, `NEGATION` and (with a witness)
 # `WITNESS` and `REDUCED` result line. The inputs below are those lines; the expected verdicts are the ones the
 # text-based probe had.
-OK = ["PREMISES 2", "FALSE PROVED axioms=[]", "WITNESS PROVED axioms=[propext]", "REDUCED PROVED axioms=[propext]"]
+OK = ["PREMISES 2", "FALSE PROVED axioms=[]", "WITNESS PROVED axioms=[propext]", "REDUCED PROVED axioms=[propext]",
+      "ALLOW OK"]
 NOT_FALSE = ["PREMISES 2", "FALSE FAILED linarith failed"]
 GAVE_UP = ["NEGATION GAVEUP 200"]
 
@@ -370,7 +371,9 @@ SURVIVE = "witness does not survive reduction"
 def test_c2r_render():
     src = render_callback("Foo.t", "trivial")
     assert "partial def reducedClosure" in src and "forallTelescopeReducing e fun xs body" in src
-    assert "withTransparency .default (TelperionProbe.reducedClosure ty)" in src       # after unfoldHeads
+    # fix round 3 (R3): the closure is built from the SAME expanded term the allowlist walks
+    assert "let e ← TelperionProbe.expandLocal ty" in src and "expanded.set (some e)" in src
+    assert "withTransparency .default (TelperionProbe.reducedClosure e)" in src
     assert "(``And, #[a, b])" in src and "(``Iff, #[a, b])" in src
     assert 'TelperionProbe.budget "REDUCED" "FAILED" do' in src and "`_telperion_probe_reduced" in src
     # the same witness, parsed from the same data literal, and kernel-checked synchronously like the first one
@@ -397,7 +400,7 @@ def test_c2r_reduction_timeout_note():
 
 
 def test_c2r_reduction_never_upgrades():
-    red = ["REDUCED PROVED axioms=[propext]"]
+    red = ["REDUCED PROVED axioms=[propext]", "ALLOW OK"]
     assert classify(NOT_FALSE + GAVE_UP + WITNESS_OK + red, witness=True).verdict == "WITNESSED"
     # every non-WITNESSED witness outcome stays what it was with a clean REDUCED line
     for w, verdict in ((["WITNESS NOANTECEDENT"], "PROBE_ONLY"), (["WITNESS INCOMPLETE mvars=true sorry=false"],
@@ -427,24 +430,51 @@ ALLOW = "outside the WITNESSED allowlist"
 def test_c2r_unopened_render():
     src = render_callback("Foo.t", "trivial")
     assert "def unopened" not in src                                        # Ruling 3's denylist is gone
-    heads = "[``Eq, ``Ne, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``True, ``Nat.le, ``Dvd.dvd]"
+    # fix round 3 (Ruling 5, M5): `Ne` is gone from the heads (it reduces to `→ False` before any leaf)
+    heads = "[``Eq, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``True, ``Nat.le, ``Dvd.dvd]"
     assert f"def okHeads : List Name := {heads}" in src
-    assert "partial def propInData (e : Expr) : MetaM (Option Expr)" in src and "isPropFormerType ty" in src
+    assert "partial def dataProblem (e : Expr) : MetaM (Option String)" in src and "isPropFormerType ty" in src
     assert "deltaExpand ty fun n => !isLib env n" in src                   # local definitions cannot hide data
-    assert "match ← TelperionProbe.allowlistProblem ty with" in src
-    assert 'TelperionReplay.line s!"REDUCED OUTSIDE {why}"' in src
-    assert src.count("allowlistProblem ty") == 1                           # the REDUCED check only, not WITNESS
+    # the walk has its own budget and line (M7), on the term the REDUCED check expanded (R3)
+    assert 'TelperionProbe.budget "ALLOW" "FAILED" do' in src
+    assert "match ← TelperionProbe.allowlistProblem e with" in src
+    assert 'TelperionReplay.line s!"ALLOW OUTSIDE {why}"' in src and 'TelperionReplay.line "ALLOW OK"' in src
+    assert src.count("allowlistProblem e") == 1 and "REDUCED OUTSIDE" not in src
+    assert "ALLOW" not in render_callback("Foo.t", None)
 
 
 def test_c2r_unopened_is_probe_only():
-    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED OUTSIDE rule i: the conclusion's head Or is not in the "
-                                                     "allowlist"], witness=True)
-    assert r.verdict == "PROBE_ONLY" and ALLOW in r.detail and "rule i: the conclusion's head Or" in r.detail, r.detail
+    red = ["REDUCED PROVED axioms=[propext]"]
+    out = ["ALLOW OUTSIDE a hypothesis `x = 0 ↔ V` is not an atom"]
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + red + out, witness=True)
+    assert r.verdict == "PROBE_ONLY" and ALLOW in r.detail and "a hypothesis `x = 0 ↔ V`" in r.detail, r.detail
     # never an upgrade: with a failed first witness it is still ERROR, with no antecedent still PROBE_ONLY
-    assert classify(AESOP + UNABLE + ["WITNESS FAILED x", "REDUCED OUTSIDE rule i"], witness=True).verdict == "ERROR"
-    r = classify(AESOP + UNABLE + ["WITNESS NOANTECEDENT", "REDUCED OUTSIDE rule i"], witness=True)
+    assert classify(AESOP + UNABLE + ["WITNESS FAILED x"] + red + out, witness=True).verdict == "ERROR"
+    r = classify(AESOP + UNABLE + ["WITNESS NOANTECEDENT"] + red + out, witness=True)
     assert r.verdict == "PROBE_ONLY" and "nothing to witness" in r.detail
     assert classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED UNOPENED x"], witness=True).verdict == "ERROR"
+    assert classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED OUTSIDE x"], witness=True).verdict == "ERROR"
+
+
+# Fix round 3 (Ruling 5, M7): the ALLOW line, its own budget and note. Missing, failed or timed out: not WITNESSED.
+@pytest.mark.parametrize("allow,note", [
+    ([], "allowlist check failed: no ALLOW result line"),
+    (["ALLOW FAILED unknown constant"], "allowlist check failed: unknown constant"),
+    (["ALLOW " + TIMEOUT], "allowlist check failed: it timed out at maxHeartbeats")])
+def test_c2r_allow_failure_is_probe_only(allow, note):
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED PROVED axioms=[]"] + allow, witness=True)
+    assert r.verdict == "PROBE_ONLY" and note in r.detail and "does not survive" not in r.detail, r.detail
+
+
+def test_c2r_allow_protocol_is_strict():
+    red = ["REDUCED PROVED axioms=[]"]
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + red + ["ALLOW OK", "ALLOW OK"], witness=True)
+    assert r.verdict == "ERROR" and "2 ALLOW result lines" in r.detail
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + red + ["ALLOW MAYBE"], witness=True)
+    assert r.verdict == "ERROR" and "unknown status 'MAYBE'" in r.detail
+    # the reduced-witness reason comes first; ALLOW OK never rescues it
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED FAILED x", "ALLOW OK"], witness=True)
+    assert r.verdict == "PROBE_ONLY" and "does not survive" in r.detail
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -908,6 +938,30 @@ noncomputable def hide (n : ℕ) : ℕ := by classical exact if (∀ k : ℕ, k 
 theorem hidev : ∀ m : ℕ, m = m → hide m = m := fun m _ => by
   unfold hide; rw [if_pos fun n hn => absurd hn (Nat.not_lt_zero n)]
 theorem realv (x : ℝ) (h : x < 3) : x < 5 := by linarith
+-- fix round 3 (Ruling 5): R1, a vacuous proposition at a negative position of a hypothesis
+theorem iffh : ∀ x : ℕ, (x = 0 ↔ ∀ n : ℕ, n < 0 → n = 7) → x = 0 :=
+  fun _ h => h.2 fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem imph : ∀ x : ℕ, ((∀ n : ℕ, n < 0 → n = 7) → x = 0) → x = 0 :=
+  fun _ h => h fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem iffb : ∀ b : Bool, (b = true ↔ ∀ n : ℕ, n < 0 → n = 7) → b = true :=
+  fun _ h => h.2 fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem orh : ∀ x : ℕ, (x = 0 ∨ ¬∀ n : ℕ, n < 0 → n = 7) → x = 0 :=
+  fun _ h => h.elim id fun hv => absurd (fun n hn => absurd hn (Nat.not_lt_zero n)) hv
+theorem insth : ∀ inst : LT ℕ, (∀ a b : ℕ, @LT.lt ℕ inst a b ↔ ∀ n : ℕ, Nat.lt n 0 → a = b) → @LT.lt ℕ inst 1 2 :=
+  fun _ h => (h 1 2).2 fun n hn => absurd hn (Nat.not_lt_zero n)
+-- R2: a local structure as a binder type hides a hypothesis in its fields
+structure SS where
+  x : ℕ
+  h : (∀ n : ℕ, n < 0 → n = 7) → x = 0
+theorem strh : ∀ m : ℕ, m = m → ∀ s : SS, s.x = 0 := fun _ _ s => s.h fun n hn => absurd hn (Nat.not_lt_zero n)
+-- R3: a structural `match` predicate under a library head (the walked and the witnessed term must be one)
+def F : ℕ → Prop
+  | 0 => ∀ n : ℕ, n < 0 → n = 7
+  | k + 1 => F k
+theorem fv : ∀ m : ℕ, m = m → id (F 3) := by
+  intro _ _; show F 0; exact fun n hn => absurd hn (Nat.not_lt_zero n)
+-- M6: a bare `True` conclusion says nothing
+theorem truev : ∀ m : ℕ, m = m → True := fun _ _ => trivial
 noncomputable def R (k : ℕ) : Prop := Nat.rec (motive := fun _ => Prop) True (fun _ _ => True) k
 -- true, but the kernel would have to evaluate `slow 40 0` to check a proof, so it is sorry'd (the replay allows sorry;
 -- no verdict reads the theorem's own proof). Binders before the `:` would make `sorry` itself whnf the target.
@@ -979,6 +1033,27 @@ def test_lean_c2r_allowlist_repros_are_never_witnessed(c2r_module, theorem, witn
     r = _probe(c2r_module, theorem, witness)
     assert r.verdict == "PROBE_ONLY" and "outside the WITNESSED allowlist" in r.detail, r.detail
     print(f"ALLOW {theorem} with {witness}: {r.verdict} -- {r.detail}")
+
+
+# Fix round 3 (Ruling 5): the R1, R2, R3 and M6 repros, each WITNESSED (or not, see the report) at 3b25ae0.
+ATOMIC_REPROS = [("TpRed.iffh", "⟨0, ⟨fun _ n hn => absurd hn (Nat.not_lt_zero n), fun _ => rfl⟩, trivial⟩"),
+                 ("TpRed.imph", "⟨0, fun _ => rfl, trivial⟩"),
+                 ("TpRed.iffb", "⟨true, ⟨fun _ n hn => absurd hn (Nat.not_lt_zero n), fun _ => rfl⟩, trivial⟩"),
+                 ("TpRed.orh", "⟨0, Or.inl rfl, trivial⟩"),
+                 ("TpRed.insth", "⟨⟨fun a b => ∀ n : ℕ, Nat.lt n 0 → a = b⟩, fun _ _ => Iff.rfl, trivial⟩"),
+                 ("TpRed.strh", "⟨0, rfl, ⟨0, fun _ => rfl⟩, trivial⟩"), ("TpRed.fv", PAD), ("TpRed.truev", PAD)]
+
+
+@lean
+@pytest.mark.parametrize("theorem,witness", ATOMIC_REPROS)
+def test_lean_c2r_atomic_repros_are_never_witnessed(c2r_module, theorem, witness):   # MUST-FAIL (Ruling 5)
+    r = _probe(c2r_module, theorem, witness)
+    assert r.verdict == "PROBE_ONLY", r.detail
+    if theorem == "TpRed.fv":      # R3: refused either way, by the reduced witness or by the walk of the same term
+        assert "outside the WITNESSED allowlist" in r.detail or "witness does not survive reduction" in r.detail
+    else:
+        assert "outside the WITNESSED allowlist" in r.detail, r.detail
+    print(f"ATOMIC {theorem} with {witness}: {r.verdict} -- {r.detail}")
 
 
 @lean

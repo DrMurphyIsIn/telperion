@@ -60,15 +60,16 @@ of 200000 heartbeats:
   anything WITNESSED and never touches the ``false`` probe (Ruling 8's premise split stays non-reducing). A cost: a
   true statement whose conclusion reduces to a negation (`¬ P`, `a ≠ b`) exposes `P` as an antecedent that cannot hold
   together with the others, so it is never WITNESSED and needs a sign-off. A witness can cover both closures at once
-  with a tactic block, `by first | exact <for the first> | exact <for the reduced one>`. Once the witness has
-  checked, WITNESSED further needs the statement inside an ALLOWLIST (fix round 2, Ruling 4, ``allowlistProblem``;
-  it replaced fix round 1's denylist of unopened heads, which a review beat): with every non-library definition
-  delta-expanded everywhere and walked over the same reducing telescope, (i) every conclusion has a head in
-  ``okHeads`` (`=`, `≠`, `≤`, `<`, `≥`, `>`, `True`, `Nat.le`, `∣`) and no proposition or predicate inside its
-  arguments; (ii) no hypothesis or binder type has a proposition or predicate inside data (a hypothesis's own
-  propositions only at logical positions); (iii) no binder is a proposition or predicate variable. Outside it, the
-  line is ``REDUCED OUTSIDE <rule>``: PROBE_ONLY, "outside the WITNESSED allowlist". Library definitions are trusted
-  text, not walked.
+  with a tactic block, `by first | exact <for the first> | exact <for the reduced one>`. The reduced closure is built
+  from ``expandLocal ty`` (every non-library definition delta-expanded everywhere), the same term ``allow`` walks.
+* ``allow``    -- with a witness, the ATOMIC allowlist (fix rounds 2-3, Rulings 4-5; ``allowlistProblem``, in its
+  own budget), which replaced fix round 1's denylist of unopened heads and round 2's "logical positions" rule, both
+  beaten by reviews. Over the same reducing telescope and ∧ / ↔ descent: (1) every hypothesis is an atom or a
+  conjunction of atoms; (2) every conclusion is an atom, and not all are `True`; (3) every data binder has a library
+  type, and no binder is a proposition or predicate variable. An atom is a head in ``okHeads`` (`=`, `≤`, `<`, `≥`,
+  `>`, `True`, `Nat.le`, `∣`) applied to library data with no proposition or predicate inside. ``ALLOW OK`` is needed
+  for WITNESSED; ``ALLOW OUTSIDE <why>`` is PROBE_ONLY "outside the WITNESSED allowlist", and a failed or timed-out
+  walk (or a missing line) is PROBE_ONLY "allowlist check failed". Library definitions are trusted text, not walked.
 
 PREMISES. In an elaborated type a binder `(h : P)` and an arrow `P → Q` in the conclusion are both ∀-binders; the
 elaborator names an arrow's binder `a._@._internal._hyg.N`: in v4.35.0's `MacroScopesView`, name `a`, ctx exactly
@@ -81,11 +82,11 @@ The telescope does not reduce: `¬ P`, `a ≠ b` and `s ⊆ t` in a conclusion s
 with NAMED binders (`: ∀ (m : ℕ) (h : m < 0), False`) is read as premises.
 
 PROTOCOL. The callback prints, through the replay's nonce'd lines, ``PREMISES n``, exactly one ``FALSE``, one
-``NEGATION`` and (with a witness) one ``WITNESS`` and one ``REDUCED`` result line (a missing ``REDUCED`` line is no
-WITNESSED, not an ERROR); the replay protocol around them (one REPLAY line, one final DONE, all under a 128-bit per-run
-tag) is checked by ``lean_replay``. Anything else is ERROR. No untrusted code with effects runs in the process (the
-negation probe evaluates the statement only through compiled TRUSTED code, and a pure term has no IO bridge; see
-lean_replay), so nothing else can print under the tag.
+``NEGATION`` and (with a witness) one ``WITNESS``, one ``REDUCED`` and one ``ALLOW`` result line (a missing
+``REDUCED`` or ``ALLOW`` line is no WITNESSED, not an ERROR); the replay protocol around them (one REPLAY line, one
+final DONE, all under a 128-bit per-run tag) is checked by ``lean_replay``. Anything else is ERROR. No untrusted code
+with effects runs in the process (the negation probe evaluates the statement only through compiled TRUSTED code, and
+a pure term has no IO bridge; see lean_replay), so nothing else can print under the tag.
 
 ONE-SIDED BY DESIGN. VACUOUS and REFUTED rest on positive evidence (a kernel-checked proof of ``False``, a
 counterexample value). Everything else is PROBE_ONLY: the battery failing to derive ``False`` and plausible failing to
@@ -126,7 +127,8 @@ STATUSES = {
     "FALSE": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
     "NEGATION": ("SUCCESS", "GAVEUP", "FAILURE", "NO_TESTABLE", "UNAVAILABLE", "TIMEOUT"),
     "WITNESS": ("PROVED", "FAILED", "INCOMPLETE", "NOANTECEDENT", "TIMEOUT"),
-    "REDUCED": ("PROVED", "FAILED", "INCOMPLETE", "OUTSIDE", "TIMEOUT"),
+    "REDUCED": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
+    "ALLOW": ("OK", "OUTSIDE", "FAILED", "TIMEOUT"),
 }
 SURVIVE = "witness does not survive reduction"
 ALLOWLIST = "outside the WITNESSED allowlist"
@@ -260,105 +262,107 @@ partial def reducedClosure (e : Expr) : MetaM Expr :=
       out ← mkAppM ``Exists #[← mkLambdaFVars #[x] out]
     return out
 
-/-! The witness allowlist (fix round 2, Ruling 4). A witness counts only if the statement, with every non-library
-definition delta-expanded and walked like `reducedClosure`, satisfies: (i) every conclusion it reaches has a head in
-`okHeads` and no proposition or predicate anywhere in its arguments; (ii) no binder type or hypothesis holds a
-proposition or predicate inside DATA (a hypothesis's own propositions may sit only at logical positions: ∀ / →
-domains and bodies, sides of ∧ ∨ ↔ ¬, the body of an ∃); (iii) no binder is itself a proposition or predicate
-variable. -/
+/-! The witness allowlist (fix rounds 2-3, Rulings 4-5): ATOMIC. A witness counts only if the statement, expanded by
+`expandLocal` (the same term the reduced closure is built from) and walked like `reducedClosure` (the same reducing
+telescope, the same ∧ / ↔ descent), has: (1) every hypothesis an atom or a conjunction of atoms, (2) every conclusion
+an atom, and not all of them `True`, (3) every data binder of a library type, and no binder that is a proposition or
+a predicate. An atom is a head in `okHeads` applied to library data with no proposition or predicate inside. -/
 
-/-- Rule i: the conclusion heads the allowlist admits. -/
-def okHeads : List Name := [``Eq, ``Ne, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``True, ``Nat.le, ``Dvd.dvd]
+/-- The statement with every NON-library definition delta-expanded everywhere (the fingerprint's predicate), so a
+local definition or instance cannot hide a proposition: the one term both the reduced closure and the walk use. -/
+def expandLocal (ty : Expr) : MetaM Expr := do
+  let env ← getEnv
+  deltaExpand ty fun n => !isLib env n && env.find? n matches some (.defnInfo _)
 
-/-- The first subterm of the data term `e` that is a proposition or a predicate (by its type), or `none`. A proof is
-skipped (it carries no data); binders are instantiated, so `inferType` never sees a loose bound variable. -/
-partial def propInData (e : Expr) : MetaM (Option Expr) := do
+/-- The heads an atom may have. -/
+def okHeads : List Name := [``Eq, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``True, ``Nat.le, ``Dvd.dvd]
+
+def nonLib (n : Name) : MetaM (Option String) := do
+  return if isLib (← getEnv) n then none else some s!"the non-library constant {n}"
+
+/-- Why the data term `e` is not plain library data, or `none`: a subterm that is a proposition or a predicate (by its
+type), or a non-library constant or structure. A proof is skipped (it carries no data); binders are instantiated, so
+`inferType` never sees a loose bound variable. -/
+partial def dataProblem (e : Expr) : MetaM (Option String) := do
   let ty ← inferType e
   if ← isProp ty then return none
-  if ← isPropFormerType ty then return some e
+  if ← isPropFormerType ty then return some s!"the proposition or predicate `{← ppExpr e}` inside data"
   match e with
+  | .const n _ => nonLib n
   | .app .. =>
     for a in e.getAppArgs do
-      if let some s ← propInData a then return some s
+      if let some w ← dataProblem a then return some w
     match e.getAppFn with
-    | .const .. | .fvar .. => return none
-    | f => propInData f
+    | .const n _ => nonLib n
+    | .fvar _ => return none
+    | f => dataProblem f
   | .lam n d b bi | .forallE n d b bi =>
-    if let some s ← propInData d then return some s
-    withLocalDecl n bi d fun x => propInData (b.instantiate1 x)
+    if let some w ← dataProblem d then return some w
+    withLocalDecl n bi d fun x => dataProblem (b.instantiate1 x)
   | .letE _ t v b _ =>
-    if let some s ← propInData t then return some s
-    if let some s ← propInData v then return some s
-    propInData (b.instantiate1 v)
-  | .mdata _ b | .proj _ _ b => propInData b
+    if let some w ← dataProblem t then return some w
+    if let some w ← dataProblem v then return some w
+    dataProblem (b.instantiate1 v)
+  | .mdata _ b => dataProblem b
+  | .proj sn _ b =>
+    if let some w ← nonLib sn then return some w
+    dataProblem b
   | _ => return none
 
-def dataProblem (rule what : String) (e : Expr) : MetaM (Option String) := do
-  match ← propInData e with
-  | some s => return some s!"{rule}: {what} has the proposition or predicate `{← ppExpr s}` inside data"
-  | none => return none
-
-mutual
-/-- Rules ii and iii for the type `t` of a binder (of the telescope, or of a ∀ or ∃ inside a hypothesis). -/
-partial def binderProblem (t : Expr) : MetaM (Option String) := do
-  if ← isProp t then hypProblem t
-  else if ← isPropFormerType t then
-    return some s!"rule iii: a binder of type `{← ppExpr t}` (a proposition or predicate variable)"
-  else dataProblem "rule ii" "a binder type" t
-
-/-- Rule ii for a hypothesis `t`: its propositions only at logical positions, and no proposition inside data. -/
-partial def hypProblem (t : Expr) : MetaM (Option String) := do
-  match t.consumeMData with
-  | .forallE n d b bi =>
-    if let some w ← binderProblem d then return some w
-    withLocalDecl n bi d fun x => hypProblem (b.instantiate1 x)
-  | t =>
-    match t.getAppFnArgs with
-    | (``And, #[a, b]) | (``Or, #[a, b]) | (``Iff, #[a, b]) =>
-      if let some w ← hypProblem a then return some w
-      hypProblem b
-    | (``Not, #[a]) => hypProblem a
-    | (``Exists, #[_, .lam n d b bi]) =>
-      if let some w ← binderProblem d then return some w
-      withLocalDecl n bi d fun x => hypProblem (b.instantiate1 x)
-    | _ =>
-      unless t.getAppFn.isConst do
-        return some s!"rule ii: the hypothesis `{← ppExpr t}` is not a constant applied to data"
-      for a in t.getAppArgs do
-        if let some w ← dataProblem "rule ii" "a hypothesis" a then return some w
-      return none
-end
-
-/-- Rule i for a conclusion `c`. -/
-def conclusionProblem (c : Expr) : MetaM (Option String) := do
-  let .const n _ := c.getAppFn
-    | return some s!"rule i: the conclusion `{← ppExpr c}` does not have a constant head"
+/-- Why the proposition `t` is not an atom (a head in `okHeads` applied to library data), or `none`. -/
+def atomProblem (what : String) (t : Expr) : MetaM (Option String) := do
+  let t := t.consumeMData
+  let .const n _ := t.getAppFn
+    | return some s!"{what} `{← ppExpr t}` is not an atom (an allowed head applied to data)"
   unless okHeads.contains n do
-    return some s!"rule i: the conclusion's head {n} is not in the allowlist"
-  for a in c.getAppArgs do
-    if let some w ← dataProblem "rule i" "the conclusion" a then return some w
+    return some s!"{what} `{← ppExpr t}` is not an atom: its head {n} is not allowed"
+  for a in t.getAppArgs do
+    if let some w ← dataProblem a then return some s!"{what} `{← ppExpr t}` has {w}"
   return none
 
-/-- The first allowlist rule `e` breaks, walked like `reducedClosure` (the same telescope, the same ∧ / ↔ descent). -/
-partial def allowWalk (e : Expr) : MetaM (Option String) :=
+/-- Rule 1: a hypothesis is an atom or a conjunction of atoms (no →, ↔, ¬, ∀, ∃, ∨ inside). -/
+partial def hypProblem (t : Expr) : MetaM (Option String) := do
+  match t.consumeMData.getAppFnArgs with
+  | (``And, #[a, b]) =>
+    if let some w ← hypProblem a then return some w
+    hypProblem b
+  | _ => atomProblem "a hypothesis" t
+
+/-- Rules 1 and 3 for the type `t` of a binder of the telescope. -/
+def binderProblem (t : Expr) : MetaM (Option String) := do
+  if ← isProp t then hypProblem t
+  else if ← isPropFormerType t then
+    return some s!"a binder of type `{← ppExpr t}` (a proposition or predicate variable)"
+  else match ← dataProblem t with
+    | some w => return some s!"a binder type `{← ppExpr t}` has {w}"
+    | none => return none
+
+/-- The first rule `e` breaks, and whether some conclusion it reached is not `True`; walked like `reducedClosure`. -/
+partial def allowWalk (e : Expr) : MetaM (Option String × Bool) :=
   forallTelescopeReducing e fun xs body => do
     for x in xs do
-      if let some w ← binderProblem (← inferType x) then return some w
+      if let some w ← binderProblem (← inferType x) then return (some w, false)
     match (← whnf body).getAppFnArgs with
     | (``And, #[a, b]) =>
-      if let some w ← allowWalk a then return some w
-      allowWalk b
+      let (w, s) ← allowWalk a
+      if w.isSome then return (w, s)
+      let (w', s') ← allowWalk b
+      return (w', s || s')
     | (``Iff, #[a, b]) =>
-      if let some w ← allowWalk (← mkArrow a b) then return some w
-      allowWalk (← mkArrow b a)
-    | _ => conclusionProblem body.consumeMData
+      let (w, s) ← allowWalk (← mkArrow a b)
+      if w.isSome then return (w, s)
+      let (w', s') ← allowWalk (← mkArrow b a)
+      return (w', s || s')
+    | _ =>
+      let c := body.consumeMData
+      return (← atomProblem "the conclusion" c, !c.isConstOf ``True)
 
-/-- Why the statement `ty` is outside the witness allowlist, or `none`. Every NON-library definition is
-delta-expanded everywhere first (as the fingerprint does), so a local definition or instance cannot hide a proposition
-inside data. -/
-def allowlistProblem (ty : Expr) : MetaM (Option String) := withTransparency .default do
-  let env ← getEnv
-  allowWalk (← deltaExpand ty fun n => !isLib env n && env.find? n matches some (.defnInfo _))
+/-- Why the expanded statement `e` is outside the witness allowlist, or `none` (rule 2 includes: not only `True`). -/
+def allowlistProblem (e : Expr) : MetaM (Option String) := withTransparency .default do
+  let (w, said) ← allowWalk e
+  if w.isSome then return w
+  if !said then return some "the conclusion is `True`: it says nothing"
+  return none
 
 def kind : ConstantInfo → String
   | .axiomInfo _ => "axiom" | .defnInfo _ => "def" | .thmInfo _ => "theorem" | .opaqueInfo _ => "opaque"
@@ -464,26 +468,31 @@ def render_callback(theorem: str, witness: str | None) -> str:
             f'      {line} "WITNESS NOANTECEDENT"\n'
             f"      return\n"
             + _witness_check("WITNESS", "_telperion_probe_witness", witness)
-            # step 6 Task 0: the same witness against the ∃-closure of the REDUCING telescope (downgrade only)
-            + f'  TelperionProbe.budget "REDUCED" "FAILED" do\n'
-            f"    let ex ← withTransparency .default (TelperionProbe.reducedClosure ty)\n"
-            + _witness_check("REDUCED", "_telperion_probe_reduced", witness, allowlist=True)
+            # step 6 Task 0: the same witness against the ∃-closure of the REDUCING telescope (downgrade only), built
+            # from the expanded statement that the allowlist then walks in its own budget (fix round 3: R3, M7)
+            + f"  let expanded ← IO.mkRef (none : Option Expr)\n"
+            f'  TelperionProbe.budget "REDUCED" "FAILED" do\n'
+            f"    let e ← TelperionProbe.expandLocal ty\n"
+            f"    expanded.set (some e)\n"
+            f"    let ex ← withTransparency .default (TelperionProbe.reducedClosure e)\n"
+            + _witness_check("REDUCED", "_telperion_probe_reduced", witness)
+            + f'  TelperionProbe.budget "ALLOW" "FAILED" do\n'
+            f"    match ← expanded.get with\n"
+            f'    | none => {line} "ALLOW FAILED the statement was not expanded (the reduced check stopped first)"\n'
+            f"    | some e =>\n"
+            f"      match ← TelperionProbe.allowlistProblem e with\n"
+            f'      | some why => {line} s!"ALLOW OUTSIDE {{why}}"\n'
+            f'      | none => {line} "ALLOW OK"\n'
         )
     return src
 
 
-def _witness_check(kind: str, decl: str, witness: str, allowlist: bool = False) -> str:
+def _witness_check(kind: str, decl: str, witness: str) -> str:
     """The Lean lines, inside a probe's budget with the ∃-closure bound to `ex`, that parse the witness (a string
     literal: data), elaborate it against `ex`, add it as the auxiliary theorem `decl` (kernel-checked synchronously,
-    before PROVED is printed), collect its axioms and print one `<kind>` result line. With `allowlist`, a witness that
-    checked prints `<kind> OUTSIDE <rule>` instead of PROVED when the statement is outside the WITNESSED allowlist."""
+    before PROVED is printed), collect its axioms and print one `<kind>` result line."""
     line = "TelperionReplay.line"
     sync = "withOptions (fun o => Elab.async.set o false) do"
-    proved = f'        {line} s!"{kind} PROVED axioms={{axs.toList}}"\n'
-    if allowlist:
-        proved = (f"        match ← TelperionProbe.allowlistProblem ty with\n"
-                  f'        | some why => {line} s!"{kind} OUTSIDE {{why}}"\n'
-                  f'        | none => {line} s!"{kind} PROVED axioms={{axs.toList}}"\n')
     return (
         f"    let msgs := (← getThe Core.State).messages\n"
         f"    try\n"
@@ -500,7 +509,7 @@ def _witness_check(kind: str, decl: str, witness: str, allowlist: bool = False) 
         f"          addDecl (.thmDecl {{ name := `{decl}, levelParams := info.levelParams,\n"
         f"                              type := ex, value := w }})\n"
         f"        let axs ← collectAxioms `{decl}\n"
-        + proved +
+        f'        {line} s!"{kind} PROVED axioms={{axs.toList}}"\n'
         f"    catch e =>\n"
         f'      {line} s!"{kind} FAILED {{← e.toMessageData.toString}}"\n'
         f"    modifyThe Core.State fun s => {{ s with messages := msgs }}\n"
@@ -524,9 +533,6 @@ def _reduced_problem(reduced: list[tuple[str, str]]) -> str | None:
     if not reduced:
         return f"{SURVIVE}: the reducing check printed no REDUCED result line; not counted"
     status, rest = reduced[0]
-    if status == "OUTSIDE":
-        return (f"{ALLOWLIST}: {rest[:300]}; a vacuous part could hide there, so the witness is not counted (anything "
-                "outside the allowlist needs a sign-off)")
     if status == "PROVED":
         bad = _axiom_problem("reduced", rest)
         return f"{SURVIVE}: {bad}" if bad else None
@@ -536,6 +542,22 @@ def _reduced_problem(reduced: list[tuple[str, str]]) -> str | None:
         return f"{SURVIVE}: it left metavariables or sorry against the reducing telescope ({rest}); not counted"
     return (f"{SURVIVE}: it does not close the ∃-closure over the reducing telescope, so reduction exposes an "
             f"antecedent it does not cover: {rest[:300]}; not counted")
+
+
+def _allow_problem(allow: list[tuple[str, str]]) -> str | None:
+    """Why the statement keeps a checked witness from WITNESSED on allowlist grounds (its `ALLOW` line, at most one),
+    or None for `ALLOW OK`. A missing line, a failure or a timeout of the walk is no WITNESSED either (fail closed)."""
+    if not allow:
+        return "allowlist check failed: no ALLOW result line; not counted"
+    status, rest = allow[0]
+    if status == "OK":
+        return None
+    if status == "OUTSIDE":
+        return (f"{ALLOWLIST}: {rest[:300]}; the witness is not counted (anything outside the allowlist needs a "
+                "sign-off)")
+    if status == "TIMEOUT":
+        return f"allowlist check failed: it timed out at maxHeartbeats {HEARTBEATS} (inconclusive); not counted"
+    return f"allowlist check failed: {rest[:300]}; not counted"
 
 
 def _results(lines: list[str], kind: str) -> list[tuple[str, str]]:
@@ -584,6 +606,12 @@ def classify(lines: list[str], witness: bool = False) -> ProbeResult:
                                     "duplicated protocol")
     if reduced and reduced[0][0] not in STATUSES["REDUCED"]:
         return ProbeResult("ERROR", f"reduced witness probe printed an unknown status {reduced[0][0]!r}")
+    allow = _results(lines, "ALLOW") if witness else []
+    if len(allow) > 1:
+        return ProbeResult("ERROR", f"allowlist check printed {len(allow)} ALLOW result lines; refusing a duplicated "
+                                    "protocol")
+    if allow and allow[0][0] not in STATUSES["ALLOW"]:
+        return ProbeResult("ERROR", f"allowlist check printed an unknown status {allow[0][0]!r}")
     if got.get("WITNESS") and got["WITNESS"][0] == "FAILED":
         return ProbeResult("ERROR", f"the witness does not check: {got['WITNESS'][1][:500]}")
     notes = [f"probe '{key}' timed out at maxHeartbeats {HEARTBEATS} (inconclusive)" for key in timed_out]
@@ -602,7 +630,7 @@ def classify(lines: list[str], witness: bool = False) -> ProbeResult:
         return ProbeResult("REFUTED", f"plausible found a counterexample (seed {PLAUSIBLE_SEED}): {neg[1]}")
     wline = got.get("WITNESS")
     if wline and wline[0] == "PROVED":
-        bad = _axiom_problem("witness", wline[1]) or _reduced_problem(reduced)
+        bad = _axiom_problem("witness", wline[1]) or _reduced_problem(reduced) or _allow_problem(allow)
         if not bad:
             return ProbeResult("WITNESSED", f"the witness proves {premises} satisfiable, over the reducing telescope "
                                "too (kernel-checked, clean axioms); no counterexample found")

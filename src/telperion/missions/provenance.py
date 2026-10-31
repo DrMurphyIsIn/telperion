@@ -945,11 +945,12 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       grammar, declaration-range and accounted-for checks stop accidental and casual mismatches
       between its text and what Lean elaborates, not an adversarial author: freeze an untrusted
       campaign inside the sandbox;
-    - WITNESSED is an allowlist (step 6, Ruling 4): the witness must also close the
-      exists-closure over the REDUCING telescope, and the statement (local definitions unfolded)
-      must have only allowlisted conclusion heads (`=`, `<`, `<=`, ...) with no proposition inside
-      data anywhere and no proposition or predicate variable; everything else is PROBE_ONLY and
-      needs the sign-off. Library definitions are trusted text (their bodies are not walked);
+    - WITNESSED is an atomic allowlist (step 6, Rulings 4-5): the witness must also close the
+      exists-closure over the REDUCING telescope of the statement with local definitions unfolded,
+      and that same term must have only atomic hypotheses and conclusions (an allowed head such as
+      `=` or `<` applied to library data with no proposition inside), library binder types and no
+      proposition or predicate variable; everything else is PROBE_ONLY and needs the sign-off.
+      Library definitions are trusted text (their bodies are not walked);
     - hand-editing the node file is out of reach of this check: deleting `checks_required`
       from `[grant]`, like back-dating `created` before the first grant, removes the
       requirement. Both are the same documented limitation class (a CI diff check, step 5);
