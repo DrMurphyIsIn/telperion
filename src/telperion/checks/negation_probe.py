@@ -60,8 +60,11 @@ of 200000 heartbeats:
   anything WITNESSED and never touches the ``false`` probe (Ruling 8's premise split stays non-reducing). A cost: a
   true statement whose conclusion reduces to a negation (`¬ P`, `a ≠ b`) exposes `P` as an antecedent that cannot hold
   together with the others, so it is never WITNESSED and needs a sign-off. A witness can cover both closures at once
-  with a tactic block, `by first | exact <for the first> | exact <for the reduced one>`. NOT exposed: a vacuous part
-  under any other inductive or structure head (`∨`, `∃`, a local `structure`), which whnf does not open either.
+  with a tactic block, `by first | exact <for the first> | exact <for the reduced one>`. A conclusion the descent
+  reaches but cannot open is ``REDUCED UNOPENED``, PROBE_ONLY with "conclusion not fully opened (Or/Exists/structure)"
+  whatever the witness does (fix round 1, Ruling 3; ``unopened``): a head that is not from the library (a local
+  `structure` or inductive, or anything whnf left stuck), that is not a constant or a local variable, or that takes a
+  proposition or a predicate as an argument (`∨`, `∃`, `=` between propositions, `Fact p`, ...).
 
 PREMISES. In an elaborated type a binder `(h : P)` and an arrow `P → Q` in the conclusion are both ∀-binders; the
 elaborator names an arrow's binder `a._@._internal._hyg.N`: in v4.35.0's `MacroScopesView`, name `a`, ctx exactly
@@ -119,9 +122,10 @@ STATUSES = {
     "FALSE": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
     "NEGATION": ("SUCCESS", "GAVEUP", "FAILURE", "NO_TESTABLE", "UNAVAILABLE", "TIMEOUT"),
     "WITNESS": ("PROVED", "FAILED", "INCOMPLETE", "NOANTECEDENT", "TIMEOUT"),
-    "REDUCED": ("PROVED", "FAILED", "INCOMPLETE", "TIMEOUT"),
+    "REDUCED": ("PROVED", "FAILED", "INCOMPLETE", "UNOPENED", "TIMEOUT"),
 }
 SURVIVE = "witness does not survive reduction"
+UNOPENED = "conclusion not fully opened (Or/Exists/structure)"
 
 
 @dataclass
@@ -233,24 +237,44 @@ partial def unfoldHeads (env : Environment) (fuel : Nat) : Expr → Option Expr
       | _ => some e
     | _ => some e
 
-/-- `p ∧ q`, dropping a side that is `True` (it has nothing to witness). -/
-def conj (p q : Expr) : MetaM Expr :=
-  if p.isConstOf ``True then pure q else if q.isConstOf ``True then pure p else mkAppM ``And #[p, q]
+/-- `p ∧ q`, dropping a side that is `True` (it has nothing to witness); the first reason either side was not fully
+opened, if any. -/
+def conj : Expr × Option String → Expr × Option String → MetaM (Expr × Option String)
+  | (p, w), (q, v) => do
+    let e ← if p.isConstOf ``True then pure q else if q.isConstOf ``True then pure p else mkAppM ``And #[p, q]
+    return (e, w.orElse fun _ => v)
+
+/-- Why a reduced conclusion `c` (in whnf, neither `∧` nor `↔`) is NOT fully opened, or `none` (Ruling 3). A vacuous
+part could still hide under it when its head is not from the library (a local structure or inductive, or anything
+else whnf left stuck), is not a constant or a local variable, or takes a proposition or a predicate as an argument
+(`∨`, `∃`, `=` between propositions, ...). -/
+def unopened (c : Expr) : MetaM (Option String) := do
+  let head := c.getAppFn
+  match head with
+  | .const n _ => if !isLib (← getEnv) n then return some s!"{n} is not from the library"
+  | .fvar _ => pure ()
+  | _ => return some "its head is not a constant or a local variable"
+  for a in c.getAppArgs do
+    if ← isPropFormerType (← inferType a) then
+      return some s!"{← ppExpr head} has a proposition or predicate argument"
+  return none
 
 /-- The ∃-closure of `e` over its REDUCING ∀-telescope: `forallTelescopeReducing`, so a body that is not a ∀ is put in
 whnf at the ambient transparency (the callback sets default) and opened if that exposes one (`id`, `¬`, `let`, a
 beta-redex, any unfoldable head). A body that whnf leaves as `∧` or `↔` (inductives, which reduction cannot open) is
-descended into, `a ↔ b` as `(a → b) ∧ (b → a)`. Every binder, data or proof, gets an `∃`, as in the witness probe. -/
-partial def reducedClosure (e : Expr) : MetaM Expr :=
+descended into, `a ↔ b` as `(a → b) ∧ (b → a)`. Every binder, data or proof, gets an `∃`, as in the witness probe.
+Also returns why a conclusion it reached is not fully opened (`unopened`), if one is not. -/
+partial def reducedClosure (e : Expr) : MetaM (Expr × Option String) :=
   forallTelescopeReducing e fun xs body => do
-    let inner ← match (← whnf body).getAppFnArgs with
+    let c ← whnf body
+    let (inner, why) ← match c.getAppFnArgs with
       | (``And, #[a, b]) => conj (← reducedClosure a) (← reducedClosure b)
       | (``Iff, #[a, b]) => conj (← reducedClosure (← mkArrow a b)) (← reducedClosure (← mkArrow b a))
-      | _ => pure (mkConst ``True)
+      | _ => pure (mkConst ``True, ← unopened c)
     let mut out := inner
     for x in xs.reverse do
       out ← mkAppM ``Exists #[← mkLambdaFVars #[x] out]
-    return out
+    return (out, why)
 
 def kind : ConstantInfo → String
   | .axiomInfo _ => "axiom" | .defnInfo _ => "def" | .thmInfo _ => "theorem" | .opaqueInfo _ => "opaque"
@@ -358,7 +382,10 @@ def render_callback(theorem: str, witness: str | None) -> str:
             + _witness_check("WITNESS", "_telperion_probe_witness", witness)
             # step 6 Task 0: the same witness against the ∃-closure of the REDUCING telescope (downgrade only)
             + f'  TelperionProbe.budget "REDUCED" "FAILED" do\n'
-            f"    let ex ← withTransparency .default (TelperionProbe.reducedClosure ty)\n"
+            f"    let (ex, why?) ← withTransparency .default (TelperionProbe.reducedClosure ty)\n"
+            f"    if let some why := why? then\n"
+            f'      {line} s!"REDUCED UNOPENED {{why}}"\n'
+            f"      return\n"
             + _witness_check("REDUCED", "_telperion_probe_reduced", witness)
         )
     return src
@@ -410,6 +437,8 @@ def _reduced_problem(reduced: list[tuple[str, str]]) -> str | None:
     if not reduced:
         return f"{SURVIVE}: the reducing check printed no REDUCED result line; not counted"
     status, rest = reduced[0]
+    if status == "UNOPENED":
+        return f"{UNOPENED}: {rest[:300]}; a vacuous part could hide there, so the witness is not counted"
     if status == "PROVED":
         bad = _axiom_problem("reduced", rest)
         return f"{SURVIVE}: {bad}" if bad else None

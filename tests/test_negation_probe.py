@@ -418,6 +418,28 @@ def test_c2r_reduced_protocol_is_strict():
     assert r.verdict == "ERROR" and "unknown status 'BOGUS'" in r.detail
 
 
+# Fix round 1 (Ruling 3): a reduced conclusion the descent cannot open (`∨`, `∃`, a local structure, any head with a
+# proposition or predicate argument) is no WITNESSED either, whatever the witness does.
+UNOPENED = "conclusion not fully opened (Or/Exists/structure)"
+
+
+def test_c2r_unopened_render():
+    src = render_callback("Foo.t", "trivial")
+    assert "def unopened (c : Expr) : MetaM (Option String)" in src
+    assert "isPropFormerType (← inferType a)" in src and "isLib (← getEnv) n" in src
+    assert 'TelperionReplay.line s!"REDUCED UNOPENED {why}"' in src
+
+
+def test_c2r_unopened_is_probe_only():
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED UNOPENED Or has a proposition or predicate argument"],
+                 witness=True)
+    assert r.verdict == "PROBE_ONLY" and UNOPENED in r.detail and "Or has a proposition" in r.detail, r.detail
+    # never an upgrade: with a failed first witness it is still ERROR, with no antecedent still PROBE_ONLY
+    assert classify(AESOP + UNABLE + ["WITNESS FAILED x", "REDUCED UNOPENED Or"], witness=True).verdict == "ERROR"
+    r = classify(AESOP + UNABLE + ["WITNESS NOANTECEDENT", "REDUCED UNOPENED Or"], witness=True)
+    assert r.verdict == "PROBE_ONLY" and "nothing to witness" in r.detail
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Lean tests: modules are compiled into their own dirs `<env>/.tp_mod_<hex>/` and replayed from there (an untrusted
 # path); the trusted manifest of the env is built once per process in a temp dir.
@@ -842,6 +864,16 @@ theorem letv : ∀ m : ℕ, m = m → let k := 0; ∀ n : ℕ, n < k → n = 7 :
 theorem betav : ∀ m : ℕ, m = m → (fun P : Prop => P) (∀ n : ℕ, n < 0 → n = 7) :=
   fun _ _ n hn => absurd hn (Nat.not_lt_zero n)
 theorem honest (m : ℕ) (h : m < 3) : id (∀ n : ℕ, n < 5 → n < 6) := fun n hn => by omega
+-- fix round 1 (Ruling 3): heads the descent does not open
+theorem orv : ∀ m : ℕ, m = m → (∀ n : ℕ, n < 0 → n = 7) ∨ False :=
+  fun _ _ => Or.inl fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem exv : ∀ m : ℕ, m = m → ∃ k : ℕ, ∀ n : ℕ, n < 0 → n = k :=
+  fun _ _ => ⟨7, fun n hn => absurd hn (Nat.not_lt_zero n)⟩
+structure S : Prop where
+  h : ∀ n : ℕ, n < 0 → n = 7
+theorem structv : ∀ m : ℕ, m = m → S := fun _ _ => ⟨fun n hn => absurd hn (Nat.not_lt_zero n)⟩
+theorem eqv : ∀ m : ℕ, m = m → ((∀ n : ℕ, n < 0 → n = 7) = True) :=
+  fun _ _ => eq_true fun n hn => absurd hn (Nat.not_lt_zero n)
 noncomputable def R (k : ℕ) : Prop := Nat.rec (motive := fun _ => Prop) True (fun _ _ => True) k
 -- true, but the kernel would have to evaluate `slow 40 0` to check a proof, so it is sorry'd (the replay allows sorry;
 -- no verdict reads the theorem's own proof). Binders before the `:` would make `sorry` itself whnf the target.
@@ -886,3 +918,13 @@ def test_lean_c2r_reduction_timeout_is_probe_only(c2r_module):            # MUST
     r = _probe(c2r_module, "TpRed.slowv", PAD)
     assert r.verdict == "PROBE_ONLY" and "witness does not survive reduction" in r.detail, r.detail
     assert "the reducing check timed out at maxHeartbeats 200000" in r.detail, r.detail
+
+
+@lean
+@pytest.mark.parametrize("theorem", ["TpRed.orv", "TpRed.exv", "TpRed.structv", "TpRed.eqv"])
+def test_lean_c2r_unopened_conclusion_is_never_witnessed(c2r_module, theorem):   # MUST-FAIL control (Ruling 3)
+    # reduction stops at `∨`, `∃`, a local structure, and `=` between propositions; the pad closes the reduced closure
+    # (nothing was opened), so before Ruling 3 each was WITNESSED
+    r = _probe(c2r_module, theorem, PAD)
+    assert r.verdict == "PROBE_ONLY" and "conclusion not fully opened (Or/Exists/structure)" in r.detail, r.detail
+    print(f"C2R-U {theorem} with {PAD}: {r.verdict} -- {r.detail}")

@@ -464,19 +464,25 @@ These are real, and you should know them before you rely on a `[checks]` record.
   so `m < 0` stays in the conclusion. (Restating the binders as hypotheses, `(m : ℕ) (h : m < 0) : False`, does NOT
   help: they are then premises by construction, and the probe reads exactly the same thing. Use that form only for
   binders that really are meant as hypotheses.)
-- **Vacuity nested under a closed head: closed by the reducing check, except for heads reduction cannot open.**
+- **Vacuity nested under a closed head: closed by the reducing check, and fail-closed where reduction cannot open.**
   Step 4 left a gap here: the witness's ∃-closure stopped at any conclusion head that was not a ∀ or a non-library
   definition, so `∀ m : ℕ, m = m → id (∀ n : ℕ, n < 0 → n = 7)`, which is vacuously true, was WITNESSED by
   `⟨0, rfl, trivial⟩`, a term that only satisfies the pad `m = m`. Since step 6 the same witness must also close the
   ∃-closure over the reducing telescope, and that example, and the same thing under `∧`, `↔`, `¬`, a `let` and a
   beta-redex, are PROBE_ONLY ("witness does not survive reduction"), each one a must-fail control in the Lean tests.
-  What remains:
-  - **Inductive and structure heads other than `∧` and `↔`.** Reduction stops at an inductive type, and the check only
-    descends into `∧` and `↔`. A vacuous part under `∨`, `∃`, a local `structure` (or a local `inductive`) is still
-    not seen, so `∀ m : ℕ, m = m → (∀ n : ℕ, n < 0 → n = 7) ∨ False` can still be WITNESSED by the pad. Read the
-    conclusion of any WITNESSED statement for a hidden vacuous part under one of these.
-  - **Library definitions that default transparency does not unfold**, such as a Mathlib `@[irreducible]` one. The
-    submission's own definitions are replayed without their attributes, so they always unfold, irreducible or not.
+  Reduction stops at an inductive type, and the check only descends into `∧` and `↔`. So wherever it reaches a
+  conclusion it cannot open, it does not try to judge it: the verdict is PROBE_ONLY with the note "conclusion not
+  fully opened (Or/Exists/structure)", whatever the witness does. That is any conclusion whose head is not from the
+  library (a local `structure` or `inductive`, or a local definition whnf could not reduce), is not a constant or a
+  local variable, or takes a proposition or a predicate as an argument: `∨`, `∃`, `=` between propositions,
+  `Fact p` and the like, and a library definition default transparency does not unfold (a Mathlib `@[irreducible]`
+  one) when it is applied to a proposition. The vacuous `∨`, `∃`, local-structure and `(… = True)` forms of the
+  example are must-fail controls too. What remains:
+  - **Nothing is known to reach WITNESSED through a closed head.** The rule is structural: a conclusion counts as
+    opened only when it is built from library heads applied to data (`x < 5`, `a = b` on numbers, `False`), where no
+    proposition is left to hide in. A statement over ℝ is fine (`x < 5` there is a library head applied to reals).
+  - **More honest statements need a sign-off.** Any true statement whose conclusion is a disjunction, an existential,
+    a local structure, or a local definition whnf cannot reduce is never WITNESSED now.
   - **A cost for honest statements.** A true statement whose conclusion reduces to a negation (`¬ P`, `a ≠ b`, and
     anything else that ends in `→ False`) exposes `P` as an antecedent, and `P` can never hold together with the
     hypotheses, or the statement would be false. So such a statement is never WITNESSED any more; it needs a
