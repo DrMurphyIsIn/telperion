@@ -587,7 +587,7 @@ a silent, misleadingly clean `OK` for a typo'd path.
   against a FULL clone of it — never the local repository alone.
 - **A shallow clone, or a repository using grafts or alternates, is refused for a post-cutoff campaign**, not silently
   tolerated with a partial history: `git rev-parse --is-shallow-repository`, and the presence of `info/grafts` or
-  `objects/info/alternates` (checked in both the git directory and, for a linked worktree, the common directory), are
+  `objects/info/alternates` or `objects/info/http-alternates` (checked in both the git directory and, for a linked worktree, the common directory), are
   each a hard refusal. Fetch full history (`fetch-depth: 0`) and drop grafts/alternates before freezing or granting.
 - **Git 2.31 or newer is required.** The history walk pins `log.follow=false` and relies on `git log --first-parent
   --raw --no-abbrev` behaving the documented way; an older git is not tested against this and may not refuse the
