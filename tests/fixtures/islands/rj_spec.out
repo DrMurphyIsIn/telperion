@@ -1,0 +1,71 @@
+ISLAND-HEADER island=riemann-jensen commit=c1e023fa3ae7161219dde3dcb73f0c28ff972be2 challenge_sha256=eeae0da96ab3d5784522a5745dc46353b1a804c3ea32972be4040cd4cd73354c
+== rj_spec start Sat Oct 31 17:44:16 UTC 2026  (standalone comparator, no --paranoid flag exists in it)
+project /scratch/island/rjfresh (git archive c1e023fa; no .git)
+config /scratch/island/configs/comparator_rj.json md5 1c619f6c101866f65cc95b1bc53baa74
+{
+  "challenge_module": "Challenge.Basic",
+  "solution_module": "Solution.Basic",
+  "theorem_names": [
+    "RiemannJensen.Challenge.exists_isDedekindZetaContinuation",
+    "RiemannJensen.Challenge.isDedekindZetaContinuation_unique",
+    "RiemannJensen.Challenge.dedekind_thm_main",
+    "RiemannJensen.Challenge.riemannJensen_main"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": true
+}
+comparator /scratch/tools35/comparator/.lake/build/bin/comparator 944095173755a8e850b2caeb1a90b303 (tag v4.35.0 = e3dcf3083fc53d44b27a4431fabf7d43181583f5)
+COMPARATOR_LEAN4EXPORT 7248a941abbbeb4cd512ab7e4fc7ab15 (tag v4.35.0 = 5a9a355dc6c5fd82b69058d433e2ae2e8dfbf8fe)
+COMPARATOR_NANODA a89bb94318dc602b8cad0b068eeb428e (nanoda_lib 37cb87b7e6cd6862ef2bd121faa9f4604f59fe96)
+COMPARATOR_LANDRUN /scratch/pub/sandbox/landrun-bwrap.sh 13a13e8b042cb95de4e07956e8d1f6d2; --cap-add occurrences in shim: 0; --cap-drop ALL in shim: 1
+a40f4ccda5911bd2f5b7c06103607f3b  lakefile.toml
+bb96bbb65a42d860f7891e0d72d6f723  lake-manifest.json
+e5eec29c8fde3c9ce64c115f675e21a3  lean-toolchain
+1144de2550256a20ead84e8d28dbe030  Challenge/Basic.lean
+78b8d8acf4c6a78a6eba1b49def3d280  Solution/Basic.lean
+lean /elan/toolchains/leanprover--lean4---v4.35.0/bin/lean Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)
+LEAN_PATH md5 2229e5db6c20c4f0e2a3b2d8eaf1984d (11 entries)
+vm.max_map_count 1048576
+== probe through COMPARATOR_LANDRUN with comparator's own flag shape
+landrun-bwrap: ro=[/] rw=[/dev /scratch/island/runs/probe_w] env=[PATH] cmd=/bin/sh
+probe uid=0 CapEff: 0000000000000000
+probe mount-bind: mount: /: permission denied.
+probe remount-rw: mount: /: permission denied.
+probe write-outside: touch: cannot touch '/etc/probe_escape': Read-only file system
+probe write-inside: OK
+probe net: none
+probe no-escape: /etc/probe_escape absent
+== comparator
+Building Challenge.Basic
+landrun-bwrap: ro=[/ /scratch/island/rjfresh /elan/toolchains/leanprover--lean4---v4.35.0 /usr/bin/git] rw=[/dev /scratch/island/rjfresh/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
+[warn] [3775/3775] Replayed Challenge.Basic
+warning: Challenge/Basic.lean:94:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:100:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:144:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:154:8: declaration uses `sorry`
+Build completed successfully (3775 jobs).
+landrun-bwrap: ro=[/ /scratch/island/rjfresh /scratch/island/rjfresh/.lake /elan/toolchains/leanprover--lean4---v4.35.0] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=/scratch/tools35/lean4export/.lake/build/bin/lean4export
+Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RiemannJensen.Challenge.exists_isDedekindZetaContinuation, RiemannJensen.Challenge.isDedekindZetaContinuation_unique, RiemannJensen.Challenge.dedekind_thm_main, RiemannJensen.Challenge.riemannJensen_main, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge.Basic
+Building Solution.Basic
+landrun-bwrap: ro=[/ /scratch/island/rjfresh /elan/toolchains/leanprover--lean4---v4.35.0 /usr/bin/git] rw=[/dev /scratch/island/rjfresh/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
+[ok] [5734/5874] Built RiemannJensen.Analysis.LowerBranch (6.6s)
+[ok] [6635/6701] Built RiemannJensen.Definitions (6.9s)
+[ok] [8653/8696] Built RiemannJensen.Xi (2.9s)
+[ok] [9194/9194] Built Solution.Basic (4.8s)
+Build completed successfully (9194 jobs).
+landrun-bwrap: ro=[/ /scratch/island/rjfresh /scratch/island/rjfresh/.lake /elan/toolchains/leanprover--lean4---v4.35.0] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=/scratch/tools35/lean4export/.lake/build/bin/lean4export
+Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RiemannJensen.Challenge.exists_isDedekindZetaContinuation, RiemannJensen.Challenge.isDedekindZetaContinuation_unique, RiemannJensen.Challenge.dedekind_thm_main, RiemannJensen.Challenge.riemannJensen_main, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Solution.Basic
+Running nanoda kernel on solution
+landrun-bwrap: ro=[/ /tmp/tmp.XXWhqYh9 /tmp/tmp.XX6fRzAY] rw=[/dev] env=[] cmd=/scratch/tools35/nanoda_lib/target/release/nanoda_bin
+nanoda kernel accepts the solution
+Running Lean default kernel on solution.
+Lean default kernel accepts the solution
+Your solution is okay!
+ISLAND-rj_spec-EXIT 0
+landrun-bwrap calls this run (excl. probe): 5; --cap-add in shim: 0
+exports kept: 2
+-rw------- 1 root root 804651077 Oct 31 18:02 tmp.XX6fRzAY
+-rw------- 1 root root       218 Oct 31 18:01 tmp.XXWhqYh9
+d20cc0e28e19d8fdd4b82c8dc38188df  tmp.XX6fRzAY
+5dca62ad6c47be6566650b0211bc78ea  tmp.XXWhqYh9
+Sat Oct 31 18:06:36 UTC 2026

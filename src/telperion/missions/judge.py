@@ -121,12 +121,16 @@ _SENTINEL = "DO NOT EDIT BY HAND"
 
 #: Comparator tags exist for these island toolchains (git ls-remote --tags, 2026-09-23).
 #: The Comparator must be built with the SAME toolchain as the modules it exports, so the tag
-#: is per island, not the v4.32.0 the BG bridge pins.
+#: is per island, not the v4.32.0 the BG bridge pins. Step 6 adds the two library islands'
+#: toolchains (`telperion island replay`): v4.34.0-rc2 (zeta-zeros-v2) and v4.35.0 (riemann-jensen,
+#: and the default for new projects; there is no v4.34.1 tag).
 COMPARATOR_TAG_FOR_TOOLCHAIN = {
     "leanprover/lean4:v4.32.0": "v4.32.0",
     "leanprover/lean4:v4.33.0-rc2": "v4.33.0-rc2",
     "leanprover/lean4:v4.34.0-rc1": "v4.34.0-rc1",
+    "leanprover/lean4:v4.34.0-rc2": "v4.34.0-rc2",
     "leanprover/lean4:v4.34.0": "v4.34.0",
+    "leanprover/lean4:v4.35.0": "v4.35.0",
 }
 
 

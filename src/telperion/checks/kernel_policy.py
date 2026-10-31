@@ -46,8 +46,9 @@ def _island_projects(root: Path, tracked: list[str]) -> tuple[dict[str, str], se
     """Step 6: `(toolchains, known, problems)` for the islands, as projects named `islands/<name>` whose toolchain
     is island.toml's `toolchain`. An island is every directory (or symlink) under `islands/` on disk, plus every
     `islands/<name>/` with a tracked file, so neither an uncommitted island nor a committed one deleted on disk is
-    missed. One whose island.toml is missing, refused (a symlink anywhere on the way, oversized, not UTF-8) or
-    garbled is a problem, never skipped: its toolchain could be anything."""
+    missed. One whose island.toml is missing, refused (a symlink anywhere on the way, oversized, not UTF-8),
+    garbled, or fails the registry's strict schema (`islands.island_toolchain`, the parser `island check` uses) is a
+    problem, never skipped: its toolchain could be anything. The toolchain is taken exactly as written."""
     from telperion import islands
 
     names, problems = islands.island_names(root)
@@ -62,7 +63,7 @@ def _island_projects(root: Path, tracked: list[str]) -> tuple[dict[str, str], se
         if tc is None:
             problems.append(f"{proj}: {problem}")
         else:
-            toolchains[proj] = tc.strip()
+            toolchains[proj] = tc
     return toolchains, known, problems
 
 

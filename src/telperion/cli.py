@@ -3186,6 +3186,73 @@ def cmd_island_check(args) -> int:
         return 1
 
 
+def cmd_island_add(args) -> int:
+    """`island add NAME --source URL --commit SHA --use TEXT`: clone at the pin (into --tools, outside the repo),
+    copy the challenge by byte, write island.toml (no [replay]), our comparator.json and REPLAY.md. Builds nothing.
+    Exit 0 when registered, 1 otherwise."""
+    from . import islands
+
+    try:
+        isl = islands.add_island(Path(args.root), args.name, args.source, args.commit, args.use,
+                                 fetch=islands.git_fetch, tools=Path(args.tools), licence=args.licence)
+        print(f"REGISTERED {isl.name}: {isl.source} @ {isl.commit[:12]}, {isl.toolchain}, {len(isl.theorems)} "
+              f"theorems; self-reported until a replay is recorded (`telperion island record-replay`)")
+        return 0
+    except Exception as exc:  # the CLI never prints a traceback (fail closed)
+        print(f"island add: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
+def _island_replay_report(islands, root: Path, name: str, res) -> int:
+    """Print a replay outcome and, on PASS, what `island check` now says. Exit 0 iff PASS and verified."""
+    if res.verdict != "pass":
+        print(f"FAIL {name}: no [replay] recorded (log sha256 {res.log_sha256})")
+        for p in res.problems:
+            print(f"  - {p}")
+        return 1
+    probs = islands.island_problems(root, name)
+    print(f"PASS {name}: [replay] recorded, evidence archived under islands/{name}/replay/ (log sha256 "
+          f"{res.log_sha256}); island check: {'self-reported' if probs else 'verified'}")
+    for p in probs:
+        print(f"  - {p}")
+    return 1 if probs else 0
+
+
+def cmd_island_replay(args) -> int:
+    """`island replay NAME`: build and replay the island's clone (Comparator with nanoda, the negation probe, the
+    fingerprint). It runs the library's code: MUST RUN INSIDE A SANDBOX (never on the owner's machine; replays are
+    normally ingested with `island record-replay`). Exit 0 iff PASS and verified."""
+    from . import islands
+
+    root = Path(args.root)
+    try:
+        leanlock = None if args.leanlock == "none" else Path(args.leanlock)
+        res = islands.replay_island(root, args.name, run=islands.subprocess_run, tools=Path(args.tools),
+                                    leanlock=leanlock)
+        return _island_replay_report(islands, root, args.name, res)
+    except Exception as exc:  # the CLI never prints a traceback (fail closed)
+        print(f"island replay: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_island_record_replay(args) -> int:
+    """`island record-replay NAME --log FILE [--probe-json FILE ...] [--fingerprint-json FILE] --date D
+    --comparator-tag T`: ingest a replay run in the sandbox, judged exactly as `island replay` judges its own.
+    Exit 0 iff PASS and verified; 1 on FAIL (recorded in REPLAY.md only) or a refusal (nothing written)."""
+    from . import islands
+
+    root = Path(args.root)
+    try:
+        res = islands.record_replay(root, args.name, log=Path(args.log),
+                                    probe_jsons=[Path(p) for p in args.probe_json or ()],
+                                    fingerprint_json=Path(args.fingerprint_json) if args.fingerprint_json else None,
+                                    date=args.date, comparator_tag=args.comparator_tag)
+        return _island_replay_report(islands, root, args.name, res)
+    except Exception as exc:  # the CLI never prints a traceback (fail closed)
+        print(f"island record-replay: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
 def _trust_kwargs(args) -> dict:
     """The --trusted-env / --trusted-manifest / --olean-dir options that were given, as keyword arguments."""
     kw = {}
@@ -4061,6 +4128,39 @@ def main(argv=None) -> int:
     p.add_argument("name", nargs="?", default=None, help="one island (default: all of them)")
     p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
     p.set_defaults(fn=cmd_island_check)
+    p = isp_sub.add_parser("add", help="register an island: clone at the pin (outside the repo), copy the challenge "
+                                       "by byte, write island.toml, our comparator.json and REPLAY.md; builds nothing")
+    p.add_argument("name", help="the island name ([a-z0-9-]+)")
+    p.add_argument("--source", required=True, help="the library's https:// git URL")
+    p.add_argument("--commit", required=True, help="the full 40-hex commit to pin")
+    p.add_argument("--use", required=True, help="intended use (island.toml intended_use)")
+    p.add_argument("--licence", default=None,
+                   help="SPDX licence id (default: detected from the clone's LICENSE: Apache-2.0 or MIT)")
+    p.add_argument("--tools", default=str(Path.home() / "telperion-tools"),
+                   help="tools directory; the clone goes to <tools>/islands/<name>/src (default: ~/telperion-tools)")
+    p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
+    p.set_defaults(fn=cmd_island_add)
+    p = isp_sub.add_parser("replay", help="build and replay an island's clone (Comparator + nanoda, negation probe, "
+                                          "fingerprint). MUST RUN INSIDE A SANDBOX: it runs the library's code")
+    p.add_argument("name")
+    p.add_argument("--tools", default=str(Path.home() / "telperion-tools"),
+                   help="tools directory: islands/<name>/src, comparator-<tag>, nanoda-<rev8>, bin/landrun")
+    p.add_argument("--leanlock", default=str(Path.home() / "hodge-engine" / "leanlock.sh"),
+                   help="leanlock.sh every lake/lean command goes through, or 'none' (a sandbox with no lock)")
+    p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
+    p.set_defaults(fn=cmd_island_replay)
+    p = isp_sub.add_parser("record-replay", help="ingest a replay run in the sandbox: its Comparator log and the "
+                                                 "probe and fingerprint JSONs, judged as `island replay` judges")
+    p.add_argument("name")
+    p.add_argument("--log", required=True, help="the Comparator log; its first line is the ISLAND-HEADER")
+    p.add_argument("--probe-json", action="append", default=None, metavar="FILE",
+                   help="`telperion probe-negation --json --file <challenge>` output, one per theorem (repeat)")
+    p.add_argument("--fingerprint-json", default=None, metavar="FILE",
+                   help="`telperion fingerprint --json --file <challenge>` output covering every theorem")
+    p.add_argument("--date", required=True, help="the date of the run (YYYY-MM-DD)")
+    p.add_argument("--comparator-tag", required=True, help="the Comparator tag the run used (vX.Y.Z[-rcN])")
+    p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
+    p.set_defaults(fn=cmd_island_record_replay)
 
     p = sub.add_parser("probe-negation",
                        help="one-sided probe of a theorem's ELABORATED constant: VACUOUS (its premises "
