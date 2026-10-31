@@ -2595,6 +2595,8 @@ def test_statement_fingerprint_target(tmp_path, body, want):
     # fix round 3 (R4): Lean records the range from the doc comment, so it is refused with a clear message
     ("/-- the statement -/\ntheorem main : True", "move the docstring to a comment"),
     ("/-- the statement -/\nnoncomputable def S : Prop := True", "move the docstring to a comment"),
+    # cleanup round (R4 edge): a `--` line comment between the doc comment and the declaration
+    ("/-- the statement -/\n-- a note\ntheorem main : True", "move the docstring to a comment"),
 ])
 def test_statement_fingerprint_target_refusals(tmp_path, body, why):
     with pytest.raises(ValueError, match=re.escape(why)):
@@ -2626,7 +2628,7 @@ GRAMMAR_REFUSALS = [
     "elab", "elab_rules", "macro", "macro_rules", "syntax", "notation", "infix", "infixl", "infixr", "prefix",
     "postfix", "declare_syntax_cat", "run_cmd", "run_elab", "run_meta", "alias", "export", "attribute",
     "initialize", "builtin_initialize", "deriving", "set_option", "local", "scoped", "instance", "private",
-    "protected", "opaque", "axiom", "irreducible_def", "omit", "include", "run_tac", "by_elab")] + [
+    "protected", "opaque", "axiom", "irreducible_def", "omit", "include", "run_tac", "by_elab", "decreasing_by", "termination_by")] + [
     ("theorem main : True\n  set_option maxHeartbeats 1 in\ndef x : ℕ := 0", "uses `set_option` (line 2)"),
     ("open scoped Real\nscoped notation \"x\" => 1\ntheorem main : True", "string literal (line 2)"),
     ("theorem main : True\nderiving instance Repr for Nat", "uses `deriving` (line 2)"),
@@ -2646,6 +2648,11 @@ GRAMMAR_REFUSALS = [
     ("theorem main : True := by\n  run_tac pure ()\n  sorry", "uses `run_tac` (line 2)"),
     ("def x : ℕ := by exact 0\ntheorem main : True := by sorry", "line 1: `by` is allowed only"),
     ("theorem main : True := by sorry\ndef x : ℕ := 0", "line 1: `by` is allowed only"),
+    # cleanup round (N1), the re-review's repro: an INDENTED `decreasing_by` is a tactic block without `by`
+    ("def tac : Nat := 0\ndef f : Nat → Nat\n  | 0 => 0\n  | n + 1 => f n\n  termination_by n => n\n"
+     "  decreasing_by aesop\ntheorem main : True", "uses `termination_by` (line 5)"),
+    ("def f : Nat → Nat\n  | 0 => 0\n  | n + 1 => f n\n  decreasing_by simp_wf\ntheorem main : True",
+     "uses `decreasing_by` (line 4)"),
 ]
 
 
@@ -2987,3 +2994,47 @@ def test_freeze_refuses_a_symlinked_project_import(tmp_path):
     d.symlink_to(tmp_path / "real.lean")
     with pytest.raises(ValueError, match="not a regular file"):
         freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+
+
+
+# Cleanup round (Ruling 20 minors).
+def test_howto_library_roots_match_the_code():
+    """N2: the HOWTO's list of library roots (which imports are the trusted env's) is the code's list."""
+    from telperion.closure_audit import DEFAULT_LIBRARY_ROOTS
+    howto = (Path(__file__).resolve().parents[1] / "docs" / "MISSIONS_HOWTO.md").read_text(encoding="utf-8")
+    m = re.search(r"one of the library roots (.*?)\)", howto, re.S)
+    assert m, "the HOWTO's library-root list is missing"
+    assert re.findall(r"`([^`]+)`", m.group(1)) == list(DEFAULT_LIBRARY_ROOTS)
+
+
+def test_freeze_history_import_added_late_at_unchanged_version_flagged(tmp_path):
+    """I3a, the re-review's repro: a freeze committed WITHOUT [imports], then a Defs edit, then [imports] hand-added
+    with the new hash at the same version. Refused, as a late-added fingerprint is."""
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _hand_edit_freeze(root, lambda d: d.pop("imports"))
+    _git_commit(root, "freeze, committed without [imports]")
+    (root / "lean" / "Statements" / "Defs.lean").write_text("def bound : Nat := 6\n")
+    _hand_edit_freeze(root, lambda d: d.__setitem__(
+        "imports", {"Statements.Defs": hashlib.sha256(b"def bound : Nat := 6\n").hexdigest()}))
+    _git_commit(root, "hand-add [imports] with the edited hash")
+    problems = freeze_problems(root)
+    assert any("'Statements.Defs' added without a version bump or a new node" in p for p in problems), problems
+
+
+def test_freeze_refuses_an_import_through_a_symlinked_directory(tmp_path):
+    """I3b: the source must live inside the campaign's tree; a symlinked directory component is refused."""
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    elsewhere = tmp_path / "elsewhere"
+    (root / "lean" / "Statements" / "Defs.lean").rename(tmp_path / "Defs.lean")
+    elsewhere.mkdir()
+    (tmp_path / "Defs.lean").rename(elsewhere / "Defs.lean")
+    (root / "lean" / "Sub").symlink_to(elsewhere, target_is_directory=True)
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "import Mathlib\nimport Sub.Defs\ntheorem thm_Node_A : bound = 5", load_campaign(root).manifest)
+    with pytest.raises(ValueError, match="symlinked directory"):
+        freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    assert not freeze_path(root).exists()

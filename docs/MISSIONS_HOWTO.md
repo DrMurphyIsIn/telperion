@@ -595,10 +595,11 @@ How each fingerprint is computed:
     `run_meta`, `initialize`, `builtin_initialize`, and any `#` command (`#eval`, `#exit`, `#print`, ...) (they run
     code); `alias`, `export`, `attribute`, `deriving`, `instance`, `irreducible_def` (they generate declarations);
     `set_option`, `local`, `scoped` (other than `open scoped`), `private`, `protected`, `opaque`, `axiom`, `omit`,
-    `include`, `run_tac`, `by_elab`; any attribute `@[…]`; any `«»` name; any backquote (a `` `( `` quotation or a
+    `include`, `run_tac`, `by_elab`, `decreasing_by`, `termination_by`; any attribute `@[…]`; any `«»` name; any backquote (a `` `( `` quotation or a
     name literal);
   - `by` only as the statement's own final `:= by sorry` (closing `end` lines may follow); supporting definitions
-    take term proofs, because a tactic block can run code at compile time;
+    take term proofs, because a tactic block can run code at compile time. For the same reason `decreasing_by` (a
+    tactic block without `by`) and `termination_by` are refused;
   - no doc comment on the statement itself (Lean records its range from the doc comment's line; move the docstring
     to a `/- … -/` or `--` comment). A doc comment on a supporting definition is fine.
   Statement files come from `mission add`, so this costs little in practice: of the 123 node statement files in the
@@ -624,11 +625,14 @@ How each fingerprint is computed:
   (an `alias main := …` records the alias's own line); compile-time code in the trusted statement layer could still
   forge the record.
 - **Imported project modules.** Every module in the statement files' import closure that is not the trusted env's
-  (its first component is not `Mathlib`, `Init`, `Lean`, `Std`, `Batteries`, `Aesop`, `Qq`, `Plausible` or
-  `ProofWidgets`) must be a source file of the campaign, `<campaign>/lean/<A>/<B>.lean`, and its sha256 is recorded in
-  FREEZE.toml `[imports]`. A change to one is reported as "import drift" and needs an unfreeze, under the same history
-  rules as `[statements]`. The fingerprint already sees such a change, because its definitions are unfolded; the hash
-  is there so the read-back covers what was imported.
+  (its first component is not one of the library roots `Init`, `Lean`, `Std`, `Batteries`, `Mathlib`, `Aesop`, `Qq`,
+  `ProofWidgets`, `Plausible`, `LeanSearchClient`, `ImportGraph`, `Lake`, `Cli`) must be a source file of the
+  campaign, `<campaign>/lean/<A>/<B>.lean`, reached without any symlink, and its sha256 is recorded in FREEZE.toml
+  `[imports]`. A change to one is reported as "import drift" and needs an unfreeze, under the same history rules as
+  `[statements]` (an import may appear at an unchanged version only together with a new node). The fingerprint
+  already sees a change to its DEFINITIONS, because they are unfolded; a change to its notation, macros or instances
+  alters how the statement text reads without changing the frozen fingerprint, which is why the hash is there: so the
+  read-back covers what was imported.
 - **What is hashed.** The theorem is fingerprinted by its TYPE, that is `P`; the definition by its VALUE, which is `P`
   again. In both cases every non-library definition is unfolded first, so `theorem t : S`, `theorem t : P` and `S`
   itself all get the same fingerprint. Universe-polymorphic statements are included, with level parameters numbered

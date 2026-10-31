@@ -348,6 +348,12 @@ def project_import_hashes(root: Path, campaign) -> Dict[str, str]:
         if any(not p or p[0].isdigit() or not _IDENT_COMPONENT.match(p) for p in parts):
             raise ValueError(f"import {module!r} is not a plain dotted Lean module name")
         src = lean_dir.joinpath(*parts).with_suffix(".lean")
+        # cleanup round (I3b): no symlink anywhere from `<root>/lean` down, so the source lives in
+        # the campaign's own tree (Ruling 15's rule for the provenance walk)
+        for d in [lean_dir] + [lean_dir.joinpath(*parts[:i]) for i in range(1, len(parts))]:
+            if d.is_symlink():
+                raise ValueError(f"imported module {module!r} resolves through the symlinked directory {d}; "
+                                 "refusing to hash a source outside the campaign's tree")
         try:
             st = src.lstat()
         except FileNotFoundError:
@@ -1040,6 +1046,15 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
                 f"{FREEZE_FILENAME} at {label}: imported project module(s) "
                 f"{', '.join(sorted(imp_bad))!r} changed or were removed without a version bump."
             )
+        # cleanup round (I3a), as for fingerprints: an import may appear at an unchanged version
+        # only together with a new node; otherwise whoever adds it chooses the hash recorded
+        imp_added = set(cur_imp) - set(prev_imp)
+        if imp_added and not set(cur_statements) - set(prev_statements):
+            problems.append(
+                f"{FREEZE_FILENAME} at {label}: imported project module(s) "
+                f"{', '.join(sorted(imp_added))!r} added without a version bump or a new node; record "
+                "them with `mission unfreeze`."
+            )
         prev_env, cur_env = prev.get("fingerprints_env"), cur.get("fingerprints_env")
         if prev_env and cur_env != prev_env:
             problems.append(
@@ -1308,6 +1323,9 @@ _FORBIDDEN_TOKENS = (
     "irreducible_def", "omit", "include",
     # fix round 3 (Ruling 20): tactic and term forms that run arbitrary code at elaboration time
     "run_tac", "by_elab",
+    # cleanup round (N1): `decreasing_by` is a tactic block with no `by` token; `termination_by`
+    # goes with it (statement files need no well-founded recursion)
+    "decreasing_by", "termination_by",
 )
 _TOKEN_RE = re.compile(r"[A-Za-z_\u0370-\u03ff\u1f00-\u1fff\u2100-\u214f]"
                        r"[\w'!?\u0370-\u03ff\u1f00-\u1fff\u2100-\u214f\u2080-\u2089\u2090-\u209c]*")
@@ -1427,7 +1445,8 @@ def _doc_comment_on(segs, line_start: int) -> bool:
         if pos >= line_start:
             break
         piece = seg[: max(0, line_start - pos)]
-        if piece.strip():
+        # a `--` line comment between the doc comment and the declaration does not detach it
+        if piece.strip() and not (kind == "comment" and piece.lstrip().startswith("--")):
             last = (kind, piece)
         pos += len(seg)
     return last is not None and last[0] == "comment" and last[1].lstrip().startswith("/--")
