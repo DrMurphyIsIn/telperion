@@ -440,6 +440,8 @@ def test_c2r_unopened_render():
     assert "match ← TelperionProbe.allowlistProblem e with" in src
     assert 'TelperionReplay.line s!"ALLOW OUTSIDE {why}"' in src and 'TelperionReplay.line "ALLOW OK"' in src
     assert src.count("allowlistProblem e") == 1 and "REDUCED OUTSIDE" not in src
+    # S2: an `=` between functions is no atom (funext can hide an empty domain)
+    assert "function equality (funext can hide an empty domain)" in src
     assert "ALLOW" not in render_callback("Foo.t", None)
 
 
@@ -962,6 +964,8 @@ theorem fv : ∀ m : ℕ, m = m → id (F 3) := by
   intro _ _; show F 0; exact fun n hn => absurd hn (Nat.not_lt_zero n)
 -- M6: a bare `True` conclusion says nothing
 theorem truev : ∀ m : ℕ, m = m → True := fun _ _ => trivial
+-- S2: an `=` between functions out of an empty type is a ∀ over that empty domain (by funext)
+theorem funv : ∀ m : ℕ, m = m → ∀ f g : Fin 0 → ℕ, f = g := fun _ _ f g => funext fun x => x.elim0
 noncomputable def R (k : ℕ) : Prop := Nat.rec (motive := fun _ => Prop) True (fun _ _ => True) k
 -- true, but the kernel would have to evaluate `slow 40 0` to check a proof, so it is sorry'd (the replay allows sorry;
 -- no verdict reads the theorem's own proof). Binders before the `:` would make `sorry` itself whnf the target.
@@ -1060,3 +1064,9 @@ def test_lean_c2r_atomic_repros_are_never_witnessed(c2r_module, theorem, witness
 def test_lean_c2r_allowlist_keeps_real_inequalities(c2r_module):               # MUST-PASS (Ruling 4)
     r = _probe(c2r_module, "TpRed.realv", "⟨0, by norm_num, trivial⟩")
     assert r.verdict == "WITNESSED", r.detail
+
+
+@lean
+def test_lean_c2r_function_equality_is_never_witnessed(c2r_module):       # MUST-FAIL (S2)
+    r = _probe(c2r_module, "TpRed.funv", "⟨0, rfl, Fin.elim0, Fin.elim0, trivial⟩")
+    assert r.verdict == "PROBE_ONLY" and "function equality (funext can hide an empty domain)" in r.detail, r.detail

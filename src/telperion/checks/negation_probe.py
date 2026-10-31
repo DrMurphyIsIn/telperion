@@ -67,7 +67,8 @@ of 200000 heartbeats:
   beaten by reviews. Over the same reducing telescope and ∧ / ↔ descent: (1) every hypothesis is an atom or a
   conjunction of atoms; (2) every conclusion is an atom, and not all are `True`; (3) every data binder has a library
   type, and no binder is a proposition or predicate variable. An atom is a head in ``okHeads`` (`=`, `≤`, `<`, `≥`,
-  `>`, `True`, `Nat.le`, `∣`) applied to library data with no proposition or predicate inside. ``ALLOW OK`` is needed
+  `>`, `True`, `Nat.le`, `∣`) applied to library data with no proposition or predicate inside, and not an `=` between
+  functions (funext can hide an empty domain; bundled maps are not covered). ``ALLOW OK`` is needed
   for WITNESSED; ``ALLOW OUTSIDE <why>`` is PROBE_ONLY "outside the WITNESSED allowlist", and a failed or timed-out
   walk (or a missing line) is PROBE_ONLY "allowlist check failed". Library definitions are trusted text, not walked.
 
@@ -316,6 +317,8 @@ def atomProblem (what : String) (t : Expr) : MetaM (Option String) := do
     | return some s!"{what} `{← ppExpr t}` is not an atom (an allowed head applied to data)"
   unless okHeads.contains n do
     return some s!"{what} `{← ppExpr t}` is not an atom: its head {n} is not allowed"
+  if n == ``Eq && t.getAppNumArgs == 3 && (← whnf t.appFn!.appFn!.appArg!).isForall then
+    return some s!"{what} `{← ppExpr t}` is a function equality (funext can hide an empty domain)"
   for a in t.getAppArgs do
     if let some w ← dataProblem a then return some s!"{what} `{← ppExpr t}` has {w}"
   return none

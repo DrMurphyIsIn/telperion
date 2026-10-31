@@ -150,7 +150,9 @@ verifier.
      propositions inside data). Then:
      - (1) every hypothesis is an atom or a conjunction of atoms: no `→`, `↔`, `¬`, `∨`, `∀` or `∃` inside one;
      - (2) every conclusion is an atom (`a ↔ b` and `a ∧ b` are split first, and each side of an `↔` is then a
-       hypothesis too), and they are not all `True`: `∀ m, m = m → True` says nothing;
+       hypothesis too); they are not all `True`, and none is an `=` between functions (`f = g` with
+       `f g : Fin 0 → ℕ` is, by extensionality, a ∀ over the empty `Fin 0`; so is a `Matrix` equality). The same goes
+       for an `=` between functions in a hypothesis;
      - (3) every data binder has a library type (not a structure or inductive of your own project), and no binder is
        a proposition or a predicate variable (`∀ P : Prop`, `∀ F : ℕ → Prop`, `∀ s : Set ℕ`).
      If the walk itself fails or runs out of heartbeats, the note is "allowlist check failed: <why>" instead.
@@ -494,8 +496,15 @@ These are real, and you should know them before you rely on a `[checks]` record.
   the Lean tests. So:
   - **Exactly this can be WITNESSED:** a statement whose binders are variables of library types and hypotheses that
     are atoms or conjunctions of atoms, and whose conclusions (after reduction and splitting `∧` and `↔`) are atoms,
-    not all `True`. `(x : ℕ) (h : x < 3) : x < 5`, the same over ℝ, and `(m : ℕ) (h : m < 3) : id (∀ n : ℕ, n < 5 →
-    n < 6)` (with a witness for `n` too) are measured must-pass controls.
+    not all `True` and not equalities between functions. `(x : ℕ) (h : x < 3) : x < 5`, the same over ℝ, and `(m :
+    ℕ) (h : m < 3) : id (∀ n : ℕ, n < 5 → n < 6)` (with a witness for `n` too) are measured must-pass controls.
+  - **What WITNESSED means, and what it does not.** The probe targets VACUITY. WITNESSED says the hypotheses can hold
+    together and every bound type is inhabited (the kernel checked a witness for all of it). It does NOT say the
+    statement is non-trivial: `x = x`, `0 ≤ n` on ℕ, `1 ∣ n`, an equation at a one-element type (`Unit`, `PUnit`,
+    `Fin 1`) and an equation between bundled maps out of an empty type (`Fin 0 ≃ Fin 0`, `Fin 0 ↪ ℕ`; the
+    function-equality rule covers plain functions only) can all be WITNESSED. Refusing `True` is only
+    the cheapest special case. Whether the statement says anything worth proving is checked by the read-back of the
+    frozen statement, by a person, not by the probe.
   - **Everything else needs a sign-off**, even with a witness that checks. That includes any hypothesis with `→`,
     `↔`, `¬`, `∨`, `∀`, `∃` or a non-allowed head (`x ≠ 0`, `Even n`, `Nat.Prime p`, `x ∈ s`, `Continuous f`); any
     conclusion that is a disjunction, an existential, a structure (`Nat.Prime p` unfolds to the library structure

@@ -949,8 +949,12 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       exists-closure over the REDUCING telescope of the statement with local definitions unfolded,
       and that same term must have only atomic hypotheses and conclusions (an allowed head such as
       `=` or `<` applied to library data with no proposition inside), library binder types and no
-      proposition or predicate variable; everything else is PROBE_ONLY and needs the sign-off.
-      Library definitions are trusted text (their bodies are not walked);
+      proposition or predicate variable, and no `=` between functions; everything else is
+      PROBE_ONLY and needs the sign-off. Library definitions are trusted text (their bodies are
+      not walked). WITNESSED targets VACUITY only: the hypotheses can hold together and every
+      bound type is inhabited. It does NOT say the statement is non-trivial (`x = x`, `0 <= n`,
+      equations at `Unit`/`PUnit`/`Fin 1`, bundled maps out of an empty type are WITNESSED);
+      the read-back of the frozen statement is what checks triviality;
     - hand-editing the node file is out of reach of this check: deleting `checks_required`
       from `[grant]`, like back-dating `created` before the first grant, removes the
       requirement. Both are the same documented limitation class (a CI diff check, step 5);
