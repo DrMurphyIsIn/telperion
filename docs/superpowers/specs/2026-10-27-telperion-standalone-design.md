@@ -222,6 +222,17 @@ recorded by Rulings 11 and 12: the sign-off is free text; and a `created` back-d
 not caught. (A third, that the closure audit imported rather than replayed and was tied to the other two checks only
 by the theorem name and the interim axiom cross-check, was closed in step 5.)
 
+**Amendment (2026-10-31; step 5 Task 6). The theorem tie is semantic for frozen campaigns (frozen statement
+fingerprint); the name resolver remains a readable cross-check.** The name tie above (`guard_anchors.resolve_theorem`)
+reads the artifact's text, and an adversarial artifact can make it name a decoy (step 4's final re-review: `s!`
+interpolation, a quote inside `«»`, declaration text inside `«»`, `#exit`, a `(command| ...)` quotation). So, for
+nodes the grant rule covers, `checks-record` and the gate also require the record's fingerprint to EQUAL the node's
+frozen statement fingerprint (FREEZE.toml `[fingerprints]`, section 7), and refuse a node with none ("statement
+fingerprint not frozen"). The fingerprint gained a VALUE mode for this: a `def S : Prop`'s value, unfolded and
+serialized as type mode treats a theorem's type, so `theorem t : S`, `theorem t : body` and `S` agree. The checked
+fingerprint must be a type-mode one. `GATE_VERSION` is `2026-10-31.1`, step 5's one bump: the freeze, the deviation
+ledger and its read-back, the required `[author]`, the isolated closure audit and this tie.
+
 **Amendment (2026-10-30; step 4 Ruling 9 and the caveat recorded with the fingerprint re-review). These checks are NOT A
 SANDBOX.** Replay isolation keeps the submission's code out of the check's process, and nothing more. Building the
 submission (`lake build`, or compiling a submitted text for the fingerprint) runs its code with the caller's
@@ -281,6 +292,17 @@ Islands are a generic mechanism, and these two are its reference entries. RH-spe
    - A grant requires the ledger to be present and read back. An empty ledger must say "none" explicitly.
 4. **Provenance headers.** Every ported file names its source repository, file and commit. A lint check enforces this,
    islands included.
+
+**Amendment (2026-10-31; step 5, Ruling 4 and Task 6). Where the freeze lives.** The freeze is campaign-level:
+`<campaign>/FREEZE.toml` records the sha256 of every node's statement file in `[statements]` and, with `mission freeze
+--fingerprints`, every node's statement fingerprint in `[fingerprints]`, not in `[grant]` (each grant still records
+its own `statement_sha256`). The fingerprinted constant is the statement file's last `theorem`, in type mode (the form
+statement files have so far, and the one the gate reads), or, with no theorem, its last `def … : Prop`, in value mode
+(the form item 1 describes; the containment match and the name resolver do not handle it yet). CI's
+"fails if the file changes" is `mission verify`'s walk of FREEZE.toml's git history: at an unchanged version neither
+table may change, except for nodes added with it; any other change needs a version bump with an `[[unfreeze]]` entry
+read back by someone other than its author. `unfreeze` records fingerprints only when given `--fingerprints` and never
+carries them forward.
 
 **Scope.** These rules apply to new missions only. Existing proved nodes are recorded as `pre-process`. KC-1's F0
 (`KC1Statement_F0_FROZEN_558248cd.lean`) already conforms and becomes the first mission to use the full flow.

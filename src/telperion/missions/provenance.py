@@ -45,7 +45,19 @@ from .statements import statement_path
 #:   2026-10-29.1  grants of nodes created on or after 2026-10-28 (or with no created date)
 #:                 require a passing [checks] record (probe + closure + fingerprint, one olean
 #:                 closure). Existing grants keep their recorded version.
-GATE_VERSION = "2026-10-29.1"
+#:   2026-10-31.1  step 5 (statement-first process), for the same post-cutoff nodes:
+#:                 - the campaign must be frozen (FREEZE.toml records the node's statement,
+#:                   committed, with a clean git history: process.freeze_grant_problem);
+#:                 - DEVIATIONS.md must be present and valid, and read back by an identity
+#:                   other than the node's author (process.deviations_grant_problem);
+#:                 - the node must have an [author] block;
+#:                 - the [checks] closure audit must be ISOLATED (a kernel-replay callback
+#:                   on the probe's and the fingerprint's closure: closure_isolated);
+#:                 - the [checks] statement fingerprint must equal the node's FROZEN
+#:                   statement fingerprint (the semantic theorem tie; FREEZE.toml
+#:                   [fingerprints]).
+#:                 `checks_required = true` in [grant] keeps meaning what it did (Ruling 13).
+GATE_VERSION = "2026-10-31.1"
 
 #: A read-back shorter than this is not a rendering of a formal statement; it is a label.
 #: The shortest genuine read-back in the live registry on 2026-09-23 was 262 characters.
@@ -911,14 +923,20 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       The interim axiom cross-check (final review I3) stays as a second line: the record carries
       the REPLAY's axiom list, which the probe and fingerprint must agree on, which must be a
       subset of CLEAN_AXIOMS, and which must include the closure audit's per-target axioms;
-    - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
-      declaration the grant gate matched) and of the Comparator record's theorem when there is
-      one (final review I1). The resolver is the gate's SYNTACTIC one, so a non-adversarial
-      artifact cannot pass a helper lemma's checks; an adversarial artifact still has known
-      ways to fool the resolver, all of which predate step 4: `s!`-interpolated strings, quotes
-      inside `«»` names, declaration text inside `«»`, `#exit`, and `(command| ...)`
-      quotations. The sound fix, tying the target's statement fingerprint to the node's
-      statement file, is step 5;
+    - the theorem tie is semantic for frozen campaigns (frozen statement fingerprint); the name
+      resolver remains a readable cross-check (step 5 Task 6). For a node the grant rule covers
+      (`checks_required`), the record's `statement_fingerprint` must equal the
+      node's frozen statement fingerprint (`process.statement_fingerprint_problem`, from
+      FREEZE.toml's `[fingerprints]`, which `mission freeze --fingerprints` records); a missing
+      one is refused ("statement fingerprint not frozen"). So an adversarial artifact that
+      fools the syntactic resolver below (`s!`-interpolated strings, quotes inside `«»` names,
+      declaration text inside `«»`, `#exit`, `(command| ...)` quotations, all predating step 4)
+      gets the checks of a declaration whose statement differs, and is refused. The name
+      resolver (`guard_anchors.resolve_theorem`, the declaration the grant gate matched)
+      remains a readable cross-check, with the Comparator record's theorem when there is one
+      (final review I1). The tie is as good as the frozen fingerprint: it is computed by
+      whoever froze the campaign and cannot be recomputed here without Lean, so its git
+      history (`process.freeze_history_problems`) is what protects it once frozen;
     - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
       of the statement and of each forall-body, but a vacuous sub-proposition under any other
       conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
@@ -965,8 +983,17 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     bad = [a for a in k.axioms if a not in CLEAN_AXIOMS]
     if bad:
         return f"the replayed module uses non-standard axioms {bad} (recorded {k.date})"
-    # Final review I1: the record must be of the node's OWN theorem, the declaration the grant
-    # gate matched in the artifact, and of the Comparator record's theorem once there is one.
+    # Step 5 Task 6: the SEMANTIC tie. For a node the grant rule covers, the checked theorem's
+    # statement fingerprint must be the node's frozen statement fingerprint, whatever name the
+    # resolver below reads out of the artifact.
+    if checks_required(node):
+        from .process import statement_fingerprint_problem
+        fp_problem = statement_fingerprint_problem(Path(campaign_root), node, k.statement_fingerprint)
+        if fp_problem:
+            return fp_problem
+    # Final review I1, kept as a readable cross-check: the record must be of the node's OWN
+    # theorem, the declaration the grant gate matched in the artifact, and of the Comparator
+    # record's theorem once there is one.
     from .judge import _guard_anchors
     ga = _guard_anchors()
     try:

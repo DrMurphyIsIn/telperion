@@ -36,6 +36,8 @@ from telperion.missions.verify import GateError, grant_status  # noqa: E402
 
 OLEAN = "d" * 64
 FPRINT = "e" * 64
+#: The fixtures' frozen statement fingerprints (FREEZE.toml [fingerprints]; step 5 Task 6).
+FROZEN_FP = {"Demo_ck": FPRINT}
 
 
 def _rec(art_sha: str, *, probe: str = "WITNESSED", closure: str = "PASS",
@@ -103,13 +105,22 @@ def test_probe_verdicts_match_negation_probe():
     assert set(PROBE_VERDICTS) == set(VERDICTS)
 
 
-def _statement_for(root: Path, node: Node) -> None:
+def _statement_for(root: Path, node: Node, fingerprint: str | None = FPRINT) -> None:
     """The node's statement file, so `checks_problem` can resolve its registered theorem (final review I1):
-    `minimal_proved_node`'s artifact declares `theorem t : True`."""
+    `minimal_proved_node`'s artifact declares `theorem t : True`. Step 5 Task 6: and, unless `fingerprint` is
+    None, a FREEZE.toml recording `fingerprint` as its frozen statement fingerprint (the semantic tie), written
+    through the freeze's own writer."""
+    from telperion.missions.process import _write_freeze
+    from telperion.missions.schema import slug_of
     from telperion.missions.statements import statement_path
     p = statement_path(root, node)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("theorem t : True\n")
+    if fingerprint is not None:
+        slug = slug_of(node.name)
+        _write_freeze(root, {"version": 1, "frozen": "2026-10-29", "identity": "freezer@test",
+                             "session": "freezer-session", "statements": {slug: "0" * 64},
+                             "fingerprints": {slug: fingerprint}})
 
 
 def test_checks_current_record_has_no_problem(tmp_path):
@@ -237,8 +248,13 @@ def _grant(root: Path) -> Node:
     # that, so freeze AND commit once here, same as a real session would run `mission
     # freeze` + `git commit` before `mission grant`; a campaign already frozen (e.g. a
     # re-grant in the same test) is left alone.
+    # Step 5 Task 6: the freeze records the node's statement fingerprint (here the fixtures' FPRINT, injected
+    # the way `mission freeze --fingerprints` would record the Lean-computed one); a campaign frozen earlier
+    # (`_cli_campaign`) is committed here if it is not yet.
     if not freeze_path(root).exists():
-        freeze(root, identity="gate@test", session="gate-session", date="2026-10-29")
+        freeze(root, identity="gate@test", session="gate-session", date="2026-10-29",
+               fingerprints=FROZEN_FP)
+    if not (root / ".git").exists():
         subprocess.run(["git", "-C", str(root), "init", "-q"],
                        check=True, capture_output=True, text=True)
         subprocess.run(["git", "-C", str(root), "add", "."],
@@ -403,9 +419,13 @@ def _record(mroot: Path, paths: dict, *extra: str) -> int:
                 "--fingerprint-json", str(paths["fp"]), *extra)
 
 
-def _cli_campaign(tmp_path: Path, created: str = "2026-10-29") -> Path:
+def _cli_campaign(tmp_path: Path, created: str = "2026-10-29", fingerprints="frozen") -> Path:
+    """The CLI campaign, frozen (uncommitted; `_grant` commits it) with FPRINT as the node's statement
+    fingerprint (step 5 Task 6: `checks-record` ties a post-cutoff record to it), or with `fingerprints`."""
     mroot = tmp_path / "missions"
-    _grant_campaign(mroot, created=created, campaign="demo")
+    root = _grant_campaign(mroot, created=created, campaign="demo")
+    freeze(root, identity="gate@test", session="gate-session", date="2026-10-29",
+           fingerprints=FROZEN_FP if fingerprints == "frozen" else fingerprints)
     return mroot
 
 
@@ -522,10 +542,15 @@ def test_checks_record_then_grant_closes_the_loop(tmp_path):
 
 def test_gate_version_bumped_for_checks(tmp_path):
     from telperion.missions import provenance as prov
-    assert prov.GATE_VERSION == "2026-10-29.1"
+    assert prov.GATE_VERSION == "2026-10-31.1"           # step 5 (Ruling 16): bumped once for the step
     root = _grant_campaign(tmp_path, created="2026-10-29")
     _with_checks(root, _rec(_art_sha(root, load_node(root / "nodes" / "Demo_ck.toml"))))
-    assert _grant(root).grant.gate_version == "2026-10-29.1"
+    assert _grant(root).grant.gate_version == "2026-10-31.1"
+
+
+def prov_gate_version() -> str:
+    from telperion.missions.provenance import GATE_VERSION
+    return GATE_VERSION
 
 
 def _proved(tmp_path: Path, *, created: str, checks: bool = True) -> Path:
@@ -596,7 +621,7 @@ def test_checks_required_by_grant_record(flag, required):
 
 @pytest.mark.parametrize("created,flag", [("2026-10-29", True), ("", True), ("2026-10-01", False)])
 def test_gate_records_its_checks_decision(tmp_path, created, flag):
-    """Every grant the new gate writes is 2026-10-29.1, so the decision itself is recorded: a
+    """Every grant the new gate writes is 2026-10-29.1 or later, so the decision itself is recorded: a
     pre-cutoff node granted today stays exempt (Ruling 11), a post-cutoff one keeps the rule."""
     root = _proved(tmp_path, created=created)
     p = root / "nodes" / "Demo_ck.toml"
@@ -607,7 +632,7 @@ def test_gate_records_its_checks_decision(tmp_path, created, flag):
 def test_verify_created_edited_after_new_gate_grant_still_needs_checks(tmp_path):
     root = _proved(tmp_path, created="2026-10-29", checks=False)
     p = root / "nodes" / "Demo_ck.toml"
-    assert load_node(p).grant.gate_version == "2026-10-29.1"
+    assert load_node(p).grant.gate_version == prov_gate_version()
     save_node(dataclasses.replace(load_node(p), created="2026-10-01"), p)
     errs = _checks_errors(root)
     assert len(errs) == 1 and "checks-record" in errs[0], errs
@@ -721,6 +746,7 @@ def test_record_of_another_theorem_than_the_comparator_record_fails(tmp_path):
     from telperion.missions.provenance import checks_problem
     from telperion.missions.schema import ComparatorRecord
     root = _grant_campaign(tmp_path, created="2026-10-29")
+    freeze(root, identity="gate@test", session="gate-session", date="2026-10-29", fingerprints=FROZEN_FP)
     p = root / "nodes" / "Demo_ck.toml"
     node = load_node(p)
     node = dataclasses.replace(node, checks=_rec(_art_sha(root, node)))
@@ -902,3 +928,123 @@ def test_cli_isolated_closure_without_olean_refused_as_missing(tmp_path, how, ca
     assert _node(mroot).checks is None
     err = capsys.readouterr().err
     assert "missing" in err and "None" not in err, err
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 6: the semantic theorem tie. For a post-cutoff node, the [checks] fingerprint must
+# equal the node's FROZEN statement fingerprint (FREEZE.toml [fingerprints]); none frozen is refused.
+# ---------------------------------------------------------------------------
+
+def test_checks_problem_passes_on_the_frozen_fingerprint(tmp_path):
+    from telperion.missions.provenance import checks_problem
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    _statement_for(tmp_path, node, fingerprint=FPRINT)
+    assert checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node),
+                                                                          theorem="t"))) == ""
+
+
+def test_checks_problem_refuses_a_mismatched_fingerprint(tmp_path):
+    from telperion.missions.provenance import checks_problem
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    _statement_for(tmp_path, node, fingerprint="f" * 64)
+    problem = checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node),
+                                                                             theorem="t")))
+    assert problem.startswith("statement fingerprint mismatch") and FPRINT[:16] in problem, problem
+
+
+@pytest.mark.parametrize("frozen", ["no-freeze", "no-entry"])
+def test_checks_problem_refuses_an_unfrozen_fingerprint(tmp_path, frozen):
+    from telperion.missions.process import _write_freeze
+    from telperion.missions.provenance import checks_problem
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    _statement_for(tmp_path, node, fingerprint=None)
+    if frozen == "no-entry":
+        _write_freeze(tmp_path, {"version": 1, "frozen": "2026-10-29", "identity": "i", "session": "s",
+                                 "statements": {"t": "0" * 64}})
+    problem = checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node),
+                                                                             theorem="t")))
+    assert problem.startswith("statement fingerprint not frozen"), problem
+
+
+def test_checks_problem_refuses_an_untrustworthy_freeze(tmp_path):
+    from telperion.missions.process import freeze_path
+    from telperion.missions.provenance import checks_problem
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    _statement_for(tmp_path, node, fingerprint=None)
+    freeze_path(tmp_path).symlink_to("elsewhere.toml")
+    problem = checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node),
+                                                                             theorem="t")))
+    assert problem.startswith("statement fingerprint not frozen: FREEZE.toml is a symlink"), problem
+
+
+def test_checks_problem_pre_cutoff_node_has_no_fingerprint_tie(tmp_path):
+    from telperion.missions.provenance import checks_problem
+    from missions_fixtures import minimal_proved_node
+    node = dataclasses.replace(minimal_proved_node(tmp_path, heavy=False), created="2026-10-01")
+    _statement_for(tmp_path, node, fingerprint=None)
+    assert checks_problem(tmp_path, dataclasses.replace(node, checks=_rec(_art_sha(tmp_path, node),
+                                                                          theorem="t"))) == ""
+
+
+def test_grant_refused_on_a_fingerprint_that_is_not_the_frozen_one(tmp_path):
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    freeze(root, identity="gate@test", session="gate-session", date="2026-10-29",
+           fingerprints={"Demo_ck": "f" * 64})
+    _with_checks(root, _rec(_art_sha(root, node)))
+    with pytest.raises(GateError, match=r"\[checks\] required .*statement fingerprint mismatch"):
+        _grant(root)
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+def test_verify_flags_a_proved_node_whose_frozen_fingerprint_moved(tmp_path):
+    """An unfreeze that records a different fingerprint for a granted node: its [checks] no longer tie."""
+    from telperion.missions.process import unfreeze
+    root = _proved(tmp_path, created="2026-10-29")
+    assert _checks_errors(root) == []
+    unfreeze(root, author="owner@test", reason="re-fingerprint", readback_identity="reviewer@test",
+             date="2026-10-30", fingerprints={"Demo_ck": "f" * 64})
+    errs = _checks_errors(root)
+    assert len(errs) == 1 and "statement fingerprint mismatch" in errs[0], errs
+
+
+def test_cli_record_refused_on_a_mismatched_frozen_fingerprint(tmp_path, capsys):
+    mroot = _cli_campaign(tmp_path, fingerprints={"Demo_ck": "f" * 64})
+    assert _record(mroot, _write_jsons(tmp_path)) == 2
+    assert _node(mroot).checks is None
+    assert "statement fingerprint mismatch" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("fps", [None, {}])
+def test_cli_record_refused_without_a_frozen_fingerprint(tmp_path, capsys, fps):
+    if fps is None:                                         # not frozen at all
+        mroot = tmp_path / "missions"
+        _grant_campaign(mroot, created="2026-10-29", campaign="demo")
+    else:                                                   # frozen without --fingerprints
+        mroot = _cli_campaign(tmp_path, fingerprints=fps)
+    assert _record(mroot, _write_jsons(tmp_path)) == 2
+    assert _node(mroot).checks is None
+    assert "statement fingerprint not frozen" in capsys.readouterr().err
+
+
+def test_cli_record_refuses_a_value_mode_fingerprint_json(tmp_path, capsys):
+    mroot = _cli_campaign(tmp_path)
+    paths = _write_jsons(tmp_path)
+    doc = json.loads(paths["fp"].read_text())
+    paths["fp"].write_text(json.dumps({**doc, "mode": "value"}))
+    assert _record(mroot, paths) == 2
+    assert _node(mroot).checks is None
+    assert "'value'-mode fingerprint" in capsys.readouterr().err
+    paths["fp"].write_text(json.dumps({**doc, "mode": "type"}))
+    assert _record(mroot, paths) == 0
+
+
+def test_cli_record_pre_cutoff_node_has_no_fingerprint_tie(tmp_path):
+    mroot = tmp_path / "missions"
+    _grant_campaign(mroot, created="2026-10-01", campaign="demo")    # pre-cutoff, never frozen
+    assert _record(mroot, _write_jsons(tmp_path)) == 0
+    assert _node(mroot).checks.statement_fingerprint == FPRINT

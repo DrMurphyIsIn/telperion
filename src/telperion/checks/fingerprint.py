@@ -10,6 +10,14 @@ strict implicit, instance) is kept, because it is part of the meaning. Universe 
 Nothing goes through the pretty-printer. Constants declared in a non-library module always unfold. ``whnf`` is never
 used, because it would unfold library constants too.
 
+VALUE MODE (step 5 Task 6). ``mode="value"`` hashes a ``def S : Prop``'s VALUE instead of its type, with the same
+unfolding, the same library roots and the same serializer, level parameters numbered by ``S``'s own ``levelParams``.
+Since ``S`` is a non-library definition, a ``theorem t : S`` (type mode) unfolds to ``S``'s value and so gets the
+same hash as ``S`` in value mode, and so does ``theorem t' : body`` with the statement written out. That is what lets
+``mission freeze`` record a statement's fingerprint and the gate compare it with the artifact theorem's. In value
+mode, a target that is not a definition (theorem, axiom, opaque, inductive, ...) or whose type is not literally
+``Prop`` is refused (``value-mode-not-a-def``, ``value-mode-not-prop``).
+
 WHAT IS REFUSED (fail closed, ``FP-REFUSED``, a ValueError).
   * An axiom declared by any untrusted module (Ruling 10: the replay refuses it, so it never enters the env).
   * Any non-library constant still left after unfolding, which would be hashed by its NAME alone: a local inductive,
@@ -200,26 +208,45 @@ partial def tpSer (lps : List Name) : Expr → TpSerM Unit
   | .mdata _ e => tpSer lps e
   | .proj s i e => do tpEmit s!"(j {tpSerName s} {i} "; tpSer lps e; tpEmit ")"
 
-/-- The fingerprint of `ci`'s statement in `env`: `.ok <serialization>` or `.error "<what> <why>"` (a refusal).
-Self-contained: it needs only `env` and `tpRoots`, so a loader that builds `env` some other way can call it. -/
-def tpFingerprint (env : Environment) (ci : ConstantInfo) : IO (Except String String) := do
-  let (e, _) ← (deltaExpand ci.type (fun n => !tpIsLib env n && tpIsDef env n)).toIO
+/-- The fingerprint of the closed term `e0` (whose level parameters are `lps`) in `env`: `.ok <serialization>` or
+`.error "<what> <why>"` (a refusal). Self-contained: it needs only `env` and `tpRoots`, so a loader that builds `env`
+some other way can call it. -/
+def tpFingerprintExpr (env : Environment) (lps : List Name) (e0 : Expr) : IO (Except String String) := do
+  let (e, _) ← (deltaExpand e0 (fun n => !tpIsLib env n && tpIsDef env n)).toIO
     { fileName := "<fingerprint>", fileMap := default, maxRecDepth := 100000 } { env }
   let n := Id.run ((tpSize e).run' ({}, {}))
   if n > tpCap then
     return .error s!"too-large {n} nodes (counted up to the cap {tpCap} + 1)"
   match Id.run ((tpOffense env e).run' {}) with
   | some (c, k) =>
-    let uses := ci.type.getUsedConstants.filter (!tpIsLib env ·) |>.toList.map toString
+    let uses := e0.getUsedConstants.filter (!tpIsLib env ·) |>.toList.map toString
     return .error s!"{c} {k} (statement uses: {", ".intercalate uses})"
   | none =>
-    match (tpSer ci.levelParams e).run "" with
+    match (tpSer lps e).run "" with
     | .error msg => return .error s!"{msg} unserializable"
     | .ok ((), s) => return .ok s
+
+/-- Type mode: the fingerprint of `ci`'s statement (its TYPE). -/
+def tpFingerprint (env : Environment) (ci : ConstantInfo) : IO (Except String String) :=
+  tpFingerprintExpr env ci.levelParams ci.type
+
+/-- Value mode: the fingerprint of a `def S : Prop := body`'s VALUE, unfolded and serialized exactly as type mode
+treats a theorem's type, with the level parameters numbered by `S`'s own. So `theorem t : S` (type mode, where `S` is
+a non-library definition and unfolds to `body`), `theorem t' : body` and `S` here give the same string. Anything but
+a definition whose type is literally `Prop` is refused: a theorem, axiom, opaque, inductive or a missing value, and a
+definition of any other type (`ℕ`, `ℕ → Prop`, `Type`). -/
+def tpFingerprintValue (env : Environment) (ci : ConstantInfo) : IO (Except String String) := do
+  match ci with
+  | .defnInfo d =>
+    if d.type.consumeMData != .sort .zero then
+      return .error "value-mode-not-prop def (value mode needs a `def … : Prop`; this definition's type is not Prop)"
+    tpFingerprintExpr env ci.levelParams d.value
+  | _ => return .error s!"value-mode-not-a-def {tpKind (some ci)} (value mode needs a `def … : Prop`)"
 """.replace("__CAP__", str(SIZE_CAP))
 
 _CALLBACK = """
 def tpNonce : String := "__NONCE__"
+def tpValueMode : Bool := __VALUE_MODE__
 
 open Lean Meta Elab Term in
 def TelperionReplay.callback : TermElabM Unit := do
@@ -228,11 +255,20 @@ def TelperionReplay.callback : TermElabM Unit := do
     match env.find? t with
     | none => IO.println s!"FP-MISSING {tpNonce} {t}"
     | some ci =>
-      match ← tpFingerprint env ci with
+      match ← (if tpValueMode then tpFingerprintValue env ci else tpFingerprint env ci) with
       | .error why => IO.println s!"FP-REFUSED {tpNonce} {t} {why}"
       | .ok s => IO.println s!"FP-BEGIN {tpNonce} {t}\\n{s}\\nFP-END {tpNonce} {t}"
   IO.println s!"FP-DONE {tpNonce}"
 """
+
+#: ``type``: a constant's TYPE (what a theorem states). ``value``: a ``def … : Prop``'s VALUE (what a statement
+#: definition says), so that a frozen ``def S : Prop`` and an artifact's ``theorem t : S`` can be compared.
+MODES = ("type", "value")
+
+
+def _check_mode(mode: str) -> None:
+    if mode not in MODES:
+        raise ValueError(f"fingerprint mode must be one of {MODES}, not {mode!r}")
 
 
 def _names(names) -> str:
@@ -240,11 +276,13 @@ def _names(names) -> str:
 
 
 def render_fingerprint_callback(targets: list[str], nonce: str,
-                                library_roots: tuple[str, ...] = LIBRARY_ROOTS) -> str:
+                                library_roots: tuple[str, ...] = LIBRARY_ROOTS, mode: str = "type") -> str:
     """The replay callback that prints, per target, one nonce'd ``FP-BEGIN``/``FP-END`` block, ``FP-REFUSED`` or
     ``FP-MISSING``, then ``FP-DONE <nonce>``. Trusted code, elaborated before the replay."""
+    _check_mode(mode)
     return (ROOTS_DEF.replace("__ROOTS__", _names(library_roots)) + HELPERS
-            + _CALLBACK.replace("__NONCE__", nonce).replace("__TARGETS__", _names(targets)))
+            + _CALLBACK.replace("__NONCE__", nonce).replace("__VALUE_MODE__", "true" if mode == "value" else "false")
+            .replace("__TARGETS__", _names(targets)))           # last: a target name is data, never re-scanned
 
 
 def parse_fingerprints(output: str, nonce: str) -> dict[str, str]:
@@ -309,8 +347,9 @@ def _precheck(project: Path, library_roots: tuple[str, ...]) -> None:
 class Fingerprints(dict):
     """target -> sha256 of its serialized statement; ``olean_sha256``/``olean_closure`` bind the replayed closure."""
 
-    def __init__(self, fps=(), olean_sha256=None, olean_closure=(), axioms=None):
+    def __init__(self, fps=(), olean_sha256=None, olean_closure=(), axioms=None, mode="type"):
         super().__init__(fps)
+        self.mode: str = mode
         self.olean_sha256: str | None = olean_sha256
         self.olean_closure: list = [list(e) for e in olean_closure]
         self.axioms: list | None = list(axioms) if axioms is not None else None
@@ -340,10 +379,13 @@ def _compile_body(body: str, module: str, cdir: Path, search: list[str], prefix:
 def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper: list[str] | None, timeout: int,
                  body: str | None = None, trusted: list[str] | None = None, trusted_env: Path | None = None,
                  expect_body_olean: str | None = None, manifest=None, untrusted_paths=(),
-                 elan_home=None, memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB) -> Fingerprints:
+                 elan_home=None, memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB,
+                 mode: str = "type") -> Fingerprints:
     """Compile ``body`` (if given) as a randomly named module in a private temp dir, then replay the untrusted
-    imports (or the body) and fingerprint ``targets`` in the replay callback. ``trusted`` and ``expect_body_olean``
-    override the trusted prefixes given to the script and the expected body olean (tests only)."""
+    imports (or the body) and fingerprint ``targets`` in the replay callback, in ``mode`` (``MODES``). ``trusted``
+    and ``expect_body_olean`` override the trusted prefixes given to the script and the expected body olean (tests
+    only)."""
+    _check_mode(mode)
     project = Path(project)
     _precheck(project, LIBRARY_ROOTS)
     pinned = pinned_env(trusted_env, elan_home)
@@ -367,7 +409,7 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
             f = resolve_olean(search, m)
             (trusted_imps if f and under_prefix(f, pinned.prefixes) else replayed).append(m)
         nonce = secrets.token_hex(16)                           # only now: the body compile cannot have seen it
-        r = lean_replay.run_replay(replayed, render_fingerprint_callback(targets, nonce), project=None,
+        r = lean_replay.run_replay(replayed, render_fingerprint_callback(targets, nonce, mode=mode), project=None,
                                    untrusted_paths=untrusted, trusted_imports=["Mathlib", *trusted_imps],
                                    trusted_env=pinned.root, manifest=manifest, elan_home=elan_home, wrapper=prefix,
                                    timeout=timeout, allow_sorry=True, expect_oleans=expect,
@@ -389,7 +431,7 @@ def _fingerprint(project: Path, imports: list[str], targets: list[str], wrapper:
     absent = [t for t, k in keys.items() if k not in fps]
     if absent:
         raise ValueError(f"no fingerprint printed for {', '.join(absent)}:\n{r.output[-4000:]}")
-    return Fingerprints({t: fps[k] for t, k in keys.items()}, r.olean_sha256, r.olean_closure, r.axioms)
+    return Fingerprints({t: fps[k] for t, k in keys.items()}, r.olean_sha256, r.olean_closure, r.axioms, mode)
 
 
 def _escaped(target: str) -> str:
@@ -402,19 +444,23 @@ def _escaped(target: str) -> str:
 
 def run_fingerprint(project: Path, imports: list[str], targets: list[str], wrapper: list[str] | None = None,
                     timeout: int = 1800, trusted_env: Path | None = None, manifest=None,
-                    untrusted_paths=(), memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB) -> Fingerprints:
+                    untrusted_paths=(), memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB,
+                    mode: str = "type") -> Fingerprints:
     """Fingerprint ``targets`` declared in ``imports`` (modules built in ``project``'s ``.lake/build/lib/lean`` or in
     ``untrusted_paths``; an import that resolves to a trusted .olean is imported instead), trusting only the pinned
-    ``trusted_env`` (default ``$TELPERION_LEAN_ENV``)."""
+    ``trusted_env`` (default ``$TELPERION_LEAN_ENV``). ``mode`` is ``"type"`` (a theorem's statement) or ``"value"``
+    (a ``def … : Prop``'s value; anything else is refused)."""
     return _fingerprint(project, imports, targets, wrapper, timeout, trusted_env=trusted_env, manifest=manifest,
-                        untrusted_paths=untrusted_paths, memory_mb=memory_mb)
+                        untrusted_paths=untrusted_paths, memory_mb=memory_mb, mode=mode)
 
 
 def run_fingerprint_on_text(project: Path, text: str, target: str, wrapper: list[str] | None = None,
                             timeout: int = 1800, trusted_env: Path | None = None, manifest=None,
-                            memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB) -> str:
-    """Fingerprint ``target`` as declared in the Lean source ``text``, compiled as its own module and then replayed.
+                            memory_mb: int | None = lean_replay.DEFAULT_MEMORY_MB, mode: str = "type",
+                            untrusted_paths=()) -> str:
+    """Fingerprint ``target`` as declared in the Lean source ``text``, compiled as its own module and then replayed,
+    in ``mode`` (see ``run_fingerprint``). ``untrusted_paths`` are olean dirs the text may import from (replayed).
 
     NOT A SANDBOX: compiling ``text`` runs its code with the caller's permissions (see the module docstring)."""
     return _fingerprint(project, [], [target], wrapper, timeout, body=text, trusted_env=trusted_env,
-                        manifest=manifest, memory_mb=memory_mb)[target]
+                        manifest=manifest, memory_mb=memory_mb, mode=mode, untrusted_paths=untrusted_paths)[target]

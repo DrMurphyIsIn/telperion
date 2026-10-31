@@ -30,6 +30,47 @@ def test_render_mentions_targets_and_roots():
     assert "`foo" in s and "deltaExpand" in s and "`Mathlib" in s
 
 
+# Step 5 Task 6: value mode, a `def … : Prop`'s VALUE.
+def test_render_selects_the_mode():
+    assert "def tpValueMode : Bool := false" in render_fingerprint_callback(["foo"], N)
+    assert "def tpValueMode : Bool := true" in render_fingerprint_callback(["foo"], N, mode="value")
+    assert "tpFingerprintValue env ci" in render_fingerprint_callback(["foo"], N, mode="value")
+
+
+def test_render_refuses_an_unknown_mode():
+    with pytest.raises(ValueError, match="mode"):
+        render_fingerprint_callback(["foo"], N, mode="values")
+
+
+def test_render_target_named_like_a_placeholder_stays_data():
+    # targets are substituted LAST, so a name spelled like a placeholder is never re-scanned
+    s = render_fingerprint_callback(["__VALUE_MODE__", "__NONCE__"], N, mode="value")
+    assert "[`__VALUE_MODE__, `__NONCE__]" in s and "def tpValueMode : Bool := true" in s
+
+
+def test_unknown_mode_refused_before_any_lean(tmp_path):
+    from telperion.checks.fingerprint import _fingerprint
+    with pytest.raises(ValueError, match="mode must be one of"):
+        _fingerprint(tmp_path, [], ["t"], None, 1, body="theorem t : True := trivial\n", mode="both")
+
+
+def test_cli_mode_value_reaches_the_run_and_the_json(monkeypatch, capsys):
+    import json
+    from telperion import cli
+    from telperion.checks import fingerprint as fp_
+    seen = {}
+
+    def ok(project, imports, targets, wrapper=None, timeout=0, mode="type", **kw):
+        seen["mode"] = mode
+        return fp_.Fingerprints({t: "a" * 64 for t in targets}, "b" * 64, [], [], mode)
+    monkeypatch.setattr(fp_, "run_fingerprint", ok)
+    assert cli.main(["fingerprint", "--project", ".", "--import", "M", "--target", "S", "--mode", "value",
+                     "--json"]) == 0
+    assert seen["mode"] == "value" and json.loads(capsys.readouterr().out)["mode"] == "value"
+    with pytest.raises(SystemExit):
+        cli.main(["fingerprint", "--project", ".", "--import", "M", "--target", "S", "--mode", "values"])
+
+
 LEAN_ENV = os.environ.get("TELPERION_LEAN_ENV")
 lean = pytest.mark.skipif(not LEAN_ENV, reason="TELPERION_LEAN_ENV not set")
 
@@ -500,7 +541,7 @@ def test_cli_prints_hashes_and_exits_2_on_missing(monkeypatch, capsys):
     from telperion.checks import fingerprint as fp_
     seen = {}
 
-    def ok(project, imports, targets, wrapper=None, timeout=0, trusted_env=None):
+    def ok(project, imports, targets, wrapper=None, timeout=0, trusted_env=None, mode="type"):
         seen["trusted_env"] = trusted_env
         return {t: "a" * 64 for t in targets}
     monkeypatch.setattr(fp_, "run_fingerprint", ok)
@@ -508,7 +549,7 @@ def test_cli_prints_hashes_and_exits_2_on_missing(monkeypatch, capsys):
                      "--trusted-env", "/pinned/env"]) == 0
     assert capsys.readouterr().out == f"foo {'a' * 64}\nbar {'a' * 64}\n" and seen["trusted_env"] == Path("/pinned/env")
 
-    def missing(project, imports, targets, wrapper=None, timeout=0, trusted_env=None):
+    def missing(project, imports, targets, wrapper=None, timeout=0, trusted_env=None, mode="type"):
         raise ValueError("target not found: baz")
     monkeypatch.setattr(fp_, "run_fingerprint", missing)
     assert cli.main(["fingerprint", "--project", ".", "--import", "Mathlib", "--target", "baz",
@@ -544,7 +585,8 @@ def test_cli_json_includes_olean_sha256(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {"fingerprints": {"foo": "a" * 64}, "olean_sha256": "b" * 64,
                                                    "olean_closure": [["M", "olean", "c" * 64]],
                                                    "module": "M", "theorem": "foo", "source_sha256": None,
-                                                   "axioms": ["propext"]}      # final review I3: the replay's axioms
+                                                   "axioms": ["propext"],      # final review I3: the replay's axioms
+                                                   "mode": "type"}             # step 5 Task 6
 
 
 def test_cli_trusted_manifest_build_verify(tmp_path, monkeypatch, capsys):
@@ -626,3 +668,47 @@ def test_evil_module_gives_the_true_hash(tmp_path):                  # MUST-FAIL
     finally:
         import shutil
         shutil.rmtree(lib, ignore_errors=True)
+
+
+# Step 5 Task 6: value mode. One body, every mode-relevant case, two Lean runs (one per mode).
+VALUE_BODY = """import Mathlib
+def S : Prop := ∀ n : ℕ, n + 0 = n
+theorem t : S := fun n => rfl
+theorem t' : ∀ n : ℕ, n + 0 = n := fun n => rfl
+theorem h (n : ℕ) (k : n = 0) : n = n := rfl
+def SU.{u} : Prop := ∀ (α : Sort u) (a : α), a = a
+theorem tu.{v} : SU.{v} := fun _ _ => rfl
+theorem tu'.{w} : ∀ (α : Sort w) (a : α), a = a := fun _ _ => rfl
+theorem tu0 : SU.{0} := fun _ _ => rfl
+"""
+
+
+def _fps(text: str, targets: list, mode: str) -> dict:
+    from telperion.checks.fingerprint import _fingerprint
+    return dict(_fingerprint(Path(LEAN_ENV), [], targets, None, 900, body=text, mode=mode))
+
+
+@lean
+def test_value_mode_equals_type_mode_of_a_theorem_of_it():           # MUST-PASS control (Task 6)
+    value = _fps(VALUE_BODY, ["S", "SU"], "value")
+    typ = _fps(VALUE_BODY, ["t", "t'", "h", "tu", "tu'", "tu0"], "type")
+    # `def S : Prop := body` (value) == `theorem t : S` (type) == `theorem t' : body` (type)
+    assert value["S"] == typ["t"] == typ["t'"]
+    assert typ["h"] != typ["t"]                                     # MUST-FAIL: a helper of another type
+    # universe-polymorphic: `def SU.{u}` against `theorem tu.{v} : SU.{v}` and the inlined `tu'.{w}`, each
+    # numbered by its own level parameters; `SU.{0}` is another statement
+    assert value["SU"] == typ["tu"] == typ["tu'"] != typ["tu0"]
+
+
+@lean
+def test_value_mode_refuses_what_is_not_a_def_of_prop():             # MUST-FAIL control (Task 6)
+    body = ("import Mathlib\ntheorem t : True := trivial\nopaque op : ℕ\ndef N : ℕ := 3\n"
+            "def F (n : ℕ) : Prop := n = n\ndef T : Type := ℕ\n")
+    with pytest.raises(ValueError) as exc:
+        _fps(body, ["t", "op", "N", "F", "T", "propext"], "value")
+    msg = str(exc.value)
+    assert "refused" in msg
+    for target, why in [("t", "value-mode-not-a-def theorem"), ("op", "value-mode-not-a-def opaque"),
+                        ("N", "value-mode-not-prop"), ("F", "value-mode-not-prop"), ("T", "value-mode-not-prop"),
+                        ("propext", "value-mode-not-a-def axiom")]:
+        assert f"{target} {why}" in msg, (target, msg)

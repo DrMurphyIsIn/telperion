@@ -27,6 +27,7 @@ from telperion.missions.process import (  # noqa: E402
     render_audit_file, unfreeze, write_deviations_readback,
 )
 from telperion.cli import main  # noqa: E402
+from test_missions_checks import FROZEN_FP  # noqa: E402  (step 5 Task 6: the frozen statement fingerprints)
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +545,8 @@ def test_post_cutoff_grant_refused_by_tampered_freeze_history(tmp_path):
     write_statement(root, extra, "theorem thm_extra : True", manifest)
 
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
 
     write_statement(root, load_campaign(root).nodes["Extra"],
@@ -572,7 +574,8 @@ def test_post_cutoff_grant_passes_with_clean_committed_freeze(tmp_path):
 
     root = _grant_campaign(tmp_path, created="2026-10-29")
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
     deviations_path(root).write_text(DEVIATIONS_TEMPLATE)  # Step 5 Task 3's ledger gate
     write_deviations_readback(root, identity="auditor@example.com",  # fix round 1's read-back gate
@@ -738,7 +741,8 @@ def _post_cutoff_frozen_grant_campaign(parent: Path, campaign: str = "campaign")
     node = load_node(root / "nodes" / "Demo_ck.toml")
     _with_checks(root, _rec(_art_sha(root, node)))
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
     deviations_path(root).write_text(DEVIATIONS_TEMPLATE)  # Step 5 Task 3's ledger gate
     write_deviations_readback(root, identity="auditor@example.com",  # fix round 1's read-back gate
@@ -1736,7 +1740,8 @@ def test_post_cutoff_grant_requires_ledger(tmp_path):
     node = load_node(root / "nodes" / "Demo_ck.toml")
     _with_checks(root, _rec(_art_sha(root, node)))
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
 
     with pytest.raises(GateError, match="DEVIATIONS.md"):
@@ -1761,7 +1766,8 @@ def test_deviations_symlink_refused_as_clean_problem(tmp_path):
     node = load_node(root / "nodes" / "Demo_ck.toml")
     _with_checks(root, _rec(_art_sha(root, node)))
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
     deviations_path(root).symlink_to("mission.toml")
 
@@ -1780,7 +1786,8 @@ def test_cli_grant_non_utf8_deviations_is_clean_error(tmp_path, capsys):
     node = load_node(root / "nodes" / "Demo_ck.toml")
     _with_checks(root, _rec(_art_sha(root, node)))
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
     deviations_path(root).write_bytes(b"\xff\xfe\xfd")
 
@@ -1878,7 +1885,8 @@ def _ready_for_deviations_readback(tmp_path: Path, *, author=_AUTHOR_UNSET) -> P
         save_node(node, p)
     _with_checks(root, _rec(_art_sha(root, node)))
     _git_init(root)
-    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29",
+           fingerprints=FROZEN_FP)
     _git_commit(root, "initial freeze")
     deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
     return root
@@ -2407,3 +2415,241 @@ def test_symlinked_directory_under_lake_not_reported(tmp_path):
 
     problems = provenance_problems(root)
     assert not any("vendor" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 Task 6: frozen statement fingerprints (FREEZE.toml [fingerprints]) -- recorded by
+# freeze/unfreeze, kept by the same git-history walk as [statements], and read by the gate.
+# ---------------------------------------------------------------------------
+
+FP_A, FP_B, FP_C = "a" * 64, "b" * 64, "c" * 64
+
+
+def _frozen_with_fps(root: Path, fps=None, date: str = "2026-10-29") -> None:
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date=date,
+           fingerprints={"Node_A": FP_A, "Node_B": FP_B} if fps is None else fps)
+    _git_commit(root, "initial freeze")
+
+
+def test_freeze_records_fingerprints_and_frozen_fingerprint_reads_them(tmp_path):
+    from telperion.missions.process import frozen_fingerprint
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    text = freeze_path(root).read_text()
+    assert '[fingerprints]\n"Node_A" = "' + FP_A + '"\n"Node_B" = "' + FP_B + '"' in text
+    doc = _load_freeze_for_test(root)
+    assert doc["fingerprints"] == {"Node_A": FP_A, "Node_B": FP_B}
+    nodes = load_campaign(root).nodes
+    assert frozen_fingerprint(root, nodes["Node_A"]) == FP_A
+    assert freeze_problems(root) == []
+
+
+def test_freeze_without_fingerprints_writes_no_table(tmp_path):
+    from telperion.missions.process import frozen_fingerprint
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    assert "[fingerprints]" not in freeze_path(root).read_text()
+    assert frozen_fingerprint(root, load_campaign(root).nodes["Node_A"]) is None
+
+
+@pytest.mark.parametrize("fps,why", [({"Nope": FP_A}, "no statement file"),
+                                     ({"Node_A": "A" * 64}, "64 lowercase hex"),
+                                     ({"Node_A": "a" * 63}, "64 lowercase hex")])
+def test_freeze_refuses_bad_fingerprints_and_writes_nothing(tmp_path, fps, why):
+    root = tmp_path / "demo"
+    _campaign(root)
+    with pytest.raises(ValueError, match=why):
+        freeze(root, identity="alice@example.com", session="s1", date="2026-10-29", fingerprints=fps)
+    assert not freeze_path(root).exists()
+
+
+def test_unfreeze_records_exactly_the_given_fingerprints(tmp_path):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    doc = unfreeze(root, author="alice@example.com", reason="r", readback_identity="bob@example.com",
+                   date="2026-10-30", fingerprints={"Node_A": FP_C})
+    assert doc["fingerprints"] == {"Node_A": FP_C}                  # never carried forward
+    _git_commit(root, "unfreeze with a new fingerprint")
+    assert freeze_problems(root) == []                              # a version bump may change them
+    doc = unfreeze(root, author="alice@example.com", reason="r2", readback_identity="bob@example.com",
+                   date="2026-10-30")
+    assert "fingerprints" not in _load_freeze_for_test(root) and doc["fingerprints"] == {}
+
+
+def test_freeze_problems_flags_hand_edited_fingerprint_entries(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01",
+           fingerprints={"Node_A": FP_A})
+    _hand_edit_freeze(root, lambda d: d["fingerprints"].update({"Ghost": FP_B, "Node_B": "XYZ"}))
+    problems = freeze_problems(root)
+    assert any("'Ghost', which has no [statements] entry" in p for p in problems), problems
+    assert any("'Node_B' that is not 64 lowercase hex" in p for p in problems), problems
+
+
+def test_freeze_with_a_non_table_fingerprints_is_untrusted(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    freeze_path(root).write_text('fingerprints = "x"\n' + freeze_path(root).read_text())   # a top-level key
+    assert freeze_problems(root) == [
+        "FREEZE.toml has a `fingerprints` that is not a table of string fingerprints; refusing to "
+        "trust it."]
+
+
+@pytest.mark.parametrize("mutate,why", [
+    (lambda d: d["fingerprints"].__setitem__("Node_A", FP_C), "changed or were removed without a version bump"),
+    (lambda d: d["fingerprints"].pop("Node_A"), "changed or were removed without a version bump"),
+])
+def test_freeze_history_fingerprint_change_at_unchanged_version_flagged(tmp_path, mutate, why):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    _hand_edit_freeze(root, mutate)
+    _git_commit(root, "rewrite a frozen fingerprint")
+    problems = freeze_problems(root)
+    assert any("statement fingerprint(s) 'Node_A'" in p and why in p for p in problems), problems
+
+
+def test_freeze_history_fingerprint_added_for_a_frozen_node_flagged(tmp_path):
+    """A fingerprint appearing later, at the same version, for a node frozen earlier: whoever
+    adds it chooses what a later [checks] record must match. Refused, committed or not."""
+    root = tmp_path / "demo"
+    _frozen_with_fps(root, fps={})
+    _hand_edit_freeze(root, lambda d: d.__setitem__("fingerprints", {"Node_A": FP_A}))
+    problems = freeze_problems(root)
+    assert any("'Node_A'" in p and "added for already-frozen node(s)" in p for p in problems), problems
+    _git_commit(root, "add a fingerprint without a version bump")
+    assert any("added for already-frozen node(s)" in p for p in freeze_problems(root))
+
+
+def test_freeze_history_fingerprint_added_with_its_new_node_allowed(tmp_path):
+    """The [statements] rule's exception, mirrored: a node new in the transition may arrive with
+    its fingerprint."""
+    from telperion.missions.process import freeze_history_problems
+    root = tmp_path / "demo"
+    _frozen_with_fps(root, fps={})
+    _hand_edit_freeze(root, lambda d: (d["statements"].__setitem__("Node_C", "0" * 64),
+                                       d.__setitem__("fingerprints", {"Node_C": FP_C})))
+    assert freeze_history_problems(root) == []
+
+
+def test_freeze_history_fingerprints_changed_by_unfreeze_clean(tmp_path):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    unfreeze(root, author="alice@example.com", reason="re-fingerprint", readback_identity="bob@example.com",
+             date="2026-10-30", fingerprints={"Node_A": FP_C, "Node_B": FP_B})
+    _git_commit(root, "unfreeze")
+    assert freeze_problems(root) == []
+
+
+def _stmt_target(tmp_path: Path, body: str):
+    from telperion.missions.process import statement_fingerprint_target
+    root = tmp_path / "demo"
+    manifest = _campaign(root, names=("Node_A",))
+    node = load_campaign(root).nodes["Node_A"]
+    write_statement(root, node, body, manifest)
+    return statement_fingerprint_target(root, load_campaign(root).nodes["Node_A"])
+
+
+@pytest.mark.parametrize("body,want", [
+    ("import Mathlib\n\ntheorem thm_a : 1 + 1 = 2", ("thm_a", "type")),
+    ("lemma thm_a' : True", ("thm_a'", "type")),
+    ("import Mathlib\n\ndef Stmt : Prop := ∀ n : ℕ, n + 0 = n", ("Stmt", "value")),
+    ("def Stmt.{u} : Prop := ∀ (α : Sort u) (a : α), a = a", ("Stmt", "value")),
+    ("noncomputable abbrev Stmt:Prop := True", ("Stmt", "value")),
+    # the LAST declaration, namespace-qualified; comments and strings blanked
+    ("namespace Demo\ndef helper : ℕ := 3\n-- theorem fake : False\ntheorem main : helper = 3 := by sorry\nend Demo",
+     ("Demo.main", "type")),
+    ("namespace Demo\ntheorem main : True := by sorry\nend Demo\ndef S : Prop := True", ("Demo.main", "type")),
+    ("namespace Demo\ntheorem _root_.top : True", ("top", "type")),
+    ('def s : String := "\ntheorem fake : False := sorry\n"\ndef S : Prop := True', ("S", "value")),
+    # a theorem wins over a later def: the frozen fingerprint is of the theorem the gate's needle is read from
+    ("def S : Prop := True\ntheorem main : S := by sorry\ndef after : Prop := False", ("main", "type")),
+    ("theorem poly.{u} (α : Sort u) (a : α) : a = a", ("poly", "type")),
+])
+def test_statement_fingerprint_target(tmp_path, body, want):
+    assert _stmt_target(tmp_path, body) == want
+
+
+@pytest.mark.parametrize("body,why", [
+    ("private theorem t : True", "private"),
+    ("def «my stmt» : Prop := True", "not a plain dotted Lean identifier"),
+    ("example : True", "declares no theorem, lemma, def or abbrev"),
+    # the gate's statement_decl does not blank strings, so it would read `fake` as the statement
+    ('theorem real : True\ndef s : String := " theorem fake : False"', "ambiguous statement file"),
+])
+def test_statement_fingerprint_target_refusals(tmp_path, body, why):
+    with pytest.raises(ValueError, match=why):
+        _stmt_target(tmp_path, body)
+
+
+def test_compute_statement_fingerprints_calls_lean_per_node_in_its_mode(tmp_path):
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    manifest = _campaign(root)
+    write_statement(root, load_campaign(root).nodes["Node_B"], "def StmtB : Prop := True", manifest)
+    calls = []
+
+    def fake(project, text, target, *, mode, **kw):
+        calls.append((project, target, mode, "DO NOT EDIT" in text, kw))
+        return {"thm_Node_A": FP_A, "StmtB": FP_B}[target]
+
+    out = compute_statement_fingerprints(root, fingerprint_text=fake, timeout=7)
+    assert out == {"Node_A": FP_A, "Node_B": FP_B}
+    assert calls == [(root / "lean", "thm_Node_A", "type", True, {"timeout": 7}),
+                     (root / "lean", "StmtB", "value", True, {"timeout": 7})]
+
+    def broken(project, text, target, *, mode, **kw):
+        raise ValueError("refused (...): StmtB value-mode-not-prop")
+    with pytest.raises(ValueError, match="node 'Node_A': statement fingerprint of 'thm_Node_A' \\(type mode\\)"):
+        compute_statement_fingerprints(root, fingerprint_text=broken)
+
+
+def test_cli_freeze_and_unfreeze_with_fingerprints(tmp_path, capsys, monkeypatch):
+    from telperion.missions import process as proc
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo")
+    seen = []
+
+    def fake(root, **kw):
+        seen.append(kw)
+        return {"Node_A": FP_A, "Node_B": FP_B}
+    monkeypatch.setattr(proc, "compute_statement_fingerprints", fake)
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", "alice@example.com",
+               "--session", "s1", "--fingerprints", "--trusted-env", "/pinned", "--timeout", "9", "--wrapper", ""])
+    out = capsys.readouterr().out
+    assert rc == 0 and "2 statement fingerprint(s) recorded" in out, out
+    assert seen == [{"trusted_env": Path("/pinned"), "wrapper": [], "timeout": 9}]
+    assert _load_freeze_for_test(mroot / "demo")["fingerprints"] == {"Node_A": FP_A, "Node_B": FP_B}
+
+    # an already-frozen campaign is refused before any Lean runs
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", "alice@example.com",
+               "--session", "s1", "--fingerprints"])
+    assert rc == 1 and "already frozen" in capsys.readouterr().out and len(seen) == 1
+
+    # so is a self-read-back unfreeze
+    rc = main(["mission", "--missions-root", str(mroot), "unfreeze", "demo", "--author", "alice@example.com",
+               "--reason", "r", "--readback-identity", "Alice@example.com", "--fingerprints"])
+    assert rc == 1 and "readback_identity" in capsys.readouterr().out and len(seen) == 1
+
+    rc = main(["mission", "--missions-root", str(mroot), "unfreeze", "demo", "--author", "alice@example.com",
+               "--reason", "r", "--readback-identity", "bob@example.com", "--fingerprints"])
+    assert rc == 0 and "2 statement fingerprint(s) recorded" in capsys.readouterr().out and len(seen) == 2
+    assert _load_freeze_for_test(mroot / "demo")["fingerprints"] == {"Node_A": FP_A, "Node_B": FP_B}
+
+
+def test_cli_freeze_fingerprint_failure_writes_nothing(tmp_path, capsys, monkeypatch):
+    from telperion.missions import process as proc
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo")
+
+    def fail(root, **kw):
+        raise ValueError("node 'Node_B': statement fingerprint of 'thm_Node_B' (type mode) failed: refused")
+    monkeypatch.setattr(proc, "compute_statement_fingerprints", fail)
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", "alice@example.com",
+               "--session", "s1", "--fingerprints"])
+    assert rc == 1 and "Node_B" in capsys.readouterr().out
+    assert not freeze_path(mroot / "demo").exists()

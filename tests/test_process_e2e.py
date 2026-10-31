@@ -6,11 +6,20 @@ by the time this task runs the grant gate checks FOUR post-cutoff preconditions 
 order (`verify.grant_status`): `[checks]`, the node's `[author]` block, the campaign
 freeze, then the deviation ledger -- in that order (`[checks]` is checked FIRST, ahead of
 the freeze and the ledger). This test demonstrates each gate's refusal in the order the
-gate actually raises them, which is: `[checks]` missing, then "frozen", then the missing
-DEVIATIONS read-back, then success -- not the order the original task brief sketched
-(which predates the gate's final shape). Every failure message asserted below is the
-EXACT wording the gate raises, read straight out of `verify.py`/`process.py`, not just a
+gate actually raises them -- not the order the original task brief sketched (which
+predates the gate's final shape). Every failure message asserted below is the EXACT
+wording the gate raises, read straight out of `verify.py`/`process.py`, not just a
 non-zero exit code.
+
+Step 5 Task 6 (Ruling 2's extension): a post-cutoff `[checks]` record is tied to the
+node's FROZEN statement fingerprint, so `checks-record` now refuses until the campaign is
+frozen with one ("statement fingerprint not frozen"), and refuses a fingerprint that
+differs from it. The order is therefore: `[checks]` missing; `checks-record` refused (not
+frozen); freeze (no fingerprints) and `checks-record` still refused; the fingerprint
+injected into FREEZE.toml through its own writer (standing for `mission freeze
+--fingerprints`, which needs Lean -- tests/test_statement_tie_lean.py runs the real one);
+a mismatched fingerprint refused; `checks-record` passes; the grant refused on the
+freeze that is not in git yet; then on the missing DEVIATIONS read-back; then success.
 
 No Lean toolchain is needed: every artifact here is plain text and the gate's checks on
 it (`checks_problem`, `freeze_problems`, `deviations_grant_problem`, ...) never shell out
@@ -34,7 +43,8 @@ from telperion.missions.statements import write_statement  # noqa: E402
 # (tmp_path/"missions"/"demo"/"proof"/"Demo_ck.lean") -- which is exactly the layout this
 # test builds below, campaign "demo", node "Demo.ck" / slug "Demo_ck", artifact
 # "proof/Demo_ck.lean". `_record` runs `mission checks-record` through the CLI.
-from test_missions_checks import _record, _write_jsons  # noqa: E402
+from test_missions_checks import FPRINT, _record, _write_jsons  # noqa: E402
+from telperion.missions.process import _load_freeze_safe, _write_freeze  # noqa: E402
 
 #: Identities and sessions, each pair distinct from every other pair in both fields
 #: (provenance.independence_of/`_auditor_matches` compare BOTH the session and the
@@ -67,6 +77,16 @@ def _git_commit(croot: Path, message: str) -> None:
          "commit", "-q", "-m", message],
         check=True, capture_output=True,
     )
+
+
+def _inject_frozen_fingerprint(croot: Path, slug: str, fp: str) -> None:
+    """Record *fp* as *slug*'s frozen statement fingerprint, through FREEZE.toml's own reader and
+    writer, BEFORE the freeze state is committed: what `mission freeze --fingerprints` (or
+    `unfreeze --fingerprints`) writes when Lean computes *fp*."""
+    doc, problem = _load_freeze_safe(croot)
+    assert doc is not None and problem is None, problem
+    doc["fingerprints"] = {**(doc.get("fingerprints") or {}), slug: fp}
+    _write_freeze(croot, doc)
 
 
 def test_statement_first_process_e2e(tmp_path, capsys):
@@ -132,35 +152,66 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     assert rc == 1 and "[checks]" in out, out
     assert node().status == "open"
 
-    # Write a passing `[checks]` record, through the exact helper the step-4 tests use
+    # The checks' JSONs, through the exact helper the step-4 tests use
     # (tests/test_missions_checks.py's `_write_jsons`/`_record`): a PROBE_ONLY verdict
     # with a reviewer `signoff:` note, tied to the node's registered theorem
     # (`lemma_ck`), the artifact's current source_sha256, and a clean replay axiom list.
     paths = _write_jsons(tmp_path, verdict="PROBE_ONLY")
-    assert _record(mroot, paths, "--note", "signoff: bb reviewed the hypotheses") == 0
-    assert node().checks is not None and node().checks.probe_verdict == "PROBE_ONLY"
+    signoff = ("--note", "signoff: bb reviewed the hypotheses")
 
     # ------------------------------------------------------------------
-    # Step 3: a grant attempt now fails with "frozen" -- the campaign has no FREEZE.toml.
+    # Step 3 (step 5 Task 6): `checks-record` is refused -- the campaign is not frozen,
+    # so there is no frozen statement fingerprint to tie the checked theorem to.
+    # ------------------------------------------------------------------
+    assert _record(mroot, paths, *signoff) == 2
+    err = capsys.readouterr().err
+    assert "statement fingerprint not frozen (no FREEZE.toml)" in err, err
+    assert node().checks is None
+
+    # `mission freeze` -- it also writes the DEVIATIONS.md template (`none`). Without
+    # --fingerprints it records no statement fingerprint, and says what that means.
+    rc = cli("freeze", "demo", "--identity", GATE[0], "--session", GATE[1])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "no statement fingerprints recorded" in out, out
+    assert (croot / "FREEZE.toml").exists()
+    assert (croot / "DEVIATIONS.md").exists()
+    assert _record(mroot, paths, *signoff) == 2
+    err = capsys.readouterr().err
+    assert "statement fingerprint not frozen (FREEZE.toml has no [fingerprints] entry for 'Demo_ck')" in err, err
+
+    # The frozen statement fingerprint, injected through FREEZE.toml's own writer before the
+    # first commit (what `mission freeze --fingerprints` records, computed with Lean). A
+    # fingerprint JSON whose theorem states something else is refused (the semantic tie);
+    # the matching one passes.
+    _inject_frozen_fingerprint(croot, "Demo_ck", FPRINT)
+    other = _write_jsons(tmp_path, verdict="PROBE_ONLY", fingerprints={"lemma_ck": "a" * 64})
+    assert _record(mroot, other, *signoff) == 2
+    err = capsys.readouterr().err
+    assert "statement fingerprint mismatch" in err, err
+    assert node().checks is None
+    paths = _write_jsons(tmp_path, verdict="PROBE_ONLY")
+    assert _record(mroot, paths, *signoff) == 0
+    assert node().checks is not None and node().checks.probe_verdict == "PROBE_ONLY"
+    assert node().checks.statement_fingerprint == FPRINT
+
+    # ------------------------------------------------------------------
+    # Step 4: a grant attempt now fails on the freeze -- FREEZE.toml exists but is not in
+    # git yet, so its history (Rulings 5-9) cannot be verified.
     # ------------------------------------------------------------------
     rc = grant()
     out = capsys.readouterr().out
-    assert rc == 1 and "frozen" in out, out
+    assert rc == 1 and "freeze has unresolved problem(s)" in out and "freeze history unavailable" in out, out
     assert node().status == "open"
 
-    # `mission freeze` -- it also writes the DEVIATIONS.md template (`none`) -- then
-    # COMMIT it: post-cutoff freezes must be verifiable against git history (Rulings 5-9),
-    # so the tmp campaign becomes a git repo of its own, never touching the ambient
-    # global git config.
-    rc = cli("freeze", "demo", "--identity", GATE[0], "--session", GATE[1])
-    assert rc == 0
-    assert (croot / "FREEZE.toml").exists()
-    assert (croot / "DEVIATIONS.md").exists()
+    # COMMIT the freeze: post-cutoff freezes must be verifiable against git history
+    # (Rulings 5-9), so the tmp campaign becomes a git repo of its own, never touching the
+    # ambient global git config.
     subprocess.run(["git", "-C", str(croot), "init", "-q"], check=True, capture_output=True)
     _git_commit(croot, "freeze demo campaign")
 
     # ------------------------------------------------------------------
-    # Step 4: a grant attempt now fails on the missing DEVIATIONS read-back -- the ledger
+    # Step 5: a grant attempt now fails on the missing DEVIATIONS read-back -- the ledger
     # exists (the `none` template) and parses, but nobody has read it back yet.
     # ------------------------------------------------------------------
     rc = grant()
@@ -177,7 +228,7 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     assert (croot / "DEVIATIONS.readback.toml").exists()
 
     # ------------------------------------------------------------------
-    # Step 5: the grant now succeeds.
+    # Step 6: the grant now succeeds.
     # ------------------------------------------------------------------
     rc = grant()
     out = capsys.readouterr().out
@@ -186,7 +237,7 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     assert node().grant is not None and node().grant.checks_required is True
 
     # ------------------------------------------------------------------
-    # Step 6: edit the statement and commit it -- `verify` must fail with "statement
+    # Step 7: edit the statement and commit it -- `verify` must fail with "statement
     # drift" (the campaign-wide freeze check, `process.freeze_problems`: the current
     # statement hash no longer matches the one FREEZE.toml recorded).
     #
@@ -205,22 +256,35 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     assert "statement drift" in out, out
 
     # ------------------------------------------------------------------
-    # Step 7: `mission unfreeze`, with a read-back identity distinct from its author,
-    # then commit -- `verify` now passes the freeze check (the drifted hash is gone;
-    # FREEZE.toml records the current statement and an `[[unfreeze]]` entry for it).
+    # Step 8: `mission unfreeze`, with a read-back identity distinct from its author --
+    # `verify` now passes the freeze check (the drifted hash is gone; FREEZE.toml records
+    # the current statement and an `[[unfreeze]]` entry for it). Without --fingerprints
+    # the new version records no statement fingerprint (none is carried forward), so the
+    # proved node's [checks] stop passing in `verify` until one is recorded for this
+    # version; it is injected before the unfreeze is committed, as `unfreeze
+    # --fingerprints` would write it.
     # ------------------------------------------------------------------
     rc = cli("unfreeze", "demo", "--author", UNFREEZE_OWNER,
              "--reason", "statement annotated after the freeze",
              "--readback-identity", UNFREEZE_READBACK)
-    assert rc == 0
+    out = capsys.readouterr().out
+    assert rc == 0 and "no statement fingerprints recorded" in out, out
+
+    rc = cli("verify", "demo")
+    out = capsys.readouterr().out
+    assert "statement drift" not in out, out
+    assert rc == 1 and "statement fingerprint not frozen" in out, out
+
+    _inject_frozen_fingerprint(croot, "Demo_ck", FPRINT)
     _git_commit(croot, "unfreeze after the statement annotation")
 
     rc = cli("verify", "demo")
     out = capsys.readouterr().out
     assert "statement drift" not in out, out
+    assert "statement fingerprint" not in out, out
 
     # ------------------------------------------------------------------
-    # Step 8: the provenance lint passes on the campaign (no ported files here, so
+    # Step 9: the provenance lint passes on the campaign (no ported files here, so
     # nothing requires a provenance header), and `mission audit-file` writes Audit.lean.
     # ------------------------------------------------------------------
     rc = main(["lint-provenance", str(croot)])

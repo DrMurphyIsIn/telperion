@@ -39,8 +39,8 @@ A claim reserves a node for one session for a TTL (default: 24 hours). Claims ar
 | `comparator-record <slug> --run-id N --theorem T` | Record a PASSING `missions-comparator` run on a proved node (sidecar; never a status change) |
 | `checks-record <slug> --campaign C --probe-json F --closure-json F --fingerprint-json F` | Record the negation probe, closure audit and statement fingerprint for the node's artifact, read from the checks' own JSON output. A node created on or after 2026-10-28 (or with no `created` date) cannot be granted `proved` without a passing record; see [Checks before grant](#checks-before-grant) |
 | `ci-record <slug> --workflow W --job J --run-id N` | Record a run of a named non-required CI job on the node's CURRENT artifact (head sha + conclusion from `gh run view`, or `--head-sha`/`--conclusion`). A node with `requires_ci_job = "W:J"` cannot be granted, and fails `verify` once proved, without a `success` record on the current artifact digest |
-| `freeze <campaign>` | Record a campaign-level statement freeze (`FREEZE.toml`) and write the `DEVIATIONS.md` template if there isn't one yet. A post-cutoff node cannot be granted until its campaign is frozen AND the freeze is committed; see [Statement-first process](#statement-first-process) |
-| `unfreeze <campaign> --author A --reason R --readback-identity I` | Bump a frozen campaign's hashes to the current statements, with a recorded, independently read-back reason (`--readback-identity` must differ from `--author`) |
+| `freeze <campaign> [--fingerprints]` | Record a campaign-level statement freeze (`FREEZE.toml`) and write the `DEVIATIONS.md` template if there isn't one yet. With `--fingerprints` (needs the pinned Lean env) it also records every node's statement fingerprint, which a post-cutoff `[checks]` record must match. A post-cutoff node cannot be granted until its campaign is frozen AND the freeze is committed; see [Statement-first process](#statement-first-process) |
+| `unfreeze <campaign> --author A --reason R --readback-identity I [--fingerprints]` | Bump a frozen campaign's hashes to the current statements, with a recorded, independently read-back reason (`--readback-identity` must differ from `--author`); `--fingerprints` re-records the statement fingerprints for the new version (none are carried forward) |
 | `deviations-readback <campaign>` | Record an independent read-back of `DEVIATIONS.md` (the ledger's sha256 plus who read it and when); required, from an identity/session distinct from a node's own `[author]`, before that node can be granted post-cutoff |
 | `audit-file <campaign>` | Write `<campaign>/lean/Audit.lean`: one `import` per proved node's artifact module, then one `#print axioms <theorem>` per proved node |
 | `audit-crosscheck --print-axioms-out F --closure-json F` | Cross-check a captured `lake env lean Audit.lean` transcript against a closure audit's per-target axiom lists |
@@ -325,9 +325,13 @@ exited cleanly). Anything else, including no verdict at all, is recorded as FAIL
   record on every `proved` node the rule covers, so a node that was granted and then had its artifact edited fails
   verify (Ruling 11). The rule applies to `proved` only: a refutation does not prove the statement, so the probe and the
   fingerprint have nothing to say about it.
-- **`GATE_VERSION` is `2026-10-29.1`.** Every grant records the gate version that granted it. This version is the first
-  that requires `[checks]`; grants made under an earlier version keep the version they were granted with, so you can
-  always tell which rules a grant was held to.
+- **`GATE_VERSION` is `2026-10-31.1`.** Every grant records the gate version that granted it, and grants made under
+  an earlier version keep the version they were granted with, so you can always tell which rules a grant was held to.
+  `2026-10-29.1` was the first that required `[checks]`. `2026-10-31.1` is step 5's single bump (Ruling 16), and for
+  the same post-cutoff nodes it adds everything in [Statement-first process](#statement-first-process): a committed
+  campaign freeze with a clean history, a `DEVIATIONS.md` ledger read back by someone other than the node's author, an
+  `[author]` block, an isolated (kernel-replayed) closure audit, and a `[checks]` fingerprint equal to the node's
+  frozen statement fingerprint. `checks_required = true` in `[grant]` means exactly what it did before.
 
 ### Running the checks, step by step
 
@@ -363,7 +367,10 @@ declaring theorem `Demo.my_thm`.
    Exit 0 when every target was fingerprinted, 2 otherwise. With `--json`, stdout is
    `{"fingerprints": {...}, "olean_sha256": ..., "olean_closure": [...], "module": ..., "theorem": ...,
    "source_sha256": ..., "axioms": [...]}` (plus `source_mtime`, `olean_mtime` and `stale` as for the probe), or
-   `{"error": ...}`. Here `--file` is only hashed, into `source_sha256`. It takes the same
+   `{"error": ...}`, and it also carries `"mode"`. Here `--file` is only hashed, into `source_sha256`. The default
+   `--mode type` hashes the target's TYPE, which is what you want for the artifact's theorem; `--mode value` hashes a
+   `def … : Prop`'s VALUE instead (what the freeze records for a statement written as a definition), and
+   `checks-record` refuses a value-mode JSON. It takes the same
    `--trusted-env`, `--trusted-manifest`, `--olean-dir`, `--memory-mb`, `--wrapper` and `--timeout` options. The project
    (outside `.lake` and `.git`) must contain no symlink and no directory or `.lean` file named after a library root.
 3. **Closure audit**, on the same build. Note that `--json` takes a FILE here, unlike the other two:
@@ -388,8 +395,9 @@ declaring theorem `Demo.my_thm`.
    verdicts from them guards against mistakes, not against an operator who writes them by hand. It refuses (exit 2,
    nothing written) on an unreadable or malformed JSON, an unknown probe verdict, a missing or mismatched
    `olean_sha256` (the closure JSON's included), a closure JSON that is not isolated for a node that needs checks, a
-   target that is not the node's registered theorem, a fingerprinted theorem that the closure audit
-   did not audit, a probe of a different theorem, a `source_sha256` that is absent or not the artifact's current
+   target that is not the node's registered theorem, a fingerprint that is not the node's frozen statement
+   fingerprint (or no frozen fingerprint at all) for a node that needs checks, a value-mode fingerprint JSON, a
+   fingerprinted theorem that the closure audit did not audit, a probe of a different theorem, a `source_sha256` that is absent or not the artifact's current
    sha256, a stale build, missing, unequal or non-standard replay `axioms`, a missing artifact, or a node that is
    `deprecated` or `refuted`. Otherwise it writes
    the record and exits 0 if it passes, 1 if it does not (VACUOUS, or PROBE_ONLY with no sign-off, for example). It
@@ -424,11 +432,17 @@ These are real, and you should know them before you rely on a `[checks]` record.
   the `.olean` reader (the two bullets above). `audit-closure --legacy-import` keeps the old, NOT isolated path; its
   output is refused for nodes created on or after the cutoff. The replay axiom cross-check (the probe's and the
   fingerprint's `axioms` must be standard and include the closure audit's) stays as a second line.
-- **The theorem tie is syntactic.** `checks-record` and the gate find the node's own theorem with the gate's syntactic
-  resolver (`guard_anchors.resolve_theorem`), so an honest artifact cannot pass a helper lemma's checks. An
-  adversarial artifact still has known ways to fool that resolver, all of which predate step 4: `s!`-interpolated
-  strings, quotes inside `«»` names, declaration text inside `«»`, `#exit`, and `(command| ...)` quotations. The sound
-  fix, tying the target's statement fingerprint to the node's statement file, is step-5 work.
+- **The theorem tie is semantic for frozen campaigns (frozen statement fingerprint); the name resolver remains a
+  readable cross-check.** For a node that needs checks, `checks-record` and the gate require the checked theorem's
+  fingerprint to EQUAL the node's frozen statement fingerprint, the one `mission freeze --fingerprints` recorded in
+  `FREEZE.toml`, and they refuse a node that has none ("statement fingerprint not frozen"). The gate's syntactic
+  resolver (`guard_anchors.resolve_theorem`) still has to name the theorem too, and it still has known blind spots,
+  all of which predate step 4: `s!`-interpolated strings, quotes inside `«»` names, declaration text inside `«»`,
+  `#exit`, and `(command| ...)` quotations. Each of them makes the resolver name a decoy, and the decoy's statement
+  is not the frozen one, so its fingerprint differs and the record is refused (`tests/test_statement_tie_lean.py`
+  builds all five). What is left is what the fingerprint itself cannot see: two declarations that state the same
+  thing are interchangeable here, by design, and the frozen fingerprint is only as trustworthy as whoever froze the
+  campaign (see [Statement fingerprints in the freeze](#statement-fingerprints-in-the-freeze)).
 - **The node file can be hand-edited.** The cutoff keys on `created`, and nothing guards that field while a node is
   still unproved: a node back-dated to before 2026-10-28 before its first grant is granted without checks. Deleting
   `checks_required` from a `[grant]` together with back-dating `created` is the same class of hand edit, with the same
@@ -482,8 +496,9 @@ provenance lint simply have nothing to say about it, and `mission provenance-rep
 than silently passing it off as compliant.
 
 The whole shape, end to end, on one node: `add` (writes `[author]`) → `audit` (independent read-back, draft → open) →
-`link` (attach the artifact) → `checks-record` (the step-4 checks) → `freeze` the campaign and commit it → write and
-read back `DEVIATIONS.md` → `grant`. `tests/test_process_e2e.py` runs exactly this on a synthetic campaign and is the
+`freeze --fingerprints` the campaign and commit it → `link` (attach the artifact) → `checks-record` (the step-4
+checks, which for a post-cutoff node must match the frozen statement fingerprint, so the freeze comes first) → write
+and read back `DEVIATIONS.md` → `grant`. `tests/test_process_e2e.py` runs exactly this on a synthetic campaign and is the
 easiest way to see every message the gate actually raises, in the order it actually raises them.
 
 ### Freezing a campaign, and committing it
@@ -528,6 +543,59 @@ above — and that read-back identity has nothing to do with any node's own `[au
 reporting the old drift: the working tree has the new hash, but the history walk a post-cutoff grant and `verify` both
 run sees only what git has recorded.
 
+### Statement fingerprints in the freeze
+
+A statement hash says the statement FILE has not changed. It says nothing about which declaration in an artifact
+proves that statement, and up to step 4 the gate answered that question by reading the artifact's text
+(`guard_anchors.resolve_theorem`), which an adversarial artifact can fool. So the freeze can also record what each
+statement SAYS, as Lean elaborates it: its fingerprint (the same sha256 `telperion fingerprint` computes, see
+[The four checks](#the-four-checks)).
+
+```bash
+telperion mission freeze demo --fingerprints        # needs the pinned env: $TELPERION_LEAN_ENV, its trusted manifest
+git -C missions/demo add FREEZE.toml DEVIATIONS.md
+git -C missions/demo commit -m "freeze demo campaign"
+```
+
+That adds a `[fingerprints]` table beside `[statements]`, one `"<node>" = "<fingerprint>"` line per node. We chose an
+explicit flag over "whenever a Lean env happens to be configured": a freeze is a one-way record, and what it contains
+should not depend on which machine ran it. Without the flag nothing is recorded, the command says so, and every
+post-cutoff `[checks]` record is refused until a freeze records them.
+
+How each fingerprint is computed:
+- The statement file is compiled as its own module with the pinned `lean` (no lake) and replayed into the pinned env
+  like every other check. If it declares a `theorem` or `lemma` (`theorem foo : P := by sorry`, the form statement
+  files have had so far), the last one is fingerprinted by its TYPE, that is `P`. It must be the same theorem the
+  gate reads as the node's statement (`guard_anchors.statement_decl`), or the freeze refuses the file as ambiguous.
+  With no theorem at all, the last `def` or `abbrev` (`def S : Prop := P`, the form spec 7 describes) is fingerprinted
+  by its VALUE, which is `P` again. In both cases every non-library definition is unfolded first, so `theorem t : S`,
+  `theorem t : P` and `S` itself all get the same fingerprint, universe-polymorphic statements included (each
+  numbered by its own level parameters). The rest of the gate (the containment match and the name resolver) still
+  expects a theorem-form statement, so a def-form node can be frozen this way but not yet granted.
+- Imports of other campaign modules resolve from `<campaign>/lean/.lake/build/lib/lean`, or from `--olean-dir`.
+- A statement that cannot be fingerprinted fails the whole freeze, and nothing is written: a local inductive or
+  structure left after unfolding, a `sorry` in the statement itself, a `def` whose type is not `Prop`, a `private`
+  declaration, or a `«»`-quoted name.
+- It compiles the statement files, so it is NOT A SANDBOX either; they are the campaign's own files, but the same
+  caution applies.
+
+Then, for every node that needs checks, `checks-record` and the gate require the checked theorem's fingerprint (type
+mode) to equal the frozen one. A mismatch reads "statement fingerprint mismatch"; no frozen fingerprint reads
+"statement fingerprint not frozen". `mission verify` re-checks it on every proved node, so moving a node's frozen
+fingerprint later (an unfreeze that records a different one) makes its `[checks]` stop passing.
+
+The history walk covers `[fingerprints]` with the same rules as `[statements]`: at an unchanged version a fingerprint
+may not change or disappear, and one may be added only together with its node (a fingerprint appearing later for a
+node that was already frozen is refused, because whoever adds it chooses what a later `[checks]` record must match).
+Changing any of them takes a version bump, so `unfreeze --fingerprints`. `unfreeze` never carries fingerprints
+forward: a fingerprint also depends on the definitions a statement imports, which the statement hash does not cover,
+so each version records its own or none.
+
+What this does not protect: the grant cannot recompute a frozen fingerprint without Lean, so it takes FREEZE.toml's
+word for it. Its trust is the freeze's trust: whoever froze the campaign, and the committed history after that. A
+fingerprint also depends on the pinned env, since library constants are hashed by name: after a Mathlib bump, re-run
+the checks and `unfreeze --fingerprints`.
+
 ### The deviation ledger, and its read-back
 
 `DEVIATIONS.md`, at the campaign root, records every place a formal statement departs from whatever informal source
@@ -554,7 +622,9 @@ it, not just the one you happen to be granting next.
 step — it is still the only verb that flips `open` to `proved`/`refuted`, and it is still a syntactic, local gate, not
 a Lean rebuild. What changed is how many preconditions a post-cutoff `proved` grant now carries, and the order the
 gate actually checks them in (`verify.grant_status`): the usual open/proof-link/artifact/statement-match checks first,
-then — once the gate already knows the grant would be `proved` — in this order: a passing, current `[checks]` record;
+then — once the gate already knows the grant would be `proved` — in this order: a passing, current `[checks]` record
+(whose fingerprint must be the node's frozen statement fingerprint, so a campaign that is not frozen with
+fingerprints is refused here, before the freeze check itself);
 an `[author]` block (refused outright if absent, since a post-cutoff node always gets one from `add`, so a missing one
 can only mean a hand edit); the campaign's freeze (with the full git-history walk); the deviation ledger and its
 read-back. Each layer's refusal names itself plainly — `[checks]`, "frozen" / FREEZE.toml, `DEVIATIONS.readback.toml`

@@ -1558,10 +1558,37 @@ def cmd_mission_grant(args) -> int:
     return 0
 
 
+def _statement_fingerprints_for(args, camp_root):
+    """Step 5 Task 6: `--fingerprints` -> `process.compute_statement_fingerprints` with the Lean
+    options given (trusted env, manifest, olean dirs, memory, wrapper, timeout); None without it."""
+    import shlex
+
+    from .missions.process import compute_statement_fingerprints
+
+    if not getattr(args, "fingerprints", False):
+        return None
+    kw = _trust_kwargs(args)
+    if getattr(args, "wrapper", None) is not None:
+        kw["wrapper"] = shlex.split(args.wrapper)
+    if getattr(args, "timeout", None) is not None:
+        kw["timeout"] = args.timeout
+    return compute_statement_fingerprints(camp_root, **kw)
+
+
+def _print_fingerprints_note(campaign: str, doc: dict) -> None:
+    n = len(doc.get("fingerprints") or {})
+    if n:
+        print(f"{campaign}: {n} statement fingerprint(s) recorded in [fingerprints]")
+    else:
+        print(f"{campaign}: no statement fingerprints recorded (no --fingerprints); `mission checks-record` "
+              "and the gate refuse every post-cutoff node until a freeze records them (statement "
+              "fingerprint not frozen)")
+
+
 def cmd_mission_freeze(args) -> int:
     from datetime import date as _date
 
-    from .missions.process import freeze, write_deviations_template_if_missing
+    from .missions.process import freeze, freeze_path, write_deviations_template_if_missing
     from .missions.provenance import ProvenanceError, git_identity, session_id
     from .missions.schema import SchemaError
 
@@ -1573,14 +1600,18 @@ def cmd_mission_freeze(args) -> int:
     identity = (getattr(args, "identity", None) or "").strip() or git_identity(camp_root)
     session = session_id(getattr(args, "session", None))
     try:
+        already = freeze_path(camp_root).exists() or freeze_path(camp_root).is_symlink()
+        # an already-frozen campaign is refused by `freeze` itself; do not run Lean first
+        fps = None if already else _statement_fingerprints_for(args, camp_root)
         doc = freeze(camp_root, identity=identity, session=session,
-                    date=_date.today().isoformat())
+                    date=_date.today().isoformat(), fingerprints=fps)
     except (ProvenanceError, SchemaError, ValueError) as exc:
         print(str(exc))
         return 1
 
     print(f"{args.campaign}: frozen {doc['frozen']} by {doc['identity']} "
           f"(session {doc['session']}); {len(doc['statements'])} statement(s) recorded")
+    _print_fingerprints_note(args.campaign, doc)
     print(f"commit {args.campaign}/FREEZE.toml now: an uncommitted freeze has no git "
           "history to verify version bumps and unfreeze entries against, and "
           "`mission verify` reports that as a problem once this campaign is post-cutoff.")
@@ -1623,7 +1654,7 @@ def cmd_mission_deviations_readback(args) -> int:
 def cmd_mission_unfreeze(args) -> int:
     from datetime import date as _date
 
-    from .missions.process import unfreeze
+    from .missions.process import freeze_path, unfreeze
     from .missions.schema import SchemaError
 
     camp_root = _missions_root(args) / args.campaign
@@ -1632,9 +1663,13 @@ def cmd_mission_unfreeze(args) -> int:
         return 1
 
     try:
+        # what `unfreeze` refuses anyway (no freeze, a self-read-back) is refused before any Lean runs
+        doomed = (not freeze_path(camp_root).exists()
+                  or args.readback_identity.strip().lower() == args.author.strip().lower())
         doc = unfreeze(camp_root, author=args.author, reason=args.reason,
                        readback_identity=args.readback_identity,
-                       date=_date.today().isoformat())
+                       date=_date.today().isoformat(),
+                       fingerprints=None if doomed else _statement_fingerprints_for(args, camp_root))
     except (SchemaError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -1642,6 +1677,7 @@ def cmd_mission_unfreeze(args) -> int:
     print(f"{args.campaign}: unfrozen to version {doc['version']} by {args.author} "
           f"(read back by {args.readback_identity}); {len(doc['statements'])} statement(s) "
           "re-recorded")
+    _print_fingerprints_note(args.campaign, doc)
     return 0
 
 
@@ -2064,7 +2100,11 @@ def cmd_mission_checks_record(args) -> int:
     artifact's CURRENT sha256. A mismatch or an absent value is refused (final review I2).
     Final review I1: the target is the node's registered theorem
     (`guard_anchors.resolve_theorem`, the declaration the grant gate matches); a `--target`
-    naming anything else is refused. Final review I3 (kept as a second line after step 5): the
+    naming anything else is refused. That name tie is syntactic and stays as a readable
+    cross-check; step 5 Task 6 adds the SEMANTIC tie: for a node that needs checks, the
+    target's fingerprint (type mode; a `"mode": "value"` JSON is refused) must equal the node's
+    frozen statement fingerprint (FREEZE.toml `[fingerprints]`), and a node with none frozen is
+    refused ("statement fingerprint not frozen"). Final review I3 (kept as a second line after step 5): the
     probe and fingerprint JSONs' replay `axioms` lists must agree, be a subset of CLEAN_AXIOMS
     and include the closure audit's axioms for the target; the list is recorded.
 
@@ -2074,7 +2114,8 @@ def cmd_mission_checks_record(args) -> int:
     Refuses (exit 2, no record): a malformed or unreadable JSON, an unknown probe verdict, a
     missing or mismatched `olean_sha256`, an ambiguous or unaudited fingerprint target, no
     proof link or a missing artifact, status `deprecated` or `refuted`, a non-isolated closure
-    JSON for a node that needs checks, a closure `olean_sha256` that is not the probe's. Otherwise writes the
+    JSON for a node that needs checks, a closure `olean_sha256` that is not the probe's, a fingerprint that is not
+    the frozen statement fingerprint (or none frozen) for a node that needs checks. Otherwise writes the
     record and exits 0 when it passes `provenance.checks_problem`, 1 when it does not (e.g.
     VACUOUS, or PROBE_ONLY without a `signoff:` in --note). Never changes the node's status.
     """
@@ -2179,6 +2220,17 @@ def cmd_mission_checks_record(args) -> int:
     if target not in fps:
         return refuse(f"the fingerprint JSON has no target {target!r}, the node's registered theorem "
                       f"(has {sorted(fps)})")
+    # Step 5 Task 6: the SEMANTIC tie. The checked theorem's statement (a TYPE-mode fingerprint; a
+    # value-mode one would be of a definition, not of what a theorem proves) must be the node's
+    # frozen statement fingerprint, whatever name the resolver above read out of the artifact.
+    if fp.get("mode", "type") != "type":
+        return refuse(f"the fingerprint JSON is a {fp.get('mode')!r}-mode fingerprint; the checked theorem "
+                      "is fingerprinted in type mode (`telperion fingerprint` without --mode value)")
+    if checks_required(node):
+        from .missions.process import statement_fingerprint_problem
+        fp_problem = statement_fingerprint_problem(camp_root, node, str(fps[target]))
+        if fp_problem:
+            return refuse(fp_problem)
     audited = [t.get("name") for t in closure["targets"] if isinstance(t, dict)]
     if target not in audited:
         return refuse(f"the closure audit's targets {audited} do not include {target!r}")
@@ -3104,9 +3156,11 @@ def cmd_fingerprint(args) -> int:
     """Statement fingerprint of each target (checks/fingerprint.py): one `<target> <sha256>` line per target, or with
     --json {"fingerprints": {...}, "olean_sha256": <closure digest>, "olean_closure": [[module, part, sha256], ...],
     "module": ..., "theorem": ..., "source_sha256": <sha256 of --file, or null>} (module and theorem are null unless
-    there is exactly one --import and one --target). The optional --file is only hashed, into source_sha256, which
-    `mission checks-record` compares with the node's artifact. The modules are KERNEL-REPLAYED into the pinned
-    trusted env, never imported.
+    there is exactly one --import and one --target), plus "axioms" (the replay's) and "mode". The optional --file is
+    only hashed, into source_sha256, which `mission checks-record` compares with the node's artifact. The modules are
+    KERNEL-REPLAYED into the pinned trusted env, never imported. --mode value fingerprints a `def … : Prop`'s VALUE
+    (what `mission freeze --fingerprints` records for a definition-form statement); `checks-record` takes only a
+    type-mode JSON, the theorem's statement.
 
     Exit 0 when every target was fingerprinted, 2 otherwise (a missing target, a refusal, a Lean error, no trusted
     env or manifest). Trust comes from --trusted-env (default $TELPERION_LEAN_ENV), never from --project."""
@@ -3122,7 +3176,7 @@ def cmd_fingerprint(args) -> int:
                              "rebuild the module, then re-run the fingerprint")
         fps = fingerprint.run_fingerprint(Path(args.project), args.imports, args.targets,
                                           wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
-                                          timeout=args.timeout, **_trust_kwargs(args))
+                                          timeout=args.timeout, mode=args.mode, **_trust_kwargs(args))
     except ValueError as exc:
         if args.json:
             print(_json.dumps({"error": str(exc)}))
@@ -3137,7 +3191,7 @@ def cmd_fingerprint(args) -> int:
                            "module": args.imports[0] if len(args.imports) == 1 else None,
                            "theorem": args.targets[0] if len(args.targets) == 1 else None,
                            "source_sha256": _source_sha256(args.file),
-                           "axioms": getattr(fps, "axioms", None), **stale}))
+                           "axioms": getattr(fps, "axioms", None), "mode": args.mode, **stale}))
         return 0
     for t in args.targets:
         print(f"{t} {fps[t]}")
@@ -3162,6 +3216,29 @@ def cmd_trusted_manifest(args) -> int:
         print(f"trusted-manifest: {exc}")
         return 2
     return 0
+
+
+def _add_statement_fingerprint_args(p) -> None:
+    """`mission freeze`/`unfreeze --fingerprints` and the Lean options it runs with (step 5 Task 6)."""
+    p.add_argument("--fingerprints", action="store_true",
+                   help="also record every node's statement fingerprint in FREEZE.toml [fingerprints], computed "
+                        "with Lean from its statement file (needs the pinned env); without it none are recorded "
+                        "and post-cutoff [checks] are refused ('statement fingerprint not frozen'). NOT a sandbox: "
+                        "it compiles the statement files")
+    p.add_argument("--trusted-env", default=None, metavar="DIR",
+                   help="with --fingerprints: the pinned Lean env (default: $TELPERION_LEAN_ENV)")
+    p.add_argument("--trusted-manifest", default=None, metavar="FILE",
+                   help="with --fingerprints: the trusted env's sha256 manifest (default as for `telperion "
+                        "fingerprint`)")
+    p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
+                   help="with --fingerprints: an untrusted olean dir a statement may import from, besides "
+                        "<campaign>/lean/.lake/build/lib/lean (repeatable)")
+    p.add_argument("--memory-mb", type=int, default=None, metavar="MB",
+                   help="with --fingerprints: Lean's --memory bound (default 8192; 0 for none)")
+    p.add_argument("--wrapper", default=None,
+                   help="with --fingerprints: command prefix before the pinned `lean` (default: leanlock with one "
+                        "slot when ~/hodge-engine/leanlock.sh exists; '' for none)")
+    p.add_argument("--timeout", type=int, default=None, help="with --fingerprints: seconds for each Lean run")
 
 
 def main(argv=None) -> int:
@@ -3641,6 +3718,7 @@ def main(argv=None) -> int:
     p.add_argument("--identity", default=None,
                    help="freezing identity (default: `git config user.email`); recorded in "
                         "FREEZE.toml")
+    _add_statement_fingerprint_args(p)
     p.set_defaults(mission_fn=cmd_mission_freeze)
 
     # deviations-readback CAMPAIGN [--session S] [--identity I] [--date D]
@@ -3672,6 +3750,7 @@ def main(argv=None) -> int:
     p.add_argument("--readback-identity", required=True, dest="readback_identity",
                    help="an INDEPENDENT identity (not --author) that read back the new "
                         "hashes before this was recorded; refused if it equals --author")
+    _add_statement_fingerprint_args(p)
     p.set_defaults(mission_fn=cmd_mission_unfreeze)
 
     # audit-file CAMPAIGN
@@ -3898,6 +3977,9 @@ def main(argv=None) -> int:
     p.add_argument("--file", default=None,
                    help="the theorem's source file; only hashed, into the --json `source_sha256` that "
                         "`mission checks-record` compares with the node's artifact")
+    p.add_argument("--mode", choices=("type", "value"), default="type",
+                   help="type (default): the target's TYPE, a theorem's statement; value: a `def … : Prop`'s VALUE, "
+                        "which equals type mode of a `theorem t : S` (anything else is refused)")
     p.add_argument("--wrapper", default=None,
                    help="command prefix before the pinned `lean` (default: leanlock with one slot "
                         "when ~/hodge-engine/leanlock.sh exists; '' for none)")
