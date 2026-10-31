@@ -2534,6 +2534,7 @@ def test_freeze_history_fingerprint_added_with_its_new_node_allowed(tmp_path):
     _frozen_with_fps(root, fps={})
     _hand_edit_freeze(root, lambda d: (d["statements"].__setitem__("Node_C", "0" * 64),
                                        d.__setitem__("fingerprints", {"Node_C": FP_C})))
+    _git_commit(root, "add Node_C with its fingerprint")      # final review I2: uncommitted changes never count
     assert freeze_history_problems(root) == []
 
 
@@ -3038,3 +3039,278 @@ def test_freeze_refuses_an_import_through_a_symlinked_directory(tmp_path):
     with pytest.raises(ValueError, match="symlinked directory"):
         freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
     assert not freeze_path(root).exists()
+
+
+# ---------------------------------------------------------------------------
+# Step 5 final-review fix round (Ruling 21)
+# ---------------------------------------------------------------------------
+
+def _granted_post_cutoff(tmp_path: Path) -> Path:
+    """A post-cutoff Demo_ck granted `proved` through the gate (frozen, committed, ledger read back)."""
+    from test_missions_checks import _proved
+    root = _proved(tmp_path, created="2026-10-29")
+    _git_commit(root, "the grant")
+    return root
+
+
+def _verify_errors(root: Path) -> list:
+    """verify's errors, less the fixtures' known legacy one (their statement has no `import` line)."""
+    from telperion.missions.verify import verify_campaign
+    return [e for e in verify_campaign(root).errors if not e.startswith("Statement import header")]
+
+
+def test_verify_green_after_a_post_cutoff_grant(tmp_path):
+    assert _verify_errors(_granted_post_cutoff(tmp_path)) == []
+
+
+@pytest.mark.parametrize("damage,why", [
+    (lambda r: deviations_readback_path(r).unlink(), "DEVIATIONS.readback.toml"),
+    (lambda r: deviations_path(r).write_text("garbage line\n"), "DEVIATIONS.md"),
+])
+def test_verify_rechecks_the_deviation_ledger_after_the_grant(tmp_path, damage, why):
+    """I1, the review's repro: deleting the read-back, or corrupting the ledger, after the grant turns verify red."""
+    root = _granted_post_cutoff(tmp_path)
+    damage(root)
+    _git_commit(root, "damage the ledger after the grant", add=("-A",))
+    errs = _verify_errors(root)
+    assert any("post-cutoff" in e and why in e for e in errs), errs
+
+
+def test_verify_rechecks_author_after_the_grant(tmp_path):
+    """I1: dropping [author] from a granted post-cutoff node turns verify red."""
+    root = _granted_post_cutoff(tmp_path)
+    p = root / "nodes" / "Demo_ck.toml"
+    save_node(dataclasses.replace(load_node(p), author=None), p)
+    _git_commit(root, "drop [author]")
+    errs = _verify_errors(root)
+    assert any("has no [author] block" in e for e in errs), errs
+
+
+def test_uncommitted_unfreeze_blocks_the_grant_and_verify(tmp_path):
+    """I2: an unfreeze left uncommitted counts for nothing, at the grant and in verify."""
+    root = _post_cutoff_frozen_grant_campaign(tmp_path)
+    unfreeze(root, author="alice@example.com", reason="r", readback_identity="bob@example.com",
+             date="2026-10-30", fingerprints=FROZEN_FP)
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    assert "FREEZE.toml has uncommitted changes" in freeze_grant_problem(root, node)
+    with pytest.raises(GateError, match="uncommitted changes"):
+        grant_status(load_campaign(root), "Demo_ck", identity="gate@test", session="gate-session")
+    assert any("uncommitted changes" in p for p in freeze_problems(root))
+    _git_commit(root, "commit the unfreeze")
+    assert grant_status(load_campaign(root), "Demo_ck", identity="gate@test",
+                        session="gate-session").status == "proved"
+
+
+def test_uncommitted_change_not_flagged_for_a_pre_process_campaign(tmp_path):
+    root = tmp_path / "demo"
+    _campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    _git_commit(root, "freeze")
+    unfreeze(root, author="alice@example.com", reason="r", readback_identity="bob@example.com", date="2026-10-02")
+    assert not any("uncommitted" in p for p in freeze_problems(root))
+
+
+# I3: `freeze --add`.
+def _add_node(root: Path, name: str = "Node_C", stmt: str = "theorem thm_Node_C : 7 = 7") -> None:
+    manifest = load_campaign(root).manifest
+    node = Node(name=name, title=f"title of {name}", kind="lemma", status="draft", depends_on=(),
+                statement_module=f"Statements.{name}")
+    save_node(node, root / "nodes" / f"{name}.toml")
+    write_statement(root, node, stmt, manifest)
+
+
+def test_freeze_add_records_a_new_node_at_the_same_version(tmp_path):
+    from telperion.missions.process import freeze_add
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    before = _load_freeze_for_test(root)
+    _add_node(root)
+    _git_commit(root, "add Node_C")
+    assert any("'Node_C' has a statement file but is not recorded" in p for p in freeze_problems(root))
+    doc = freeze_add(root, fingerprints=_fps({"Node_C": FP_C}))
+    assert doc["added"] == ["Node_C"] and doc["version"] == before["version"] == 1
+    after = _load_freeze_for_test(root)
+    # nothing already recorded changed; the node, its fingerprint arrived together
+    for key in ("version", "frozen", "identity", "session", "fingerprints_env"):
+        assert after[key] == before[key]
+    assert {k: v for k, v in after["statements"].items() if k != "Node_C"} == before["statements"]
+    assert after["fingerprints"] == {**before["fingerprints"], "Node_C": FP_C}
+    _git_commit(root, "freeze --add Node_C")
+    assert freeze_problems(root) == []                         # the history walk accepts exactly this
+
+
+def test_freeze_add_with_a_new_project_import(tmp_path):
+    from telperion.missions.process import freeze_add
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "freeze")
+    (root / "lean" / "Statements" / "Other.lean").write_text("def seven : Nat := 7\n")
+    _add_node(root, stmt="import Statements.Other\ntheorem thm_Node_C : seven = 7")
+    freeze_add(root)
+    _git_commit(root, "freeze --add")
+    assert set(_load_freeze_for_test(root)["imports"]) == {"Statements.Defs", "Statements.Other"}
+    assert freeze_problems(root) == []
+
+
+@pytest.mark.parametrize("setup,why", [
+    (lambda r: None, "no node has been added since the freeze"),
+    (lambda r: write_statement(r, load_campaign(r).nodes["Node_A"], "theorem thm_Node_A : 5 = 5",
+                               load_campaign(r).manifest), "statement drift on Node_A"),
+])
+def test_freeze_add_refusals(tmp_path, setup, why):
+    from telperion.missions.process import freeze_add
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    setup(root)
+    with pytest.raises(ValueError, match=why):
+        freeze_add(root)
+
+
+def test_freeze_add_refuses_import_drift_and_another_env(tmp_path):
+    from telperion.missions.process import freeze_add
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01", fingerprints=_fps({"Node_A": FP_A}))
+    _add_node(root)
+    with pytest.raises(ValueError, match="another trusted env|recorded ones under"):
+        freeze_add(root, fingerprints=_fps({"Node_C": FP_C}, env="8" * 64))
+    (root / "lean" / "Statements" / "Defs.lean").write_text("def bound : Nat := 6\n")
+    with pytest.raises(ValueError, match="import drift on Statements.Defs"):
+        freeze_add(root)
+
+
+def test_cli_freeze_add_and_the_mission_add_hint(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo")
+    assert main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", "a@x",
+                 "--session", "s1"]) == 0
+    capsys.readouterr()
+    rc = main(["mission", "--missions-root", str(mroot), "add", "demo", "Node.C", "--title", "late", "--kind",
+               "lemma", "--statement", "theorem late : True", "--identity", "a@x", "--session", "s2"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "telperion mission freeze demo --add" in out, out
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--add"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "recorded 1 new node(s) at version 1: Node_C" in out, out
+    assert main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--add"]) == 1
+
+
+# I4: the module-system import forms.
+def test_import_lines_reads_every_import_form():
+    from telperion.missions.process import _import_lines
+    text = ("module\n\npublic import Demo.More\nimport Demo.Other\nimport all Demo.Priv\npublic meta import Demo.Meta\n"
+            "meta import Demo.M2\n-- import Demo.Commented\n/- import Demo.Block -/\n")
+    assert _import_lines(text) == ["Demo.More", "Demo.Other", "Demo.Priv", "Demo.Meta", "Demo.M2"]
+
+
+def test_public_import_of_a_project_module_lands_in_imports(tmp_path):
+    root = tmp_path / "demo"
+    _defs_campaign(root, defs="module\n\npublic import Statements.More\n\npublic def bound : Nat := 5\n",
+                   extra="module\n\npublic def other : Nat := 1\n")
+    doc = freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    assert set(doc["imports"]) == {"Statements.Defs", "Statements.More"}
+
+
+# M1: one predicate; `frozen` is an ISO date.
+def test_back_dated_freeze_does_not_switch_off_the_provenance_lint(tmp_path):
+    """The review's repro: a hand-written FREEZE.toml with an early `frozen`, a PROVED post-cutoff node, and an
+    unheadered ported file: verify still runs the lint."""
+    from test_missions_checks import _proved
+    root = _proved(tmp_path, created="2026-10-29")
+    _hand_edit_freeze(root, lambda d: d.__setitem__("frozen", "2026-01-01"))
+    (root / "lean" / "Ported.lean").write_text("-- ported from upstream\ntheorem p : True := trivial\n")
+    from telperion.missions.process import campaign_requires_process
+    assert campaign_requires_process(root)
+    assert any("Ported.lean" in e for e in _verify_errors(root))
+
+
+@pytest.mark.parametrize("frozen", ["", "2026-13-01", "2026-10-01junk", "yesterday"])
+def test_freeze_frozen_must_be_an_iso_date(tmp_path, frozen):
+    root = tmp_path / "demo"
+    _campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    _hand_edit_freeze(root, lambda d: d.__setitem__("frozen", frozen))
+    assert freeze_problems(root) == [
+        f"FREEZE.toml has a `frozen` that is not an ISO date ({frozen!r}); refusing to trust it."]
+
+
+# M2: no traceback from the freeze verbs.
+def test_cli_freeze_with_a_directory_statement_is_a_clean_error(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo", names=("Node_A",))
+    sp = mroot / "demo" / "lean" / "Statements" / "Node_A.lean"
+    sp.unlink()
+    sp.mkdir()
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", "a@x", "--session", "s1"])
+    out = capsys.readouterr().out
+    assert rc == 2 and "freeze refused: IsADirectoryError" in out, out
+
+
+# M3: who froze it is immutable.
+@pytest.mark.parametrize("key", ["identity", "session"])
+def test_freeze_history_identity_and_session_are_immutable(tmp_path, key):
+    root = tmp_path / "demo"
+    _frozen_with_fps(root)
+    _hand_edit_freeze(root, lambda d: d.__setitem__(key, "someone-else"))
+    _git_commit(root, f"rewrite {key}")
+    assert any(f"the freeze's `{key}` changed" in p for p in freeze_problems(root))
+
+
+# M4: audit-file never writes through a symlink.
+def test_cli_audit_file_refuses_a_symlinked_audit_lean(tmp_path, capsys):
+    mroot = tmp_path / "missions"
+    _campaign(mroot / "demo")
+    target = tmp_path / "elsewhere.lean"
+    target.write_text("keep me\n")
+    (mroot / "demo" / "lean" / "Audit.lean").symlink_to(target)
+    rc = main(["mission", "--missions-root", str(mroot), "audit-file", "demo"])
+    assert rc == 1 and "symlink" in capsys.readouterr().out
+    assert target.read_text() == "keep me\n"
+
+
+# M5: a ported file in build/ or _build/ is linted.
+@pytest.mark.parametrize("d", ["build", "_build"])
+def test_provenance_lint_walks_build_dirs(tmp_path, d):
+    from telperion.missions.process import provenance_problems
+    root = tmp_path / "demo"
+    _campaign(root)
+    (root / d).mkdir()
+    (root / d / "Hidden.lean").write_text("-- ported from upstream\ntheorem h : True := trivial\n")
+    assert any("Hidden.lean" in p for p in provenance_problems(root))
+
+
+# M6: the read-back date.
+@pytest.mark.parametrize("date,why", [("2026-13-01", "not a calendar date"), ("someday", "not a calendar date"),
+                                      ("2999-01-01", "in the future")])
+def test_deviations_readback_date_must_be_a_real_past_date(tmp_path, date, why):
+    root = tmp_path / "demo"
+    _campaign(root)
+    deviations_path(root).write_text(DEVIATIONS_TEMPLATE)
+    with pytest.raises(ValueError, match=why):
+        write_deviations_readback(root, identity="a@x", session="s", date=date)
+    assert not deviations_readback_path(root).exists()
+
+
+# M11: imported project modules must be built, and not stale, for `--fingerprints`.
+def test_compute_refuses_an_unbuilt_or_stale_project_import(tmp_path):
+    import os
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    with pytest.raises(ValueError, match="has no built .olean.*build the statement package first"):
+        compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest))
+    built = tmp_path / "oleans" / "Statements"
+    built.mkdir(parents=True)
+    (built / "Defs.olean").write_bytes(b"olean")
+    src = root / "lean" / "Statements" / "Defs.lean"
+    os.utime(built / "Defs.olean", (1_000_000, 1_000_000))
+    with pytest.raises(ValueError, match="stale build"):
+        compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest),
+                                       untrusted_paths=[tmp_path / "oleans"])
+    os.utime(src, (1_000, 1_000))
+    out = compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest),
+                                         untrusted_paths=[tmp_path / "oleans"])
+    assert list(out) == ["Node_A"]

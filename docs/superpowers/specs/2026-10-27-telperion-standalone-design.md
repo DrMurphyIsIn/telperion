@@ -309,8 +309,12 @@ and the declaration range Lean recorded for it (read as data from the compiled o
 declaration's line. Every imported project module is recorded, by source sha256, in `[imports]`. **Trust (Task 6 fix
 round 3, Ruling 20):** the freeze fingerprints exactly what Lean elaborates; these checks stop accidental and casual
 mismatches between the statement text and that elaboration. The statement layer (the statement file and the project
-modules it imports) is trusted read-back content, because compiling it runs code; a campaign from an untrusted author
-must be frozen inside the sandbox. `fingerprints_env` records the trusted env digest the fingerprints were computed under (machine-independent
+modules it imports) is trusted content, because compiling it runs code; the operator and the node's independent reader
+are expected to have read it. That is not yet a record (step 5 final review I6): the node `[readback]` approves the
+statement text and carries no digest, the first freeze has no separate read-back, and `[imports]` and `[fingerprints]`
+are bound to no auditor; a `FREEZE.readback.toml` is a tracked follow-up. A campaign from an untrusted author must be
+frozen inside the sandbox. A node added after the freeze is recorded at the same version with `mission freeze --add`,
+and an uncommitted change to FREEZE.toml counts for nothing. `fingerprints_env` records the trusted env digest the fingerprints were computed under (machine-independent
 within a platform), which the fingerprint JSON at `checks-record` must match, and the `frozen` date never changes. CI's
 "fails if the file changes" is `mission verify`'s walk of FREEZE.toml's git history: at an unchanged version neither
 table may change, except for nodes added with it; any other change needs a version bump with an `[[unfreeze]]` entry

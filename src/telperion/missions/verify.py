@@ -31,7 +31,7 @@ from .coverage import (
     islands_with_lean,
 )
 from .process import (
-    campaign_is_post_cutoff,
+    campaign_requires_process,
     deviations_grant_problem,
     freeze_grant_problem,
     freeze_problems,
@@ -862,6 +862,15 @@ def verify_campaign(
             if ck:
                 errors.append(f"Node {sl!r}: status is 'proved' but [checks] are required "
                               f"(created {node.created or '(empty)'}, cutoff {CHECKS_CUTOFF}): {ck}")
+            # Step 5 final review I1: re-check post-grant what the grant checked, as for
+            # [checks]: the deviation ledger, its read-back and independence, and [author]
+            # (without which the read-back independence checks are silently skipped).
+            if node.author is None:
+                errors.append(f"Node {sl!r}: status is 'proved' (post-cutoff) but it has no "
+                              "[author] block, so its read-back's independence cannot be checked.")
+            dv = deviations_grant_problem(root, node)
+            if dv:
+                errors.append(f"Node {sl!r}: status is 'proved' (post-cutoff) but {dv}")
 
         # 2c. Closure flag coherence: compare STORED flag vs freshly computed
         if node.proof.via == "reduction":
@@ -950,12 +959,11 @@ def verify_campaign(
     errors.extend(freeze_problems(root))
 
     # 4c. Provenance-header lint (step 5 Task 4, spec 7.4): every ported file names its
-    # source repository, file and commit. Scoped to a POST-CUTOFF campaign only -- read
-    # through `campaign_is_post_cutoff`, never FREEZE.toml directly -- the same
-    # predicate `freeze_grant_problem`/`deviations_grant_problem` gate on, so a legacy
-    # campaign frozen before the cutoff is not retroactively held to a requirement that
-    # did not exist when its files were ported.
-    if campaign_is_post_cutoff(root):
+    # source repository, file and commit. Scoped by the one "this campaign is under the
+    # process" predicate (`campaign_requires_process`, final review M1): FREEZE.toml's
+    # `frozen` date is on or after the cutoff, or a post-cutoff node is proved -- the same
+    # predicate the freeze history walk uses.
+    if campaign_requires_process(root, campaign):
         errors.extend(provenance_problems(root))
 
     # 5. Attempts ledger (if it exists)

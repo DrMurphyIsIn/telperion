@@ -19,7 +19,10 @@ frozen); freeze (no fingerprints) and `checks-record` still refused; the fingerp
 injected into FREEZE.toml through its own writer (standing for `mission freeze
 --fingerprints`, which needs Lean -- tests/test_statement_tie_lean.py runs the real one);
 a mismatched fingerprint refused; `checks-record` passes; the grant refused on the
-freeze that is not in git yet; then on the missing DEVIATIONS read-back; then success.
+freeze that is not in git yet; a node added after the freeze and recorded with `freeze
+--add`; the grant refused on the missing DEVIATIONS read-back; then success. It ends (final
+review M7) on a green `verify`, after the statement edit, the unfreeze, a re-audit and a
+re-grant.
 
 No Lean toolchain is needed: every artifact here is plain text and the gate's checks on
 it (`checks_problem`, `freeze_problems`, `deviations_grant_problem`, ...) never shell out
@@ -211,6 +214,23 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     subprocess.run(["git", "-C", str(croot), "init", "-q"], check=True, capture_output=True)
     _git_commit(croot, "freeze demo campaign")
 
+    # Final review I3: a second node, added AFTER the freeze. `mission add` says the campaign is
+    # frozen; until `freeze --add` records it (at the unchanged version), the freeze check
+    # reports it and blocks every post-cutoff grant in the campaign.
+    rc = cli("add", "demo", "Demo.two", "--title", "a node added after the freeze", "--kind", "lemma",
+             "--statement", "import Mathlib\n\ntheorem lemma_two : 2 + 2 = 4",
+             "--identity", AUTHOR[0], "--session", AUTHOR[1])
+    out = capsys.readouterr().out
+    assert rc == 0 and "freeze demo --add" in out, out
+    _git_commit(croot, "add Demo.two")
+    rc = grant()
+    out = capsys.readouterr().out
+    assert rc == 1 and "'Demo_two' has a statement file but is not recorded" in out, out
+    rc = cli("freeze", "demo", "--add")
+    out = capsys.readouterr().out
+    assert rc == 0 and "recorded 1 new node(s) at version 1: Demo_two" in out, out
+    _git_commit(croot, "freeze --add Demo.two")
+
     # ------------------------------------------------------------------
     # Step 5: a grant attempt now fails on the missing DEVIATIONS read-back -- the ledger
     # exists (the `none` template) and parses, but nobody has read it back yet.
@@ -275,6 +295,8 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "statement drift" not in out, out
     assert rc == 1 and "statement fingerprint not frozen" in out, out
+    # final review I2: an uncommitted unfreeze counts for nothing
+    assert "FREEZE.toml has uncommitted changes" in out, out
 
     _inject_frozen_fingerprint(croot, "Demo_ck", FPRINT)
     _git_commit(croot, "unfreeze after the statement annotation")
@@ -293,7 +315,32 @@ def test_statement_first_process_e2e(tmp_path, capsys):
     assert rc == 0 and "OK" in out, out
 
     rc = cli("audit-file", "demo")
+    out = capsys.readouterr().out
     assert rc == 0
     audit_path = croot / "lean" / "Audit.lean"
     assert audit_path.exists()
     assert "#print axioms lemma_ck" in audit_path.read_text()
+    assert "audit-closure --project" in out and "--target lemma_ck" in out, out     # final review I5
+
+    # ------------------------------------------------------------------
+    # Step 10 (final review M7): close the loop. The statement changed after the grant, so
+    # `verify` reports the grant's statement digest as stale until the node is re-granted.
+    # There is no verb that reopens a proved node; it is set back to `draft` through the
+    # schema, the way the campaign was scaffolded above. Then an independent re-audit, a
+    # re-grant through the gate, and `verify` is green.
+    # ------------------------------------------------------------------
+    rc = cli("verify", "demo")
+    out = capsys.readouterr().out
+    assert rc == 1 and "statement file has changed since the gate granted this node" in out, out
+    import dataclasses
+    from telperion.missions.schema import save_node
+    save_node(dataclasses.replace(node(), status="draft"), croot / "nodes" / "Demo_ck.toml")
+    rc = cli("audit", "Demo_ck", "--campaign", "demo", "--text", READBACK_TEXT,
+             "--identity", AUDITOR[0], "--session", AUDITOR[1])
+    assert rc == 0 and node().status == "open"
+    rc = grant()
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    rc = cli("verify", "demo")
+    out = capsys.readouterr().out
+    assert rc == 0, out

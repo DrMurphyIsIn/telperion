@@ -939,7 +939,9 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       history (`process.freeze_history_problems`) is what protects it once frozen. The frozen
       fingerprint is exactly what Lean elaborated from the statement layer (the statement file
       and the project modules it imports, recorded in FREEZE.toml `[imports]`); that layer is
-      trusted read-back content, since compiling it runs code (Ruling 20). The freeze's
+      trusted content, since compiling it runs code (Ruling 20); the operator and the node's
+      reader are expected to have read it, but no record yet binds that reading to the frozen
+      hashes (the node `[readback]` approves the text only; a FREEZE read-back is a follow-up). The freeze's
       grammar, declaration-range and accounted-for checks stop accidental and casual mismatches
       between its text and what Lean elaborates, not an adversarial author: freeze an untrusted
       campaign inside the sandbox;

@@ -1349,6 +1349,11 @@ def cmd_mission_add(args) -> int:
     print(f"node: {node_path}")
     print(f"statement: {stmt_path}")
     print(f"author: {identity} (session {session})")
+    from .missions.process import freeze_path as _freeze_path
+    if _freeze_path(root).exists():
+        # final review I3: a frozen campaign's every post-cutoff grant is refused until the new node is recorded
+        print(f"{args.campaign} is frozen: record the new node with `telperion mission freeze {args.campaign} --add` "
+              "(add --fingerprints for its statement fingerprint), then commit FREEZE.toml")
     return 0
 
 
@@ -1558,7 +1563,7 @@ def cmd_mission_grant(args) -> int:
     return 0
 
 
-def _statement_fingerprints_for(args, camp_root):
+def _statement_fingerprints_for(args, camp_root, only=None):
     """Step 5 Task 6: `--fingerprints` -> `process.compute_statement_fingerprints` with the Lean
     options given (trusted env, manifest, olean dirs, memory, wrapper, timeout); None without it."""
     import shlex
@@ -1568,6 +1573,8 @@ def _statement_fingerprints_for(args, camp_root):
     if not getattr(args, "fingerprints", False):
         return None
     kw = _trust_kwargs(args)
+    if only is not None:
+        kw["only"] = only
     if getattr(args, "wrapper", None) is not None:
         kw["wrapper"] = shlex.split(args.wrapper)
     if getattr(args, "timeout", None) is not None:
@@ -1585,6 +1592,33 @@ def _print_fingerprints_note(campaign: str, doc: dict) -> None:
               "fingerprint not frozen)")
 
 
+def _mission_freeze_add(args, camp_root) -> int:
+    """`mission freeze --add` (final review I3): record the nodes added since the freeze, at the unchanged
+    version (process.freeze_add)."""
+    from .missions.process import _current_statement_hashes, _load_freeze, freeze_add
+    from .missions.registry import load_campaign
+
+    try:
+        doc = _load_freeze(camp_root)
+        recorded = set((doc or {}).get("statements") or {})
+        new = set(_current_statement_hashes(camp_root, load_campaign(camp_root))) - recorded
+        fps = _statement_fingerprints_for(args, camp_root, only=new) if doc is not None and new else None
+        out = freeze_add(camp_root, fingerprints=fps)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    except Exception as exc:            # final review M2
+        print(f"freeze --add refused: {type(exc).__name__}: {exc}")
+        return 2
+    print(f"{args.campaign}: recorded {len(out['added'])} new node(s) at version {out['version']}: "
+          f"{', '.join(out['added'])}")
+    if not getattr(args, "fingerprints", False):
+        print(f"{args.campaign}: no statement fingerprints recorded for them (no --fingerprints); their "
+              "post-cutoff [checks] are refused until an unfreeze records them")
+    print(f"commit {args.campaign}/FREEZE.toml now: an uncommitted change to the freeze does not count.")
+    return 0
+
+
 def cmd_mission_freeze(args) -> int:
     from datetime import date as _date
 
@@ -1597,6 +1631,8 @@ def cmd_mission_freeze(args) -> int:
         print(f"Campaign {args.campaign!r} not found at {camp_root}")
         return 1
 
+    if getattr(args, "add", False):
+        return _mission_freeze_add(args, camp_root)
     identity = (getattr(args, "identity", None) or "").strip() or git_identity(camp_root)
     session = session_id(getattr(args, "session", None))
     try:
@@ -1608,6 +1644,9 @@ def cmd_mission_freeze(args) -> int:
     except (ProvenanceError, SchemaError, ValueError) as exc:
         print(str(exc))
         return 1
+    except Exception as exc:            # final review M2: a clean message, never a traceback
+        print(f"freeze refused: {type(exc).__name__}: {exc}")
+        return 2
 
     print(f"{args.campaign}: frozen {doc['frozen']} by {doc['identity']} "
           f"(session {doc['session']}); {len(doc['statements'])} statement(s) recorded")
@@ -1644,6 +1683,9 @@ def cmd_mission_deviations_readback(args) -> int:
     except ValueError as exc:
         print(str(exc))
         return 1
+    except Exception as exc:            # final review M2
+        print(f"deviations-readback refused: {type(exc).__name__}: {exc}")
+        return 2
 
     print(f"{args.campaign}/DEVIATIONS.md read back by {doc['auditor_identity']} "
           f"(session {doc['auditor_session']}) on {doc['date']}; ledger sha256 "
@@ -1673,6 +1715,9 @@ def cmd_mission_unfreeze(args) -> int:
     except (SchemaError, ValueError) as exc:
         print(str(exc))
         return 1
+    except Exception as exc:            # final review M2
+        print(f"unfreeze refused: {type(exc).__name__}: {exc}")
+        return 2
 
     print(f"{args.campaign}: unfrozen to version {doc['version']} by {args.author} "
           f"(read back by {args.readback_identity}); {len(doc['statements'])} statement(s) "
@@ -1682,8 +1727,10 @@ def cmd_mission_unfreeze(args) -> int:
 
 
 def cmd_mission_audit_file(args) -> int:
-    from .missions.process import render_audit_file
-    from .missions.schema import SchemaError
+    import shlex
+
+    from .missions.process import audit_targets, render_audit_file
+    from .missions.schema import SchemaError, atomic_write_text
 
     camp_root = _missions_root(args) / args.campaign
     if not camp_root.is_dir():
@@ -1692,14 +1739,28 @@ def cmd_mission_audit_file(args) -> int:
 
     try:
         text = render_audit_file(camp_root)
-    except (SchemaError, ValueError, OSError) as exc:
+        modules, theorems = audit_targets(camp_root)
+        out_path = camp_root / "lean" / "Audit.lean"
+        # final review M4: never write through a symlink; replace the file atomically
+        if out_path.is_symlink() or (out_path.exists() and not out_path.is_file()):
+            print(f"{out_path} is a symlink or not a regular file; refusing to write through it")
+            return 1
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(out_path, text)
+    except (SchemaError, ValueError) as exc:
         print(str(exc))
         return 1
-
-    out_path = camp_root / "lean" / "Audit.lean"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(text, encoding="utf-8")
+    except Exception as exc:            # final review M2: a clean message, never a traceback
+        print(f"audit-file refused: {type(exc).__name__}: {exc}")
+        return 2
     print(f"{args.campaign}: wrote {out_path}")
+    if theorems:
+        # final review I5: ONE closure audit over every proved node, whose single JSON is what
+        # `mission audit-crosscheck` compares the transcript of Audit.lean with
+        cmd = ["telperion", "audit-closure", "--project", str(camp_root / "lean")]
+        cmd += [a for m in modules for a in ("--import", m)] + [a for t in theorems for a in ("--target", t)]
+        print("the matching closure audit (one run, every proved node):\n  "
+              + " ".join(shlex.quote(c) for c in cmd + ["--json", "closure.json"]))
     return 0
 
 
@@ -3721,6 +3782,10 @@ def main(argv=None) -> int:
     p.add_argument("--identity", default=None,
                    help="freezing identity (default: `git config user.email`); recorded in "
                         "FREEZE.toml")
+    p.add_argument("--add", action="store_true",
+                   help="the campaign is frozen: record the nodes added since, at the unchanged version (their "
+                        "statement hashes, with --fingerprints their fingerprints, and new project imports); "
+                        "nothing already recorded changes")
     _add_statement_fingerprint_args(p)
     p.set_defaults(mission_fn=cmd_mission_freeze)
 

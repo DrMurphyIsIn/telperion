@@ -196,6 +196,10 @@ def _freeze_shape_problem(doc: dict) -> Optional[str]:
         return "has no positive integer `version`"
     if not isinstance(doc.get("frozen"), str):
         return "has no string `frozen` date"
+    try:                                    # final review M1: a real ISO date, as a whole
+        datetime.date.fromisoformat(doc["frozen"])
+    except ValueError:
+        return f"has a `frozen` that is not an ISO date ({doc['frozen'][:20]!r})"
     for key in ("identity", "session", "fingerprints_env"):
         if key in doc and not isinstance(doc[key], str):
             return f"has a non-string `{key}`"
@@ -311,14 +315,17 @@ def _hash_statement(root: Path, node) -> str:
     return hashlib.sha256(statement_body(root, node).encode("utf-8")).hexdigest()
 
 
+#: One import per line, as Lean has it, in every module-system form (final review I4):
+#: `import X`, `public import X`, `meta import X`, `public meta import X`, `import all X`.
+_IMPORT_RE = re.compile(r"(?m)^[ \t]*(?:public[ \t]+)?(?:meta[ \t]+)?import[ \t]+(?:all[ \t]+)?([^\s]+)")
+
+
 def _import_lines(text: str) -> List[str]:
-    """The modules a Lean file imports (`import A.B`, comments ignored)."""
+    """The modules a Lean file imports (`_IMPORT_RE`), read with the shared lexer, so a
+    commented-out import is not one."""
     from .judge import _guard_anchors
     code = _guard_anchors().blank_lean_code(text)
-    out: List[str] = []
-    for m in re.finditer(r"(?m)^[ \t]*import[ \t]+([^\n]*)$", code):
-        out.extend(m.group(1).split())
-    return out
+    return [m.group(1) for m in _IMPORT_RE.finditer(code)]
 
 
 def project_import_hashes(root: Path, campaign) -> Dict[str, str]:
@@ -420,7 +427,7 @@ def freeze(root: Path, *, identity: str, session: str, date: str,
 
     Step 5 Task 6: *fingerprints* (slug -> statement fingerprint, as
     `compute_statement_fingerprints` returns them -- exactly what Lean elaborates, from a
-    statement layer that is trusted read-back content) are recorded in `[fingerprints]`; with
+    statement layer that is trusted content) are recorded in `[fingerprints]`; with
     none, nothing is recorded there and the gate refuses every post-cutoff `[checks]` record
     with "statement fingerprint not frozen". *fingerprints_env* (default: the one a
     `StatementFingerprints` carries) is the trusted env they were computed under, recorded as
@@ -452,6 +459,58 @@ def freeze(root: Path, *, identity: str, session: str, date: str,
     }
     _write_freeze(root, doc)
     return doc
+
+
+def freeze_add(root: Path, *, fingerprints: Optional[Dict[str, str]] = None,
+               fingerprints_env: Optional[str] = None) -> dict:
+    """Record the nodes added since the freeze, at the UNCHANGED version (final review I3): their
+    `[statements]` hashes, their `[fingerprints]` (*fingerprints*, as
+    `compute_statement_fingerprints(root, only=...)` returns them), and any project module
+    newly imported (`[imports]`). Nothing already recorded changes, which is exactly what the
+    history walk accepts at an unchanged version ("identical except for added nodes"; an
+    import or a fingerprint may arrive only with its node). Refuses (`ValueError`) when the
+    campaign is not frozen or not readable, when there is no new node, when an already
+    recorded statement or import has drifted (that takes `unfreeze`), and when the new
+    fingerprints come from another trusted env than the recorded ones."""
+    from .registry import load_campaign
+
+    root = Path(root)
+    doc = _load_freeze(root)
+    if doc is None:
+        raise ValueError(f"{root.name} has no {FREEZE_FILENAME}; call `freeze` first.")
+    campaign = load_campaign(root)
+    current = _current_statement_hashes(root, campaign)
+    recorded = dict(doc.get("statements") or {})
+    drifted = sorted(slug for slug in recorded if slug in current and current[slug] != recorded[slug])
+    if drifted:
+        raise ValueError(f"statement drift on {', '.join(drifted)}: a changed statement takes "
+                         "`mission unfreeze`, not `freeze --add`.")
+    new = {slug: h for slug, h in current.items() if slug not in recorded}
+    if not new:
+        raise ValueError(f"no node has been added since the freeze; {FREEZE_FILENAME} is unchanged.")
+    imports = dict(doc.get("imports") or {})
+    current_imports = project_import_hashes(root, campaign)
+    changed = sorted(m for m in imports if m in current_imports and current_imports[m] != imports[m])
+    if changed:
+        raise ValueError(f"import drift on {', '.join(changed)}: a changed imported module takes "
+                         "`mission unfreeze`, not `freeze --add`.")
+    fps = dict(doc.get("fingerprints") or {})
+    added_fps = _checked_fingerprints(fingerprints, new)
+    env = doc.get("fingerprints_env")
+    if added_fps:
+        new_env = _fingerprints_env(fingerprints, fingerprints_env)
+        if env and new_env != env:
+            raise ValueError(f"the new fingerprints were computed under trusted env {new_env[:12]}..., "
+                             f"the recorded ones under {env[:12]}...; refusing to mix them.")
+        env = new_env
+    new_doc = dict(doc)
+    new_doc["statements"] = {**recorded, **new}
+    new_doc["fingerprints"] = {**fps, **added_fps}
+    new_doc["fingerprints_env"] = env
+    new_doc["imports"] = {**imports, **{m: h for m, h in current_imports.items() if m not in imports}}
+    _write_freeze(root, new_doc)
+    new_doc["added"] = sorted(new)
+    return new_doc
 
 
 def unfreeze(root: Path, *, author: str, reason: str, readback_identity: str, date: str,
@@ -679,8 +738,7 @@ def freeze_problems(root: Path, *, require_history: bool = False) -> List[str]:
                 f"version {v}."
             )
 
-    require = require_history or any(node.status == "proved" and checks_required(node)
-                                     for node in campaign.nodes.values())
+    require = require_history or campaign_requires_process(root, campaign)
     problems.extend(freeze_history_problems(root, require=require))
     return problems
 
@@ -1003,6 +1061,13 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
             f"{FREEZE_FILENAME} at {label}: the `frozen` date changed ({prev.get('frozen')!r} -> "
             f"{cur.get('frozen')!r}); it is fixed at the first freeze."
         )
+    # final review M3: so are who froze it and in which session
+    for key in ("identity", "session"):
+        if cur.get(key) != prev.get(key):
+            problems.append(
+                f"{FREEZE_FILENAME} at {label}: the freeze's `{key}` changed ({prev.get(key)!r} -> "
+                f"{cur.get(key)!r}); it is fixed at the first freeze."
+            )
 
     if cur_entries[:len(prev_entries)] != prev_entries:
         problems.append(
@@ -1213,6 +1278,15 @@ def freeze_history_problems(root: Path, *, require: bool = False) -> List[str]:
     problems: List[str] = []
     for (_prev_label, prev_doc), (cur_label, cur_doc) in zip(states, states[1:]):
         problems.extend(_freeze_transition_problems(prev_doc, cur_doc, cur_label))
+    # Final review I2: an uncommitted change counts no more than an uncommitted first freeze.
+    # The anchor (a protected branch verified in CI) never sees the working tree, so a grant
+    # or a verify against it would rest on a state that a later commit may not reproduce.
+    if post_cutoff and doc != history[-1][1]:
+        problems.append(
+            f"{FREEZE_FILENAME} has uncommitted changes (the working tree differs from the last "
+            f"commit, {history[-1][0][:12]}); commit {FREEZE_FILENAME} before granting or "
+            "verifying."
+        )
     return problems
 
 
@@ -1289,9 +1363,12 @@ def freeze_grant_problem(root: Path, node) -> str:
 # CASUAL mismatches between the text and that elaboration; they do not make the text a
 # guarantee of it. Compile-time code is still possible in the statement layer -- the statement
 # file's own `by sorry` and the project modules it imports (recorded, by source sha256, in
-# FREEZE.toml `[imports]`) are compiled for real -- and it is TRUSTED, as part of what the
-# independent read-back approves. A campaign from an untrusted author must be frozen inside
-# the sandbox. Known residual (R2): a command keyword outside the grammar's lists on an
+# FREEZE.toml `[imports]`) are compiled for real -- and it is TRUSTED: the freezing operator
+# and the node's independent reader are expected to have read it, imports included. No record yet binds that reading to the frozen hashes (final review I6): the node's
+# `[readback]` approves the statement TEXT and carries no digest, the first freeze has no
+# separate read-back, and `[imports]`/`[fingerprints]` are tied to no auditor (a
+# FREEZE.readback.toml is a tracked follow-up).
+# A campaign from an untrusted author must be frozen inside the sandbox. Known residual (R2): a command keyword outside the grammar's lists on an
 # INDENTED line is not seen by the line-start check (a meaning-changing command that declares
 # nothing, such as `unif_hint`, passes all three checks).
 # ---------------------------------------------------------------------------
@@ -1368,7 +1445,9 @@ def _statement_text_problem(ga, text: str) -> Optional[str]:
     Statement files come from `mission add` and declare one statement and its supporting
     definitions, so this costs nothing. It is defence in depth against ACCIDENTAL and CASUAL
     mismatches between the text and what Lean elaborates; it is not a guarantee. The statement
-    layer (this file and the project modules it imports) is trusted read-back content: compiling
+    layer (this file and the project modules it imports) is trusted content, expected to have
+    been read by the operator and the node's reader, with no record yet binding that reading to
+    the frozen hashes: compiling
     it runs code, and only a sandbox makes a freeze safe against an adversarial author (Ruling
     20; see the section comment above)."""
     segs = ga.lean_segments(text)
@@ -1566,6 +1645,26 @@ def statement_target_details(ga, text: str, slug: str) -> Tuple[str, str, int]:
     return name, "type" if theorems else "value", line
 
 
+def _project_imports_built(root: Path, campaign, untrusted_paths=()) -> None:
+    """Final review M11: every imported PROJECT module (`project_import_hashes`) must be built
+    -- an `.olean` in `<root>/lean/.lake/build/lib/lean` or an `--olean-dir` -- and not older
+    than its source, or the fingerprint would be of the old definitions next to the new
+    source hash in `[imports]`. `ValueError` naming the module otherwise. Build the statement
+    package first (`lake build` in `<root>/lean`)."""
+    from ..checks.lean_replay import resolve_olean
+
+    search = [str(Path(root) / "lean" / ".lake" / "build" / "lib" / "lean"), *map(str, untrusted_paths)]
+    for module in sorted(project_import_hashes(root, campaign)):
+        src = Path(root, "lean", *module.split(".")).with_suffix(".lean")
+        olean = resolve_olean(search, module)
+        if olean is None:
+            raise ValueError(f"imported project module {module!r} has no built .olean (looked in "
+                             f"{', '.join(search)}); build the statement package first")
+        if src.stat().st_mtime > os.stat(olean).st_mtime:
+            raise ValueError(f"imported project module {module!r}: its source {src} is newer than its .olean "
+                             f"{olean} (a stale build); rebuild the statement package first")
+
+
 class StatementFingerprints(dict):
     """slug -> statement fingerprint, plus ``trusted_env_sha256``: the trusted env
     (`checks.lean_replay.trusted_env_digest`) every one of them was computed under."""
@@ -1575,7 +1674,7 @@ class StatementFingerprints(dict):
         self.trusted_env_sha256 = trusted_env_sha256
 
 
-def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
+def compute_statement_fingerprints(root: Path, *, fingerprint_text=None, only=None,
                                    **lean_kw) -> StatementFingerprints:
     """slug -> statement fingerprint for every node with a statement file, each computed by
     compiling its statement file as its own module with the pinned `lean`, kernel-replaying it
@@ -1583,8 +1682,9 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
     (`checks.fingerprint.run_statement_fingerprint`, project `<root>/lean`, so its
     `.lake/build/lib/lean` serves any campaign module a statement imports). `lean_kw` goes to
     that function (trusted_env, manifest, wrapper, timeout, memory_mb, untrusted_paths).
-    `fingerprint_text` replaces it (tests). `ValueError` naming the node on the first failure:
-    a freeze records every node's fingerprint or none.
+    `fingerprint_text` replaces it (tests). *only* restricts it to those slugs (`freeze --add`).
+    `ValueError` naming the node on the first failure: a freeze records every node's
+    fingerprint or none.
 
     The SEMANTIC half of the choice (fix round 1, Ruling 18, finding I1): the replayed
     statement module must declare exactly one statement constant, and it must be the textual
@@ -1599,8 +1699,8 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
     What this is and is not (Ruling 20): the fingerprint is exactly what Lean elaborated; the
     checks above stop accidental and casual mismatches between the statement text and that
     elaboration. Compile-time code in the statement file's tactic block or in the project
-    modules it imports is trusted, as part of what the independent read-back approves, and could
-    defeat them.
+    modules it imports is trusted (the operator and the node's reader are expected to have read
+    it; no record binds that reading to the frozen hashes yet), and could defeat them.
 
     NOT A SANDBOX: compiling a statement runs its code, and its imports' (see
     `checks.fingerprint`). A campaign from an untrusted author must be frozen inside the
@@ -1611,10 +1711,11 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
     if fingerprint_text is None:
         from ..checks.fingerprint import run_statement_fingerprint as fingerprint_text
     campaign = load_campaign(root)
+    _project_imports_built(root, campaign, lean_kw.get("untrusted_paths", ()))
     out = StatementFingerprints()
     for slug, node in sorted(campaign.nodes.items()):
         path = statement_path(root, node)
-        if not path.exists():
+        if not path.exists() or (only is not None and slug not in only):
             continue
         from .judge import _guard_anchors
         try:
@@ -1864,6 +1965,60 @@ _AUDIT_HEADER = (
 )
 
 
+#: Upper bound on a source `render_audit_file` reads (an artifact or a statement file).
+_AUDIT_SOURCE_MAX_BYTES = 1 << 24
+
+
+def _read_source_guarded(path: Path, *, slug: str) -> str:
+    """*path*'s text for `render_audit_file` (final review M4): a regular file, not a symlink,
+    under `_AUDIT_SOURCE_MAX_BYTES`, read with O_NOFOLLOW; `ValueError` naming *slug* otherwise."""
+    try:
+        st = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"node {slug!r}: cannot read {path} ({exc.strerror or exc})") from None
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"node {slug!r}: {path} is not a regular file (a symlink or a special file); "
+                         "refusing to read it")
+    if st.st_size > _AUDIT_SOURCE_MAX_BYTES:
+        raise ValueError(f"node {slug!r}: {path} is larger than {_AUDIT_SOURCE_MAX_BYTES} bytes")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as fh:
+            data = fh.read(_AUDIT_SOURCE_MAX_BYTES + 1)
+        return data.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"node {slug!r}: cannot read {path} ({exc})") from None
+
+
+def audit_targets(root: Path) -> Tuple[List[str], List[str]]:
+    """`(modules, theorems)` of the campaign's proved nodes, as `render_audit_file` emits them:
+    the distinct artifact modules, sorted, and each proved node's registered theorem, in slug
+    order. Also what ONE `telperion audit-closure` run over the whole campaign takes (one
+    `--import` per module, one `--target` per theorem), so that its single closure JSON
+    cross-checks against Audit.lean's transcript (final review I5)."""
+    from . import judge
+    from .registry import load_campaign
+
+    root = Path(root)
+    campaign = load_campaign(root)
+    ga = judge._guard_anchors()
+    theorems: List[str] = []
+    modules: Set[str] = set()
+    for slug, node in sorted(campaign.nodes.items()):
+        if node.status != "proved":
+            continue
+        if node.proof is None:
+            raise ValueError(f"node {slug!r} is proved but carries no [proof] link")
+        theorem = ga.resolve_theorem(_read_source_guarded(root / node.proof.artifact, slug=slug),
+                                     _read_source_guarded(statement_path(root, node), slug=slug))
+        _validate_theorem_name(theorem, slug=slug)
+        module = _artifact_module(root, node)
+        _validate_module_name(module, slug=slug)
+        modules.add(module)
+        theorems.append(theorem)
+    return sorted(modules), theorems
+
+
 def render_audit_file(root: Path) -> str:
     """The source of `<root>/lean/Audit.lean`: `_AUDIT_HEADER`, then one `import` per
     distinct proved-node artifact module (de-duplicated, sorted), then one `#print axioms
@@ -1879,35 +2034,13 @@ def render_audit_file(root: Path) -> str:
     validated (`_validate_theorem_name`, `_validate_module_name`) before being emitted --
     raising `ValueError`, naming the offending node, rather than writing unsanitised
     artifact-path or theorem-name text into the generated Lean source."""
-    from . import judge
-    from .registry import load_campaign
     from ..closure_audit import lean_name_literal
 
-    root = Path(root)
-    campaign = load_campaign(root)
-    ga = judge._guard_anchors()
-
-    printed: List[Tuple[str, str]] = []  # (slug, fully-qualified theorem), slug order
-    modules: Set[str] = set()
-    for slug, node in sorted(campaign.nodes.items()):
-        if node.status != "proved":
-            continue
-        if node.proof is None:
-            raise ValueError(f"node {slug!r} is proved but carries no [proof] link")
-        artifact = (root / node.proof.artifact).resolve()
-        stmt = statement_path(root, node)
-        theorem = ga.resolve_theorem(artifact.read_text(encoding="utf-8"),
-                                     stmt.read_text(encoding="utf-8"))
-        _validate_theorem_name(theorem, slug=slug)
-        module = _artifact_module(root, node)
-        _validate_module_name(module, slug=slug)
-        modules.add(module)
-        printed.append((slug, theorem))
-
+    modules, theorems = audit_targets(root)
     lines = [_AUDIT_HEADER, ""]
-    lines += [f"import {m}" for m in sorted(modules)]
+    lines += [f"import {m}" for m in modules]
     lines.append("")
-    for _slug, theorem in printed:
+    for theorem in theorems:
         lines.append(f"#print axioms {lean_name_literal(theorem)[1:]}")
     return "\n".join(lines) + "\n"
 
@@ -2404,6 +2537,13 @@ def write_deviations_readback(root: Path, *, identity: str, session: str, date: 
         raise ValueError("deviations-readback: identity must be non-empty.")
     if not session:
         raise ValueError("deviations-readback: session must be non-empty.")
+    # final review M6: a real calendar date, as a whole, and not in the future (a read-back has
+    # happened), the same rule as a ledger entry's date
+    parsed = _parsed_date(str(date or "").strip())
+    if parsed is None:
+        raise ValueError(f"deviations-readback: date {date!r} is not a calendar date (YYYY-MM-DD).")
+    if parsed > datetime.date.today():
+        raise ValueError(f"deviations-readback: date {date!r} is in the future.")
     text, problem = _load_deviations_safe(root)
     if problem:
         raise ValueError(problem)
@@ -2534,8 +2674,10 @@ _PORTED_HEAD_LINES = 30
 _LEAN_HEAD_MAX_BYTES = 1 << 16
 
 #: Directory names the tree walk never descends into: version control and Lake's own
-#: (potentially huge, and irrelevant) build/dependency output.
-_SKIP_DIR_NAMES = frozenset({".git", ".lake", "build", "_build"})
+#: (potentially huge, and irrelevant) build/dependency output. Only these two (final review
+#: M5): a `build/` or `_build/` directory is walked like any other, since Lake's output is
+#: under `.lake/build` and a ported file must not hide in one.
+_SKIP_DIR_NAMES = frozenset({".git", ".lake"})
 
 #: `(?i)\b(ported|adapted|copied) from\b`, scanned only against the comment-only text
 #: of a file's first `_PORTED_HEAD_LINES` lines (`_lean_head_comment_text`) -- a mention
@@ -2654,7 +2796,7 @@ def _walk_lean_files(root: Path) -> List[Path]:
     """Every `.lean` file under *root*, ABSOLUTE paths, sorted. The walk never follows a
     directory symlink (`os.walk`'s own default, `followlinks=False`: a campaign cannot
     be escaped or looped back into through one) and never descends into `.git/`,
-    `.lake/`, or a build directory (`_SKIP_DIR_NAMES`) -- none of them hold anything this
+    or `.lake/` (`_SKIP_DIR_NAMES`) -- neither holds anything this
     lint should look at, and `.lake/` in particular can hold a huge, unrelated
     dependency tree. A `.lean` path that is ITSELF a symlink is still returned here;
     `_read_lean_head_safe` is what refuses to follow it."""
@@ -2919,6 +3061,23 @@ def provenance_problems(root: Path) -> List[str]:
                 "exactly 40 lowercase hex characters."
             )
     return sorted(problems)
+
+
+def campaign_requires_process(root: Path, campaign=None) -> bool:
+    """THE predicate for "this campaign is under the statement-first process" (final review
+    M1), used by the provenance lint, `freeze_problems` (whether the freeze history is
+    required) and the history walk: FREEZE.toml's `frozen` date is on or after `CUTOFF`, or a
+    post-cutoff node (`provenance.checks_required`) is PROVED. The second half keeps a
+    back-dated or hand-written `frozen` from switching the process off. *campaign* defaults to
+    `load_campaign(root)`."""
+    from .provenance import checks_required
+
+    if campaign is None:
+        from .registry import load_campaign
+        campaign = load_campaign(root)
+    if any(node.status == "proved" and checks_required(node) for node in campaign.nodes.values()):
+        return True
+    return campaign_is_post_cutoff(root)
 
 
 def campaign_is_post_cutoff(root: Path) -> bool:

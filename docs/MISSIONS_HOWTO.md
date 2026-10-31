@@ -510,7 +510,8 @@ easiest way to see every message the gate actually raises, in the order it actua
 node cannot be granted `proved` unless its statement's hash still matches what FREEZE.toml recorded — the freeze is
 what makes a later edit to a statement *visible* as drift, rather than just a silent change nobody has to answer for.
 `freeze` also writes `DEVIATIONS.md` from a template if the campaign does not have one yet (see below), so a freshly
-frozen campaign is never one file short of being grantable.
+frozen campaign does not also lack a ledger; it still needs that ledger's read-back (`DEVIATIONS.readback.toml`)
+before a post-cutoff grant.
 
 **Commit it.** `mission freeze` only writes the file; it does not commit it, and a post-cutoff grant needs the freeze
 to be committed. The reason is `freeze_history_problems` (`process.py`): on every grant and on every `verify`, the
@@ -538,12 +539,28 @@ git -C missions/demo commit -m "unfreeze demo campaign: <reason>"
 ```
 
 `unfreeze` re-hashes every current statement, bumps the version, and appends an `[[unfreeze]]` entry recording who
-asked for the change, why, and who read the new hashes back before they were recorded. `--readback-identity` must
+asked for the change, why, and who read the new hashes back before they were recorded. Both `--author` and
+`--readback-identity` are ASSERTED names: free strings, with no session, and neither defaults to the git identity
+(unlike `freeze`); nothing checks who typed them. `--readback-identity` must
 differ from `--author` — refused otherwise, the same "testimony from a different principal" rule as the node read-back
 above — and that read-back identity has nothing to do with any node's own `[author]`; it is independence of the
-*freeze bump itself*, a campaign-level fact, not a per-node one. Forget to commit the unfreeze and `verify` keeps
-reporting the old drift: the working tree has the new hash, but the history walk a post-cutoff grant and `verify` both
-run sees only what git has recorded.
+*freeze bump itself*, a campaign-level fact, not a per-node one. Forget to commit the unfreeze and both `verify` and
+a post-cutoff grant refuse: "FREEZE.toml has uncommitted changes". An uncommitted change to the freeze counts no more
+than an uncommitted first freeze, because the anchor (a protected branch, verified in CI) only ever sees what git has
+recorded.
+
+**Adding a node to a frozen campaign.** `mission add` on a frozen campaign leaves the new node unrecorded, and the
+freeze check then reports it, which blocks every post-cutoff grant in the campaign. Record it at the SAME version with
+`--add`; nothing already recorded changes, which is exactly what the history walk allows (an import or a fingerprint
+may arrive only together with its node). `mission add` prints this reminder:
+
+```bash
+telperion mission freeze demo --add --fingerprints     # --fingerprints: the new node's statement fingerprint
+git -C missions/demo add FREEZE.toml
+git -C missions/demo commit -m "freeze demo campaign: add the new node"
+```
+
+`--add` refuses when nothing was added, and when a recorded statement or import has drifted (that takes `unfreeze`).
 
 ### Statement fingerprints in the freeze
 
@@ -569,9 +586,13 @@ post-cutoff `[checks]` record is refused until a freeze records them.
 the statement file. The grammar, the declaration range and the accounted-for check below stop accidental and casual
 mismatches between the text and that elaboration, which is what a reader checks; they are defence in depth, not a
 guarantee that the text is what Lean elaborates. Compiling the statement layer (the statement file, its terminal
-`by sorry`, and every project module it imports) runs that code, so the statement layer is TRUSTED read-back content:
-the independent read-back approves it, imported project modules included. A campaign from an untrusted author must be
-frozen inside the sandbox.
+`by sorry`, and every project module it imports) runs that code, so the statement layer is TRUSTED content: the
+operator who freezes and the node's independent reader are expected to have read it, its imported project modules
+included. That expectation is not yet a record: the node's `[readback]` approves the statement TEXT and carries no
+digest; the first freeze has no separate read-back at all (only unfreezes name a read-back identity); and the
+`[imports]` and `[fingerprints]` hashes are bound to no auditor. A `FREEZE.readback.toml` binding sha256(FREEZE.toml)
+to an auditor who is neither the freezer nor the node's author is a tracked follow-up. A campaign from an untrusted
+author must be frozen inside the sandbox.
 
 How each fingerprint is computed:
 - **One statement constant per file.** A statement file declares exactly one: one `theorem` or `lemma`
@@ -642,6 +663,9 @@ How each fingerprint is computed:
 - The rest of the gate (the containment match and the name resolver) still expects a theorem-form statement, so a
   def-form node can be frozen this way but not yet granted.
 - Imports of other campaign modules resolve from `<campaign>/lean/.lake/build/lib/lean`, or from `--olean-dir`.
+  **Build the statement package first** (`lake build` in `<campaign>/lean`, in the sandbox for an untrusted
+  campaign): `--fingerprints` refuses an imported project module with no built `.olean`, or whose source is newer than
+  its `.olean` (a stale build would freeze the old definitions next to the new source hash).
 - A statement that cannot be fingerprinted fails the whole freeze, and nothing is written: any refusal above, a local
   inductive or structure left after unfolding, or a `sorry` in the statement itself.
 - It compiles the statement files, so it is NOT A SANDBOX either; they are the campaign's own files, but the same
@@ -719,14 +743,23 @@ deviation ledger read-back, the same way it already skips the heavy-node re-judg
 
 `telperion mission audit-file <campaign>` writes `<campaign>/lean/Audit.lean`: one `import` per distinct proved-node
 artifact module (sorted, de-duplicated), then one `#print axioms <theorem>` per proved node, so that running it
-through `lake env lean` gives one transcript naming every axiom every proved node in the campaign actually rests on.
-Capture that transcript and cross-check it against a closure audit's own JSON with:
+through `lake env lean` gives one transcript of the axioms every proved node in the campaign reports. It also prints
+the ONE matching closure-audit command: every proved node's module as `--import` and every theorem as `--target`, so
+that a single closure JSON covers the whole campaign (`audit-crosscheck` takes one). Capture both and cross-check them:
 
 ```bash
-lake env lean lean/Audit.lean > print_axioms.txt
-telperion audit-closure --json closure.json   # per node, or however your CI already runs it
+telperion mission audit-file demo                     # writes lean/Audit.lean, prints the audit-closure command
+lake env lean lean/Audit.lean > print_axioms.txt      # NOT ISOLATED: imports every proved artifact (see below)
+telperion audit-closure --project missions/demo/lean --import Demo.A --import Demo.B \
+    --target Demo.thm_a --target Demo.thm_b --json closure.json     # the printed command: one run, every node
 telperion mission audit-crosscheck --print-axioms-out print_axioms.txt --closure-json closure.json
 ```
+
+**The `lake env lean` step is NOT ISOLATED.** It imports every proved artifact, so their lakefiles, initializers and
+elaborators run in that process, which is exactly the path the closure audit stopped using in step 5: an imported
+`command_elab` can forge the `#print axioms` transcript. Run it in the sandbox for anything you did not write, and read
+the cross-check as a stale-cache and drift net for honest runs, not as evidence against an adversarial artifact; the
+replayed closure audit is that evidence.
 
 A theorem on only one side — printed by `Audit.lean` but never closure-audited, or the reverse — is reported as a
 problem, same as an axiom set that differs between the two. This is a drift net across the WHOLE campaign's proved
@@ -746,7 +779,8 @@ a silent, misleadingly clean `OK` for a typo'd path.
 ### Known limitations, stated plainly
 
 - **Local `.git` contents, including its history, are not fully trustworthy inputs on their own.** The freeze-history
-  walk (`freeze_history_problems`) refuses `git replace` refs, grafts, alternates, and a shallow clone outright, and
+  walk (`freeze_history_problems`) ignores `git replace` refs (`--no-replace-objects`), refuses grafts, alternates and
+  a shallow clone outright, and
   it reads through one hardened `_git` helper with a sanitised environment and `--no-replace-objects` — but rewriting
   history to a single, internally consistent commit (amending a freeze and its statement together, with the version
   left unchanged) is inherent to local git and cannot be detected by anything that only looks at the repository doing
