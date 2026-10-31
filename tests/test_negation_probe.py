@@ -418,26 +418,33 @@ def test_c2r_reduced_protocol_is_strict():
     assert r.verdict == "ERROR" and "unknown status 'BOGUS'" in r.detail
 
 
-# Fix round 1 (Ruling 3): a reduced conclusion the descent cannot open (`∨`, `∃`, a local structure, any head with a
-# proposition or predicate argument) is no WITNESSED either, whatever the witness does.
-UNOPENED = "conclusion not fully opened (Or/Exists/structure)"
+# Fix rounds 1-2 (Rulings 3, 4): WITNESSED needs the statement inside an ALLOWLIST of shapes (`REDUCED OUTSIDE`
+# otherwise), checked once the witness has closed the reduced closure; anything else is PROBE_ONLY, whatever the
+# witness.
+ALLOW = "outside the WITNESSED allowlist"
 
 
 def test_c2r_unopened_render():
     src = render_callback("Foo.t", "trivial")
-    assert "def unopened (c : Expr) : MetaM (Option String)" in src
-    assert "isPropFormerType (← inferType a)" in src and "isLib (← getEnv) n" in src
-    assert 'TelperionReplay.line s!"REDUCED UNOPENED {why}"' in src
+    assert "def unopened" not in src                                        # Ruling 3's denylist is gone
+    heads = "[``Eq, ``Ne, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``True, ``Nat.le, ``Dvd.dvd]"
+    assert f"def okHeads : List Name := {heads}" in src
+    assert "partial def propInData (e : Expr) : MetaM (Option Expr)" in src and "isPropFormerType ty" in src
+    assert "deltaExpand ty fun n => !isLib env n" in src                   # local definitions cannot hide data
+    assert "match ← TelperionProbe.allowlistProblem ty with" in src
+    assert 'TelperionReplay.line s!"REDUCED OUTSIDE {why}"' in src
+    assert src.count("allowlistProblem ty") == 1                           # the REDUCED check only, not WITNESS
 
 
 def test_c2r_unopened_is_probe_only():
-    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED UNOPENED Or has a proposition or predicate argument"],
-                 witness=True)
-    assert r.verdict == "PROBE_ONLY" and UNOPENED in r.detail and "Or has a proposition" in r.detail, r.detail
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED OUTSIDE rule i: the conclusion's head Or is not in the "
+                                                     "allowlist"], witness=True)
+    assert r.verdict == "PROBE_ONLY" and ALLOW in r.detail and "rule i: the conclusion's head Or" in r.detail, r.detail
     # never an upgrade: with a failed first witness it is still ERROR, with no antecedent still PROBE_ONLY
-    assert classify(AESOP + UNABLE + ["WITNESS FAILED x", "REDUCED UNOPENED Or"], witness=True).verdict == "ERROR"
-    r = classify(AESOP + UNABLE + ["WITNESS NOANTECEDENT", "REDUCED UNOPENED Or"], witness=True)
+    assert classify(AESOP + UNABLE + ["WITNESS FAILED x", "REDUCED OUTSIDE rule i"], witness=True).verdict == "ERROR"
+    r = classify(AESOP + UNABLE + ["WITNESS NOANTECEDENT", "REDUCED OUTSIDE rule i"], witness=True)
     assert r.verdict == "PROBE_ONLY" and "nothing to witness" in r.detail
+    assert classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED UNOPENED x"], witness=True).verdict == "ERROR"
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -874,6 +881,33 @@ structure S : Prop where
 theorem structv : ∀ m : ℕ, m = m → S := fun _ _ => ⟨fun n hn => absurd hn (Nat.not_lt_zero n)⟩
 theorem eqv : ∀ m : ℕ, m = m → ((∀ n : ℕ, n < 0 → n = 7) = True) :=
   fun _ _ => eq_true fun n hn => absurd hn (Nat.not_lt_zero n)
+-- fix round 2 (Ruling 4): the task-0 review's repros (C1, C2, I1), each WITNESSED by a witness that also closes the
+-- reduced closure before the allowlist
+theorem pinv : ∀ m : ℕ, m = m → ∀ P : Prop, P = (∀ n : ℕ, n < 0 → n = 7) → P := by
+  intro _ _ P h; subst h; exact fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem pinfv : ∀ F : ℕ → Prop, F = (fun k => ∀ n : ℕ, n < 0 → n = k) → F 7 := by
+  intro F h; subst h; exact fun n hn => absurd hn (Nat.not_lt_zero n)
+open Classical in
+theorem decv : ∀ m : ℕ, m = m → decide (∀ n : ℕ, n < 0 → n = 7) = true :=
+  fun _ _ => decide_eq_true fun n hn => absurd hn (Nat.not_lt_zero n)
+open Classical in
+theorem itecv : ∀ m : ℕ, m = m → (if (∀ n : ℕ, n < 0 → n = 7) then 0 else 1) = 0 :=
+  fun _ _ => if_pos fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem plv : ∀ m : ℕ, m = m → Nonempty (PLift (∀ n : ℕ, n < 0 → n = 7)) :=
+  fun _ _ => ⟨⟨fun n hn => absurd hn (Nat.not_lt_zero n)⟩⟩
+theorem subtv : ∀ m : ℕ, m = m → Nonempty {_u : Unit // ∀ n : ℕ, n < 0 → n = 7} :=
+  fun _ _ => ⟨⟨(), fun n hn => absurd hn (Nat.not_lt_zero n)⟩⟩
+theorem subsv : ∀ m : ℕ, m = m → Subsingleton (Fin 0) := fun _ _ => ⟨fun a => a.elim0⟩
+open Classical in
+theorem itev : ∀ x : ℕ, x = (if (∀ n : ℕ, n < 0 → n = 7) then 0 else 1) → x = 0 := by
+  intro x hx; rw [hx, if_pos fun n hn => absurd hn (Nat.not_lt_zero n)]
+-- (`Nat.lt`, not `<`: under the binder `inst` is the local instance, and `<` would mean `inst` itself)
+theorem instv : ∀ inst : LT ℕ, inst = ⟨fun a b => ∀ n : ℕ, Nat.lt n 0 → a = b⟩ → @LT.lt ℕ inst 1 2 := by
+  intro inst h; rw [h]; exact fun n hn => absurd hn (Nat.not_lt_zero n)
+noncomputable def hide (n : ℕ) : ℕ := by classical exact if (∀ k : ℕ, k < 0 → k = 7) then n else n + 1
+theorem hidev : ∀ m : ℕ, m = m → hide m = m := fun m _ => by
+  unfold hide; rw [if_pos fun n hn => absurd hn (Nat.not_lt_zero n)]
+theorem realv (x : ℝ) (h : x < 3) : x < 5 := by linarith
 noncomputable def R (k : ℕ) : Prop := Nat.rec (motive := fun _ => Prop) True (fun _ _ => True) k
 -- true, but the kernel would have to evaluate `slow 40 0` to check a proof, so it is sorry'd (the replay allows sorry;
 -- no verdict reads the theorem's own proof). Binders before the `:` would make `sorry` itself whnf the target.
@@ -922,9 +956,32 @@ def test_lean_c2r_reduction_timeout_is_probe_only(c2r_module):            # MUST
 
 @lean
 @pytest.mark.parametrize("theorem", ["TpRed.orv", "TpRed.exv", "TpRed.structv", "TpRed.eqv"])
-def test_lean_c2r_unopened_conclusion_is_never_witnessed(c2r_module, theorem):   # MUST-FAIL control (Ruling 3)
+def test_lean_c2r_unopened_conclusion_is_never_witnessed(c2r_module, theorem):   # MUST-FAIL (Rulings 3, 4)
     # reduction stops at `∨`, `∃`, a local structure, and `=` between propositions; the pad closes the reduced closure
-    # (nothing was opened), so before Ruling 3 each was WITNESSED
+    # (nothing was opened), so before Ruling 3 each was WITNESSED; since Ruling 4 the allowlist refuses each
     r = _probe(c2r_module, theorem, PAD)
-    assert r.verdict == "PROBE_ONLY" and "conclusion not fully opened (Or/Exists/structure)" in r.detail, r.detail
+    assert r.verdict == "PROBE_ONLY" and "outside the WITNESSED allowlist" in r.detail, r.detail
     print(f"C2R-U {theorem} with {PAD}: {r.verdict} -- {r.detail}")
+
+
+# Fix round 2 (Ruling 4): every task-0 review repro is outside the allowlist, so never WITNESSED (each was WITNESSED at
+# 4c8e862 with this witness, except where the report says otherwise). `hidev` hides `V` in a LOCAL definition's body,
+# which only the delta-expanded walk sees.
+ALLOW_REPROS = [("TpRed.pinv", "⟨0, rfl, _, rfl, trivial⟩"), ("TpRed.pinfv", "⟨_, rfl, trivial⟩"),
+                ("TpRed.decv", PAD), ("TpRed.itecv", PAD), ("TpRed.plv", PAD), ("TpRed.subtv", PAD),
+                ("TpRed.subsv", PAD), ("TpRed.itev", "⟨_, rfl, trivial⟩"), ("TpRed.instv", "⟨_, rfl, trivial⟩"),
+                ("TpRed.hidev", PAD)]
+
+
+@lean
+@pytest.mark.parametrize("theorem,witness", ALLOW_REPROS)
+def test_lean_c2r_allowlist_repros_are_never_witnessed(c2r_module, theorem, witness):   # MUST-FAIL (Ruling 4)
+    r = _probe(c2r_module, theorem, witness)
+    assert r.verdict == "PROBE_ONLY" and "outside the WITNESSED allowlist" in r.detail, r.detail
+    print(f"ALLOW {theorem} with {witness}: {r.verdict} -- {r.detail}")
+
+
+@lean
+def test_lean_c2r_allowlist_keeps_real_inequalities(c2r_module):               # MUST-PASS (Ruling 4)
+    r = _probe(c2r_module, "TpRed.realv", "⟨0, by norm_num, trivial⟩")
+    assert r.verdict == "WITNESSED", r.detail
