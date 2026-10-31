@@ -497,8 +497,10 @@ def test_body_cannot_spoof_markers(trick):                   # MUST-FAIL control
 def test_doubling_definitions_too_large_fast():              # MUST-FAIL control (I1)
     defs = "def a0 : ℕ := 1\n" + "".join(f"def a{k + 1} : ℕ := a{k} + a{k}\n" for k in range(20))
     start = time.monotonic()
-    _refused("import Mathlib\n" + defs + "theorem t : a20 = a20 := rfl\n", "too-large", timeout=60)
-    assert time.monotonic() - start < 60
+    _refused("import Mathlib\n" + defs + "theorem t : a20 = a20 := rfl\n", "too-large", timeout=300)
+    # The point is "refused without a blow-up", not a speed target: the wall clock includes the
+    # Mathlib import, which took 64 s on a GitHub-hosted runner.
+    assert time.monotonic() - start < 300
 
 
 @lean
