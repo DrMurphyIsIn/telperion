@@ -270,8 +270,8 @@ def verify_trusted_manifest(pinned: PinnedEnv, path) -> None:
 def trusted_env_digest(pinned: PinnedEnv, path) -> str:
     """A machine-independent sha256 of a trusted manifest's CONTENT: the toolchain, then every trusted file's sha256
     keyed by its path relative to its trusted prefix (the toolchain's lib/lean, or a package dir relative to the env
-    root) instead of the absolute paths the manifest itself records. Two machines with the same pinned env get the same
-    digest; a different Mathlib or toolchain gets another. Call it after `verify_trusted_manifest` (step 5 Task 6: the
+    root) instead of the absolute paths the manifest itself records. Two machines of the same platform with the same pinned
+    env get the same digest (the binary and shared libraries are platform files); a different Mathlib or toolchain gets another. Call it after `verify_trusted_manifest` (step 5 Task 6: the
     freeze's statement fingerprints and the checked theorem's fingerprint must come from the same trusted env)."""
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))

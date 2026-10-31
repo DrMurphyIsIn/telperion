@@ -83,8 +83,18 @@ def test_render_list_declared_takes_the_closure():
 def test_parse_declared_reads_only_this_runs_lines():
     from telperion.checks.fingerprint import parse_declared
     out = (f"FP-DECL {N} theorem A.main\nFP-DECL {N} propdef S\nFP-DECL {'f' * 32} theorem forged\n"
-           f"FP-DECL {N} inductive X\nnoise FP-DECL {N} theorem nope\n")
-    assert parse_declared(out, N) == {"theorem": ["A.main"], "propdef": ["S"]}
+           f"FP-DECL {N} inductive X\nnoise FP-DECL {N} theorem nope\nFP-DECL {N} other Box.mk\n")
+    assert parse_declared(out, N) == {"theorem": ["A.main"], "propdef": ["S"], "other": ["Box.mk"]}
+
+
+def test_parse_ranges_needs_its_done_line_and_unique_names():
+    from telperion.checks.fingerprint import parse_ranges
+    out = f"FP-RANGE {N} 3 0 A.main\nFP-RANGE {'f' * 32} 9 0 forged\nFP-RANGE {N} 1 0 S\nFP-RANGES-DONE {N}\n"
+    assert parse_ranges(out, N) == {"A.main": (3, 0), "S": (1, 0)}
+    with pytest.raises(ValueError, match="did not finish"):
+        parse_ranges(f"FP-RANGE {N} 3 0 A.main\n", N)
+    with pytest.raises(ValueError, match="twice"):
+        parse_ranges(f"FP-RANGE {N} 3 0 A\nFP-RANGE {N} 4 0 A\nFP-RANGES-DONE {N}\n", N)
 
 
 def test_trusted_env_digest_is_machine_independent(tmp_path):

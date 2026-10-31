@@ -145,6 +145,7 @@ jobs:
           test "$(cat lean-toolchain)" = "$LEAN_TOOLCHAIN"
 
       - name: Build the trusted manifest (and check that it verifies and is not overwritten without --force)
+        id: manifest
         shell: bash
         run: |
           telperion trusted-manifest build --env "$TELPERION_LEAN_ENV" --out "$PROBE_MANIFEST"
@@ -172,6 +173,8 @@ jobs:
             exit 1
           fi
       - name: Lean controls, statement fingerprint (tests/test_fingerprint.py)
+        # run even when an earlier file's step failed (one red file must not hide the others), but only on a good env
+        if: ${{ !cancelled() && steps.manifest.outcome == 'success' }}
         shell: bash
         env:
           PYTHONFAULTHANDLER: "1"
@@ -182,6 +185,8 @@ jobs:
             exit 1
           fi
       - name: Lean controls, kernel replay (tests/test_lean_replay.py)
+        # run even when an earlier file's step failed (one red file must not hide the others), but only on a good env
+        if: ${{ !cancelled() && steps.manifest.outcome == 'success' }}
         shell: bash
         env:
           PYTHONFAULTHANDLER: "1"
@@ -192,6 +197,8 @@ jobs:
             exit 1
           fi
       - name: Lean controls, replayed closure audit (tests/test_closure_audit_replay.py)
+        # run even when an earlier file's step failed (one red file must not hide the others), but only on a good env
+        if: ${{ !cancelled() && steps.manifest.outcome == 'success' }}
         shell: bash
         env:
           PYTHONFAULTHANDLER: "1"
@@ -202,6 +209,8 @@ jobs:
             exit 1
           fi
       - name: Lean controls, statement tie (step 5) (tests/test_statement_tie_lean.py)
+        # run even when an earlier file's step failed (one red file must not hide the others), but only on a good env
+        if: ${{ !cancelled() && steps.manifest.outcome == 'success' }}
         shell: bash
         env:
           PYTHONFAULTHANDLER: "1"

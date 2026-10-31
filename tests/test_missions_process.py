@@ -2566,57 +2566,111 @@ def _stmt_target(tmp_path: Path, body: str):
      "theorem main : Good helper := by sorry\nend Demo", ("Demo.main", "type")),
     ("namespace Demo\ntheorem _root_.top : True", ("top", "type")),
     ("theorem poly.{u} (α : Sort u) (a : α) : a = a", ("poly", "type")),
-    # a theorem after `set_option ... in`, attributes or `nonrec` is still THE theorem (review I1 (a))
-    ("set_option maxHeartbeats 400000 in theorem main : 1 = 2", ("main", "type")),
-    ("@[simp] @[reducible] theorem main : 1 = 2", ("main", "type")),
-    ("nonrec theorem main : 1 = 2", ("main", "type")),
-    # comments mentioning the forbidden tokens are harmless
-    ("-- no #exit, no «» and no `( here\ntheorem main : True", ("main", "type")),
+    # the rest of the whitelist grammar (fix round 2): universe, variable, section, open (scoped), structure,
+    # inductive, class, noncomputable def, multi-line statements
+    ("import Mathlib\nuniverse u\nopen Nat\nopen scoped Real\nsection\nvariable (n : ℕ)\n"
+     "structure Box where\n  val : ℕ\ninductive Col\n  | red\n  | blue\nclass HasX (α : Type) where\n  x : α\n"
+     "noncomputable def pick : ℕ := 0\nend\ntheorem main (b : Box)\n    (h : b.val = n) :\n    b.val = n := by sorry",
+     ("main", "type")),
+    # comments and doc comments mentioning anything forbidden are harmless
+    ("/-- no #exit, no «», no `( and no \"strings\" here; set_option, alias, elab -/\n-- @[simp] 'c'\n"
+     "theorem main : True", ("main", "type")),
 ])
 def test_statement_fingerprint_target(tmp_path, body, want):
     assert _stmt_target(tmp_path, body) == want
 
 
 @pytest.mark.parametrize("body,why", [
-    # review I1 (a): a closed Prop def beside a theorem the line-anchored regex used to miss
-    ("def Weak : Prop := True\nset_option maxHeartbeats 400000 in theorem main : 1 = 2", "both a theorem and"),
-    ("def Weak : Prop := True\n@[simp] @[reducible] theorem main : 1 = 2", "both a theorem and"),
-    ("abbrev Weak : Prop := True\nnonrec theorem main : 1 = 2", "both a theorem and"),
     # review I1 (b): two theorems, in two namespaces
-    ("namespace A\ntheorem main : 1 = 1\nend A\nnamespace B\nset_option maxHeartbeats 400000 in "
-     "theorem main : 1 = 2", "2 `theorem`/`lemma` keywords"),
-    # review I1 (c): text Lean never elaborates
-    ("namespace A\ntheorem main : 1 = 1 := by sorry\nend A\n#exit\nnamespace A\ntheorem main : 1 = 2",
-     "`#exit`"),
-    ("namespace A\ntheorem main : 1 = 1 := by sorry\nend A\nnamespace A\n"
-     "def q : Lean.MacroM Lean.Syntax := `(command| theorem main : 1 = 2 := by sorry)\nend A\ndef x : ℕ := 0",
-     "syntax quotation"),
-    ('def «"» : String := "\ntheorem main : 1 = 2 := by sorry\n"\ndef «"x» : Prop := True', "`«»`-quoted name"),
-    ('theorem real : True\ndef s : String := " theorem fake : False"', "inside a string literal"),
-    ('def S : Prop := True\ndef s : String := s!"{"\ntheorem main : 1 = 2\n"}"', "both a theorem and"),
-    ("def S : Prop := True\ntheorem main : S := by sorry", "both a theorem and"),
+    ("namespace A\ntheorem main : 1 = 1\nend A\nnamespace B\ntheorem main : 1 = 2", "2 `theorem`/`lemma` keywords"),
+    ("def Weak : Prop := True\ntheorem main : 1 = 2", "both a theorem and"),
     ("def A : Prop := True\ndef B : Prop := False", "2 closed `def … : Prop`s"),
-    ("private theorem t : True", "private"),
-    ("example : True", "declares no theorem, lemma or closed `def … : Prop`"),
+    ("example : True", "line 2 starts a command with 'example'"),       # line 1 is the provenance header
     ("def N : ℕ := 3", "declares no theorem, lemma or closed `def … : Prop`"),
-    # the gate's reader drops `open ...` lines, so it never sees this theorem
-    ("open Nat in theorem main : True", "the gate's statement reader finds no theorem"),
 ])
 def test_statement_fingerprint_target_refusals(tmp_path, body, why):
     with pytest.raises(ValueError, match=re.escape(why)):
         _stmt_target(tmp_path, body)
 
 
-def _fake_statement_run(declared_for, env=FP_ENV, calls=None):
+#: Fix round 2 (Ruling 19): one statement file per forbidden form of the whitelist grammar, each refused.
+GRAMMAR_REFUSALS = [
+    # the re-review's bypasses: a generator plus hidden text
+    ('import Mathlib\nalias main := Nat.zero_le\ndef s : String := s!"{"\n'
+     'theorem main : ∀ n : ℕ, n = n + 1 := by sorry -- "}"', "string literal (line 3)"),
+    ('import Mathlib\nalias main := Nat.zero_le\nelab "ignore" c:command : command => pure ()\n'
+     "ignore theorem main : ∀ n : ℕ, n = n + 1 := by sorry", "string literal (line 3)"),
+    # every string, raw-string and char literal, wherever it is
+    ('theorem main : True\ndef s : String := "x"', "string literal (line 2)"),
+    ('theorem main : True\ndef s : String := r"x"', "string literal (line 2)"),
+    ("theorem main : True\ndef c : Char := 'x'", "char literal (line 2)"),
+    ('def s : String := m!"{"\ntheorem main : True\n"}"', "string literal (line 1)"),
+    # quoting, quotations, attributes, # commands
+    ("def «x y» : ℕ := 0\ntheorem main : True", "`«»`-quoted name (it can hide quotes and declaration text) (line 1)"),
+    ("theorem main : True\ndef q := `(command| theorem t : True := trivial)", "backquote (a syntax quotation `` `( `` or a name literal) (line 2)"),
+    ("theorem main : True\ndef n := `Nat", "backquote (a syntax quotation `` `( `` or a name literal) (line 2)"),
+    ("@[simp] theorem main : True", "attribute `@[...]` (no attribute is allowed in a statement file) (line 1)"),
+    ("theorem main : True\n#exit", "`#` command (line 2)"),
+    ("#eval 1\ntheorem main : True", "`#` command (line 1)"),
+    ("#print axioms Nat.add\ntheorem main : True", "`#` command (line 1)"),
+    # forbidden tokens, wherever they are (an indented line, after another command)
+] + [(f"{tok} foo\ntheorem main : True", f"uses `{tok}` (line 1)") for tok in (
+    "elab", "elab_rules", "macro", "macro_rules", "syntax", "notation", "infix", "infixl", "infixr", "prefix",
+    "postfix", "declare_syntax_cat", "run_cmd", "run_elab", "run_meta", "alias", "export", "attribute",
+    "initialize", "builtin_initialize", "deriving", "set_option", "local", "scoped", "instance", "private",
+    "protected", "opaque", "axiom", "irreducible_def", "omit", "include")] + [
+    ("theorem main : True\n  set_option maxHeartbeats 1 in\ndef x : ℕ := 0", "uses `set_option` (line 2)"),
+    ("open scoped Real\nscoped notation \"x\" => 1\ntheorem main : True", "string literal (line 2)"),
+    ("theorem main : True\nderiving instance Repr for Nat", "uses `deriving` (line 2)"),
+    # anything at a command start that is not on the allowlist, naming the line
+    ("theorem main : True\nnonrec def x : ℕ := 0", "line 2 starts a command with 'nonrec'"),
+    ("theorem main : True\nignore theorem t : True", "line 2 starts a command with 'ignore'"),
+    ("theorem main :\n∀ n : ℕ, n = n", "line 2 starts a command with '∀'"),
+    ("noncomputable instance : Inhabited ℕ := ⟨0⟩\ntheorem main : True", "uses `instance` (line 1)"),
+    ("noncomputable theorem main : True", "`noncomputable` must be followed by `def`, `abbrev` or `section`"),
+    # a command keyword that does not start a line
+    ("def x : ℕ := 0 theorem main : True", "line 1: the command keyword `theorem` does not start a line"),
+    ("def x : ℕ := 0\n  theorem main : True", "line 2: the command keyword `theorem` does not start a line"),
+    ("open Nat in theorem main : True", "line 1: the command keyword `theorem` does not start a line"),
+]
+
+
+@pytest.mark.parametrize("body,why", GRAMMAR_REFUSALS)
+def test_statement_grammar_refuses(tmp_path, body, why):
+    # the line numbers above are the body's; the file has the provenance header line first
+    why = re.sub(r"line (\d+)", lambda m: f"line {int(m.group(1)) + 1}", why)
+    with pytest.raises(ValueError, match=re.escape(why)):
+        _stmt_target(tmp_path, body)
+
+
+def test_statement_grammar_accepts_the_repo_fixtures():
+    """The honest statement fixtures (tests/fixtures/missions) are inside the grammar."""
+    from telperion.missions.judge import _guard_anchors
+    from telperion.missions.process import statement_target_of_text
+    files = sorted(Path(__file__).resolve().parent.glob("fixtures/missions/**/lean/Statements/*.lean"))
+    assert files
+    for f in files:
+        name, mode = statement_target_of_text(_guard_anchors(), f.read_text(encoding="utf-8"), f.stem)
+        assert mode == "type" and name.startswith("demo_"), (f, name)
+
+
+def _fake_statement_run(declared_for, env=FP_ENV, calls=None, ranges_for=None):
     """A stand-in for `fingerprint.run_statement_fingerprint`: FP_A/FP_B by target, the replay's declarations from
     `declared_for(target)` and the trusted env digest `env`."""
     from telperion.checks.fingerprint import Fingerprints
 
     def fake(project, text, target, *, mode, **kw):
+        from telperion.missions.judge import _guard_anchors
+        from telperion.missions.process import statement_target_details
         if calls is not None:
             calls.append((project, target, mode, "DO NOT EDIT" in text, kw))
-        return Fingerprints({target: {"thm_Node_A": FP_A, "StmtB": FP_B}.get(target, FP_C)}, mode=mode,
-                            trusted_env_sha256=env, declared=declared_for(target, mode))
+        out = Fingerprints({target: {"thm_Node_A": FP_A, "StmtB": FP_B}.get(target, FP_C)}, mode=mode,
+                           trusted_env_sha256=env, declared=declared_for(target, mode))
+        # the declaration range Lean would record: where the text declares the target (fix round 2)
+        out.ranges = {target: (statement_target_details(_guard_anchors(), text, "x")[2], 0)}
+        if ranges_for is not None:
+            out.ranges = ranges_for(out.ranges)
+        return out
     return fake
 
 
@@ -2677,7 +2731,9 @@ def test_compute_refuses_missing_or_mixed_trusted_envs(tmp_path, envs, why):
 
     def fake(project, text, target, *, mode, **kw):
         from telperion.checks.fingerprint import Fingerprints
-        return Fingerprints({target: FP_A}, mode=mode, trusted_env_sha256=next(it), declared=_honest(target, mode))
+        out = Fingerprints({target: FP_A}, mode=mode, trusted_env_sha256=next(it), declared=_honest(target, mode))
+        out.ranges = {target: (2, 0)}
+        return out
     with pytest.raises(ValueError, match=why):
         compute_statement_fingerprints(root, fingerprint_text=fake)
 
@@ -2800,3 +2856,34 @@ def test_back_dated_freeze_in_a_shallow_clone_flagged_once_a_post_cutoff_node_is
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert any("shallow clone" in q for q in freeze_problems(dest))
+
+
+def test_compute_refuses_a_constant_no_textual_declaration_accounts_for(tmp_path):
+    """Fix round 2 (Ruling 19): a generator the grammar did not know (Lean declares `foo_def` or `Wrapper`, no
+    declaration in the text names it or a prefix of it) is refused; a declared structure's own auxiliaries are not."""
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    manifest = _campaign(root, names=("Node_A",))
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "structure Box where\n  val : Nat\ntheorem thm_Node_A : True", manifest)
+    aux = {"theorem": ["thm_Node_A", "Box.mk.injEq", "Box.mk.inj"], "propdef": [],
+           "other": ["Box", "Box.mk", "Box.rec", "Box.val"]}
+    out = compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(lambda t, m: aux))
+    assert out == {"Node_A": FP_A}
+    with pytest.raises(ValueError, match=r"declares \['Wrapper', 'foo_def'\], which no declaration"):
+        compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(
+            lambda t, m: {**aux, "theorem": aux["theorem"] + ["foo_def"], "other": aux["other"] + ["Wrapper"]}))
+
+
+@pytest.mark.parametrize("ranges", [{}, {"thm_Node_A": (5, 0)}, {"thm_Node_A": (2, 3)}, None])
+def test_compute_refuses_a_target_lean_records_elsewhere(tmp_path, ranges):
+    """Fix round 2 (Ruling 19, part 2): the target's recorded declaration range must start at the textual
+    declaration's line, column 0 (line 2: the provenance header is line 1). An alias or other generator records its
+    own line."""
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    _campaign(root, names=("Node_A",))
+    assert compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest)) == {"Node_A": FP_A}
+    with pytest.raises(ValueError, match=r"Lean records the declaration of 'thm_Node_A' at \(line, column\)"):
+        compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest,
+                                                                                  ranges_for=lambda r: ranges))

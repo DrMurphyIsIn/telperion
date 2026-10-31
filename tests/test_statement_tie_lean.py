@@ -158,7 +158,8 @@ def frozen_statement():
     from telperion.checks.fingerprint import run_statement_fingerprint
     fps = run_statement_fingerprint(Path(LEAN_ENV), "-- statement\n" + STATEMENT + " := by sorry\n", "main_thm",
                                     mode="type")
-    assert fps.declared == {"theorem": ["main_thm"], "propdef": []}
+    assert fps.declared == {"theorem": ["main_thm"], "propdef": [], "other": []}
+    assert fps.ranges == {"main_thm": (2, 0)}
     return fps["main_thm"], fps.trusted_env_sha256
 
 
@@ -239,26 +240,78 @@ def test_attack_chain_refused_at_the_freeze(tmp_path, capsys):
     rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
                "--session", GATE[1], "--fingerprints"])
     out = capsys.readouterr().out
-    assert rc == 1 and "`#exit`" in out, out
+    assert rc == 1 and "`#` command" in out, out
     assert not (root / "FREEZE.toml").exists()
 
 
-@pytest.mark.parametrize("stmt,why", [
-    # the only `theorem` the text shows is inside an `s!` interpolation: Lean declares no theorem at all
-    ('def s : String := s!"{"\ntheorem main_thm : 1 + 1 = 2 := by sorry\n"}"', "target not found: main_thm"),
-    # Lean declares theorems the text does not show (a structure's `mk.injEq`, `mk.inj`, ...): the module must
-    # declare exactly the one statement constant the text reads
-    ("structure Box where\n  val : Nat\ntheorem main_thm : 1 + 1 = 2", "as Lean elaborates it, declares the theorem(s)"),
-])
-def test_statement_lean_reads_differently_is_refused_at_the_freeze(tmp_path, capsys, stmt, why):
-    """The semantic half, with no backstop token in the text (real Lean)."""
+#: Fix round 2 (Ruling 19): the re-review's bypasses, a declaration GENERATOR (`alias main := Nat.zero_le`, a real
+#: theorem `main` stating `∀ n, 0 ≤ n`) plus a textual `theorem main` stating something FALSE that Lean never
+#: elaborates: hidden in an `s!` interpolation, or swallowed by an `elab` command. Both compile; both used to freeze
+#: the alias's fingerprint while the gate read the false text. The whitelist grammar refuses both at the freeze.
+GENERATOR_BYPASSES = {
+    "alias_s_interpolation": ('import Mathlib\nalias main := Nat.zero_le\ndef s : String := s!"{"\n'
+                              'theorem main : ∀ n : ℕ, n = n + 1 := by sorry -- "}"\n'),
+    "alias_elab_swallow": ('import Mathlib\nalias main := Nat.zero_le\nelab "ignore" c:command : command => pure ()\n'
+                           "ignore theorem main : ∀ n : ℕ, n = n + 1 := by sorry\n"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(GENERATOR_BYPASSES))
+def test_generator_bypass_refused_at_the_freeze(tmp_path, capsys, case):
+    from telperion.missions import judge
+    from telperion.missions.process import statement_target_of_text
+    text = GENERATOR_BYPASSES[case]
+    # the bypass is real Lean: it compiles, and Lean declares exactly one theorem `main` (the alias)
+    from telperion.checks.fingerprint import run_statement_fingerprint
+    fps = run_statement_fingerprint(Path(LEAN_ENV), text, "main", mode="type")
+    assert fps.declared["theorem"] == ["main"]
+    # part 2's binding sees it too: Lean records `main` on the alias's line 2, not the textual theorem's line 4
+    assert fps.ranges["main"] == (2, 0)
+    # and the gate's reader sees the false text as the statement
+    assert judge._guard_anchors().statement_decl(text)[1].startswith("theorem main : ∀ n : ℕ, n = n + 1")
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, text, HONEST)
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
+               "--session", GATE[1], "--fingerprints"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "string literal" in out, out
+    assert not (root / "FREEZE.toml").exists()
+    with pytest.raises(ValueError, match="string literal"):
+        statement_target_of_text(judge._guard_anchors(), text, "Demo_ck")
+
+
+def test_statement_lean_reads_differently_is_refused_at_the_freeze(tmp_path, capsys):
+    """The step-4 `s!` desync on a statement file: the only `theorem` the text shows is inside an interpolation, so
+    Lean declares no theorem. Fix round 1 refused it semantically ("target not found"); since fix round 2 the grammar
+    refuses it first (no string literal at all)."""
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, 'def s : String := s!"{"\ntheorem main_thm : 1 + 1 = 2 := by sorry\n"}"', HONEST)
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
+               "--session", GATE[1], "--fingerprints"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "string literal" in out, out
+    assert not (root / "FREEZE.toml").exists()
+
+
+def test_honest_statement_with_supporting_definitions_freezes(tmp_path, capsys):
+    """The grammar's supporting declarations, in real Lean: a structure (whose `mk.injEq`/`mk.inj`/... are its own),
+    an inductive, a class and a definition with a nested proof (`proof_N` auxiliaries) are all accounted for, and the
+    one statement theorem is what is frozen."""
+    stmt = ("import Mathlib\nuniverse u\nopen scoped Real\nstructure Box where\n  val : ℕ\ninductive Col\n  | red\n"
+            "  | blue\nclass HasX (α : Type u) where\n  x : α\ndef five : Fin 6 := ⟨5, by decide⟩\n"
+            "theorem main_thm : 1 + 1 = 2")
     mroot = tmp_path / "missions"
     root = _campaign(mroot, stmt, HONEST)
     rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
                "--session", GATE[1], "--fingerprints"])
     out = capsys.readouterr().out
-    assert rc == 1 and why in out, out
-    assert not (root / "FREEZE.toml").exists()
+    assert rc == 0 and "1 statement fingerprint(s) recorded" in out, out
+    assert len(_load_freeze(root)["fingerprints"]["Demo_ck"]) == 64
+    from telperion.checks.fingerprint import run_statement_fingerprint
+    text = statement_path(root, load_node(root / "nodes" / "Demo_ck.toml")).read_text()
+    fps = run_statement_fingerprint(Path(LEAN_ENV), text, "main_thm", mode="type")
+    line = text.split("\n").index("theorem main_thm : 1 + 1 = 2 := by sorry") + 1
+    assert fps.ranges["main_thm"] == (line, 0) and fps.ranges["Box"][0] < line
 
 
 def test_decoy_stating_the_frozen_proposition_is_accepted(tmp_path, capsys, frozen_statement, frozen_statement_fp):

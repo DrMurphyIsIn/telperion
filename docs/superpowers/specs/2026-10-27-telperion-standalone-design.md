@@ -298,11 +298,15 @@ Islands are a generic mechanism, and these two are its reference entries. RH-spe
 --fingerprints`, every node's statement fingerprint in `[fingerprints]`, not in `[grant]` (each grant still records
 its own `statement_sha256`). A statement file declares exactly one statement constant: one `theorem`, fingerprinted in
 type mode (the form statement files have so far), or, with none, one closed `def … : Prop`, fingerprinted in value mode
-(the form item 1 describes; the containment match and the name resolver do not handle it yet). It is chosen
-semantically (Task 6 fix round 1): the replayed statement module must declare exactly that constant, and the gate's
-statement reader must agree; `#exit`, `«»` names, syntax quotations and a keyword inside a string are refused
-outright. `fingerprints_env` records the trusted env digest the fingerprints were computed under, which the
-fingerprint JSON at `checks-record` must match, and the `frozen` date never changes. CI's
+(the form item 1 describes; the containment match and the name resolver do not handle it yet). Statement files
+follow a strict whitelist grammar (Task 6 fix round 2): only `import`, `namespace`/`end`/`section`, `open`,
+`universe`, `variable`, the statement and supporting `def`/`abbrev`/`structure`/`inductive`/`class` commands, each at
+a line start; no string or char literal, no attribute, no syntax extension, generator, `#` command or `set_option`.
+The constant is then chosen semantically: the replayed statement module must declare exactly that statement
+constant, every constant it declares must be accounted for by a textual declaration, the gate's statement reader must
+agree, and the declaration range Lean recorded for it (read as data from the compiled olean) must start at the
+textual declaration's line. `fingerprints_env` records the trusted env digest the fingerprints were computed under (machine-independent
+within a platform), which the fingerprint JSON at `checks-record` must match, and the `frozen` date never changes. CI's
 "fails if the file changes" is `mission verify`'s walk of FREEZE.toml's git history: at an unchanged version neither
 table may change, except for nodes added with it; any other change needs a version bump with an `[[unfreeze]]` entry
 read back by someone other than its author. `unfreeze` records fingerprints only when given `--fingerprints` and never

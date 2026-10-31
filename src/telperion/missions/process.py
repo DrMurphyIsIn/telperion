@@ -1182,29 +1182,128 @@ _THEOREM_TOKEN_RE = re.compile(r"(?<![\w.'!?])(?:theorem|lemma)(?![\w.'!?])")
 _THEOREM_DECL_RE = re.compile(r"(?<![\w.'!?])(?:theorem|lemma)" + _KW_NAME)
 #: A `def`/`abbrev` keyword token and its name, for the closed `def S : Prop` statement constant.
 _DEF_DECL_RE = re.compile(r"(?<![\w.'!?])(?:def|abbrev)" + _KW_NAME + r"(?:\.\{[^}]*\})?")
-#: Text in a statement file's CODE that makes what Lean declares differ from what a reader of
-#: the text sees (step 4's resolver evasions, turned on the statement file): refused outright.
-_STATEMENT_FORBIDDEN = (("#exit", "`#exit` (Lean ignores everything after it)"),
-                        ("«", "a `«»`-quoted name (it can hide quotes and declaration text)"),
-                        ("`(", "a syntax quotation `` `( ``"))
+#: Fix round 2 (Ruling 19): statement files follow a STRICT WHITELIST grammar. Every command
+#: starts a line (column 0) with one of these keywords; nothing else may start a command.
+_ALLOWED_COMMANDS = frozenset({
+    "import", "namespace", "end", "section", "open", "universe", "variable",
+    "theorem", "lemma", "def", "abbrev", "structure", "inductive", "class", "noncomputable",
+})
+#: What may follow `noncomputable` on its line.
+_NONCOMPUTABLE_NEXT = frozenset({"def", "abbrev", "section"})
+#: Refused ANYWHERE in the code: declaration generators, syntax extensions (which can swallow
+#: a command, or make text mean something else), code that runs at elaboration time, and
+#: modifiers outside the grammar. Matched as whole tokens (`List.prefix` does not match).
+_FORBIDDEN_TOKENS = (
+    "elab", "elab_rules", "macro", "macro_rules", "syntax", "notation", "infix", "infixl",
+    "infixr", "prefix", "postfix", "declare_syntax_cat", "run_cmd", "run_elab", "run_meta",
+    "alias", "export", "attribute", "initialize", "builtin_initialize", "deriving",
+    "set_option", "local", "scoped", "instance", "private", "protected", "opaque", "axiom",
+    "irreducible_def", "omit", "include",
+)
+_TOKEN_RE = re.compile(r"[A-Za-z_\u0370-\u03ff\u1f00-\u1fff\u2100-\u214f]"
+                       r"[\w'!?\u0370-\u03ff\u1f00-\u1fff\u2100-\u214f\u2080-\u2089\u2090-\u209c]*")
+_FORBIDDEN_TOKEN_RE = re.compile(r"(?<![\w.'!?])(" + "|".join(_FORBIDDEN_TOKENS) + r")(?![\w.'!?])")
+_COMMAND_TOKEN_RE = re.compile(r"(?<![\w.'!?])(" + "|".join(sorted(_ALLOWED_COMMANDS)) + r")(?![\w.'!?])")
+#: Refused anywhere in the code, as text.
+_FORBIDDEN_TEXT = (
+    ("«", "a `«»`-quoted name (it can hide quotes and declaration text)"),
+    ("`", "a backquote (a syntax quotation `` `( `` or a name literal)"),
+    ("@[", "an attribute `@[...]` (no attribute is allowed in a statement file)"),
+)
+
+
+def _code_columns(segs) -> str:
+    """The code of *segs* with every comment replaced by spaces (newlines kept), so that a
+    character's line and column are its line and column in the file."""
+    return "".join(t if k != "comment" else re.sub(r"[^\n]", " ", t) for k, t in segs)
 
 
 def _statement_text_problem(ga, text: str) -> Optional[str]:
-    """Why *text* (a statement file) cannot be read unambiguously, or None: the textual backstop
-    of `statement_fingerprint_target`. Read with the shared lexer (`guard_anchors.lean_segments`),
-    so a comment mentioning `#exit` is harmless; a `theorem`/`lemma` keyword inside a STRING is
-    not, because the gate's own reader (`guard_anchors.statement_decl`) does not blank strings."""
+    """Why *text* (a statement file) is outside the statement-file grammar, or None (fix round 2,
+    Ruling 19: a STRICT WHITELIST, checked with the shared lexer `guard_anchors.lean_segments`, so
+    comments never trigger it). The grammar:
+
+    - every command starts a line, at column 0, with `import`, `namespace`, `end`, `section`,
+      `open`, `universe`, `variable`, `theorem`, `lemma`, `def`, `abbrev`, `structure`,
+      `inductive`, `class` or `noncomputable` (then `def`, `abbrev` or `section`); any other
+      token at a line start is refused, naming the line, and a command keyword anywhere else
+      (mid-line, or on an indented line) is refused too;
+    - no string, raw-string or char literal at all (an interpolated `s!"{"…"}"`, `m!`, `f!`,
+      `throwError "{"` or `dbg_trace` hides text from any lexer but Lean's own);
+    - none of `_FORBIDDEN_TOKENS` anywhere (generators such as `alias`, syntax extensions such
+      as `elab`, which can swallow a command, elaboration-time code such as `run_cmd`, and
+      `set_option`, `local`, `scoped`, `instance`, `private`, ...), no `#` command, no `«`, no
+      backquote and no attribute. The one exception is `open scoped NS` at a line start.
+
+    Statement files come from `mission add` and declare one statement and its supporting
+    definitions, so this costs nothing; what it buys is that the textual declarations ARE what
+    Lean elaborates, which `compute_statement_fingerprints` then checks."""
     segs = ga.lean_segments(text)
-    code = "".join(t for k, t in segs if k == "code")
-    for needle, what in _STATEMENT_FORBIDDEN:
-        if needle in code:
-            return f"the statement file contains {what}"
-    if any(k in ("string", "raw") and _THEOREM_TOKEN_RE.search(t) for k, t in segs):
-        return ("the statement file has `theorem`/`lemma` inside a string literal (the gate's "
-                "statement reader would see it)")
-    if re.search(r"(?<![\w.'!?])private(?![\w.'!?])", code):
-        return "the statement file declares something `private` (its name is mangled)"
+    code = _code_columns(segs)
+
+    def line_of(pos: int) -> int:
+        return code.count("\n", 0, pos) + 1
+
+    pos = 0
+    for kind, seg in segs:
+        if kind in ("string", "raw", "char"):
+            return (f"the statement file has a {'char' if kind == 'char' else 'string'} literal "
+                    f"(line {line_of(pos)}); statement files may not contain any")
+        pos += len(seg)
+    for needle, what in _FORBIDDEN_TEXT:
+        i = code.find(needle)
+        if i >= 0:
+            return f"the statement file contains {what} (line {line_of(i)})"
+    m = re.search(r"#[A-Za-z_]", code)
+    if m:
+        return f"the statement file contains a `#` command (line {line_of(m.start())})"
+    # `open scoped NS` (the namespace's scoped notation, `π` for `Real`) is the one allowed use of
+    # `scoped`; `local`/`scoped` NOTATION forms are refused through `notation`/`infix`/... below.
+    m = _FORBIDDEN_TOKEN_RE.search(re.sub(r"(?m)^open[ \t]+scoped(?![\w.'!?])", "open", code))
+    if m:
+        return (f"the statement file uses `{m.group(1)}` (line {line_of(m.start())}), which a "
+                "statement file may not")
+    allowed_at: Set[int] = set()
+    offset = 0
+    for lineno, line in enumerate(code.split("\n"), start=1):
+        start = offset
+        offset += len(line) + 1
+        if not line.strip() or line[0].isspace():
+            continue
+        tok = _TOKEN_RE.match(line)
+        word = tok.group(0) if tok else line.split()[0]
+        if word not in _ALLOWED_COMMANDS:
+            return (f"line {lineno} starts a command with {word!r}, which is not in the "
+                    "statement-file grammar")
+        allowed_at.add(start)
+        if word == "noncomputable":
+            nxt = re.match(r"noncomputable[ \t]+(\S+)", line)
+            if not nxt or nxt.group(1) not in _NONCOMPUTABLE_NEXT:
+                return (f"line {lineno}: `noncomputable` must be followed by `def`, `abbrev` or "
+                        "`section`")
+            allowed_at.add(start + nxt.start(1))
+    for m in _COMMAND_TOKEN_RE.finditer(code):
+        if m.start() not in allowed_at:
+            return (f"line {line_of(m.start())}: the command keyword `{m.group(1)}` does not start "
+                    "a line; every command must start at column 0 of its own line")
     return None
+
+
+_DECLARING_RE = re.compile(r"(?m)^(?:noncomputable[ \t]+)?(?:theorem|lemma|def|abbrev|structure|inductive|class)"
+                           + _KW_NAME)
+
+
+def statement_declared_names(ga, text: str) -> List[str]:
+    """The fully qualified names a statement file's text declares (`theorem`, `lemma`, `def`,
+    `abbrev`, `structure`, `inductive`, `class`, each at a line start, per the grammar),
+    qualified by the `namespace`s open at each."""
+    code = ga.blank_lean_code(text)
+    out = []
+    for m in _DECLARING_RE.finditer(code):
+        parts = m.group(1).split(".")
+        out.append(".".join(parts[1:]) if parts[0] == "_root_"
+                   else ".".join(ga._namespace_at(code, m.start()) + parts))
+    return out
 
 
 def _closed_prop_defs(code: str) -> List[re.Match]:
@@ -1229,16 +1328,27 @@ def statement_fingerprint_target(root: Path, node) -> Tuple[str, str]:
     `def S : Prop`). Counted over the code, with comments and string literals blanked. In type
     mode the gate's own reader (`guard_anchors.statement_decl`) must name the same declaration;
     in value mode it must find no theorem at all. The name is qualified by the `namespace`s open
-    at it (`_namespace_at`). `ValueError`, naming the node, for: a file `_statement_text_problem`
-    refuses (`#exit`, `«`, `` `( ``, a keyword inside a string, `private`); more than one
-    theorem, or more than one statement constant; none at all; a name that is not a plain dotted
-    identifier; a disagreement with the gate's reader."""
-    from ..closure_audit import _IDENT_COMPONENT
+    at it (`_namespace_at`). `ValueError`, naming the node, for: a file outside the statement-file
+    grammar (`_statement_text_problem`, fix round 2); more than one theorem, or more than one
+    statement constant; none at all; a name that is not a plain dotted identifier; a
+    disagreement with the gate's reader."""
     from .judge import _guard_anchors
 
-    ga = _guard_anchors()
-    slug = slug_of(node.name)
-    text = statement_path(root, node).read_text(encoding="utf-8")
+    return statement_target_of_text(_guard_anchors(), statement_path(root, node).read_text(encoding="utf-8"),
+                                    slug_of(node.name))
+
+
+def statement_target_of_text(ga, text: str, slug: str) -> Tuple[str, str]:
+    """`statement_fingerprint_target` on a statement file's *text* (`ga`: `guard_anchors`), for
+    the node *slug*."""
+    name, mode, _line = statement_target_details(ga, text, slug)
+    return name, mode
+
+
+def statement_target_details(ga, text: str, slug: str) -> Tuple[str, str, int]:
+    """`statement_target_of_text` plus the (1-based) line of the file its declaration starts on,
+    which the grammar puts at column 0."""
+    from ..closure_audit import _IDENT_COMPONENT
 
     def refuse(why: str) -> ValueError:
         return ValueError(f"node {slug!r}: {why}; refusing to freeze a fingerprint for it.")
@@ -1283,7 +1393,7 @@ def statement_fingerprint_target(root: Path, node) -> Tuple[str, str]:
         name = ".".join(parts[1:])
     else:
         name = ".".join(ga._namespace_at(code, decl.start()) + parts)
-    return name, "type" if theorems else "value"
+    return name, "type" if theorems else "value", code.count("\n", 0, decl.start()) + 1
 
 
 class StatementFingerprints(dict):
@@ -1310,8 +1420,12 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
     statement module must declare exactly one statement constant, and it must be the textual
     target -- in type mode its only theorem (and no closed `Prop` definition), in value mode its
     only closed `Prop` definition (and no theorem). So text that Lean never elaborates, or
-    elaborates differently from how it reads, cannot choose what is frozen. Every node's
-    fingerprint must also come from the same trusted env.
+    elaborates differently from how it reads, cannot choose what is frozen. Fix round 2 (Ruling
+    19) adds two more: every constant the module declares must be accounted for by a textual
+    declaration (its name, or a name under it), and the declaration range Lean recorded for the
+    target (`fingerprint.run_statement_fingerprint`'s ``ranges``, read as data from the compiled
+    olean) must start at the textual declaration's line, column 0. Every node's fingerprint must
+    also come from the same trusted env.
 
     NOT A SANDBOX: compiling a statement runs its code (see `checks.fingerprint`); the
     statement files are the campaign's own."""
@@ -1326,13 +1440,14 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
         path = statement_path(root, node)
         if not path.exists():
             continue
+        from .judge import _guard_anchors
         try:
-            target, mode = statement_fingerprint_target(root, node)
+            text = path.read_text(encoding="utf-8")
         except OSError as exc:
             raise ValueError(f"node {slug!r}: cannot read its statement file ({exc})") from None
+        target, mode, line = statement_target_details(_guard_anchors(), text, slug)
         try:
-            fps = fingerprint_text(root / "lean", path.read_text(encoding="utf-8"), target,
-                                   mode=mode, **lean_kw)
+            fps = fingerprint_text(root / "lean", text, target, mode=mode, **lean_kw)
         except (OSError, ValueError) as exc:
             raise ValueError(f"node {slug!r}: statement fingerprint of {target!r} ({mode} mode) "
                              f"failed: {exc}") from None
@@ -1340,7 +1455,23 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
         if not isinstance(declared, dict):
             raise ValueError(f"node {slug!r}: the statement fingerprint run did not list the "
                              "module's declarations")
-        theorems, prop_defs = list(declared.get("theorem", [])), list(declared.get("propdef", []))
+        # Fix round 2 (Ruling 19): every constant the module declares must be accounted for by a
+        # declaration in the text: its own name, or a name under it (a structure's `mk`/`rec`/
+        # `mk.injEq`, a definition's `match_1`/`proof_1`). A generator the grammar missed would
+        # show up here as an unaccounted name. Those auxiliaries are then not statement constants.
+        names = statement_declared_names(_guard_anchors(), text)
+
+        def under(n: str) -> bool:
+            return any(n.startswith(d + ".") for d in names)
+        every = [n for k in ("theorem", "propdef", "other") for n in declared.get(k, [])]
+        unaccounted = sorted(n for n in every if n not in names and not under(n))
+        if unaccounted:
+            raise ValueError(
+                f"node {slug!r}: the statement module, as Lean elaborates it, declares "
+                f"{unaccounted}, which no declaration in the statement file's text accounts for; "
+                "refusing to freeze a fingerprint for it.")
+        theorems = [n for n in declared.get("theorem", []) if not under(n)]
+        prop_defs = [n for n in declared.get("propdef", []) if not under(n)]
         want = ([target], []) if mode == "type" else ([], [target])
         if (theorems, prop_defs) != want:
             raise ValueError(
@@ -1348,6 +1479,16 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
                 f"theorem(s) {theorems} and the closed Prop definition(s) {prop_defs}, but the "
                 f"statement file reads as declaring only {target!r} ({mode} mode); refusing to "
                 "freeze a fingerprint for it.")
+        # Fix round 2 (Ruling 19, part 2): the declaration range Lean RECORDED for the target (read
+        # as data from the compiled olean) must start where the text declares it, so the constant
+        # is the textual declaration and not one a generator made under the same name.
+        ranges = getattr(fps, "ranges", None)
+        if not isinstance(ranges, dict) or ranges.get(target) != (line, 0):
+            got = None if not isinstance(ranges, dict) else ranges.get(target)
+            raise ValueError(
+                f"node {slug!r}: Lean records the declaration of {target!r} at (line, column) "
+                f"{got}, but the statement file declares it at ({line}, 0); refusing to freeze a "
+                "fingerprint for it.")
         env = getattr(fps, "trusted_env_sha256", None)
         if not env or not _SHA256_HEX_RE.fullmatch(env):
             raise ValueError(f"node {slug!r}: the fingerprint run names no trusted env digest")

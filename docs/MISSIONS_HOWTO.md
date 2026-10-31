@@ -573,14 +573,37 @@ How each fingerprint is computed:
 - **The textual choice.** The constant is read from the code, with comments and strings blanked by the gate's own
   lexer. In type mode it must be the theorem the gate reads as the node's statement (`guard_anchors.statement_decl`);
   in value mode the gate must find no theorem at all.
-- **The textual backstop.** A file is refused outright when its code contains `#exit`, a `«»` name or a `` `( ``
-  syntax quotation, when a string spells `theorem` or `lemma`, or when it declares anything `private`. Each of these
-  makes what Lean declares differ from what a reader of the text sees; a comment mentioning them is harmless.
+- **The statement-file grammar (a strict whitelist).** Read with the gate's own lexer, so comments and doc comments
+  never trigger it:
+  - every command starts a line, at column 0, with `import`, `namespace`, `end`, `section`, `open` (including
+    `open scoped`), `universe`, `variable`, the statement (`theorem`/`lemma`, or `def`/`abbrev … : Prop`), or a
+    supporting `def`, `abbrev`, `structure`, `inductive`, `class` or `noncomputable def`/`abbrev`/`section`;
+  - anything else at a line start is refused, naming the line, and so is a command keyword anywhere else (mid-line,
+    or on an indented line). Continuation lines of a multi-line declaration must be indented;
+  - no string, raw-string or char literal anywhere. An interpolated `s!"{"…"}"` (or `m!`, `f!`, `throwError`,
+    `dbg_trace`) can hide a whole `theorem` from every lexer but Lean's own;
+  - none of: `elab`, `elab_rules`, `macro`, `macro_rules`, `syntax`, `notation`, `infix`/`infixl`/`infixr`, `prefix`,
+    `postfix`, `declare_syntax_cat` (they can swallow a command or change what text means); `run_cmd`, `run_elab`,
+    `run_meta`, `initialize`, `builtin_initialize`, and any `#` command (`#eval`, `#exit`, `#print`, ...) (they run
+    code); `alias`, `export`, `attribute`, `deriving`, `instance`, `irreducible_def` (they generate declarations);
+    `set_option`, `local`, `scoped` (other than `open scoped`), `private`, `protected`, `opaque`, `axiom`, `omit`,
+    `include`; any attribute `@[…]`; any `«»` name; any backquote (a `` `( `` quotation or a name literal).
+  Statement files come from `mission add`, so this costs nothing in practice: of the 123 node statement files in the
+  campaigns written before step 5, 121 are inside it (the other two declare helper lemmas beside their theorem). The
+  three campaign `…Defs.lean` modules are not node statement files and are not frozen.
 - **The semantic choice, which is what decides.** The statement file is compiled as its own module with the pinned
   `lean` (no lake) and replayed into the pinned env like every other check. The replayed module must declare exactly
   the constant the text named, and nothing else that could be a statement: in type mode its only theorem (and no
   closed `Prop` definition), in value mode its only closed `Prop` definition (and no theorem). Theorems Lean generates
-  that the text does not show count too: a local structure's `mk.injEq` makes the file ambiguous.
+  that the text does not show must be accounted for: every constant the module declares must be named by a
+  declaration in the text, or sit under one (a structure's `mk`, `rec`, `mk.injEq`; a definition's `match_1` or
+  `proof_1`). Those auxiliaries are not statement constants. A generator the grammar did not know would show up here
+  as an unaccounted name.
+- **The declaration range.** Lean records, in the compiled statement `.olean`, the line and column each constant was
+  declared at (`declRangeExt`). That record is read back as data, by a trusted script that imports only `Lean`, from
+  the very olean that is then replayed (its sha256 is checked against the replay's copy), and the target's range must
+  start at the textual declaration's line, column 0. So the frozen constant is the one the text declares, not one a
+  generator made under the same name: an `alias main := …` records the alias's own line.
 - **What is hashed.** The theorem is fingerprinted by its TYPE, that is `P`; the definition by its VALUE, which is `P`
   again. In both cases every non-library definition is unfolded first, so `theorem t : S`, `theorem t : P` and `S`
   itself all get the same fingerprint. Universe-polymorphic statements are included, with level parameters numbered
@@ -611,7 +634,9 @@ so each version records its own or none.
 **The trusted env.** `fingerprints_env` and the JSON's `trusted_env_sha256` are a digest of the trusted manifest's
 content (`lean_replay.trusted_env_digest`): the toolchain and every trusted file's sha256, keyed by its path inside
 its package rather than by the absolute paths the manifest records, so the same pinned env gives the same digest on
-any machine. It is fixed for a version like the fingerprints are. Library constants are hashed by NAME, not unfolded,
+any machine of the same platform. The trusted files include the platform's `lean` binary and its shared libraries, so
+a macOS freeze and a Linux check get different digests, which fails closed ("different trusted env"): fingerprint the
+artifact on the platform the campaign was frozen on. It is fixed for a version like the fingerprints are. Library constants are hashed by NAME, not unfolded,
 so a Mathlib bump usually leaves a fingerprint unchanged; it changes one only where elaboration differs (an instance
 path, a renamed lemma). That is exactly why the env is recorded: a freeze under one Mathlib and checks under another
 would otherwise compare equal whenever the names happen to agree. After a bump, re-run the checks and `unfreeze
