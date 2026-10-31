@@ -104,6 +104,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
+from ..guarded_read import read_guarded
 from .schema import atomic_write_text, slug_of
 from .statements import statement_body, statement_path
 
@@ -263,33 +264,9 @@ def _load_freeze_safe(root: Path) -> Tuple[Optional[dict], Optional[str]]:
     Then the content: not UTF-8, not TOML, or not FREEZE.toml's shape. The open uses
     O_NOFOLLOW, so a symlink swapped in after the lstat is refused too, not followed.
     """
-    path = freeze_path(root)
-    try:
-        st = path.lstat()
-    except FileNotFoundError:
-        return None, None
-    except OSError as exc:
-        return None, f"{FREEZE_FILENAME} could not be read ({exc.strerror or exc})."
-    if stat.S_ISLNK(st.st_mode):
-        return None, f"{FREEZE_FILENAME} is a symlink in the working tree; refusing to trust it."
-    if not stat.S_ISREG(st.st_mode):
-        return None, (
-            f"{FREEZE_FILENAME} in the working tree is not a regular file (a directory, e.g. "
-            "a submodule checkout, or a special file); refusing to trust it."
-        )
-    if st.st_size > FREEZE_MAX_BYTES:
-        return None, (f"{FREEZE_FILENAME} is larger than {FREEZE_MAX_BYTES} bytes; refusing "
-                      "to trust it.")
-    try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(fd, "rb") as fh:
-            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-                return None, (f"{FREEZE_FILENAME} changed while being read; refusing to "
-                              "trust it.")
-            data = fh.read(FREEZE_MAX_BYTES + 1)
-    except OSError as exc:
-        return None, f"{FREEZE_FILENAME} could not be read ({exc.strerror or exc})."
+    data, problem = read_guarded(freeze_path(root), label=FREEZE_FILENAME, max_bytes=FREEZE_MAX_BYTES)
+    if data is None:
+        return None, problem
     doc, why = _parse_freeze_bytes(data)
     if why:
         return None, f"{FREEZE_FILENAME} {why}; refusing to trust it."
@@ -2388,36 +2365,10 @@ def _load_deviations_safe(root: Path) -> Tuple[Optional[str], Optional[str]]:
     it -- the same injection this guards against for FREEZE.toml), anything else that is
     not a regular file, a file over `DEVIATIONS_MAX_BYTES`, or content that is not valid
     UTF-8. Never raises."""
-    path = deviations_path(root)
-    try:
-        st = path.lstat()
-    except FileNotFoundError:
-        return None, None
-    except OSError as exc:
-        return None, f"{DEVIATIONS_FILENAME} could not be read ({exc.strerror or exc})."
-    if stat.S_ISLNK(st.st_mode):
-        return None, (f"{DEVIATIONS_FILENAME} is a symlink in the working tree; refusing "
-                      "to trust it.")
-    if not stat.S_ISREG(st.st_mode):
-        return None, (f"{DEVIATIONS_FILENAME} in the working tree is not a regular file "
-                      "(a directory, e.g. a submodule checkout, or a special file); "
-                      "refusing to trust it.")
-    if st.st_size > DEVIATIONS_MAX_BYTES:
-        return None, (f"{DEVIATIONS_FILENAME} is larger than {DEVIATIONS_MAX_BYTES} bytes; "
-                      "refusing to trust it.")
-    try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(fd, "rb") as fh:
-            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-                return None, (f"{DEVIATIONS_FILENAME} changed while being read; refusing "
-                              "to trust it.")
-            data = fh.read(DEVIATIONS_MAX_BYTES + 1)
-    except OSError as exc:
-        return None, f"{DEVIATIONS_FILENAME} could not be read ({exc.strerror or exc})."
-    if len(data) > DEVIATIONS_MAX_BYTES:
-        return None, (f"{DEVIATIONS_FILENAME} is larger than {DEVIATIONS_MAX_BYTES} bytes; "
-                      "refusing to trust it.")
+    data, problem = read_guarded(deviations_path(root), label=DEVIATIONS_FILENAME,
+                                 max_bytes=DEVIATIONS_MAX_BYTES)
+    if data is None:
+        return None, problem
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -2485,35 +2436,10 @@ def _load_deviations_readback_safe(root: Path) -> Tuple[Optional[dict], Optional
     refused, a decode error turned into a returned string), plus the TOML/shape check
     (`_parse_deviations_readback_bytes`). Returns `(doc, None)`; `(None, None)` if nothing
     is there yet; `(None, problem)` for anything this refuses. Never raises."""
-    path = deviations_readback_path(root)
-    try:
-        st = path.lstat()
-    except FileNotFoundError:
-        return None, None
-    except OSError as exc:
-        return None, (f"{DEVIATIONS_READBACK_FILENAME} could not be read "
-                      f"({exc.strerror or exc}).")
-    if stat.S_ISLNK(st.st_mode):
-        return None, (f"{DEVIATIONS_READBACK_FILENAME} is a symlink in the working tree; "
-                      "refusing to trust it.")
-    if not stat.S_ISREG(st.st_mode):
-        return None, (f"{DEVIATIONS_READBACK_FILENAME} in the working tree is not a "
-                      "regular file (a directory, e.g. a submodule checkout, or a special "
-                      "file); refusing to trust it.")
-    if st.st_size > DEVIATIONS_MAX_BYTES:
-        return None, (f"{DEVIATIONS_READBACK_FILENAME} is larger than "
-                      f"{DEVIATIONS_MAX_BYTES} bytes; refusing to trust it.")
-    try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(fd, "rb") as fh:
-            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-                return None, (f"{DEVIATIONS_READBACK_FILENAME} changed while being read; "
-                              "refusing to trust it.")
-            data = fh.read(DEVIATIONS_MAX_BYTES + 1)
-    except OSError as exc:
-        return None, (f"{DEVIATIONS_READBACK_FILENAME} could not be read "
-                      f"({exc.strerror or exc}).")
+    data, problem = read_guarded(deviations_readback_path(root), label=DEVIATIONS_READBACK_FILENAME,
+                                 max_bytes=DEVIATIONS_MAX_BYTES)
+    if data is None:
+        return None, problem
     doc, why = _parse_deviations_readback_bytes(data)
     if why:
         return None, f"{DEVIATIONS_READBACK_FILENAME} {why}; refusing to trust it."

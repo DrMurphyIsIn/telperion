@@ -3127,6 +3127,65 @@ def cmd_kernel_policy_check(args) -> int:
     return 0
 
 
+def cmd_island_list(args) -> int:
+    """`island list`: one line per island under <root>/islands/ with its status. Exit 1 only when the registry
+    itself cannot be read (`islands/` a symlink or not a directory); an invalid island is listed as self-reported."""
+    from . import islands
+
+    root = Path(args.root)
+    try:
+        names, problems = islands.island_names(root)
+        for p in problems:
+            print(p)
+        if problems:
+            return 1
+        if not names:
+            print("no islands")
+        for name in names:
+            probs = islands.island_problems(root, name)
+            try:
+                isl = islands.load_island(root, name)
+                what = f"{isl.toolchain}  {isl.commit[:12]}  {isl.source}"
+            except islands.IslandError:
+                what = "(invalid registration; see `telperion island check`)"
+            print(f"{name}  {'self-reported' if probs else 'verified'}  {what}")
+        return 0
+    except Exception as exc:  # the CLI never prints a traceback (fail closed)
+        print(f"island list: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_island_check(args) -> int:
+    """`island check [NAME]`: every problem that keeps the island (each island, with no NAME) from `verified`.
+    Exit 0 iff every island checked is verified; 1 otherwise, an unknown name included."""
+    from . import islands
+
+    root = Path(args.root)
+    try:
+        if args.name is not None:
+            names, problems = [args.name], []
+        else:
+            names, problems = islands.island_names(root)
+        for p in problems:
+            print(p)
+        if not names and not problems:
+            print("no islands")
+        bad = bool(problems)
+        for name in names:
+            probs = islands.island_problems(root, name)
+            if probs:
+                bad = True
+                print(f"SELF-REPORTED {name}")
+                for p in probs:
+                    print(f"  - {p}")
+            else:
+                print(f"VERIFIED {name}")
+        return 1 if bad else 0
+    except Exception as exc:  # the CLI never prints a traceback (fail closed)
+        print(f"island check: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
 def _trust_kwargs(args) -> dict:
     """The --trusted-env / --trusted-manifest / --olean-dir options that were given, as keyword arguments."""
     kw = {}
@@ -3990,6 +4049,18 @@ def main(argv=None) -> int:
                    help="base git ref; also enforce that the exception list only shrinks "
                         "relative to this ref (read via `git show REF:<path>` in --root)")
     p.set_defaults(fn=cmd_kernel_policy_check)
+
+    isp = sub.add_parser("island", help="the island registry (islands/<name>/): external Lean libraries Telperion "
+                                        "has replayed itself")
+    isp_sub = isp.add_subparsers(dest="island_cmd", required=True)
+    p = isp_sub.add_parser("list", help="each registered island, verified or self-reported")
+    p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
+    p.set_defaults(fn=cmd_island_list)
+    p = isp_sub.add_parser("check", help="print what keeps an island from verified; exit 1 unless every island "
+                                         "checked is verified")
+    p.add_argument("name", nargs="?", default=None, help="one island (default: all of them)")
+    p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
+    p.set_defaults(fn=cmd_island_check)
 
     p = sub.add_parser("probe-negation",
                        help="one-sided probe of a theorem's ELABORATED constant: VACUOUS (its premises "

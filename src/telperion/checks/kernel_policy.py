@@ -4,6 +4,9 @@ never turn the second kernel (nanoda) off except for re-judged heavy nodes.
 Lean v4.33.1 fixed kernel soundness bugs (#14806 order-dependent defeq cache, #14807 is_prop on a stuck type,
 #14808 recursor checks, #14582 non-uniform inductives, #14849 numeral size). v4.34.1 is the first line we pin
 that carries them; older projects are allowed only by name, on a list meant to shrink.
+
+A project is the directory of a tracked `lean-toolchain`, or an island (step 6): `islands/<name>`, whose toolchain
+is its island.toml's. An island's toolchain is held to the same floor, so registering a library cannot bypass it.
 """
 from __future__ import annotations
 
@@ -28,26 +31,72 @@ def below_floor(toolchain: str) -> bool:
     return parse_toolchain(toolchain) < parse_toolchain(FLOOR)
 
 
-def _tracked_toolchain_paths(root: Path) -> list[str]:
-    """Tracked `lean-toolchain` paths (relative to root) outside any `.lake/`, sorted.
-
-    Shared by find_projects and policy_problems so both see the same tracked set; neither
-    reads the file here, so a toolchain tracked in git but deleted on disk cannot crash this."""
+def _tracked_paths(root: Path) -> list[str]:
     out = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True).stdout.decode()
-    return sorted(
-        p for p in (x for x in out.split("\0") if x)
-        if Path(p).parts[-1] == "lean-toolchain" and ".lake" not in Path(p).parts
-    )
+    return [x for x in out.split("\0") if x]
+
+
+def _tracked_toolchain_paths(tracked: list[str]) -> list[str]:
+    """Tracked `lean-toolchain` paths (relative to root) outside any `.lake/`, sorted. Nothing is
+    read here, so a toolchain tracked in git but deleted on disk cannot crash this."""
+    return sorted(p for p in tracked if Path(p).parts[-1] == "lean-toolchain" and ".lake" not in Path(p).parts)
+
+
+def _island_projects(root: Path, tracked: list[str]) -> tuple[dict[str, str], set[str], list[str]]:
+    """Step 6: `(toolchains, known, problems)` for the islands, as projects named `islands/<name>` whose toolchain
+    is island.toml's `toolchain`. An island is every directory (or symlink) under `islands/` on disk, plus every
+    `islands/<name>/` with a tracked file, so neither an uncommitted island nor a committed one deleted on disk is
+    missed. One whose island.toml is missing, refused (a symlink anywhere on the way, oversized, not UTF-8) or
+    garbled is a problem, never skipped: its toolchain could be anything."""
+    from telperion import islands
+
+    names, problems = islands.island_names(root)
+    names = set(names) | {Path(p).parts[1] for p in tracked
+                          if len(Path(p).parts) >= 3 and Path(p).parts[0] == islands.ISLANDS_DIR}
+    toolchains: dict[str, str] = {}
+    known: set[str] = set()
+    for name in sorted(names):
+        proj = f"{islands.ISLANDS_DIR}/{name}"
+        known.add(proj)
+        tc, problem = islands.island_toolchain(root, name)
+        if tc is None:
+            problems.append(f"{proj}: {problem}")
+        else:
+            toolchains[proj] = tc.strip()
+    return toolchains, known, problems
+
+
+def _projects(root: Path) -> tuple[dict[str, str], set[str], list[str]]:
+    """`(toolchains, known, problems)` over every project: each tracked `lean-toolchain`'s directory, then each
+    island. Shared by find_projects and policy_problems."""
+    tracked = _tracked_paths(root)
+    problems: list[str] = []
+    known: set[str] = set()
+    projects: dict[str, str] = {}
+    for p in _tracked_toolchain_paths(tracked):
+        proj = str(Path(p).parent)
+        known.add(proj)
+        fp = root / p
+        if not fp.exists():
+            problems.append(f"{proj}: lean-toolchain is tracked but missing on disk")
+            continue
+        projects[proj] = fp.read_text().strip()
+    itc, iknown, iproblems = _island_projects(root, tracked)
+    problems += iproblems
+    for proj in sorted(iknown & known):
+        # an island's toolchain is island.toml's; a lean-toolchain beside it would be a second, competing pin
+        problems.append(f"{proj}: has a lean-toolchain file; an island's toolchain is the one in island.toml "
+                        "(library source never lives in islands/)")
+        projects.pop(proj, None)
+    for proj, tc in itc.items():
+        if proj not in known:
+            projects[proj] = tc
+    return projects, known | iknown, problems
 
 
 def find_projects(root: Path) -> list[tuple[str, str]]:
-    found = []
-    for p in _tracked_toolchain_paths(root):
-        fp = root / p
-        if not fp.exists():
-            continue
-        found.append((str(Path(p).parent), fp.read_text().strip()))
-    return found
+    projects, _known, _problems = _projects(root)
+    return list(projects.items())
 
 
 def _parse_exceptions_text(text: str, source: str) -> dict[str, dict]:
@@ -96,17 +145,7 @@ def shrink_problems(base_text: str | None, current: dict) -> list[str]:
 
 
 def policy_problems(root: Path, exceptions: dict) -> list[str]:
-    problems: list[str] = []
-    known_projects: set[str] = set()
-    projects: dict[str, str] = {}
-    for p in _tracked_toolchain_paths(root):
-        proj = str(Path(p).parent)
-        known_projects.add(proj)
-        fp = root / p
-        if not fp.exists():
-            problems.append(f"{proj}: lean-toolchain is tracked but missing on disk")
-            continue
-        projects[proj] = fp.read_text().strip()
+    projects, known_projects, problems = _projects(root)
     for proj, tc in projects.items():
         try:
             low = below_floor(tc)
