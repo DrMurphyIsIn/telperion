@@ -651,6 +651,7 @@ def _fake_fetch(config=None, *, head=COMMIT, challenge=CHALLENGE, toolchain="lea
         if calls is not None:
             calls.append((source, commit, Path(dest)))
         dest = Path(dest)
+        (dest / ".git" / "info").mkdir(parents=True, exist_ok=True)      # a clone's git dir (no exclude patterns)
         (dest / "Comparator").mkdir(parents=True, exist_ok=True)
         (dest / "Challenge").mkdir(exist_ok=True)
         (dest / "Comparator" / "comparator.json").write_text(json.dumps(config or AXIOM_CONFIG, indent=4) + "\n")
@@ -782,9 +783,9 @@ class FakeRun:
     """The injected `run`: canned outputs by command, every argv recorded."""
 
     def __init__(self, *, head=COMMIT, nanoda_head=NANODA, comparator=None, comparator_rc=0, probes=None, fp=None,
-                 build_rc=0, status="", status_rc=0):
+                 build_rc=0, status="", status_rc=0, ls_files="H Challenge/Basic.lean\nH lean-toolchain\n"):
         self.calls = []
-        self.status, self.status_rc = status, status_rc
+        self.status, self.status_rc, self.ls_files = status, status_rc, ls_files
         self.head, self.nanoda_head = head, nanoda_head
         self.comparator = _cmp_output() if comparator is None else comparator
         self.comparator_rc, self.build_rc = comparator_rc, build_rc
@@ -799,6 +800,8 @@ class FakeRun:
             return islands.RunResult(0, (self.nanoda_head if nanoda else self.head) + "\n")
         if "status" in argv:
             return islands.RunResult(self.status_rc, self.status)
+        if "ls-files" in argv:
+            return islands.RunResult(0, self.ls_files)
         if "cache" in argv or "build" in argv:
             return islands.RunResult(self.build_rc, "Build completed successfully.\n", 1.5, 1000)
         if "comparator" in argv:
@@ -815,6 +818,7 @@ class FakeRun:
 def _tools(tmp_path) -> Path:
     t = tmp_path / "tools"
     src = t / "islands" / "demo" / "src"
+    (src / ".git" / "info").mkdir(parents=True)                         # a clone's git dir (no exclude patterns)
     (src / "Challenge").mkdir(parents=True)
     (src / "Challenge" / "Basic.lean").write_bytes(CHALLENGE)
     (src / "lean-toolchain").write_text("leanprover/lean4:v4.35.0\n")
@@ -854,9 +858,12 @@ def test_replay_pass_writes_replay_table(tmp_path):
     assert "2026-10-31" in md and "PASS" in md and rep.log_sha256 in md and "lake build" in md
     assert "wall" in md and "peak" in md
     # the commands, in order; names reach them as list elements, never through a shell
-    kinds = [c[c.index("lake") + 1] if "lake" in c else ("status" if "status" in c else c[-1]) for c in run.calls]
-    assert kinds[:6] == ["HEAD", "status", "HEAD", "exe", "build", "env"]
-    assert run.calls[1][-2:] == ["--porcelain", "--untracked-files=normal"]
+    kinds = [c[c.index("lake") + 1] if "lake" in c else
+             ("status" if "status" in c else "ls-files" if "ls-files" in c else c[-1]) for c in run.calls]
+    assert kinds[:7] == ["HEAD", "status", "ls-files", "HEAD", "exe", "build", "env"]
+    assert run.calls[1][3:] == ["-c", "core.excludesFile=/dev/null", "status", "--porcelain",
+                                "--untracked-files=all", "--ignore-submodules=none"]
+    assert run.calls[2][3:] == ["ls-files", "-v"]
     # the runner binds the log to our comparator.json
     cfg_sha = _sha((root / "islands" / "demo" / "comparator.json").read_bytes())
     assert f"COMPARATOR_CONFIG sha256 {cfg_sha}" in log.splitlines()
@@ -1508,3 +1515,158 @@ def test_subprocess_run_timeout_with_a_grandchild_holding_the_pipe(tmp_path):
     res = islands.subprocess_run([sys.executable, "-c", script], cwd=tmp_path, timeout=0.5)
     assert res.rc == 124 and "timed out" in res.output
     assert time.monotonic() - t0 < 15
+
+
+# --- Task 2 closing commit (Ruling 9) ---------------------------------------------------------------------------------
+
+def _git_repo(d: Path) -> Path:
+    """A throwaway local repo (no network, no clone) with two committed files, as a clone looks after `island add`."""
+    g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "-C", str(d)]
+    d.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(d)], check=True)
+    (d / "Challenge").mkdir()
+    (d / "Challenge" / "Basic.lean").write_bytes(CHALLENGE)
+    (d / "Solution").mkdir()
+    (d / "Solution" / "Basic.lean").write_text("-- the solution\n")
+    subprocess.run([*g, "add", "-A"], check=True)
+    subprocess.run([*g, "commit", "-q", "-m", "x"], check=True)
+    return d
+
+
+def _plumb(d: Path, case: str, home: Path):
+    git = ["git", "-C", str(d)]
+    if case == "assume-unchanged":
+        subprocess.run([*git, "update-index", "--assume-unchanged", "Solution/Basic.lean"], check=True)
+        (d / "Solution" / "Basic.lean").write_text("-- edited\n")
+    elif case == "skip-worktree":
+        subprocess.run([*git, "update-index", "--skip-worktree", "Solution/Basic.lean"], check=True)
+        (d / "Solution" / "Basic.lean").write_text("-- edited\n")
+    elif case == "info-exclude":
+        (d / ".git" / "info" / "exclude").write_text("Extra/\n")
+        (d / "Extra").mkdir()
+        (d / "Extra" / "Hidden.lean").write_text("x\n")
+    elif case == "global-excludes":
+        (home / "ignore").write_text("Extra/\n")
+        (home / "gitconfig").write_text(f"[core]\n\texcludesFile = {home / 'ignore'}\n")
+        (d / "Extra").mkdir()
+        (d / "Extra" / "Hidden.lean").write_text("x\n")
+    elif case == "deep-untracked":
+        (d / "Solution" / "Deep" / "Er").mkdir(parents=True)
+        (d / "Solution" / "Deep" / "Er" / "New.lean").write_text("x\n")
+
+
+@pytest.mark.parametrize("case", ["clean", "assume-unchanged", "skip-worktree", "info-exclude", "global-excludes",
+                                  "deep-untracked"])
+def test_dirty_clone_check_with_real_git(tmp_path, monkeypatch, case):
+    # N1: states plain `git status --porcelain` reads as clean (real git, a local throwaway repo)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / "gitconfig"))
+    (home / "gitconfig").write_text("")
+    d = _git_repo(tmp_path / "clone")
+    _plumb(d, case, home)
+    problem = islands._dirty_clone_problem(islands.subprocess_run, d)
+    if case == "clean":
+        assert problem is None
+    else:
+        assert problem and "clean" in problem, (case, problem)
+
+
+@pytest.mark.parametrize("flag", ["h", "S", "s"])
+def test_add_and_replay_refuse_assume_unchanged_or_skip_worktree_entries(tmp_path, flag):
+    ls = f"H Challenge/Basic.lean\n{flag} Solution/Basic.lean\n"
+    with pytest.raises(islands.IslandError, match="assume-unchanged|skip-worktree"):
+        _add(tmp_path / "a", run=FakeRun(ls_files=ls))
+    run = FakeRun(ls_files=ls)
+    with pytest.raises(islands.IslandError, match="assume-unchanged|skip-worktree"):
+        _replay(tmp_path / "b", run)
+    assert not any("lake" in c for c in run.calls)
+
+
+def test_replay_refuses_a_hidden_info_exclude(tmp_path):
+    tools = _tools(tmp_path)
+    exclude = tools / "islands" / "demo" / "src" / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("# git ls-files --others --exclude-from=.git/info/exclude\nSolution/\n")
+    run = FakeRun()
+    with pytest.raises(islands.IslandError, match="info/exclude"):
+        _replay(tmp_path, run)
+    assert not any("lake" in c for c in run.calls)
+    exclude.write_text("# only comments, as `git init` writes it\n\n")
+    root, res = _replay(tmp_path, FakeRun())
+    assert res.verdict == "pass", res.problems
+
+
+def test_replay_refuses_a_reused_lake_packages(tmp_path):
+    # N1: an edited dependency under the ignored .lake/packages/ would be compiled and judged as the pin's
+    tools = _tools(tmp_path)
+    (tools / "islands" / "demo" / "src" / ".lake" / "packages" / "mathlib").mkdir(parents=True)
+    run = FakeRun()
+    with pytest.raises(islands.IslandError, match=r"\.lake/packages"):
+        _replay(tmp_path, run)
+    assert not any("lake" in c for c in run.calls)
+
+
+def test_record_replay_refuses_a_session_scratch_path_without_prefix(tmp_path):
+    # N2: a forgotten --scratch-prefix must not archive the session path
+    root = _island(tmp_path / "repo", replay=None)
+    kw = _inputs(tmp_path, log=_log(before_exit=[f"project {SCRATCH}/island/rjfresh"]))
+    with pytest.raises(islands.IslandError, match="--scratch-prefix"):
+        islands.record_replay(root, "demo", date="2026-10-31", comparator_tag="v4.35.0", **kw)
+    assert not (root / "islands" / "demo" / "replay").exists()
+
+
+def test_record_replay_refuses_a_second_session_path_after_normalizing(tmp_path):
+    other = "/tmp/claude-0/-home-user-Arda/9d2b7a61-0000-4c4c-8b8b-0123456789ab/scratchpad"
+    root = _island(tmp_path / "repo", replay=None)
+    kw = _inputs(tmp_path, log=_log(before_exit=[f"project {SCRATCH}/island", f"tools {other}/tools35"]))
+    with pytest.raises(islands.IslandError, match="session scratch path"):
+        islands.record_replay(root, "demo", date="2026-10-31", comparator_tag="v4.35.0", scratch_prefix=SCRATCH, **kw)
+
+
+def test_plain_tmp_paths_are_not_session_paths(tmp_path):
+    root = _island(tmp_path / "repo", replay=None)
+    kw = _inputs(tmp_path, log=_log(before_exit=["landrun-bwrap: ro=[/ /tmp/tmp.XXWhqYh9] cmd=/elan/bin/lean",
+                                                 "/tmp/claude-0/no-uuid-here/x"]))
+    res = islands.record_replay(root, "demo", date="2026-10-31", comparator_tag="v4.35.0", **kw)
+    assert res.verdict == "pass", res.problems
+
+
+def test_record_replay_normalizes_the_jsons_too(tmp_path):
+    # out of scope item (Ruling 9): the probe and fingerprint JSONs get the same normalization, judged as archived
+    probes = [_probe_doc(THEOREMS[0], detail=f"no counterexample ({SCRATCH}/env)"), _probe_doc(THEOREMS[1])]
+    fp = _fp_doc(trusted_env=f"{SCRATCH}/lean-env")
+    root = _island(tmp_path / "repo", replay=None)
+    kw = _inputs(tmp_path, log=_log(before_exit=[f"project {SCRATCH}/island"]), probes=probes, fp=fp)
+    res = islands.record_replay(root, "demo", date="2026-10-31", comparator_tag="v4.35.0", scratch_prefix=SCRATCH, **kw)
+    assert res.verdict == "pass", res.problems
+    rd = root / "islands" / "demo" / "replay"
+    for f in rd.iterdir():
+        text = (lzma.decompress(f.read_bytes()) if f.suffix == ".xz" else f.read_bytes()).decode()
+        assert SCRATCH not in text and "/tmp/claude-0" not in text, f.name
+    assert "$SCRATCH/lean-env" in (rd / "fingerprint.json").read_text()
+    assert islands.status(root, "demo") == "verified"
+    # and without the prefix, a JSON carrying the session path is refused like the log
+    root_b = _island(tmp_path / "b" / "repo", replay=None)
+    kw = _inputs(tmp_path / "b", probes=probes)
+    with pytest.raises(islands.IslandError, match="--scratch-prefix"):
+        islands.record_replay(root_b, "demo", date="2026-10-31", comparator_tag="v4.35.0", **kw)
+
+
+def test_replay_refuses_a_tag_without_export_set_before_building(tmp_path):
+    # N3: v4.34.0 has a Comparator tag but no COMPARATOR_EXPORTS entry: refuse before hours of building
+    root = tmp_path / "repo"
+    _island(root, replay=None, toolchain="leanprover/lean4:v4.34.0")
+    tools = _tools(tmp_path)
+    (tools / "islands" / "demo" / "src" / "lean-toolchain").write_text("leanprover/lean4:v4.34.0\n")
+    run = FakeRun()
+    with pytest.raises(islands.IslandError, match="export set"):
+        islands.replay_island(root, "demo", run=run, tools=tools, date="2026-10-31", leanlock=None)
+    assert not any("lake" in c for c in run.calls)
+
+
+@pytest.mark.parametrize("tc", ["leanprover/lean4:v4.32.0\n", "leanprover/lean4:v4.36.0\n"])
+def test_add_refuses_a_toolchain_without_export_set(tmp_path, tc):
+    with pytest.raises(islands.IslandError, match="export set|Comparator tag"):
+        _add(tmp_path, fetch=_fake_fetch(toolchain=tc))
+    assert not (tmp_path / "repo" / "islands" / "demo").exists()

@@ -84,6 +84,11 @@ LOG_MAX_BYTES = 32 << 20
 XZ_MEMLIMIT = 64 << 20
 #: What `record-replay --scratch-prefix` puts in the archived log in place of the sandbox's session scratch path.
 SCRATCH_TOKEN = "$SCRATCH"
+#: N2: what a Claude session scratch path looks like (`/tmp/claude-0/-home-user-Arda/<session uuid>/scratchpad`): a
+#: `/claude-<digits>/` component followed, later in the same path, by a UUID-shaped component. record-replay refuses
+#: to archive one: without --scratch-prefix (it was forgotten), or left over after it (a second session's path).
+_SESSION_PATH_RE = re.compile(r"/claude-\d+/(?:[^/\s]*/)*?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                              r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])")
 
 #: C1 (Ruling 8): what Comparator exports besides the theorems, by Comparator tag. Comparator exports
 #: `builtinTargets ++ theoremNames ++ legalAxioms ++ primitiveTargets ++ definitionNames` (Main.lean, compareIt),
@@ -1115,17 +1120,65 @@ def _detect_licence(src: Path) -> Optional[str]:
     return None
 
 
+def _known_tag(name: str, toolchain: str, what: str) -> str:
+    """N3: the Comparator tag for *toolchain*, refused up front unless COMPARATOR_EXPORTS knows its export set (a
+    replay on any other tag would build for hours and then FAIL on the export check)."""
+    from .missions import judge
+    try:
+        tag = judge.comparator_tag(toolchain)
+    except judge.JudgeError as exc:
+        raise IslandError(f"island {name!r}: {exc}; refusing to {what}") from None
+    if tag not in COMPARATOR_EXPORTS:
+        raise IslandError(f"island {name!r}: Comparator {tag} has no export set in COMPARATOR_EXPORTS (known: "
+                          f"{', '.join(sorted(COMPARATOR_EXPORTS))}), so no replay on it can pass; add the entry from "
+                          f"a real {tag} log first. Refusing to {what}")
+    return tag
+
+
 def _dirty_clone_problem(run: Callable[..., "RunResult"], src: Path) -> Optional[str]:
-    """I2: the clone's working tree must be exactly the commit: `git status --porcelain` empty, tracked and untracked
-    files alike (ignored files, such as a build's .lake, do not count). A leftover edit (a tamper control's, say)
-    would otherwise be registered or judged under the pin's name."""
-    r = run(["git", "-C", str(src), "status", "--porcelain", "--untracked-files=normal"], cwd=src, timeout=120)
+    """I2 + N1: the clone's working tree must be exactly the commit. A leftover edit (a tamper control's, say) would
+    otherwise be registered or judged under the pin's name. Refused, in this order:
+
+    - anything `git -c core.excludesFile=/dev/null status --porcelain --untracked-files=all --ignore-submodules=none`
+      prints: tracked and untracked files alike, every untracked file listed, submodules never ignored (whatever the
+      committed .gitmodules says), the user's global excludes file switched off. Files the repo's own .gitignore
+      ignores (a build's .lake) do not count;
+    - a `.git/info/exclude` with any pattern (it hides untracked files from that status), or a `.git` that is not a
+      directory (a worktree or gitdir link, whose exclude file lives elsewhere);
+    - any `git ls-files -v` entry marked assume-unchanged (a lowercase tag) or skip-worktree (`S`): git does not even
+      look at such a file's edits.
+    """
+    def out(r: "RunResult") -> str:
+        return "; ".join(r.output.strip().splitlines()[:5])[:300]
+
+    r = run(["git", "-C", str(src), "-c", "core.excludesFile=/dev/null", "status", "--porcelain",
+             "--untracked-files=all", "--ignore-submodules=none"], cwd=src, timeout=120)
     if r.rc != 0:
         return f"`git status` on the clone failed (exit {r.rc}); refusing to trust its working tree"
     if r.output.strip():
-        shown = "; ".join(r.output.strip().splitlines()[:5])
-        return (f"the clone's working tree is not clean (`git status --porcelain`: {shown[:300]}); a modified or "
+        return (f"the clone's working tree is not clean (`git status --porcelain`: {out(r)}); a modified or "
                 "untracked file would be taken for the pin. Re-clone it, or restore it with git")
+    git_dir = Path(src) / ".git"
+    if git_dir.is_symlink() or not git_dir.is_dir():
+        return ("the clone's working tree cannot be shown clean: its .git is not a directory (a worktree or a gitdir "
+                "link); use a plain clone")
+    data, problem = read_guarded(git_dir / "info" / "exclude", label="the clone's .git/info/exclude",
+                                 max_bytes=MAX_BYTES)
+    if problem:
+        return f"the clone's working tree cannot be shown clean: {problem}"
+    patterns = [l.strip() for l in (data or b"").decode("utf-8", errors="replace").splitlines()
+                if l.strip() and not l.strip().startswith("#")]
+    if patterns:
+        return (f"the clone's working tree cannot be shown clean: .git/info/exclude hides {', '.join(patterns[:5])!r} "
+                "from `git status`; empty it, or re-clone")
+    r = run(["git", "-C", str(src), "ls-files", "-v"], cwd=src, timeout=120)
+    if r.rc != 0:
+        return f"`git ls-files -v` on the clone failed (exit {r.rc}); refusing to trust its working tree"
+    flagged = [l for l in r.output.splitlines() if l[:1].islower() or l[:1] == "S"]
+    if flagged:
+        return (f"the clone's working tree is not clean: {len(flagged)} file(s) marked assume-unchanged (lowercase "
+                f"tag) or skip-worktree (S), whose edits git does not report ({'; '.join(flagged[:5])[:300]}); "
+                "re-clone it")
     return None
 
 
@@ -1188,6 +1241,7 @@ def add_island(root: Path, name: str, source: str, commit: str, intended_use: st
                           "theorems": list(upstream["theorem_names"]), "intended_use": intended_use}, name)
     if isl is None:
         raise IslandError(f"island {name!r}: " + "; ".join(probs))
+    _known_tag(name, isl.toolchain, "register")
     ours = comparator_json_text(cm, sm, isl.theorems)
     md = _replay_md_preamble(isl, date or datetime.date.today().isoformat(),
                              _config_differences(upstream, json.loads(ours)))
@@ -1440,11 +1494,29 @@ def _input(name: str, path, label: str, max_bytes: int) -> bytes:
     return data
 
 
-def _input_json(name: str, path, label: str):
+def _normalized(name: str, text: str, scratch_prefix: Optional[str], what: str) -> str:
+    """Ruling 7 on one input: *scratch_prefix* (if any) replaced by `$SCRATCH`; then N2: no Claude session scratch
+    path may remain, so a forgotten --scratch-prefix (or a second session's path) is refused, never archived."""
+    if scratch_prefix is not None:
+        text = text.replace(scratch_prefix, SCRATCH_TOKEN)
+    m = _SESSION_PATH_RE.search(text)
+    if m:
+        how = ("pass --scratch-prefix <that session's scratch path> so it is replaced by $SCRATCH" if scratch_prefix
+               is None else "it is not under --scratch-prefix (a second session?)")
+        raise IslandError(f"island {name!r}: {what} contains a Claude session scratch path ({m.group(0)[:100]}...); "
+                          f"the archive is public, so {how}")
+    return text
+
+
+def _input_json(name: str, path, label: str, scratch_prefix: Optional[str] = None):
+    """`(archived bytes, parsed JSON)` for one probe or fingerprint JSON: guarded read, UTF-8, normalized like the
+    log (the bytes returned are the normalized ones, which is what is judged and archived), then parsed."""
     raw = _input(name, path, label, MAX_BYTES)
     try:
-        return raw, json.loads(raw.decode("utf-8"))
-    except (ValueError, RecursionError) as exc:
+        text = _normalized(name, raw.decode("utf-8"), scratch_prefix, f"{label} {path}")
+        raw = text.encode("utf-8")
+        return raw, json.loads(text)
+    except (ValueError, RecursionError) as exc:   # UnicodeDecodeError is a ValueError
         raise IslandError(f"island {name!r}: {label} {path} is not valid JSON ({type(exc).__name__}: "
                           f"{str(exc)[:120]})") from None
 
@@ -1488,7 +1560,9 @@ def record_replay(root: Path, name: str, *, log, probe_jsons: Sequence = (), fin
     Ruling 7: with *scratch_prefix* (the sandbox's session scratch path, which the archive must not publish), every
     occurrence is replaced by `$SCRATCH` FIRST, and the normalized text is what is judged, archived and hashed into
     log_sha256; REPLAY.md records the raw log's md5 and sha256 (never the prefix). The prefix must occur in the
-    log."""
+    log. The probe and fingerprint JSONs get the same replacement, and their normalized bytes are what is judged and
+    archived. N2: a log or JSON that still holds a Claude session scratch path (`/claude-<n>/.../<uuid>`), because
+    the flag was forgotten or a second session's path is in it, is refused."""
     isl = _registered(root, name)
     _check_date_tag(name, date, comparator_tag)
     if scratch_prefix is not None:
@@ -1505,10 +1579,11 @@ def record_replay(root: Path, name: str, *, log, probe_jsons: Sequence = (), fin
         hits = log_text.count(scratch_prefix)
         if not hits:
             raise IslandError(f"island {name!r}: --scratch-prefix does not occur in the Comparator log {log}")
-        log_text = log_text.replace(scratch_prefix, SCRATCH_TOKEN)
+    log_text = _normalized(name, log_text, scratch_prefix, f"the Comparator log {log}")
     log_bytes = log_text.encode("utf-8")
-    probes = [_input_json(name, p, "the probe JSON") for p in probe_jsons]
-    fp = _input_json(name, fingerprint_json, "the fingerprint JSON") if fingerprint_json is not None else None
+    probes = [_input_json(name, p, "the probe JSON", scratch_prefix) for p in probe_jsons]
+    fp = (_input_json(name, fingerprint_json, "the fingerprint JSON", scratch_prefix)
+          if fingerprint_json is not None else None)
     pinned, problem = pinned_nanoda_rev()
     if pinned is None:
         raise IslandError(f"island {name!r}: cannot read the pinned nanoda rev: {problem}")
@@ -1557,7 +1632,6 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     The log `<tools>/islands/<name>/comparator.log` starts with the ISLAND-HEADER, the COMPARATOR_NANODA line and the
     COMPARATOR_CONFIG line (the sha256 of our comparator.json, which the verdict then requires) and ends with the
     exit line. The verdict is `evaluate_replay`'s, plus a failed build; `_conclude` writes it."""
-    from .missions import judge
     isl = _registered(root, name)
     date = date or datetime.date.today().isoformat()
     _check_date(name, date)
@@ -1584,10 +1658,11 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     if toolchain != isl.toolchain:
         raise IslandError(f"island {name!r}: the clone's lean-toolchain {toolchain!r} is not the island toolchain "
                           f"{isl.toolchain!r}; refusing to replay")
-    try:
-        tag = judge.comparator_tag(isl.toolchain)
-    except judge.JudgeError as exc:
-        raise IslandError(f"island {name!r}: {exc}") from None
+    tag = _known_tag(name, isl.toolchain, "replay")
+    if (src / ".lake" / "packages").exists() or (src / ".lake" / "packages").is_symlink():
+        raise IslandError(f"island {name!r}: the clone already has a .lake/packages/ (a reused clone); its sources are "
+                          "ignored by git, so an edit there would be built and judged as the pin's. Delete the clone's "
+                          ".lake (or re-clone) first; refusing to replay")
     pinned, problem = pinned_nanoda_rev()
     if pinned is None:
         raise IslandError(f"island {name!r}: cannot read the pinned nanoda rev: {problem}")
