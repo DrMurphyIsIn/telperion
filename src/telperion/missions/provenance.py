@@ -891,8 +891,11 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
 
     Passing: probe verdict WITNESSED, or PROBE_ONLY with a reviewer's `signoff: <who>` in the
     note (the probe is one-sided, spec 5.2); VACUOUS, REFUTED and ERROR block. The closure
-    verdict must be PASS. Currency is checked by the artifact SOURCE digest only: the record's
-    `olean_sha256` (the replayed closure the probe and fingerprint both ran on) cannot be
+    verdict must be PASS, and the closure audit must have been ISOLATED (`closure_isolated`: run
+    as a kernel-replay callback on the same replayed closure as the probe and the fingerprint,
+    step 5 Task 7); a record whose audit imported the submission (`--legacy-import`, or a record
+    from before step 5) does not pass. Currency is checked by the artifact SOURCE digest only:
+    the record's `olean_sha256` (the replayed closure all three checks ran on) cannot be
     recomputed without a build, so it is recorded for the reader and a changed source is what
     makes the record stale. Does not look at the cutoff; the gate (and `mission verify`, for
     proved nodes, Ruling 11) applies `checks_required`.
@@ -901,14 +904,13 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
     - the sign-off is free text in the note, written by whoever runs `checks-record`; nothing
       checks that the reviewer is independent of the author. A later step could require a
       sign-off identity distinct from the `[author]`, as the read-back rule does;
-    - the closure audit is tied to the probe and fingerprint by the theorem name and the interim
-      axiom cross-check:
-      `audit-closure` still IMPORTS the submission rather than replaying it, so its JSON carries
-      no olean digest and an imported module could forge it. The interim cross-check (final
-      review I3): the record carries the REPLAY's axiom list, which the probe and fingerprint
-      must agree on, which must be a subset of CLEAN_AXIOMS, and which must include the closure
-      audit's per-target axioms. The owner accepted this gap for this merge (2026-10-30); porting
-      the closure audit to a replay callback is step-5 work;
+    - CLOSED IN STEP 5 (Task 7): the closure audit used to IMPORT the submission, so an imported
+      module could forge it (the gap the owner accepted on 2026-10-30). It now runs as a
+      kernel-replay callback, `checks-record` requires its JSON to say `isolated: true` with the
+      probe's and the fingerprint's `olean_sha256`, and this check requires `closure_isolated`.
+      The interim axiom cross-check (final review I3) stays as a second line: the record carries
+      the REPLAY's axiom list, which the probe and fingerprint must agree on, which must be a
+      subset of CLEAN_AXIOMS, and which must include the closure audit's per-target axioms;
     - the record must be of the node's own theorem (`guard_anchors.resolve_theorem`, the
       declaration the grant gate matched) and of the Comparator record's theorem when there is
       one (final review I1). The resolver is the gate's SYNTACTIC one, so a non-adversarial
@@ -942,6 +944,10 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
         return f"negation probe verdict is {k.probe_verdict} (recorded {k.date})"
     if k.closure_verdict != "PASS":
         return f"closure audit verdict is {k.closure_verdict} (recorded {k.date})"
+    if not k.closure_isolated:
+        return ("the closure audit was not isolated: it imported the submission (`audit-closure "
+                "--legacy-import`, or a record from before step 5), which could forge it; re-run "
+                "`telperion audit-closure` without --legacy-import and `mission checks-record`")
     if node.proof is None:
         return "[checks] recorded but the node has no artifact"
     art = Path(campaign_root) / node.proof.artifact

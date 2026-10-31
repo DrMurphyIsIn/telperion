@@ -19,6 +19,7 @@ on:
       - "tests/test_negation_probe.py"
       - "tests/test_fingerprint.py"
       - "tests/test_lean_replay.py"
+      - "tests/test_closure_audit_replay.py"
       - "tests/test_missions_checks.py"
       # The shared helpers those tests import.
       - "tests/lean_env.py"
@@ -35,6 +36,7 @@ on:
       - "tests/test_negation_probe.py"
       - "tests/test_fingerprint.py"
       - "tests/test_lean_replay.py"
+      - "tests/test_closure_audit_replay.py"
       - "tests/test_missions_checks.py"
       # The shared helpers those tests import.
       - "tests/lean_env.py"
@@ -147,17 +149,17 @@ jobs:
             exit 1
           fi
 
-      - name: Lean controls (negation probe, fingerprint, kernel replay)
+      - name: Lean controls (negation probe, fingerprint, kernel replay, replayed closure audit)
         # Each test process builds its own copy of the manifest in a temp dir (tests/lean_env.py,
         # session_trusted_manifest), so the tests do not depend on the one built above; that step is the CLI's own
-        # check. With the env set, nothing in these three files has a reason to skip, so any skip fails the job:
+        # check. With the env set, nothing in these four files has a reason to skip, so any skip fails the job:
         # a skipped must-fail control is a control that did not run.
         shell: bash
         env:
           PYTHONFAULTHANDLER: "1"
         run: |
           python -X faulthandler -m pytest tests/test_negation_probe.py tests/test_fingerprint.py \
-            tests/test_lean_replay.py -q -rs 2>&1 | tee "$RUNNER_TEMP/lean-checks.out"
+            tests/test_lean_replay.py tests/test_closure_audit_replay.py -q -rs 2>&1 | tee "$RUNNER_TEMP/lean-checks.out"
           if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/lean-checks.out"; then
             echo "Lean tests were skipped with TELPERION_LEAN_ENV set; every control must run here."
             exit 1

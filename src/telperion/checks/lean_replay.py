@@ -55,6 +55,9 @@ HOW (the Comparator / lean4checker approach). The generated script imports TRUST
      refused.
    - A kernel rejection or any refusal is ``REPLAY FAILED``;
 4. runs the caller's callback, a ``TermElabM Unit`` named ``TelperionReplay.callback``, in the replayed environment.
+   With ``callback_takes_closure`` it is a ``TelperionReplay.Closure → TermElabM Unit`` instead and is given the
+   replayed closure: its untrusted modules and the module each untrusted constant came from (``moduleOf``), which
+   the environment cannot say, since replayed constants have no module index. The closure audit needs both.
 
 WHAT IS NOT LOADED, ON PURPOSE. Replay transfers constants only. The untrusted modules' environment extensions are
 never read: no initializers, elaborators, macros, syntax, attributes, instances, simp lemmas, notation or docstrings.
@@ -346,6 +349,7 @@ structure Closure where
   declared : Array Name := #[]                      -- axioms declared in the untrusted closure (allowAxioms only)
   needs : Array Name := #[]                         -- trusted modules this process did not import
   files : Array (Name × System.FilePath) := #[]     -- every untrusted file read, with its module
+  moduleOf : Std.HashMap Name Name := {}            -- each untrusted constant's module (replay adds none)
 
 /-- The target's import closure: trusted modules stop the walk, untrusted ones are read as data. -/
 def collect (env : Environment) : ExceptT String IO Closure := do
@@ -395,7 +399,7 @@ def collect (env : Environment) : ExceptT String IO Closure := do
         unless allowAxioms do
           throw s!"the untrusted module {m} declares the axiom {c.name}; refusing"
         out := { out with declared := out.declared.push c.name }
-      out := { out with consts := out.consts.insert c.name c }
+      out := { out with consts := out.consts.insert c.name c, moduleOf := out.moduleOf.insert c.name m }
       if targetModules.contains m then
         out := { out with target := out.target.push c.name }
     out := { out with modules := out.modules.push m }
@@ -591,7 +595,7 @@ set_option maxHeartbeats 0 in
                 -- deep recursion) is caught too, so that DONE is still printed.
                 withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := __HEARTBEATS__ * 1000 }) do
                   withCurrHeartbeats do
-                    tryCatchRuntimeEx TelperionReplay.callback fun ex => do
+                    tryCatchRuntimeEx (__CALLBACK_CALL__) fun ex => do
                       TelperionReplay.line s!"CALLBACK FAILED {← ex.toMessageData.toString}"
   TelperionReplay.line "DONE"
 """
@@ -603,7 +607,8 @@ def _targets(target_module) -> list[str]:
 
 def render_replay_script(trusted_imports, target_module, trusted_prefixes, callback_src: str, nonce: str,
                          search_path=(), heartbeats: int = 200000, *, expect_oleans=None, allow_axioms: bool = False,
-                         allow_sorry: bool = False, list_only: bool = False) -> str:
+                         allow_sorry: bool = False, list_only: bool = False,
+                         callback_takes_closure: bool = False) -> str:
     """The Lean script that replays `target_module`'s untrusted closure and then runs `callback_src`.
 
     `callback_src` is trusted Lean source (ours, never the module's) that must define
@@ -615,7 +620,8 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
     file it would read and ``REPLAY LISTED n``, replay nothing. `search_path` is the full olean search path, in
     order, that the closure is resolved over. It is DATA here and is never this process's LEAN_PATH. The callback
     runs with a fresh budget of `heartbeats` (thousands, as the ``maxHeartbeats`` option), and an exception it raises,
-    a runtime one included, is reported as ``CALLBACK FAILED``."""
+    a runtime one included, is reported as ``CALLBACK FAILED``. With `callback_takes_closure` the callback is
+    ``TelperionReplay.callback : TelperionReplay.Closure → TermElabM Unit``, called with the replayed closure."""
     if not re.fullmatch(r"[A-Za-z0-9]+", nonce):
         raise ValueError(f"nonce must be alphanumeric: {nonce!r}")
     imports = "\n".join(f"import {_module(m)}" for m in trusted_imports)
@@ -632,6 +638,8 @@ def render_replay_script(trusted_imports, target_module, trusted_prefixes, callb
             .replace("__PREFIXES__", _lean_strings(_realpath(p).rstrip("/") or "/" for p in trusted_prefixes))
             .replace("__SEARCH__", _lean_strings(search_path))
             .replace("__HEARTBEATS__", str(int(heartbeats)))
+            .replace("__CALLBACK_CALL__", "TelperionReplay.callback c" if callback_takes_closure
+                     else "TelperionReplay.callback")
             .replace("__CALLBACK__", callback_src))
 
 
@@ -785,7 +793,8 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
                trusted_imports=("Mathlib",), trusted_env=None, manifest=None, elan_home=None,
                wrapper: list[str] | None = None, timeout: int = 1800, heartbeats: int = 200000,
                allow_axioms: bool = False, allow_sorry: bool = False, expect_oleans=None,
-               prefixes_override=None, memory_mb: int | None = DEFAULT_MEMORY_MB) -> ReplayResult:
+               prefixes_override=None, memory_mb: int | None = DEFAULT_MEMORY_MB,
+               callback_takes_closure: bool = False) -> ReplayResult:
     """Replay `target_module` (a name, or a list of names) from the submission's olean dirs (see `submission_paths`)
     into a process that imports only `trusted_imports` from the pinned `trusted_env`, then run `callback_src` (see
     render_replay_script).
@@ -805,8 +814,8 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
     best-effort limit until the sandbox; None for none) and LEAN_PATH = the trusted entries only. If the closure needs
     a trusted module that is not imported, it is added and the replay run is repeated once. `expect_oleans` and
     `prefixes_override` replace the expected target oleans and the trusted prefixes given to the replay script
-    (tests only). `allow_axioms` is for tests of the replay itself only: no check passes it (Ruling 10, untrusted
-    axioms are refused)."""
+    (tests only). `callback_takes_closure` is passed to render_replay_script for the replay run. `allow_axioms` is
+    for tests of the replay itself only: no check passes it (Ruling 10, untrusted axioms are refused)."""
     prefix = default_wrapper() if wrapper is None else list(wrapper)
     targets = _targets(target_module)
     try:
@@ -889,7 +898,8 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
             nonce = f"TR{secrets.token_hex(16)}"
             try:
                 src = render_replay_script(imports, targets, prefixes, callback_src, nonce, search, heartbeats,
-                                           expect_oleans=expect, allow_axioms=allow_axioms, allow_sorry=allow_sorry)
+                                           expect_oleans=expect, allow_axioms=allow_axioms, allow_sorry=allow_sorry,
+                                           callback_takes_closure=callback_takes_closure)
                 rc, out = run(src)
             except ValueError as exc:
                 return ReplayResult("ERROR", str(exc))

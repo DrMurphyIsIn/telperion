@@ -670,16 +670,28 @@ def cmd_audit(args) -> int:
 
 
 def cmd_audit_closure(args) -> int:
-    """Kernel-level closure audit of named theorems inside a built Lake project.
+    """Kernel-level closure audit of named theorems in a built Lake project.
 
-    Exit 0 PASS, 1 FAIL (a forbidden constant/module in the closure, a non-allowed axiom, a
-    missing target, or a scan hit with --fail-on-scan-hit), 2 when the audit could not run or
-    Lean died before a verdict.  The JSON (--json) is the record; the terminal gets a summary.
+    By default the audit runs as a KERNEL-REPLAY callback (closure_audit.run_closure_audit_replayed, step 5 Task 7):
+    the project's modules are read as data and kernel-replayed into the pinned trusted env (--trusted-env, default
+    $TELPERION_LEAN_ENV, checked against its trusted manifest), never imported, and no lake runs. The JSON carries
+    `isolated: true` and the replay's `olean_sha256`/`olean_closure`, which `mission checks-record` requires to equal
+    the probe's and the fingerprint's. `--legacy-import` runs the old script that IMPORTS the submission with
+    `lake env lean` (NOT ISOLATED: the submission's lakefile, initializers and elaborators run in the audit and can
+    forge it); its JSON says `isolated: false`, and `mission checks-record` refuses it for nodes created on or after
+    the cutoff.
+
+    Exit 0 PASS, 1 FAIL (a forbidden constant/module in the closure, a non-allowed axiom, a missing target, an
+    untrusted axiom or a kernel rejection refused by the replay, or a scan hit with --fail-on-scan-hit), 2 when the
+    audit could not run or Lean died before a verdict.  The JSON (--json) is the record; the terminal gets a summary.
     """
     import json as _json
+    import shlex
 
+    from . import closure_audit
     from .closure_audit import (AuditSpec, ClosureAuditError, DEFAULT_ABSENT_CONSTANTS,
-                                DEFAULT_LIBRARY_ROOTS, render_audit_script, run_closure_audit)
+                                DEFAULT_LIBRARY_ROOTS, PLACEHOLDER_NONCE, render_audit_callback,
+                                render_audit_script)
     from .comparator import CLEAN_AXIOMS
 
     if args.spec:
@@ -707,13 +719,34 @@ def cmd_audit_closure(args) -> int:
         except ValueError as exc:
             print(f"audit-closure: {exc}")
             return 2
+    if args.script_path and not args.legacy_import:
+        print("audit-closure: --script-path is for --legacy-import only (the replayed audit's script lives in a "
+              "private temp dir)")
+        return 2
     if args.render_only:
-        Path(args.render_only).write_text(render_audit_script(spec), encoding="utf-8")
-        print(f"rendered audit script to {args.render_only} (not run)")
+        try:
+            text = (render_audit_script(spec) if args.legacy_import
+                    else render_audit_callback(spec, PLACEHOLDER_NONCE))
+        except ValueError as exc:
+            print(f"audit-closure: {exc}")
+            return 2
+        Path(args.render_only).write_text(text, encoding="utf-8")
+        what = "audit script" if args.legacy_import else "replay callback"
+        print(f"rendered {what} to {args.render_only} (not run)")
         return 0
     try:
-        res = run_closure_audit(spec, args.project, wrapper=args.wrapper, timeout=args.timeout,
-                                script_path=args.script_path, keep_script=bool(args.script_path))
+        if args.legacy_import:
+            print("audit-closure: WARNING: --legacy-import IMPORTS the submission with `lake env lean`: NOT ISOLATED. "
+                  "Its lakefile, initializers and elaborators run in the audit process and can forge the verdict. "
+                  "`mission checks-record` refuses this output for nodes created on or after the cutoff; drop "
+                  "--legacy-import for the kernel-replayed audit.", file=sys.stderr)
+            res = closure_audit.run_closure_audit(spec, args.project, wrapper=args.wrapper, timeout=args.timeout,
+                                                  script_path=args.script_path,
+                                                  keep_script=bool(args.script_path))
+        else:
+            res = closure_audit.run_closure_audit_replayed(
+                spec, Path(args.project), wrapper=None if args.wrapper is None else shlex.split(args.wrapper),
+                timeout=args.timeout, **_trust_kwargs(args))
     except ClosureAuditError as exc:
         print(f"audit-closure: {exc}")
         return 2
@@ -2016,26 +2049,32 @@ def cmd_mission_checks_record(args) -> int:
 
     Ruling 9: the probe and the fingerprint must have run on the SAME replayed olean closure,
     so both JSONs must carry the same `olean_sha256`; it is stored next to the artifact's
-    source sha256. The fingerprinted theorem (`--target`, or the only one in the JSON) must be
-    one of the closure audit's targets -- the closure JSON carries no olean digest, so that name
-    is its only tie to the other two. A `signoff:` in --note is free text: nothing checks the
-    reviewer is independent of the author (see `provenance.checks_problem`).
+    source sha256. Step 5 Task 7: so must the closure audit, which now runs as a kernel-replay
+    callback: its JSON must say `isolated: true` and carry that same `olean_sha256`, so all
+    three checks ran on ONE replayed closure (recorded as `closure_isolated`). For a node that
+    needs checks (`provenance.checks_required`: created on or after the cutoff), a closure JSON
+    that is not isolated (`audit-closure --legacy-import`, which imports the submission, or a
+    JSON from before step 5) is refused; for an older node it is recorded with
+    `closure_isolated` false. The fingerprinted theorem (`--target`, or the only one in the
+    JSON) must also be one of the closure audit's targets. A `signoff:` in --note is free text:
+    nothing checks the reviewer is independent of the author (see `provenance.checks_problem`).
 
     Ruling 12: the probe's `theorem` (and the fingerprint's, when it names one) must be that
     target, and both JSONs' `source_sha256` (the --file each check was given) must be the
     artifact's CURRENT sha256. A mismatch or an absent value is refused (final review I2).
     Final review I1: the target is the node's registered theorem
     (`guard_anchors.resolve_theorem`, the declaration the grant gate matches); a `--target`
-    naming anything else is refused. Final review I3: the probe and fingerprint JSONs' replay
-    `axioms` lists must agree, be a subset of CLEAN_AXIOMS and include the closure audit's
-    axioms for the target; the list is recorded.
+    naming anything else is refused. Final review I3 (kept as a second line after step 5): the
+    probe and fingerprint JSONs' replay `axioms` lists must agree, be a subset of CLEAN_AXIOMS
+    and include the closure audit's axioms for the target; the list is recorded.
 
     The JSON inputs are unsigned operator files: reading verdicts from them (never from flags)
     guards against mistakes, not against an operator who writes them by hand.
 
     Refuses (exit 2, no record): a malformed or unreadable JSON, an unknown probe verdict, a
     missing or mismatched `olean_sha256`, an ambiguous or unaudited fingerprint target, no
-    proof link or a missing artifact, status `deprecated` or `refuted`. Otherwise writes the
+    proof link or a missing artifact, status `deprecated` or `refuted`, a non-isolated closure
+    JSON for a node that needs checks, a closure `olean_sha256` that is not the probe's. Otherwise writes the
     record and exits 0 when it passes `provenance.checks_problem`, 1 when it does not (e.g.
     VACUOUS, or PROBE_ONLY without a `signoff:` in --note). Never changes the node's status.
     """
@@ -2043,7 +2082,7 @@ def cmd_mission_checks_record(args) -> int:
     import json as _json
     from datetime import date as _date
 
-    from .missions.provenance import checks_problem, sha256_file
+    from .missions.provenance import CHECKS_CUTOFF, checks_problem, checks_required, sha256_file
     from .missions.registry import load_campaign
     from .missions.schema import PROBE_VERDICTS, ChecksRecord, SchemaError, save_node, slug_of
 
@@ -2104,6 +2143,19 @@ def cmd_mission_checks_record(args) -> int:
     if p_olean != f_olean:
         return refuse(f"the probe ran on olean_sha256 {str(p_olean)[:12]}... but the fingerprint "
                       f"on {str(f_olean)[:12]}...; run both checks on the same build")
+    # Step 5 Task 7: the closure audit ran on that same replayed closure, never by importing the
+    # submission (which could forge it).
+    c_isolated = closure.get("isolated") is True
+    if not c_isolated and checks_required(node):
+        return refuse(f"the closure JSON is not isolated (\"isolated\": {closure.get('isolated')!r}): it "
+                      "comes from `audit-closure --legacy-import` or a telperion from before step 5, which "
+                      "IMPORTS the submission, whose code can forge it; a node created on or after "
+                      f"{CHECKS_CUTOFF} needs the kernel-replayed audit (`telperion audit-closure` without "
+                      "--legacy-import)")
+    if c_isolated and closure.get("olean_sha256") != p_olean:
+        return refuse(f"the closure audit ran on olean_sha256 {str(closure.get('olean_sha256'))[:12]}... but "
+                      f"the probe and the fingerprint on {str(p_olean)[:12]}...; run all three checks on the "
+                      "same build")
 
     # Final review I1: the checks must be of the node's OWN theorem, the artifact declaration the
     # grant gate matches (`guard_anchors.resolve_theorem`), never a helper lemma beside it.
@@ -2151,10 +2203,10 @@ def cmd_mission_checks_record(args) -> int:
                           "(a stale build); rebuild and re-run")
     note = args.note
 
-    # Final review I3 (interim): the REPLAY's axiom list, which an imported module cannot forge
-    # (the closure audit still imports the submission). The probe and the fingerprint must carry
-    # the same list, it must be a subset of CLEAN_AXIOMS, and it must include the closure audit's
-    # axioms for the target.
+    # Final review I3, kept as a second line now that the closure audit is replayed too (step 5
+    # Task 7): the REPLAY's axiom list. The probe and the fingerprint must carry the same list, it
+    # must be a subset of CLEAN_AXIOMS, and it must include the closure audit's axioms for the
+    # target.
     from .comparator import CLEAN_AXIOMS
     p_ax, f_ax = probe.get("axioms"), fp.get("axioms")
     if not isinstance(p_ax, list) or not isinstance(f_ax, list):
@@ -2179,7 +2231,7 @@ def cmd_mission_checks_record(args) -> int:
             olean_sha256=str(p_olean).lower(), probe_verdict=verdict,
             closure_verdict=closure_verdict,
             statement_fingerprint=str(fps[target]).lower(), theorem=target, note=note,
-            axioms=tuple(sorted(p_ax)))
+            axioms=tuple(sorted(p_ax)), closure_isolated=c_isolated)
     except SchemaError as exc:
         return refuse(str(exc))
     new = _dc.replace(node, checks=rec, updated=rec.date)
@@ -3305,8 +3357,14 @@ def main(argv=None) -> int:
     p = sub.add_parser("audit-closure",
                        help="kernel-level dependency-closure audit of theorems in a built Lake "
                             "project (census by root, non-library constants, name scan, "
-                            "absences, axioms); see docs/CLOSURE_AUDIT_MANIFEST_DESIGN_2026-10-22.md")
-    p.add_argument("--project", required=True, help="the built Lake project directory")
+                            "absences, axioms), run by kernel replay into the pinned trusted env (the "
+                            "project is never imported; --legacy-import for the old import path)")
+    p.add_argument("--project", required=True,
+                   help="the Lake project in which the modules are BUILT (its .lake/build/lib/lean is untrusted)")
+    p.add_argument("--legacy-import", dest="legacy_import", action="store_true",
+                   help="run the old script that IMPORTS the submission with `lake env lean` in --project. NOT "
+                        "ISOLATED: the submission's lakefile, initializers and elaborators run in the audit and "
+                        "can forge it; `mission checks-record` refuses its output for post-cutoff nodes")
     p.add_argument("--spec", default=None, help="an AuditSpec as JSON (replaces the flags below)")
     p.add_argument("--import", dest="imports", action="append", default=None, metavar="MODULE",
                    help="module to import (repeatable)")
@@ -3332,12 +3390,28 @@ def main(argv=None) -> int:
                    help="write the full module<TAB>constant listing here (absolute path)")
     p.add_argument("--fail-on-scan-hit", dest="fail_on_scan_hit", action="store_true")
     p.add_argument("--wrapper", default=None,
-                   help="command prefix placed before `lake env lean` (a build lock, nice, a sandbox)")
+                   help="command prefix before the pinned `lean` (default: leanlock with one slot when "
+                        "~/hodge-engine/leanlock.sh exists; '' for none); with --legacy-import, before "
+                        "`lake env lean` (default: none)")
     p.add_argument("--timeout", type=int, default=3600)
+    p.add_argument("--trusted-env", default=None, metavar="DIR",
+                   help="the PINNED Lean env whose toolchain and .lake packages are trusted (default: "
+                        "$TELPERION_LEAN_ENV). Nothing from --project is trusted")
+    p.add_argument("--trusted-manifest", default=None, metavar="FILE",
+                   help="the sha256 manifest of the trusted env's files, verified before every run (default: "
+                        "~/telperion-tools/trusted-manifests/<hash of the env's pins>.json)")
+    p.add_argument("--olean-dir", dest="olean_dirs", action="append", default=None, metavar="DIR",
+                   help="an extra untrusted olean dir to replay modules from, besides <project>/.lake/build/lib/lean "
+                        "(repeatable)")
+    p.add_argument("--memory-mb", type=int, default=None, metavar="MB",
+                   help="Lean's --memory bound for each run (default 8192; 0 for none). Best-effort until the "
+                        "sandbox")
     p.add_argument("--script-path", dest="script_path", default=None,
-                   help="write the rendered script here and keep it (default: temp file in the project)")
+                   help="with --legacy-import: write the rendered script here and keep it (default: temp file in "
+                        "the project)")
     p.add_argument("--render-only", dest="render_only", default=None, metavar="FILE",
-                   help="write the rendered Lean script and exit without running it")
+                   help="write the rendered Lean (the replay callback; the import script with --legacy-import) "
+                        "and exit without running it")
     p.add_argument("--json", default=None, help="write the AuditResult as JSON here")
     p.set_defaults(fn=cmd_audit_closure)
 

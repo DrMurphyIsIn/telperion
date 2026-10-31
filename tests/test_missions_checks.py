@@ -39,12 +39,14 @@ FPRINT = "e" * 64
 
 
 def _rec(art_sha: str, *, probe: str = "WITNESSED", closure: str = "PASS",
-         note: str = "", theorem: str = "lemma_ck", axioms=("propext",)) -> ChecksRecord:
+         note: str = "", theorem: str = "lemma_ck", axioms=("propext",),
+         closure_isolated: bool = True) -> ChecksRecord:
     # final review I1/I3: the record is of the node's registered theorem (the campaign fixtures'
-    # `lemma_ck`) and carries the replay's axiom list
+    # `lemma_ck`) and carries the replay's axiom list; step 5 Task 7: its closure audit was replayed
     return ChecksRecord(date="2026-10-29", artifact_sha256=art_sha, olean_sha256=OLEAN,
                         probe_verdict=probe, closure_verdict=closure,
-                        statement_fingerprint=FPRINT, theorem=theorem, note=note, axioms=axioms)
+                        statement_fingerprint=FPRINT, theorem=theorem, note=note, axioms=axioms,
+                        closure_isolated=closure_isolated)
 
 
 def _art_sha(root: Path, node: Node) -> str:
@@ -345,11 +347,14 @@ def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "
                  probe_olean: str = OLEAN, fp_olean: str = OLEAN,
                  fingerprints=None, targets=("lemma_ck",), lean_exit_code=0,
                  probe_theorem="lemma_ck", fp_theorem=_SAME, probe_src=CUR, fp_src=CUR,
-                 probe_axioms=("propext",), fp_axioms=("propext",), closure_axioms=("propext",), stale=None):
+                 probe_axioms=("propext",), fp_axioms=("propext",), closure_axioms=("propext",), stale=None,
+                 closure_olean=OLEAN, isolated=True):
     """The three JSONs in the exact shapes the checks print: `probe-negation --json`
     (ProbeResult.to_json plus module/theorem/source_sha256, cmd_probe_negation),
     `fingerprint --json` (cmd_fingerprint) and `audit-closure --json` (AuditResult.to_json,
-    the real serializer). A value of None leaves the key out (an older JSON)."""
+    the real serializer). A value of None leaves the key out (an older JSON). The closure audit
+    is the replayed one (step 5 Task 7: `isolated`, `olean_sha256`) unless `isolated` is False
+    (`audit-closure --legacy-import`) or None (a JSON from before step 5, without the keys)."""
     cur = hashlib.sha256((tmp_path / "missions" / "demo" / "proof" / "Demo_ck.lean")
                          .read_bytes()).hexdigest()
     closure_list = [["Demo.Proof", "olean", "f" * 64]]
@@ -377,9 +382,16 @@ def _write_jsons(tmp_path: Path, *, verdict: str = "WITNESSED", closure: str = "
     audit = AuditResult(verdict=closure, lean_exit_code=lean_exit_code,
                         targets=[TargetInfo(name=t, kind="theorem", statement="1 + 1 = 2",
                                             axioms=list(closure_axioms)) for t in targets])
+    closure_doc = json.loads(audit.to_json())
+    if isolated is None:
+        for k in ("isolated", "olean_sha256", "olean_closure"):
+            closure_doc.pop(k, None)
+    else:
+        closure_doc.update(isolated=isolated, olean_sha256=closure_olean if isolated else None,
+                           olean_closure=closure_list if isolated else [])
     paths = {}
     for name, body in (("probe", json.dumps(probe)), ("fp", json.dumps(fp)),
-                       ("closure", audit.to_json())):
+                       ("closure", json.dumps(closure_doc))):
         paths[name] = tmp_path / f"{name}.json"
         paths[name].write_text(body + "\n")
     return paths
@@ -799,3 +811,77 @@ def test_cli_fingerprint_refuses_a_stale_build(tmp_path, monkeypatch, capsys):
                  "--file", str(src2), "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["axioms"] == ["propext"] and out["stale"] is False
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Step 5 Task 7: the closure audit runs on the SAME replayed closure as the probe and the fingerprint.
+def test_checks_closure_isolated_roundtrip_and_type(tmp_path):
+    from telperion.missions.schema import _node_to_doc, _doc_to_node
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    for flag in (True, False):
+        rec = _rec("b" * 64, closure_isolated=flag)
+        doc = _node_to_doc(dataclasses.replace(node, checks=rec))
+        assert ("closure_isolated" in doc["checks"]) is flag      # written only when true
+        assert _doc_to_node(doc, tmp_path / "n.toml").checks == rec
+    doc = _node_to_doc(dataclasses.replace(node, checks=_rec("b" * 64)))
+    doc["checks"]["closure_isolated"] = "yes"
+    with pytest.raises(SchemaError, match="closure_isolated"):
+        _doc_to_node(doc, tmp_path / "n.toml")
+
+
+def test_checks_problem_refuses_a_non_isolated_closure(tmp_path):
+    """A record whose closure audit imported the submission (`--legacy-import`, or a record from before step 5)
+    does not pass: an imported module could have forged that audit."""
+    from telperion.missions.provenance import checks_problem
+    from missions_fixtures import minimal_proved_node
+    node = minimal_proved_node(tmp_path, heavy=False)
+    _statement_for(tmp_path, node)
+    rec = _rec(_art_sha(tmp_path, node), theorem="t", closure_isolated=False)
+    problem = checks_problem(tmp_path, dataclasses.replace(node, checks=rec))
+    assert "not isolated" in problem and "--legacy-import" in problem, problem
+    assert checks_problem(tmp_path, dataclasses.replace(node, checks=dataclasses.replace(
+        rec, closure_isolated=True))) == ""
+
+
+def test_post_cutoff_grant_refuses_a_non_isolated_closure(tmp_path):
+    root = _grant_campaign(tmp_path, created="2026-10-29")
+    node = load_node(root / "nodes" / "Demo_ck.toml")
+    _with_checks(root, _rec(_art_sha(root, node), closure_isolated=False))
+    with pytest.raises(GateError, match="not isolated"):
+        _grant(root)
+    assert load_node(root / "nodes" / "Demo_ck.toml").status == "open"
+
+
+@pytest.mark.parametrize("isolated", [False, None])
+def test_cli_legacy_closure_json_refused_for_post_cutoff_node(tmp_path, isolated, capsys):
+    """`audit-closure --legacy-import` output (isolated false), or a closure JSON from before step 5 (no key), is
+    refused for a node created on or after the cutoff, with a message that says why."""
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path, isolated=isolated)) == 2
+    assert _node(mroot).checks is None
+    err = capsys.readouterr().err
+    assert "not isolated" in err and "--legacy-import" in err, err
+
+
+def test_cli_closure_olean_must_match_probe_and_fingerprint(tmp_path, capsys):
+    mroot = _cli_campaign(tmp_path)
+    for olean in ("c" * 64, None):
+        assert _record(mroot, _write_jsons(tmp_path, closure_olean=olean)) == 2
+        assert _node(mroot).checks is None
+        assert "same build" in capsys.readouterr().err
+
+
+def test_cli_records_closure_isolation(tmp_path):
+    mroot = _cli_campaign(tmp_path)
+    assert _record(mroot, _write_jsons(tmp_path)) == 0
+    c = _node(mroot).checks
+    assert c.closure_isolated is True and c.olean_sha256 == OLEAN
+
+
+def test_cli_legacy_closure_json_accepted_for_pre_cutoff_node(tmp_path):
+    """A pre-cutoff node needs no [checks]; a record made with the legacy audit is kept, marked not isolated."""
+    mroot = _cli_campaign(tmp_path, created="2026-10-01")
+    _record(mroot, _write_jsons(tmp_path, isolated=False))
+    c = _node(mroot).checks
+    assert c is not None and c.closure_isolated is False and c.closure_verdict == "PASS"
