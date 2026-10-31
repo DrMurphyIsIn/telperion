@@ -302,10 +302,15 @@ type mode (the form statement files have so far), or, with none, one closed `def
 follow a strict whitelist grammar (Task 6 fix round 2): only `import`, `namespace`/`end`/`section`, `open`,
 `universe`, `variable`, the statement and supporting `def`/`abbrev`/`structure`/`inductive`/`class` commands, each at
 a line start; no string or char literal, no attribute, no syntax extension, generator, `#` command or `set_option`.
-The constant is then chosen semantically: the replayed statement module must declare exactly that statement
-constant, every constant it declares must be accounted for by a textual declaration, the gate's statement reader must
-agree, and the declaration range Lean recorded for it (read as data from the compiled olean) must start at the
-textual declaration's line. `fingerprints_env` records the trusted env digest the fingerprints were computed under (machine-independent
+`by` appears only as the statement's terminal `:= by sorry`, and a doc comment on the statement is refused. The
+constant is then chosen semantically: the replayed statement module must declare exactly that statement constant,
+every constant it declares must be accounted for by a textual declaration, the gate's statement reader must agree,
+and the declaration range Lean recorded for it (read as data from the compiled olean) must start at the textual
+declaration's line. Every imported project module is recorded, by source sha256, in `[imports]`. **Trust (Task 6 fix
+round 3, Ruling 20):** the freeze fingerprints exactly what Lean elaborates; these checks stop accidental and casual
+mismatches between the statement text and that elaboration. The statement layer (the statement file and the project
+modules it imports) is trusted read-back content, because compiling it runs code; a campaign from an untrusted author
+must be frozen inside the sandbox. `fingerprints_env` records the trusted env digest the fingerprints were computed under (machine-independent
 within a platform), which the fingerprint JSON at `checks-record` must match, and the `frozen` date never changes. CI's
 "fails if the file changes" is `mission verify`'s walk of FREEZE.toml's git history: at an unchanged version neither
 table may change, except for nodes added with it; any other change needs a version bump with an `[[unfreeze]]` entry

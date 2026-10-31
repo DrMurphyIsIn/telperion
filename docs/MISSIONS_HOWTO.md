@@ -565,6 +565,14 @@ explicit flag over "whenever a Lean env happens to be configured": a freeze is a
 should not depend on which machine ran it. Without the flag nothing is recorded, the command says so, and every
 post-cutoff `[checks]` record is refused until a freeze records them.
 
+**What the freeze does and does not promise (Ruling 20).** The freeze fingerprints exactly what Lean elaborates from
+the statement file. The grammar, the declaration range and the accounted-for check below stop accidental and casual
+mismatches between the text and that elaboration, which is what a reader checks; they are defence in depth, not a
+guarantee that the text is what Lean elaborates. Compiling the statement layer (the statement file, its terminal
+`by sorry`, and every project module it imports) runs that code, so the statement layer is TRUSTED read-back content:
+the independent read-back approves it, imported project modules included. A campaign from an untrusted author must be
+frozen inside the sandbox.
+
 How each fingerprint is computed:
 - **One statement constant per file.** A statement file declares exactly one: one `theorem` or `lemma`
   (`theorem foo : P := by sorry`, the form statement files have had so far), or, with none, one closed `def` or
@@ -587,10 +595,20 @@ How each fingerprint is computed:
     `run_meta`, `initialize`, `builtin_initialize`, and any `#` command (`#eval`, `#exit`, `#print`, ...) (they run
     code); `alias`, `export`, `attribute`, `deriving`, `instance`, `irreducible_def` (they generate declarations);
     `set_option`, `local`, `scoped` (other than `open scoped`), `private`, `protected`, `opaque`, `axiom`, `omit`,
-    `include`; any attribute `@[…]`; any `«»` name; any backquote (a `` `( `` quotation or a name literal).
-  Statement files come from `mission add`, so this costs nothing in practice: of the 123 node statement files in the
-  campaigns written before step 5, 121 are inside it (the other two declare helper lemmas beside their theorem). The
-  three campaign `…Defs.lean` modules are not node statement files and are not frozen.
+    `include`, `run_tac`, `by_elab`; any attribute `@[…]`; any `«»` name; any backquote (a `` `( `` quotation or a
+    name literal);
+  - `by` only as the statement's own final `:= by sorry` (closing `end` lines may follow); supporting definitions
+    take term proofs, because a tactic block can run code at compile time;
+  - no doc comment on the statement itself (Lean records its range from the doc comment's line; move the docstring
+    to a `/- … -/` or `--` comment). A doc comment on a supporting definition is fine.
+  Statement files come from `mission add`, so this costs little in practice: of the 123 node statement files in the
+  campaigns written before step 5, 121 are inside it (the other two declare helper lemmas beside their theorem, and
+  their helper proofs use `by`). The three campaign `…Defs.lean` modules are not node statement files and are not
+  held to this grammar; they are hashed into the freeze instead (below).
+  - **Known residual (R2).** Lean commands need no line start, and the grammar does not know every command in
+    Mathlib: one outside its lists, on an indented line, is not seen. The accounted-for check catches it when it
+    declares something, and the declaration range when it hides or rebinds the target, but a command that changes
+    meaning and declares nothing (`unif_hint`) passes all three. This is the trusted-content class above.
 - **The semantic choice, which is what decides.** The statement file is compiled as its own module with the pinned
   `lean` (no lake) and replayed into the pinned env like every other check. The replayed module must declare exactly
   the constant the text named, and nothing else that could be a statement: in type mode its only theorem (and no
@@ -602,8 +620,15 @@ How each fingerprint is computed:
 - **The declaration range.** Lean records, in the compiled statement `.olean`, the line and column each constant was
   declared at (`declRangeExt`). That record is read back as data, by a trusted script that imports only `Lean`, from
   the very olean that is then replayed (its sha256 is checked against the replay's copy), and the target's range must
-  start at the textual declaration's line, column 0. So the frozen constant is the one the text declares, not one a
-  generator made under the same name: an `alias main := …` records the alias's own line.
+  start at the textual declaration's line, column 0. That stops a generator making a same-named constant elsewhere
+  (an `alias main := …` records the alias's own line); compile-time code in the trusted statement layer could still
+  forge the record.
+- **Imported project modules.** Every module in the statement files' import closure that is not the trusted env's
+  (its first component is not `Mathlib`, `Init`, `Lean`, `Std`, `Batteries`, `Aesop`, `Qq`, `Plausible` or
+  `ProofWidgets`) must be a source file of the campaign, `<campaign>/lean/<A>/<B>.lean`, and its sha256 is recorded in
+  FREEZE.toml `[imports]`. A change to one is reported as "import drift" and needs an unfreeze, under the same history
+  rules as `[statements]`. The fingerprint already sees such a change, because its definitions are unfolded; the hash
+  is there so the read-back covers what was imported.
 - **What is hashed.** The theorem is fingerprinted by its TYPE, that is `P`; the definition by its VALUE, which is `P`
   again. In both cases every non-library definition is unfolded first, so `theorem t : S`, `theorem t : P` and `S`
   itself all get the same fingerprint. Universe-polymorphic statements are included, with level parameters numbered

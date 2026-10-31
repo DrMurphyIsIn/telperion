@@ -94,6 +94,24 @@ def _compile(text: str, lib: Path, module: str = ART_MODULE) -> Path:
     return lib / "build"
 
 
+def _compile_module(text: str, lib: Path, module: str) -> Path:
+    """Compile `text` as the (dotted) `module` with the pinned lean (no lake) into `lib/build/<A>/<B>.olean`."""
+    from telperion.checks.lean_replay import DEFAULT_MEMORY_MB, default_wrapper, pinned_env
+    from telperion.checks.lean_run import run_lean
+    pinned = pinned_env(LEAN_ENV)
+    rel = Path(*module.split("."))
+    src, out = lib / "src" / rel.with_suffix(".lean"), lib / "build" / rel.with_suffix(".olean")
+    src.parent.mkdir(parents=True)
+    out.parent.mkdir(parents=True)
+    src.write_text(text, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("LEAN")}
+    rc, log = run_lean([*default_wrapper(), "env", f"LEAN_PATH={os.pathsep.join(pinned.entries)}", pinned.lean,
+                        f"--memory={DEFAULT_MEMORY_MB}", "-R", str(lib / "src"), "-o", str(out), str(src)],
+                       lib, 1800, env=env)
+    assert rc == 0 and out.is_file(), log
+    return lib / "build"
+
+
 def _campaign(mroot: Path, statement: str, artifact: str) -> Path:
     """Campaign `demo`, node `Demo.ck` (slug Demo_ck): post-cutoff, an [author], an independent read-back, the
     statement file, and the artifact `proof/Demo_ck.lean` linked."""
@@ -295,11 +313,12 @@ def test_statement_lean_reads_differently_is_refused_at_the_freeze(tmp_path, cap
 
 def test_honest_statement_with_supporting_definitions_freezes(tmp_path, capsys):
     """The grammar's supporting declarations, in real Lean: a structure (whose `mk.injEq`/`mk.inj`/... are its own),
-    an inductive, a class and a definition with a nested proof (`proof_N` auxiliaries) are all accounted for, and the
-    one statement theorem is what is frozen."""
+    an inductive, a class and a definition with a term proof inside are all accounted for, a doc comment on a
+    SUPPORTING definition is fine, and the one statement theorem is what is frozen. (Since fix round 3 a supporting
+    definition may not use `by`.)"""
     stmt = ("import Mathlib\nuniverse u\nopen scoped Real\nstructure Box where\n  val : ℕ\ninductive Col\n  | red\n"
-            "  | blue\nclass HasX (α : Type u) where\n  x : α\ndef five : Fin 6 := ⟨5, by decide⟩\n"
-            "theorem main_thm : 1 + 1 = 2")
+            "  | blue\nclass HasX (α : Type u) where\n  x : α\n/-- five, below six -/\n"
+            "def five : Fin 6 := ⟨5, Nat.lt_succ_self 5⟩\ntheorem main_thm : 1 + 1 = 2")
     mroot = tmp_path / "missions"
     root = _campaign(mroot, stmt, HONEST)
     rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
@@ -312,6 +331,40 @@ def test_honest_statement_with_supporting_definitions_freezes(tmp_path, capsys):
     fps = run_statement_fingerprint(Path(LEAN_ENV), text, "main_thm", mode="type")
     line = text.split("\n").index("theorem main_thm : 1 + 1 = 2 := by sorry") + 1
     assert fps.ranges["main_thm"] == (line, 0) and fps.ranges["Box"][0] < line
+
+
+def test_doc_comment_on_the_statement_refused_at_the_freeze(tmp_path, capsys):
+    """Fix round 3 (R4), in real Lean: Lean records the statement's range from its doc comment (the modifiers), not
+    from the `theorem` line, so a doc comment on the statement is refused at the freeze with a clear message."""
+    from telperion.checks.fingerprint import run_statement_fingerprint
+    text = "import Mathlib\n/-- the statement -/\ntheorem main_thm : 1 + 1 = 2 := by sorry\n"
+    fps = run_statement_fingerprint(Path(LEAN_ENV), text, "main_thm", mode="type")
+    assert fps.ranges["main_thm"] == (2, 0)                    # the doc comment's line, not the theorem's line 3
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, "import Mathlib\n/-- the statement -/\ntheorem main_thm : 1 + 1 = 2", HONEST)
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
+               "--session", GATE[1], "--fingerprints"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "move the docstring to a comment" in out, out
+    assert not (root / "FREEZE.toml").exists()
+
+
+def test_project_import_is_hashed_and_unfolded(tmp_path, capsys, frozen_statement_fp):
+    """Fix round 3 (Ruling 20): a statement importing a campaign definitions module. The freeze records the module's
+    source sha256 in [imports], and the fingerprint unfolds its definition (non-library), so it equals the
+    fingerprint of the statement written out."""
+    mroot = tmp_path / "missions"
+    root = _campaign(mroot, "import Mathlib\nimport Statements.TieDefs\ntheorem main_thm : two = 2", HONEST)
+    defs = root / "lean" / "Statements" / "TieDefs.lean"
+    defs.write_text("import Mathlib\ndef two : ℕ := 1 + 1\n", encoding="utf-8")
+    olean_dir = _compile_module(defs.read_text(), tmp_path / "defs", "Statements.TieDefs")
+    rc = main(["mission", "--missions-root", str(mroot), "freeze", "demo", "--identity", GATE[0],
+               "--session", GATE[1], "--fingerprints", "--olean-dir", str(olean_dir)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    doc = _load_freeze(root)
+    assert doc["imports"] == {"Statements.TieDefs": hashlib.sha256(defs.read_bytes()).hexdigest()}
+    assert doc["fingerprints"]["Demo_ck"] == frozen_statement_fp     # `two = 2` unfolds to `1 + 1 = 2`
 
 
 def test_decoy_stating_the_frozen_proposition_is_accepted(tmp_path, capsys, frozen_statement, frozen_statement_fp):

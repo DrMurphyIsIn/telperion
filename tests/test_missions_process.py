@@ -2572,9 +2572,14 @@ def _stmt_target(tmp_path: Path, body: str):
      "structure Box where\n  val : ℕ\ninductive Col\n  | red\n  | blue\nclass HasX (α : Type) where\n  x : α\n"
      "noncomputable def pick : ℕ := 0\nend\ntheorem main (b : Box)\n    (h : b.val = n) :\n    b.val = n := by sorry",
      ("main", "type")),
-    # comments and doc comments mentioning anything forbidden are harmless
-    ("/-- no #exit, no «», no `( and no \"strings\" here; set_option, alias, elab -/\n-- @[simp] 'c'\n"
+    # comments mentioning anything forbidden are harmless
+    ("/- no #exit, no «», no `( and no \"strings\" here; set_option, alias, elab, by -/\n-- @[simp] 'c'\n"
      "theorem main : True", ("main", "type")),
+    # the statement's own terminal `by sorry`, also on its own line or before closing `end`s; a doc comment on a
+    # SUPPORTING definition is fine
+    ("theorem main : True := by\n  sorry", ("main", "type")),
+    ("namespace A\nsection\n/-- a helper -/\ndef h : ℕ := 0\ntheorem main : h = 0 := by sorry\nend\nend A",
+     ("A.main", "type")),
 ])
 def test_statement_fingerprint_target(tmp_path, body, want):
     assert _stmt_target(tmp_path, body) == want
@@ -2587,6 +2592,9 @@ def test_statement_fingerprint_target(tmp_path, body, want):
     ("def A : Prop := True\ndef B : Prop := False", "2 closed `def … : Prop`s"),
     ("example : True", "line 2 starts a command with 'example'"),       # line 1 is the provenance header
     ("def N : ℕ := 3", "declares no theorem, lemma or closed `def … : Prop`"),
+    # fix round 3 (R4): Lean records the range from the doc comment, so it is refused with a clear message
+    ("/-- the statement -/\ntheorem main : True", "move the docstring to a comment"),
+    ("/-- the statement -/\nnoncomputable def S : Prop := True", "move the docstring to a comment"),
 ])
 def test_statement_fingerprint_target_refusals(tmp_path, body, why):
     with pytest.raises(ValueError, match=re.escape(why)):
@@ -2618,7 +2626,7 @@ GRAMMAR_REFUSALS = [
     "elab", "elab_rules", "macro", "macro_rules", "syntax", "notation", "infix", "infixl", "infixr", "prefix",
     "postfix", "declare_syntax_cat", "run_cmd", "run_elab", "run_meta", "alias", "export", "attribute",
     "initialize", "builtin_initialize", "deriving", "set_option", "local", "scoped", "instance", "private",
-    "protected", "opaque", "axiom", "irreducible_def", "omit", "include")] + [
+    "protected", "opaque", "axiom", "irreducible_def", "omit", "include", "run_tac", "by_elab")] + [
     ("theorem main : True\n  set_option maxHeartbeats 1 in\ndef x : ℕ := 0", "uses `set_option` (line 2)"),
     ("open scoped Real\nscoped notation \"x\" => 1\ntheorem main : True", "string literal (line 2)"),
     ("theorem main : True\nderiving instance Repr for Nat", "uses `deriving` (line 2)"),
@@ -2632,6 +2640,12 @@ GRAMMAR_REFUSALS = [
     ("def x : ℕ := 0 theorem main : True", "line 1: the command keyword `theorem` does not start a line"),
     ("def x : ℕ := 0\n  theorem main : True", "line 2: the command keyword `theorem` does not start a line"),
     ("open Nat in theorem main : True", "line 1: the command keyword `theorem` does not start a line"),
+    # fix round 3 (Ruling 20): `by` only as the statement's final `:= by sorry`
+    ("def five : Fin 6 := ⟨5, by decide⟩\ntheorem main : True", "line 1: `by` is allowed only as the statement's final"),
+    ("theorem main : True := by trivial", "line 1: `by` is allowed only as the statement's final"),
+    ("theorem main : True := by\n  run_tac pure ()\n  sorry", "uses `run_tac` (line 2)"),
+    ("def x : ℕ := by exact 0\ntheorem main : True := by sorry", "line 1: `by` is allowed only"),
+    ("theorem main : True := by sorry\ndef x : ℕ := 0", "line 1: `by` is allowed only"),
 ]
 
 
@@ -2887,3 +2901,89 @@ def test_compute_refuses_a_target_lean_records_elsewhere(tmp_path, ranges):
     with pytest.raises(ValueError, match=r"Lean records the declaration of 'thm_Node_A' at \(line, column\)"):
         compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(_honest,
                                                                                   ranges_for=lambda r: ranges))
+
+
+
+# Fix round 3 (Ruling 20, R3): the target is never filtered out as an auxiliary of another textual name.
+def test_compute_keeps_a_target_under_a_textual_structure(tmp_path):
+    from telperion.missions.process import compute_statement_fingerprints
+    root = tmp_path / "demo"
+    manifest = _campaign(root, names=("Node_A",))
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "structure Pt where\n  x : Nat\ntheorem Pt.main (p : Pt) : p.x = p.x", manifest)
+    aux = {"theorem": ["Pt.main", "Pt.mk.injEq", "Pt.mk.inj"], "propdef": [], "other": ["Pt", "Pt.mk", "Pt.x"]}
+    out = compute_statement_fingerprints(root, fingerprint_text=_fake_statement_run(lambda t, m: aux))
+    assert out == {"Node_A": FP_C}
+
+
+# Fix round 3 (Ruling 20): the imported PROJECT modules are hashed into FREEZE.toml [imports].
+def _defs_campaign(root: Path, defs: str = "def bound : Nat := 5\n", extra: str = "") -> None:
+    manifest = _campaign(root, names=("Node_A",))
+    (root / "lean" / "Statements").mkdir(parents=True, exist_ok=True)
+    (root / "lean" / "Statements" / "Defs.lean").write_text(defs)
+    if extra:
+        (root / "lean" / "Statements" / "More.lean").write_text(extra)
+    write_statement(root, load_campaign(root).nodes["Node_A"],
+                    "import Mathlib\nimport Statements.Defs\ntheorem thm_Node_A : bound = 5", manifest)
+
+
+def test_freeze_records_project_imports_transitively(tmp_path):
+    root = tmp_path / "demo"
+    _defs_campaign(root, defs="import Statements.More\ndef bound : Nat := 5\n", extra="def other : Nat := 1\n")
+    doc = freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    want = {m: hashlib.sha256((root / "lean" / "Statements" / f"{m.split('.')[1]}.lean").read_bytes()).hexdigest()
+            for m in ("Statements.Defs", "Statements.More")}
+    assert doc["imports"] == want and _load_freeze_for_test(root)["imports"] == want
+    assert "\n[imports]\n" in freeze_path(root).read_text() and freeze_problems(root) == []
+
+
+def test_import_drift_and_new_imports_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    (root / "lean" / "Statements" / "Defs.lean").write_text("def bound : Nat := 6\n")
+    assert any("'Statements.Defs': import drift" in p for p in freeze_problems(root))
+    (root / "lean" / "Statements" / "Defs.lean").write_text("import Statements.More\ndef bound : Nat := 5\n")
+    (root / "lean" / "Statements" / "More.lean").write_text("def other : Nat := 1\n")
+    problems = freeze_problems(root)
+    assert any("'Statements.More' is not recorded" in p for p in problems), problems
+    unfreeze(root, author="alice@example.com", reason="Defs imports More", readback_identity="bob@example.com",
+             date="2026-10-02")
+    assert freeze_problems(root) == []
+
+
+def test_freeze_history_import_change_at_unchanged_version_flagged(tmp_path):
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    _git_init(root)
+    freeze(root, identity="alice@example.com", session="s1", date="2026-10-29")
+    _git_commit(root, "freeze")
+    (root / "lean" / "Statements" / "Defs.lean").write_text("def bound : Nat := 6\n")
+    _hand_edit_freeze(root, lambda d: d["imports"].__setitem__(
+        "Statements.Defs", hashlib.sha256(b"def bound : Nat := 6\n").hexdigest()))
+    _git_commit(root, "hide the Defs edit")
+    problems = freeze_problems(root)
+    assert any("imported project module(s) 'Statements.Defs' changed or were removed without a version bump" in p
+               for p in problems), problems
+
+
+@pytest.mark.parametrize("imp,why", [("Elsewhere.Thing", "neither a library module"),
+                                     ("Statements.Gone", "neither a library module")])
+def test_freeze_refuses_an_import_it_cannot_hash(tmp_path, imp, why):
+    root = tmp_path / "demo"
+    manifest = _campaign(root, names=("Node_A",))
+    write_statement(root, load_campaign(root).nodes["Node_A"], f"import {imp}\ntheorem thm_Node_A : True", manifest)
+    with pytest.raises(ValueError, match=why):
+        freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")
+    assert not freeze_path(root).exists()
+
+
+def test_freeze_refuses_a_symlinked_project_import(tmp_path):
+    root = tmp_path / "demo"
+    _defs_campaign(root)
+    d = root / "lean" / "Statements" / "Defs.lean"
+    (tmp_path / "real.lean").write_text(d.read_text())
+    d.unlink()
+    d.symlink_to(tmp_path / "real.lean")
+    with pytest.raises(ValueError, match="not a regular file"):
+        freeze(root, identity="alice@example.com", session="s1", date="2026-10-01")

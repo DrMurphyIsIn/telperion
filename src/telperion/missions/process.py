@@ -159,6 +159,12 @@ def _dump_freeze(doc: dict) -> str:
         lines.append("[fingerprints]")
         for slug in sorted(fingerprints):
             lines.append(f"{_quote(slug)} = {_quote(fingerprints[slug])}")
+    imports = doc.get("imports") or {}
+    if imports:
+        lines.append("")
+        lines.append("[imports]")
+        for module in sorted(imports):
+            lines.append(f"{_quote(module)} = {_quote(imports[module])}")
     for entry in doc.get("unfreeze") or ():
         lines.append("")
         lines.append("[[unfreeze]]")
@@ -201,6 +207,9 @@ def _freeze_shape_problem(doc: dict) -> Optional[str]:
     if not isinstance(fingerprints, dict) or not all(
             isinstance(v, str) for v in fingerprints.values()):
         return "has a `fingerprints` that is not a table of string fingerprints"
+    imports = doc.get("imports", {})
+    if not isinstance(imports, dict) or not all(isinstance(v, str) for v in imports.values()):
+        return "has an `imports` that is not a table of string hashes"
     entries = doc.get("unfreeze", [])
     if not isinstance(entries, list):
         return "has an `unfreeze` that is not an array of tables"
@@ -302,6 +311,56 @@ def _hash_statement(root: Path, node) -> str:
     return hashlib.sha256(statement_body(root, node).encode("utf-8")).hexdigest()
 
 
+def _import_lines(text: str) -> List[str]:
+    """The modules a Lean file imports (`import A.B`, comments ignored)."""
+    from .judge import _guard_anchors
+    code = _guard_anchors().blank_lean_code(text)
+    out: List[str] = []
+    for m in re.finditer(r"(?m)^[ \t]*import[ \t]+([^\n]*)$", code):
+        out.extend(m.group(1).split())
+    return out
+
+
+def project_import_hashes(root: Path, campaign) -> Dict[str, str]:
+    """Step 5 Task 6, fix round 3 (Ruling 20): module -> sha256 of its source, for every PROJECT
+    module in the import closure of the campaign's statement files. A module whose first
+    component is a library root (`checks.fingerprint.LIBRARY_ROOTS`: Mathlib, Init, ...) is the
+    trusted env's and stops the walk; any other import must be a source file of this campaign,
+    `<root>/lean/<A>/<B>.lean` (a regular file, not a symlink), whose own imports are walked in
+    turn. `ValueError` for an import that is neither, or whose name is not a plain dotted
+    identifier. Recorded in FREEZE.toml `[imports]`, so a change to an imported definitions
+    module is visible as drift and needs an unfreeze (the semantic tie already sees it, since
+    non-library constants are unfolded; this is for the read-back)."""
+    from ..closure_audit import DEFAULT_LIBRARY_ROOTS, _IDENT_COMPONENT
+
+    lean_dir = Path(root) / "lean"
+    todo: List[str] = []
+    for node in campaign.nodes.values():
+        sp = statement_path(root, node)
+        if sp.exists():
+            todo.extend(_import_lines(sp.read_text(encoding="utf-8")))
+    out: Dict[str, str] = {}
+    while todo:
+        module = todo.pop()
+        if module in out or module.split(".")[0] in DEFAULT_LIBRARY_ROOTS:
+            continue
+        parts = module.split(".")
+        if any(not p or p[0].isdigit() or not _IDENT_COMPONENT.match(p) for p in parts):
+            raise ValueError(f"import {module!r} is not a plain dotted Lean module name")
+        src = lean_dir.joinpath(*parts).with_suffix(".lean")
+        try:
+            st = src.lstat()
+        except FileNotFoundError:
+            raise ValueError(f"import {module!r} is neither a library module ({', '.join(DEFAULT_LIBRARY_ROOTS)}) "
+                             f"nor a source file of this campaign ({src})") from None
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"imported module {module!r} is not a regular file ({src}); refusing to hash it")
+        data = src.read_bytes()
+        out[module] = hashlib.sha256(data).hexdigest()
+        todo.extend(_import_lines(data.decode("utf-8", errors="replace")))
+    return out
+
+
 def _current_statement_hashes(root: Path, campaign) -> Dict[str, str]:
     return {
         slug: _hash_statement(root, node)
@@ -350,8 +409,12 @@ def freeze(root: Path, *, identity: str, session: str, date: str,
     already frozen -- re-running `freeze` would silently discard the unfreeze history;
     `unfreeze` is the only supported way to bring a frozen campaign's hashes current.
 
+    Fix round 3 (Ruling 20): the imported PROJECT modules are recorded too, in `[imports]`,
+    by source sha256 (`project_import_hashes`).
+
     Step 5 Task 6: *fingerprints* (slug -> statement fingerprint, as
-    `compute_statement_fingerprints` returns them) are recorded in `[fingerprints]`; with
+    `compute_statement_fingerprints` returns them -- exactly what Lean elaborates, from a
+    statement layer that is trusted read-back content) are recorded in `[fingerprints]`; with
     none, nothing is recorded there and the gate refuses every post-cutoff `[checks]` record
     with "statement fingerprint not frozen". *fingerprints_env* (default: the one a
     `StatementFingerprints` carries) is the trusted env they were computed under, recorded as
@@ -379,6 +442,7 @@ def freeze(root: Path, *, identity: str, session: str, date: str,
         "statements": statements,
         "fingerprints": _checked_fingerprints(fingerprints, statements),
         "fingerprints_env": _fingerprints_env(fingerprints, fingerprints_env),
+        "imports": project_import_hashes(root, campaign),
     }
     _write_freeze(root, doc)
     return doc
@@ -434,6 +498,7 @@ def unfreeze(root: Path, *, author: str, reason: str, readback_identity: str, da
         "statements": statements,
         "fingerprints": _checked_fingerprints(fingerprints, statements),
         "fingerprints_env": _fingerprints_env(fingerprints, fingerprints_env),
+        "imports": project_import_hashes(root, campaign),
         "unfreeze": entries,
     }
     _write_freeze(root, new_doc)
@@ -527,6 +592,29 @@ def freeze_problems(root: Path, *, require_history: bool = False) -> List[str]:
                 f"node {slug!r}: statement drift -- current hash {current[:16]}... does not "
                 f"match the frozen hash {str(recorded)[:16]}... in {FREEZE_FILENAME}."
             )
+
+    # Fix round 3 (Ruling 20): the imported project modules, by source sha256.
+    recorded_imports = doc.get("imports") or {}
+    try:
+        current_imports = project_import_hashes(root, campaign)
+    except (OSError, ValueError) as exc:
+        problems.append(f"the statement files' project imports cannot be hashed: {exc}")
+        current_imports = None
+    if current_imports is not None:
+        for module in sorted(set(recorded_imports) | set(current_imports)):
+            was, now = recorded_imports.get(module), current_imports.get(module)
+            if was is None:
+                problems.append(
+                    f"imported project module {module!r} is not recorded in {FREEZE_FILENAME} "
+                    "[imports] (imported since the freeze); unfreeze to record it.")
+            elif now is None:
+                problems.append(
+                    f"{FREEZE_FILENAME} [imports] records {module!r}, which no statement file imports "
+                    "any more (or whose source is gone); unfreeze to record the change.")
+            elif now != was:
+                problems.append(
+                    f"imported project module {module!r}: import drift -- its source hash "
+                    f"{now[:16]}... does not match the frozen {was[:16]}... in {FREEZE_FILENAME}.")
 
     # Step 5 Task 6: `[fingerprints]` must describe recorded statements, as sha256 hex, computed
     # under one named trusted env (fix round 1, M2: `fingerprints_env`).
@@ -945,6 +1033,13 @@ def _freeze_transition_problems(prev: dict, cur: dict, label: str) -> List[str]:
                 f"{', '.join(sorted(fp_removed | fp_changed))!r} changed or were removed "
                 "without a version bump."
             )
+        prev_imp, cur_imp = prev.get("imports") or {}, cur.get("imports") or {}
+        imp_bad = {m for m in prev_imp if m not in cur_imp or cur_imp[m] != prev_imp[m]}
+        if imp_bad:
+            problems.append(
+                f"{FREEZE_FILENAME} at {label}: imported project module(s) "
+                f"{', '.join(sorted(imp_bad))!r} changed or were removed without a version bump."
+            )
         prev_env, cur_env = prev.get("fingerprints_env"), cur.get("fingerprints_env")
         if prev_env and cur_env != prev_env:
             problems.append(
@@ -1172,6 +1267,18 @@ def freeze_grant_problem(root: Path, node) -> str:
 # the frozen fingerprint is what an artifact's `theorem t : S` or `theorem t : P` gets in
 # type mode. The statement file is the campaign's own frozen, read-back text, not the
 # adversarial artifact; the fingerprint itself is computed from what Lean elaborated.
+#
+# THE TRUST MODEL (fix round 3, Ruling 20). The freeze fingerprints exactly what Lean
+# elaborates from the statement file. The grammar (`_statement_text_problem`), the declaration
+# range and the accounted-for check (`compute_statement_fingerprints`) stop ACCIDENTAL and
+# CASUAL mismatches between the text and that elaboration; they do not make the text a
+# guarantee of it. Compile-time code is still possible in the statement layer -- the statement
+# file's own `by sorry` and the project modules it imports (recorded, by source sha256, in
+# FREEZE.toml `[imports]`) are compiled for real -- and it is TRUSTED, as part of what the
+# independent read-back approves. A campaign from an untrusted author must be frozen inside
+# the sandbox. Known residual (R2): a command keyword outside the grammar's lists on an
+# INDENTED line is not seen by the line-start check (a meaning-changing command that declares
+# nothing, such as `unif_hint`, passes all three checks).
 # ---------------------------------------------------------------------------
 
 #: A `theorem`/`lemma` keyword token anywhere in code (after `set_option ... in`, an attribute,
@@ -1199,6 +1306,8 @@ _FORBIDDEN_TOKENS = (
     "alias", "export", "attribute", "initialize", "builtin_initialize", "deriving",
     "set_option", "local", "scoped", "instance", "private", "protected", "opaque", "axiom",
     "irreducible_def", "omit", "include",
+    # fix round 3 (Ruling 20): tactic and term forms that run arbitrary code at elaboration time
+    "run_tac", "by_elab",
 )
 _TOKEN_RE = re.compile(r"[A-Za-z_\u0370-\u03ff\u1f00-\u1fff\u2100-\u214f]"
                        r"[\w'!?\u0370-\u03ff\u1f00-\u1fff\u2100-\u214f\u2080-\u2089\u2090-\u209c]*")
@@ -1235,9 +1344,15 @@ def _statement_text_problem(ga, text: str) -> Optional[str]:
       `set_option`, `local`, `scoped`, `instance`, `private`, ...), no `#` command, no `«`, no
       backquote and no attribute. The one exception is `open scoped NS` at a line start.
 
+    - `by` only as the statement's final `:= by sorry` (fix round 3), and no `run_tac` or
+      `by_elab`: a tactic block can run code at compile time.
+
     Statement files come from `mission add` and declare one statement and its supporting
-    definitions, so this costs nothing; what it buys is that the textual declarations ARE what
-    Lean elaborates, which `compute_statement_fingerprints` then checks."""
+    definitions, so this costs nothing. It is defence in depth against ACCIDENTAL and CASUAL
+    mismatches between the text and what Lean elaborates; it is not a guarantee. The statement
+    layer (this file and the project modules it imports) is trusted read-back content: compiling
+    it runs code, and only a sandbox makes a freeze safe against an adversarial author (Ruling
+    20; see the section comment above)."""
     segs = ga.lean_segments(text)
     code = _code_columns(segs)
 
@@ -1286,7 +1401,36 @@ def _statement_text_problem(ga, text: str) -> Optional[str]:
         if m.start() not in allowed_at:
             return (f"line {line_of(m.start())}: the command keyword `{m.group(1)}` does not start "
                     "a line; every command must start at column 0 of its own line")
+    # Fix round 3 (Ruling 20): a tactic block runs tactics, any of which can run code at compile
+    # time. The only `by` a statement file may hold is the statement's own terminal `:= by sorry`
+    # (what `mission add` appends); supporting definitions use term proofs.
+    bys = list(_BY_RE.finditer(code))
+    if bys:
+        last = bys[-1]
+        # (closing `end` lines after it are fine: `namespace A … theorem t : P := by sorry` / `end A`)
+        if len(bys) > 1 or not re.fullmatch(r"\s*sorry(?:\s*\nend(?:[ \t]+\S+)?)*\s*", code[last.end():]):
+            bad = bys[0] if len(bys) > 1 else last
+            return (f"line {line_of(bad.start())}: `by` is allowed only as the statement's final "
+                    "`:= by sorry`; supporting definitions take term proofs (a tactic block runs code "
+                    "at compile time)")
     return None
+
+
+_BY_RE = re.compile(r"(?<![\w.'!?])by(?![\w.'!?])")
+
+
+def _doc_comment_on(segs, line_start: int) -> bool:
+    """Whether the last non-blank thing before offset *line_start* of the file is a doc comment
+    (`/-- … -/`): Lean then records the declaration's range from the doc comment's line."""
+    pos, last = 0, None
+    for kind, seg in segs:
+        if pos >= line_start:
+            break
+        piece = seg[: max(0, line_start - pos)]
+        if piece.strip():
+            last = (kind, piece)
+        pos += len(seg)
+    return last is not None and last[0] == "comment" and last[1].lstrip().startswith("/--")
 
 
 _DECLARING_RE = re.compile(r"(?m)^(?:noncomputable[ \t]+)?(?:theorem|lemma|def|abbrev|structure|inductive|class)"
@@ -1389,11 +1533,18 @@ def statement_target_details(ga, text: str, slug: str) -> Tuple[str, str, int]:
     elif gate_short is not None:
         raise refuse(f"the gate's statement reader sees a theorem {gate_short!r} that is not in "
                      "its code")
+    line = code.count("\n", 0, decl.start()) + 1
+    # Fix round 3 (R4): Lean records a declaration's range from its modifiers, a doc comment
+    # included, so the range check below would compare against the doc comment's line.
+    line_start = sum(len(ln) + 1 for ln in text.split("\n")[: line - 1])
+    if _doc_comment_on(ga.lean_segments(text), line_start):
+        raise refuse("the statement declaration has a doc comment (`/-- … -/`); move the docstring "
+                     "to a comment (`/- … -/` or `--`)")
     if parts[0] == "_root_":
         name = ".".join(parts[1:])
     else:
         name = ".".join(ga._namespace_at(code, decl.start()) + parts)
-    return name, "type" if theorems else "value", code.count("\n", 0, decl.start()) + 1
+    return name, "type" if theorems else "value", line
 
 
 class StatementFingerprints(dict):
@@ -1419,16 +1570,22 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
     The SEMANTIC half of the choice (fix round 1, Ruling 18, finding I1): the replayed
     statement module must declare exactly one statement constant, and it must be the textual
     target -- in type mode its only theorem (and no closed `Prop` definition), in value mode its
-    only closed `Prop` definition (and no theorem). So text that Lean never elaborates, or
-    elaborates differently from how it reads, cannot choose what is frozen. Fix round 2 (Ruling
+    only closed `Prop` definition (and no theorem). Fix round 2 (Ruling
     19) adds two more: every constant the module declares must be accounted for by a textual
     declaration (its name, or a name under it), and the declaration range Lean recorded for the
     target (`fingerprint.run_statement_fingerprint`'s ``ranges``, read as data from the compiled
     olean) must start at the textual declaration's line, column 0. Every node's fingerprint must
     also come from the same trusted env.
 
-    NOT A SANDBOX: compiling a statement runs its code (see `checks.fingerprint`); the
-    statement files are the campaign's own."""
+    What this is and is not (Ruling 20): the fingerprint is exactly what Lean elaborated; the
+    checks above stop accidental and casual mismatches between the statement text and that
+    elaboration. Compile-time code in the statement file's tactic block or in the project
+    modules it imports is trusted, as part of what the independent read-back approves, and could
+    defeat them.
+
+    NOT A SANDBOX: compiling a statement runs its code, and its imports' (see
+    `checks.fingerprint`). A campaign from an untrusted author must be frozen inside the
+    sandbox."""
     from .registry import load_campaign
 
     root = Path(root)
@@ -1470,8 +1627,9 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
                 f"node {slug!r}: the statement module, as Lean elaborates it, declares "
                 f"{unaccounted}, which no declaration in the statement file's text accounts for; "
                 "refusing to freeze a fingerprint for it.")
-        theorems = [n for n in declared.get("theorem", []) if not under(n)]
-        prop_defs = [n for n in declared.get("propdef", []) if not under(n)]
+        # never filter the target itself (fix round 3, R3: `structure Pt` + `theorem Pt.main`)
+        theorems = [n for n in declared.get("theorem", []) if n == target or not under(n)]
+        prop_defs = [n for n in declared.get("propdef", []) if n == target or not under(n)]
         want = ([target], []) if mode == "type" else ([], [target])
         if (theorems, prop_defs) != want:
             raise ValueError(
@@ -1480,8 +1638,9 @@ def compute_statement_fingerprints(root: Path, *, fingerprint_text=None,
                 f"statement file reads as declaring only {target!r} ({mode} mode); refusing to "
                 "freeze a fingerprint for it.")
         # Fix round 2 (Ruling 19, part 2): the declaration range Lean RECORDED for the target (read
-        # as data from the compiled olean) must start where the text declares it, so the constant
-        # is the textual declaration and not one a generator made under the same name.
+        # as data from the compiled olean) must start where the text declares it. That stops a
+        # generator (`alias`) making a same-named constant elsewhere; compile-time code in the
+        # trusted statement layer could still forge the record (Ruling 20).
         ranges = getattr(fps, "ranges", None)
         if not isinstance(ranges, dict) or ranges.get(target) != (line, 0):
             got = None if not isinstance(ranges, dict) else ranges.get(target)
