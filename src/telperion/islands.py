@@ -1,14 +1,16 @@
-"""The island registry (step 6): an island is an external Lean library Telperion has replayed itself (Comparator
-with nanoda at the pinned NANODA_REV, plus the step-4 statement checks). Its pinned registration lives in
-`<root>/islands/<name>/`, and library source never does:
+"""The island registry (step 6): an island is an external Lean library whose replay evidence Telperion has archived
+and re-checks (a Comparator run with nanoda at the pinned NANODA_REV, plus the step-4 statement checks; the run
+itself happens in a sandbox elsewhere). Its pinned registration lives in `<root>/islands/<name>/`, and library
+source never does:
 
     island.toml       the pin, the intended theorems and, once a replay passes, its [replay] record
     challenge.lean    a byte copy of the library's challenge file, its sha256 in island.toml
     comparator.json   OUR Comparator config: the three standard axioms, enable_nanoda, exactly the theorems
     replay/           the archived evidence of the passing replay (Ruling 6): comparator.log.xz (the Comparator log,
-                      xz-compressed), probe-<sha256>.json (one `probe-negation --json` output per theorem) and
-                      fingerprint.json (one `fingerprint --json` output for all of them); their sha256s are in
-                      [replay] (log_sha256 is of the UNCOMPRESSED log)
+                      xz-compressed; with the sandbox's scratch path replaced by $SCRATCH when record-replay is
+                      given --scratch-prefix, Ruling 7), probe-<sha256>.json (one `probe-negation --json` output per
+                      theorem) and fingerprint.json (one `fingerprint --json` output for all of them); their sha256s
+                      are in [replay] (log_sha256 is of the UNCOMPRESSED log)
     REPLAY.md         a generated human summary of the registration and of every replay; nothing reads it
 
 Three commands write a registration (Task 2):
@@ -77,6 +79,28 @@ FINGERPRINT_ARCHIVE = "fingerprint.json"
 MAX_BYTES = 1 << 20
 #: Upper bound on a Comparator log, uncompressed (the real riemann-jensen log is 16 KB). Decompression stops here.
 LOG_MAX_BYTES = 32 << 20
+
+#: The xz decoder's memory cap, whatever dictionary size a stream's header declares (liblzma allocates that much).
+XZ_MEMLIMIT = 64 << 20
+#: What `record-replay --scratch-prefix` puts in the archived log in place of the sandbox's session scratch path.
+SCRATCH_TOKEN = "$SCRATCH"
+
+#: C1 (Ruling 8): what Comparator exports besides the theorems, by Comparator tag. Comparator exports
+#: `builtinTargets ++ theoremNames ++ legalAxioms ++ primitiveTargets ++ definitionNames` (Main.lean, compareIt),
+#: so a run under any config but ours (an extra permitted axiom such as sorryAx, definition holes, a missing axiom)
+#: shows in these lists even when Comparator accepts quietly. Each export list minus the island's theorems must be
+#: exactly this set. Taken from the two real island logs: v4.35.0 from riemann-jensen's spec run (md5 76bc5e06),
+#: v4.34.0-rc2 from zeta-zeros-v2's (md5 573d6ead), which exports no optParam/autoParam/semiOutParam/outParam. A tag
+#: not listed here is a FAIL; a new tag needs its entry, read off a real log.
+_CLEAN = ("propext", "Quot.sound", "Classical.choice")
+_PRIMITIVES = ("Nat.add", "Nat.sub", "Nat.mul", "Nat.pow", "Nat.gcd", "Nat.div", "Nat.mod", "Nat.beq", "Nat.ble",
+               "Nat.land", "Nat.lor", "Nat.xor", "Nat.shiftLeft", "Nat.shiftRight", "String.ofList", "Char.ofNat",
+               "List", "eagerReduce")
+_BUILTINS_RC2 = ("Nat", "String", "String.mk", "Char", "Quot", "Quot.mk", "Quot.lift", "Quot.ind")
+COMPARATOR_EXPORTS = {
+    "v4.34.0-rc2": frozenset(_BUILTINS_RC2 + _CLEAN + _PRIMITIVES),
+    "v4.35.0": frozenset(_BUILTINS_RC2 + _CLEAN + _PRIMITIVES + ("optParam", "autoParam", "semiOutParam", "outParam")),
+}
 
 #: The negation-probe verdicts a verified island's theorems may carry (step 4).
 PASSING_PROBES = ("PROBE_ONLY", "WITNESSED")
@@ -213,8 +237,9 @@ def _load_doc(root: Path, name: str) -> tuple[Optional[dict], Optional[str]]:
 
 def island_names(root: Path) -> tuple[list[str], list[str]]:
     """`(names, problems)`: every entry of `<root>/islands/` that is a directory or a symlink (a symlinked island is
-    listed so that checking it reports the refusal), sorted; plain files there (a README) are not islands. No
-    `islands/` at all is an empty registry. A symlinked or unreadable `islands/` gives no names and a problem."""
+    listed so that checking it reports the refusal), sorted; plain files there (a README) are not islands, and a
+    dot-prefixed directory is a stale staging directory, a problem rather than a name. No `islands/` at all is an
+    empty registry. A symlinked or unreadable `islands/` gives no names and a problem."""
     problem = _root_problem(root)
     if problem:
         return [], [problem]
@@ -225,11 +250,13 @@ def island_names(root: Path) -> tuple[list[str], list[str]]:
     try:
         for entry in d.iterdir():
             st = entry.lstat()
+            if stat.S_ISDIR(st.st_mode) and entry.name.startswith("."):
+                continue                            # a stage, reported below rather than listed as an island
             if stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode):
                 names.append(entry.name)
     except OSError as exc:
         return [], [f"{ISLANDS_DIR}/ could not be listed ({exc.strerror or exc})"]
-    return sorted(names), []
+    return sorted(names), _stale_stages(d, f"{ISLANDS_DIR}/")
 
 
 def island_toolchain(root: Path, name: str) -> tuple[Optional[str], Optional[str]]:
@@ -429,6 +456,7 @@ def load_island(root: Path, name: str) -> Island:
 #
 #   ISLAND-HEADER island=<name> commit=<40 hex> challenge_sha256=<64 hex>      the first line, written by the runner
 #   COMPARATOR_NANODA <md5 of nanoda_bin> (nanoda_lib <40 hex>)                 which nanoda the runner gave Comparator
+#   COMPARATOR_CONFIG sha256 <64 hex>         optional; `island replay` writes it: sha256 of our comparator.json
 #   Exporting #[..., <every theorem>, ...] from <challenge module>             Comparator's own lines from here on
 #   Exporting #[..., <every theorem>, ...] from <solution module>
 #   nanoda kernel accepts the solution            (v4.32.0 / v4.33.0-rc2 print "Nanoda kernel ...")
@@ -440,6 +468,7 @@ _HEADER_RE = re.compile(r"ISLAND-HEADER island=(?P<island>\S+) commit=(?P<commit
                         r"challenge_sha256=(?P<sha>[0-9a-f]{64})")
 _EXIT_RE = re.compile(r"ISLAND-(?P<label>[A-Za-z0-9_.-]+?)-EXIT (?P<rc>-?\d+)")
 _NANODA_RE = re.compile(r"COMPARATOR_NANODA [0-9a-f]{32} \(nanoda_lib (?P<rev>[0-9a-f]{40})\)")
+_CONFIG_RE = re.compile(r"COMPARATOR_CONFIG sha256 (?P<sha>[0-9a-f]{64})")
 _EXPORT_RE = re.compile(r"Exporting #\[(?P<names>[^\]]*)\] from (?P<module>\S+)")
 #: The three accept lines, in the order Comparator prints them; each must be a whole line, exactly once.
 ACCEPT_LINES = (("nanoda kernel accepts the solution", "Nanoda kernel accepts the solution"),
@@ -454,16 +483,17 @@ class ComparatorLog:
     header: Optional[tuple[str, str, str]]          # (island, commit, challenge_sha256), from the first line
     nanoda_rev: Optional[str]                       # from the one COMPARATOR_NANODA line
     exit_code: Optional[int]                        # from the one ISLAND-<label>-EXIT line
+    config_sha256: Optional[str]                    # from the one COMPARATOR_CONFIG line, if there is one
     exports: tuple[tuple[str, tuple[str, ...]], ...]  # (module, exported names) per Exporting line
     problems: tuple[str, ...]
 
 
 def parse_comparator_log(text: str) -> ComparatorLog:
     """Read one island Comparator log. A problem for: a first line that is not the ISLAND-HEADER, an ISLAND-HEADER
-    anywhere else, an unknown `ISLAND-` line; not exactly one COMPARATOR_NANODA line; any accept line missing,
-    repeated or out of order; any error line (starting "error" or "uncaught exception", as `rejudge` reads them)
-    or any line reporting an unpermitted or illegal axiom; not exactly one exit line, a nonzero exit, or an exit line
-    before "Your solution is okay!". Never raises."""
+    anywhere else, an unknown `ISLAND-` line; not exactly one COMPARATOR_NANODA line; a malformed or second
+    COMPARATOR_CONFIG line; any accept line missing, repeated or out of order; any error line (starting "error" or
+    "uncaught exception", as `rejudge` reads them) or any line reporting an unpermitted or illegal axiom; not exactly
+    one exit line, a nonzero exit, or an exit line before "Your solution is okay!". Never raises."""
     from .missions.rejudge import _is_error_line
     lines = text.splitlines()
     probs: list[str] = []
@@ -473,6 +503,7 @@ def parse_comparator_log(text: str) -> ComparatorLog:
         probs.append("the first line is not an ISLAND-HEADER line (`ISLAND-HEADER island=<name> commit=<40 hex> "
                      "challenge_sha256=<64 hex>`, written by the runner before Comparator starts)")
     nanoda: list[str] = []
+    configs: list[str] = []
     exits: list[tuple[int, int]] = []
     accepts: list[list[int]] = [[] for _ in ACCEPT_LINES]
     exports: list[tuple[str, tuple[str, ...]]] = []
@@ -495,6 +526,13 @@ def parse_comparator_log(text: str) -> ComparatorLog:
                 nanoda.append(n["rev"])
             else:
                 probs.append(f"a malformed COMPARATOR_NANODA line {s[:120]!r}")
+        if s.startswith("COMPARATOR_CONFIG"):
+            c = _CONFIG_RE.fullmatch(s)
+            if c:
+                configs.append(c["sha"])
+            else:
+                probs.append(f"a malformed COMPARATOR_CONFIG line {s[:120]!r} (want `COMPARATOR_CONFIG sha256 "
+                             "<64 hex>`)")
         if _is_error_line(raw):
             probs.append(f"an error line: {s[:200]!r}")
         low = s.lower()
@@ -511,6 +549,8 @@ def parse_comparator_log(text: str) -> ComparatorLog:
                      "say which nanoda Comparator ran")
     elif len(nanoda) > 1:
         probs.append("more than one COMPARATOR_NANODA line")
+    if len(configs) > 1:
+        probs.append("more than one COMPARATOR_CONFIG line")
     for k, variants in enumerate(ACCEPT_LINES):
         if not accepts[k]:
             alt = f" (or {variants[1]!r})" if len(variants) > 1 else ""
@@ -532,16 +572,29 @@ def parse_comparator_log(text: str) -> ComparatorLog:
         if len(accepts[2]) == 1 and idx < accepts[2][0]:
             probs.append("the exit line comes before 'Your solution is okay!'")
     return ComparatorLog(header=header, nanoda_rev=nanoda[0] if len(nanoda) == 1 else None, exit_code=exit_code,
-                         exports=tuple(exports), problems=tuple(probs))
+                         config_sha256=configs[0] if len(configs) == 1 else None, exports=tuple(exports),
+                         problems=tuple(probs))
 
 
-def comparator_log_problems(text: str, isl: Island, nanoda_rev: Optional[str]) -> list[str]:
+def comparator_log_problems(text: str, isl: Island, nanoda_rev: Optional[str], comparator_tag: Optional[str] = None,
+                            config_sha256: Optional[str] = None) -> list[str]:
     """Everything that keeps *text* from being a passing Comparator log for *isl*: the format rules
     (`parse_comparator_log`), a header naming another island, commit or challenge sha256, a nanoda other than
-    *nanoda_rev*, and an export from the challenge or the solution module (exactly one each, and from no other
-    module) that leaves out one of the island's theorems. Empty iff it passes. Never raises."""
+    *nanoda_rev*, a COMPARATOR_CONFIG line (optional: logs run elsewhere lack it) that is not *config_sha256*, and an
+    export from the challenge or the solution module (exactly one each, and from no other module) that is not
+    exactly the island's theorems, once each, plus `COMPARATOR_EXPORTS[comparator_tag]` (C1: the export lists show
+    the config the run really used). *comparator_tag* defaults to the island toolchain's version. Empty iff it
+    passes. Never raises."""
     log = parse_comparator_log(text)
     probs = list(log.problems)
+    tag = comparator_tag if comparator_tag is not None else isl.toolchain[len(_TOOLCHAIN_PREFIX):]
+    fixed = COMPARATOR_EXPORTS.get(tag)
+    if fixed is None:
+        probs.append(f"no known Comparator export set for tag {tag!r} (known: {', '.join(sorted(COMPARATOR_EXPORTS))});"
+                     " the export lists cannot be checked against our config")
+    if log.config_sha256 is not None and log.config_sha256 != config_sha256:
+        probs.append(f"the log's COMPARATOR_CONFIG sha256 {log.config_sha256} is not that of our comparator.json "
+                     f"({config_sha256}): Comparator ran another config")
     if log.header is not None:
         island, commit, sha = log.header
         if island != isl.name:
@@ -561,9 +614,23 @@ def comparator_log_problems(text: str, isl: Island, nanoda_rev: Optional[str]) -
         elif len(found) > 1:
             probs.append(f"more than one `Exporting #[...] from {module}` line")
         else:
-            missing = [t for t in isl.theorems if t not in found[0]]
+            names = found[0]
+            missing = [t for t in isl.theorems if t not in names]
             if missing:
                 probs.append(f"the export from {module} does not include {', '.join(missing)}")
+            dups = sorted({n for n in names if names.count(n) > 1})
+            if dups:
+                probs.append(f"the export from {module} lists {', '.join(dups)} more than once")
+            if fixed is not None:
+                rest = set(names) - set(isl.theorems)
+                extra, lacking = sorted(rest - fixed), sorted(fixed - rest)
+                if extra:
+                    probs.append(f"the export from {module} includes {', '.join(extra)}, which is neither one of the "
+                                 f"island's theorems nor in Comparator {tag}'s fixed set: an extra permitted axiom "
+                                 "or a definition hole, so the run's config was not ours")
+                if lacking:
+                    probs.append(f"the export from {module} lacks {', '.join(lacking)} from Comparator {tag}'s fixed "
+                                 "set, so the run's config (or Comparator) was not ours")
     for mod in sorted({mod for mod, _ in log.exports} - {isl.challenge_module, isl.solution_module}):
         probs.append(f"an export from {mod}, which is neither the challenge nor the solution module")
     return probs
@@ -640,18 +707,21 @@ class ReplayVerdict:
 
 
 def evaluate_replay(isl: Island, *, log_text: str, probe_docs: Sequence, fingerprint_doc,
-                    nanoda_rev: Optional[str], comparator_tag: str) -> ReplayVerdict:
+                    nanoda_rev: Optional[str], comparator_tag: str,
+                    config_sha256: Optional[str] = None) -> ReplayVerdict:
     """THE verdict on one replay's evidence (Ruling 1), used by `island replay`, by `island record-replay` and, on
     the archived evidence, by every `island_problems`. PASS iff the problem list is empty:
 
     - the Comparator log passes for this island (`comparator_log_problems`): header = this pin and challenge, the
-      three accept lines, nanoda at *nanoda_rev*, every theorem exported, exit 0;
+      three accept lines, nanoda at *nanoda_rev*, the export lists exactly the theorems plus Comparator's fixed set
+      for *comparator_tag* (so the run used our config), a COMPARATOR_CONFIG line if any = *config_sha256* (the
+      sha256 of our comparator.json), exit 0;
     - *comparator_tag* is the island toolchain's version (the plan: tag = island toolchain);
     - exactly one probe JSON per theorem, each PROBE_ONLY or WITNESSED, of the challenge module and the challenge
       file; one fingerprint JSON covering exactly the theorems (type mode, same module and file);
     - every probe and the fingerprint ran on the same replayed closure (one `olean_sha256`).
     """
-    probs = comparator_log_problems(log_text, isl, nanoda_rev)
+    probs = comparator_log_problems(log_text, isl, nanoda_rev, comparator_tag, config_sha256)
     want_tag = isl.toolchain[len(_TOOLCHAIN_PREFIX):]
     if comparator_tag != want_tag:
         probs.append(f"comparator_tag {comparator_tag} differs from the island toolchain's {want_tag}")
@@ -706,8 +776,8 @@ def _comparator_problems(root: Path, isl: Island) -> list[str]:
         return [problem]
     try:
         cfg = json.loads(text)
-    except ValueError as exc:
-        return [f"{COMPARATOR_FILE} is not valid JSON ({exc})"]
+    except (ValueError, RecursionError) as exc:
+        return [f"{COMPARATOR_FILE} is not valid JSON ({type(exc).__name__}: {str(exc)[:120]})"]
     if not isinstance(cfg, dict):
         return [f"{COMPARATOR_FILE} is not a JSON object"]
     probs = [f"{COMPARATOR_FILE}: {p}" for p in _unknown_keys("the config", cfg, _COMPARATOR_KEYS)]
@@ -732,9 +802,17 @@ def _comparator_problems(root: Path, isl: Island) -> list[str]:
     return probs
 
 
+def _log_archive_cap() -> int:
+    """The cap on comparator.log.xz itself: a log of at most `LOG_MAX_BYTES` compresses to less than this even when
+    it is incompressible (xz adds well under 1/64 plus a few headers), so whatever record-replay archives, the check
+    reads back (M3)."""
+    return LOG_MAX_BYTES + LOG_MAX_BYTES // 64 + 4096
+
+
 def _xz_decode(raw: bytes, label: str) -> tuple[Optional[bytes], Optional[str]]:
-    """One xz stream, at most `LOG_MAX_BYTES` once decompressed (decompression stops there), nothing after it."""
-    dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+    """One xz stream, at most `LOG_MAX_BYTES` once decompressed (decompression stops there), nothing after it, with
+    the decoder's memory capped at `XZ_MEMLIMIT` whatever dictionary the header declares."""
+    dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMLIMIT)
     try:
         data = dec.decompress(raw, max_length=LOG_MAX_BYTES + 1)
     except lzma.LZMAError as exc:
@@ -790,12 +868,12 @@ def _evidence_problems(root: Path, isl: Island, nanoda_rev: Optional[str]) -> li
             return False, None
         try:
             return True, json.loads(raw.decode("utf-8"))
-        except ValueError as exc:   # UnicodeDecodeError is a ValueError
-            probs.append(f"{REPLAY_DIR}/{fname} is not valid JSON ({exc})")
+        except (ValueError, RecursionError) as exc:   # UnicodeDecodeError is a ValueError; deep nesting recurses
+            probs.append(f"{REPLAY_DIR}/{fname} is not valid JSON ({type(exc).__name__}: {str(exc)[:120]})")
             return False, None
 
     log_text = None
-    raw = evidence(LOG_ARCHIVE, MAX_BYTES)
+    raw = evidence(LOG_ARCHIVE, _log_archive_cap())
     if raw is not None:
         data, problem = _xz_decode(raw, f"{REPLAY_DIR}/{LOG_ARCHIVE}")
         if data is None:
@@ -825,7 +903,8 @@ def _evidence_problems(root: Path, isl: Island, nanoda_rev: Optional[str]) -> li
     if probs or log_text is None:
         return probs   # log_text is None only with a problem recorded; this keeps the invariant explicit
     v = evaluate_replay(isl, log_text=log_text, probe_docs=probe_docs, fingerprint_doc=fp_doc,
-                        nanoda_rev=nanoda_rev, comparator_tag=rep.comparator_tag)
+                        nanoda_rev=nanoda_rev, comparator_tag=rep.comparator_tag,
+                        config_sha256=_config_sha256(root, isl.name))
     probs += [f"archived evidence: {p}" for p in v.problems]
     recorded = dict(rep.checks)
     for thm in isl.theorems:
@@ -872,6 +951,23 @@ def _replay_problems(root: Path, isl: Island) -> list[str]:
     return probs
 
 
+def _config_sha256(root: Path, name: str) -> Optional[str]:
+    """sha256 of `islands/<name>/comparator.json` as it is now (guarded read), or None when it cannot be read (and
+    `_comparator_problems` says why)."""
+    data, _ = _read(root, name, COMPARATOR_FILE)
+    return None if data is None else hashlib.sha256(data).hexdigest()
+
+
+def _stale_stages(d: Path, where: str) -> list[str]:
+    """M5: dot-prefixed directories under *d* are stages a hard-killed `add` or `replay` left behind."""
+    try:
+        entries = sorted(e for e in d.iterdir() if e.name.startswith(".") and e.is_dir() and not e.is_symlink())
+    except OSError:
+        return []
+    return [f"{where}{e.name} is a stale staging directory (an interrupted `telperion island add` or replay left "
+            "it); remove it" for e in entries]
+
+
 def _registration_problems(root: Path, isl: Island) -> list[str]:
     """The challenge copy against its recorded sha256, and our comparator.json: what a replay needs to be about."""
     probs = []
@@ -890,6 +986,7 @@ def island_problems(root: Path, name: str) -> list[str]:
     if doc is None:
         return [problem]
     isl, probs = _schema(doc, name)
+    probs += _stale_stages(Path(root) / ISLANDS_DIR / name, f"{ISLANDS_DIR}/{name}/")
     if isl is None:
         data, problem = _read(root, name, CHALLENGE_FILE)
         return probs + ([problem] if data is None else [])
@@ -1018,12 +1115,28 @@ def _detect_licence(src: Path) -> Optional[str]:
     return None
 
 
+def _dirty_clone_problem(run: Callable[..., "RunResult"], src: Path) -> Optional[str]:
+    """I2: the clone's working tree must be exactly the commit: `git status --porcelain` empty, tracked and untracked
+    files alike (ignored files, such as a build's .lake, do not count). A leftover edit (a tamper control's, say)
+    would otherwise be registered or judged under the pin's name."""
+    r = run(["git", "-C", str(src), "status", "--porcelain", "--untracked-files=normal"], cwd=src, timeout=120)
+    if r.rc != 0:
+        return f"`git status` on the clone failed (exit {r.rc}); refusing to trust its working tree"
+    if r.output.strip():
+        shown = "; ".join(r.output.strip().splitlines()[:5])
+        return (f"the clone's working tree is not clean (`git status --porcelain`: {shown[:300]}); a modified or "
+                "untracked file would be taken for the pin. Re-clone it, or restore it with git")
+    return None
+
+
 def add_island(root: Path, name: str, source: str, commit: str, intended_use: str, *,
                fetch: Callable[[str, str, Path], str], tools: Optional[Path] = None,
-               licence: Optional[str] = None, date: Optional[str] = None) -> Island:
+               licence: Optional[str] = None, date: Optional[str] = None,
+               run: Optional[Callable[..., "RunResult"]] = None) -> Island:
     """Register `<root>/islands/<name>/` from the library at *source* @ *commit*. `fetch(source, commit, dest)`
     clones it into `<tools>/islands/<name>/src` and returns the clone's HEAD, which must be *commit*. From the
-    clone (guarded reads) come the toolchain (`lean-toolchain`), the theorem names and modules
+    clone, whose working tree must be clean (`git status --porcelain` through *run*, default `subprocess_run`), and
+    through guarded reads, come the toolchain (`lean-toolchain`), the theorem names and modules
     (`Comparator/comparator.json`), the challenge file and, unless *licence* is given, the licence (Apache-2.0 or MIT
     from LICENSE). Writes island.toml without [replay], a byte copy of the challenge, OUR comparator.json and
     REPLAY.md (which records how the library's config differs from ours). Nothing is built. Everything is checked
@@ -1043,12 +1156,15 @@ def add_island(root: Path, name: str, source: str, commit: str, intended_use: st
     if head != commit:
         raise IslandError(f"island {name!r}: the clone's HEAD {str(head)[:40]!r} is not the pin {commit}; refusing to "
                           "register")
+    problem = _dirty_clone_problem(run or subprocess_run, src)
+    if problem:
+        raise IslandError(f"island {name!r}: {problem}; refusing to register")
     try:
         toolchain = _clone_read(src, "lean-toolchain", 4096).decode("utf-8").strip()
         upstream = json.loads(_clone_read(src, "Comparator/comparator.json").decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+    except (ValueError, RecursionError) as exc:   # UnicodeDecodeError is a ValueError
         raise IslandError(f"island {name!r}: the clone's lean-toolchain or Comparator/comparator.json cannot be "
-                          f"read ({exc})") from None
+                          f"read ({type(exc).__name__}: {str(exc)[:120]})") from None
     except IslandError as exc:
         raise IslandError(f"island {name!r}: {exc}") from None
     if not isinstance(upstream, dict) or not isinstance(upstream.get("theorem_names"), list):
@@ -1124,6 +1240,10 @@ exec "${args[@]:$i}"
 """
 
 
+#: How long to wait for the pipe to close after a timeout's process-group kill (M8).
+_POST_KILL_WAIT = 5.0
+
+
 def _raise_stack_limit() -> None:  # pragma: no cover - runs in the child
     # Comparator and Lean need a large stack (rejudge_queue.sh: `ulimit -s 65520`); on macOS 65520 KB is the hard
     # limit and "unlimited" makes every exec'd binary die, so never ask for more than that.
@@ -1161,7 +1281,15 @@ def subprocess_run(argv: Sequence[str], *, cwd: Path, env: Optional[dict] = None
             os.killpg(p.pid, signal.SIGKILL)
         except OSError:
             pass
-        out, _ = p.communicate()
+        try:
+            out, _ = p.communicate(timeout=_POST_KILL_WAIT)
+        except subprocess.TimeoutExpired:
+            # a descendant that left the process group still holds the pipe open: give up on the output
+            p.kill()
+            if p.stdout is not None:
+                p.stdout.close()
+            p.wait(timeout=_POST_KILL_WAIT)
+            out = b""
         out = (out or b"") + f"\n{argv[0]}: timed out after {timeout} s; killed\n".encode()
         rc = 124
     peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
@@ -1222,11 +1350,12 @@ def _remove_evidence(d: Path) -> None:
         shutil.rmtree(p)
 
 
-def _archive_evidence(d: Path, log_bytes: bytes, probes: Sequence[tuple[str, bytes]], fp_raw: bytes) -> dict:
+def _archive_evidence(d: Path, log_bytes: bytes, log_xz: bytes, probes: Sequence[tuple[str, bytes]],
+                      fp_raw: bytes) -> dict:
     """Write replay/ whole (staged, then renamed into place) and return the sha256s for [replay]."""
     stage = Path(tempfile.mkdtemp(dir=d, prefix=".replay-new-"))
     try:
-        (stage / LOG_ARCHIVE).write_bytes(lzma.compress(log_bytes, format=lzma.FORMAT_XZ))
+        (stage / LOG_ARCHIVE).write_bytes(log_xz)
         probe_sha = {}
         for thm, raw in probes:
             sha = hashlib.sha256(raw).hexdigest()
@@ -1247,18 +1376,28 @@ def _archive_evidence(d: Path, log_bytes: bytes, probes: Sequence[tuple[str, byt
 
 def _conclude(root: Path, isl: Island, problems: Sequence[str], checks: dict, *, how: str, date: str, tag: str,
               nanoda_rev: str, log_bytes: bytes, probes: Sequence[tuple[str, bytes]], fp_raw: Optional[bytes],
-              commands: Sequence[tuple[str, RunResult]] = ()) -> ReplayResult:
-    """Write the outcome, shared by both replay commands. PASS: archive the evidence, then write [replay] (in that
-    order, so a crash between leaves an old [replay] whose evidence no longer matches: self-reported, never a false
-    verified). FAIL: write no [replay]; an earlier one is dropped with its evidence. Either way REPLAY.md gets a
-    dated section."""
+              commands: Sequence[tuple[str, RunResult]] = (), raw_log: Optional[bytes] = None,
+              scratch_hits: int = 0) -> ReplayResult:
+    """Write the outcome, shared by both replay commands. *log_bytes* is the log as judged and archived (normalized,
+    when a scratch prefix was given; *raw_log* is then the log as received). PASS: archive the evidence, then write
+    [replay] (in that order, so a crash between leaves an old [replay] whose evidence no longer matches:
+    self-reported, never a false verified). A log the check could not read back (over `LOG_MAX_BYTES`, or an archive
+    over its cap) is a FAIL here rather than a PASS that reads self-reported. FAIL: write no [replay]; an earlier one
+    is dropped with its evidence. Either way REPLAY.md gets a dated section."""
     from .missions.schema import atomic_write_text
     d = Path(root) / ISLANDS_DIR / isl.name
     log_sha = hashlib.sha256(log_bytes).hexdigest()
+    problems = list(problems)
+    log_xz = b""
+    if not problems:
+        log_xz = lzma.compress(log_bytes, format=lzma.FORMAT_XZ)
+        if len(log_bytes) > LOG_MAX_BYTES or len(log_xz) > _log_archive_cap():
+            problems.append(f"the log ({len(log_bytes)} bytes, {len(log_xz)} compressed) is over the caps "
+                            f"({LOG_MAX_BYTES} bytes, {_log_archive_cap()} compressed) the check reads it back under")
     passed = not problems
     prior = isl.replay
     if passed:
-        shas = _archive_evidence(d, log_bytes, probes, fp_raw)
+        shas = _archive_evidence(d, log_bytes, log_xz, probes, fp_raw)
         rep = Replay(date=date, commit=isl.commit, challenge_sha256=isl.challenge_sha256, nanoda_rev=nanoda_rev,
                      comparator_tag=tag, log_sha256=log_sha, verdict="pass",
                      checks=tuple(sorted(checks.items())), probe_sha256=tuple(sorted(shas["probe_sha256"].items())),
@@ -1271,8 +1410,13 @@ def _conclude(root: Path, isl: Island, problems: Sequence[str], checks: dict, *,
     lines = [f"## {date}: {'PASS' if passed else 'FAIL'} (`telperion {how}`)", "",
              f"- commit {isl.commit}, challenge_sha256 {isl.challenge_sha256}",
              f"- nanoda_lib {nanoda_rev} (NANODA_REV), Comparator {tag}",
-             f"- Comparator log sha256 {log_sha} ({len(log_bytes)} bytes)"
+             f"- Comparator log sha256 {log_sha}, md5 {hashlib.md5(log_bytes).hexdigest()} ({len(log_bytes)} bytes)"
              + (f"; archived as {REPLAY_DIR}/{LOG_ARCHIVE}" if passed else "")]
+    if raw_log is not None:
+        lines.append(f"- the log as received: md5 {hashlib.md5(raw_log).hexdigest()}, sha256 "
+                     f"{hashlib.sha256(raw_log).hexdigest()} ({len(raw_log)} bytes); the sandbox's session scratch "
+                     f"path was replaced by {SCRATCH_TOKEN} ({scratch_hits} occurrences) before it was judged and "
+                     "archived (Ruling 7)")
     for thm in isl.theorems:
         if thm in checks:
             lines.append(f"- `{thm}`: probe {checks[thm].probe}, fingerprint {checks[thm].fingerprint}")
@@ -1300,8 +1444,9 @@ def _input_json(name: str, path, label: str):
     raw = _input(name, path, label, MAX_BYTES)
     try:
         return raw, json.loads(raw.decode("utf-8"))
-    except ValueError as exc:
-        raise IslandError(f"island {name!r}: {label} {path} is not valid JSON ({exc})") from None
+    except (ValueError, RecursionError) as exc:
+        raise IslandError(f"island {name!r}: {label} {path} is not valid JSON ({type(exc).__name__}: "
+                          f"{str(exc)[:120]})") from None
 
 
 def _check_date(name: str, date) -> None:
@@ -1315,31 +1460,65 @@ def _check_date_tag(name: str, date, tag) -> None:
         raise IslandError(f"island {name!r}: --comparator-tag must look like vX.Y.Z or vX.Y.Z-rcN, not {tag!r}")
 
 
+def _scratch_prefix_problem(prefix) -> Optional[str]:
+    """Why *prefix* cannot be a `--scratch-prefix`: it must be a plain absolute path of at least two components,
+    with no whitespace, `$`, empty, `.` or `..` component and no trailing `/`. So the replacement can only ever touch
+    path text, never an accept, header, export or exit line (none of which contains a `/`)."""
+    if not isinstance(prefix, str) or not prefix.startswith("/"):
+        return "must be an absolute path"
+    if any(ch.isspace() for ch in prefix) or "$" in prefix:
+        return "must not contain whitespace or '$'"
+    parts = prefix.split("/")[1:]
+    if prefix.endswith("/") or any(c in ("", ".", "..") for c in parts):
+        return "must be a plain path (no trailing '/', no empty, '.' or '..' component)"
+    if len(parts) < 2:
+        return "must have at least two components (a prefix as short as '/tmp' would rewrite far too much)"
+    return None
+
+
 def record_replay(root: Path, name: str, *, log, probe_jsons: Sequence = (), fingerprint_json=None, date: str,
-                  comparator_tag: str) -> ReplayResult:
+                  comparator_tag: str, scratch_prefix: Optional[str] = None) -> ReplayResult:
     """Ingest a replay run elsewhere (Ruling 1): the Comparator log *log* (its first line the ISLAND-HEADER), one
     `probe-negation --json` output per theorem and one `fingerprint --json` output, all produced in the sandbox.
     Judged by `evaluate_replay`, exactly as `replay_island` judges its own run; on PASS the files are archived
     under replay/ and [replay] is written. Every input goes through the guarded reader; an unreadable, non-UTF-8,
-    oversized or non-JSON input, a bad date or tag, or an invalid registration is an `IslandError` and nothing is
-    written. A FAIL is recorded in REPLAY.md only."""
+    oversized or non-JSON input, a bad date, tag or scratch prefix, or an invalid registration is an `IslandError`
+    and nothing is written. A FAIL is recorded in REPLAY.md only.
+
+    Ruling 7: with *scratch_prefix* (the sandbox's session scratch path, which the archive must not publish), every
+    occurrence is replaced by `$SCRATCH` FIRST, and the normalized text is what is judged, archived and hashed into
+    log_sha256; REPLAY.md records the raw log's md5 and sha256 (never the prefix). The prefix must occur in the
+    log."""
     isl = _registered(root, name)
     _check_date_tag(name, date, comparator_tag)
-    log_bytes = _input(name, log, "the Comparator log", LOG_MAX_BYTES)
+    if scratch_prefix is not None:
+        problem = _scratch_prefix_problem(scratch_prefix)
+        if problem:
+            raise IslandError(f"island {name!r}: --scratch-prefix {problem}")
+    raw_log = _input(name, log, "the Comparator log", LOG_MAX_BYTES)
     try:
-        log_text = log_bytes.decode("utf-8")
+        log_text = raw_log.decode("utf-8")
     except UnicodeDecodeError:
         raise IslandError(f"island {name!r}: the Comparator log {log} is not valid UTF-8") from None
+    hits = 0
+    if scratch_prefix is not None:
+        hits = log_text.count(scratch_prefix)
+        if not hits:
+            raise IslandError(f"island {name!r}: --scratch-prefix does not occur in the Comparator log {log}")
+        log_text = log_text.replace(scratch_prefix, SCRATCH_TOKEN)
+    log_bytes = log_text.encode("utf-8")
     probes = [_input_json(name, p, "the probe JSON") for p in probe_jsons]
     fp = _input_json(name, fingerprint_json, "the fingerprint JSON") if fingerprint_json is not None else None
     pinned, problem = pinned_nanoda_rev()
     if pinned is None:
         raise IslandError(f"island {name!r}: cannot read the pinned nanoda rev: {problem}")
     v = evaluate_replay(isl, log_text=log_text, probe_docs=[doc for _, doc in probes],
-                        fingerprint_doc=None if fp is None else fp[1], nanoda_rev=pinned, comparator_tag=comparator_tag)
+                        fingerprint_doc=None if fp is None else fp[1], nanoda_rev=pinned, comparator_tag=comparator_tag,
+                        config_sha256=_config_sha256(root, name))
     return _conclude(root, isl, v.problems, v.checks, how="island record-replay", date=date, tag=comparator_tag,
                      nanoda_rev=pinned, log_bytes=log_bytes, fp_raw=None if fp is None else fp[0],
-                     probes=[(doc.get("theorem"), raw) for raw, doc in probes if isinstance(doc, dict)])
+                     probes=[(doc.get("theorem"), raw) for raw, doc in probes if isinstance(doc, dict)],
+                     raw_log=raw_log if scratch_prefix is not None else None, scratch_hits=hits)
 
 
 def _md5_file(path: Path) -> str:
@@ -1356,7 +1535,7 @@ def _json_output(text: str) -> tuple[Optional[dict], bytes]:
     lines = text.strip().splitlines()
     try:
         doc = json.loads(lines[-1]) if lines else None
-    except ValueError:
+    except (ValueError, RecursionError):
         doc = None
     return (doc, (lines[-1] + "\n").encode("utf-8")) if isinstance(doc, dict) else (None, b"")
 
@@ -1369,14 +1548,15 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     builds and runs the library's code: it MUST RUN INSIDE A SANDBOX, and we never run it locally (owner decision
     2026-10-31; replays are ingested with `record_replay` instead).
 
-    Refuses (`IslandError`, nothing run but `git rev-parse`) unless: the registration is valid; the clone's HEAD is
-    the pin; its challenge file has the registered sha256 and its lean-toolchain is the island's; the Comparator tag
-    for the toolchain is known; Comparator, lean4export, nanoda_bin (at NANODA_REV) and the landrun shim are all in
-    *tools*. Then, through leanlock unless *leanlock* is None: `lake exe cache get`, `lake build`, `lake env
-    comparator <our comparator.json>` (PATH and COMPARATOR_* as rejudge_queue.sh sets them), `probe-negation` per
-    theorem and `fingerprint` for all of them, on the challenge. The log `<tools>/islands/<name>/comparator.log`
-    starts with the ISLAND-HEADER and the COMPARATOR_NANODA line and ends with the exit line. The verdict is
-    `evaluate_replay`'s, plus a failed build; `_conclude` writes it."""
+    Refuses (`IslandError`, nothing run but `git rev-parse` and `git status`) unless: the registration is valid; the
+    clone's HEAD is the pin and its working tree is clean; its challenge file has the registered sha256 and its
+    lean-toolchain is the island's; the Comparator tag for the toolchain is known; Comparator, lean4export,
+    nanoda_bin (at NANODA_REV) and the landrun shim are all in *tools*. Then, through leanlock unless *leanlock* is
+    None: `lake exe cache get`, `lake build`, `lake env comparator <our comparator.json>` (PATH and COMPARATOR_* as
+    rejudge_queue.sh sets them), `probe-negation` per theorem and `fingerprint` for all of them, on the challenge.
+    The log `<tools>/islands/<name>/comparator.log` starts with the ISLAND-HEADER, the COMPARATOR_NANODA line and the
+    COMPARATOR_CONFIG line (the sha256 of our comparator.json, which the verdict then requires) and ends with the
+    exit line. The verdict is `evaluate_replay`'s, plus a failed build; `_conclude` writes it."""
     from .missions import judge
     isl = _registered(root, name)
     date = date or datetime.date.today().isoformat()
@@ -1389,6 +1569,9 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     if head.rc != 0 or head.output.strip() != isl.commit:
         raise IslandError(f"island {name!r}: the clone's HEAD {head.output.strip()[:40]!r} is not the pin "
                           f"{isl.commit}; refusing to replay")
+    problem = _dirty_clone_problem(run, src)
+    if problem:
+        raise IslandError(f"island {name!r}: {problem}; refusing to replay")
     rel = _module_path(isl.challenge_module)
     try:
         challenge = _clone_read(src, rel)
@@ -1445,6 +1628,7 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     log = [f"ISLAND-HEADER island={name} commit={isl.commit} challenge_sha256={isl.challenge_sha256}",
            f"== telperion island replay {name} {date} (Comparator {tag}; this command must run inside a sandbox)",
            f"COMPARATOR_NANODA {_md5_file(nanoda_bin)} (nanoda_lib {pinned})",
+           f"COMPARATOR_CONFIG sha256 {_config_sha256(root, name)}",
            f"COMPARATOR_LEAN4EXPORT {_md5_file(l4x)} {show([l4x])}",
            f"COMPARATOR_LANDRUN {show([landrun])} {_md5_file(landrun)}",
            f"comparator {show([comparator_bin])} {_md5_file(comparator_bin)} (tag {tag})"]
@@ -1492,7 +1676,7 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     from .missions.schema import atomic_write_text
     atomic_write_text(tools / ISLANDS_DIR / name / "comparator.log", log_bytes.decode("utf-8"))
     v = evaluate_replay(isl, log_text=log_bytes.decode("utf-8"), probe_docs=probe_docs, fingerprint_doc=fp_doc,
-                        nanoda_rev=pinned, comparator_tag=tag)
+                        nanoda_rev=pinned, comparator_tag=tag, config_sha256=_config_sha256(root, name))
     problems = run_probs + list(v.problems)
     return _conclude(root, isl, problems, v.checks, how="island replay", date=date, tag=tag, nanoda_rev=pinned,
                      log_bytes=log_bytes, probes=probes, fp_raw=fp_raw, commands=commands)

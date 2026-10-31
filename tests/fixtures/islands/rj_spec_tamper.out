@@ -1,7 +1,7 @@
 ISLAND-HEADER island=riemann-jensen commit=c1e023fa3ae7161219dde3dcb73f0c28ff972be2 challenge_sha256=c2bbb1cdee0a9df29b8b568a492dc43f773863dedede5b79e35f7a18e839a9db
 == rj_spec_tamper start Sat Oct 31 18:06:36 UTC 2026  (standalone comparator, no --paranoid flag exists in it)
-project /scratch/island/rjfresh (git archive c1e023fa; no .git)
-config /scratch/island/configs/comparator_rj.json md5 1c619f6c101866f65cc95b1bc53baa74
+project $SCRATCH/island/rjfresh (git archive c1e023fa; no .git)
+config $SCRATCH/island/configs/comparator_rj.json md5 1c619f6c101866f65cc95b1bc53baa74
 {
   "challenge_module": "Challenge.Basic",
   "solution_module": "Solution.Basic",
@@ -14,20 +14,20 @@ config /scratch/island/configs/comparator_rj.json md5 1c619f6c101866f65cc95b1bc5
   "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
   "enable_nanoda": true
 }
-comparator /scratch/tools35/comparator/.lake/build/bin/comparator 944095173755a8e850b2caeb1a90b303 (tag v4.35.0 = e3dcf3083fc53d44b27a4431fabf7d43181583f5)
+comparator $SCRATCH/tools35/comparator/.lake/build/bin/comparator 944095173755a8e850b2caeb1a90b303 (tag v4.35.0 = e3dcf3083fc53d44b27a4431fabf7d43181583f5)
 COMPARATOR_LEAN4EXPORT 7248a941abbbeb4cd512ab7e4fc7ab15 (tag v4.35.0 = 5a9a355dc6c5fd82b69058d433e2ae2e8dfbf8fe)
 COMPARATOR_NANODA a89bb94318dc602b8cad0b068eeb428e (nanoda_lib 37cb87b7e6cd6862ef2bd121faa9f4604f59fe96)
-COMPARATOR_LANDRUN /scratch/pub/sandbox/landrun-bwrap.sh 13a13e8b042cb95de4e07956e8d1f6d2; --cap-add occurrences in shim: 0; --cap-drop ALL in shim: 1
+COMPARATOR_LANDRUN $SCRATCH/pub/sandbox/landrun-bwrap.sh 13a13e8b042cb95de4e07956e8d1f6d2; --cap-add occurrences in shim: 0; --cap-drop ALL in shim: 1
 a40f4ccda5911bd2f5b7c06103607f3b  lakefile.toml
 bb96bbb65a42d860f7891e0d72d6f723  lake-manifest.json
 e5eec29c8fde3c9ce64c115f675e21a3  lean-toolchain
 2a8ec68b51e52dbb2c9700f965eb2644  Challenge/Basic.lean
 78b8d8acf4c6a78a6eba1b49def3d280  Solution/Basic.lean
-lean /elan/toolchains/leanprover--lean4---v4.35.0/bin/lean Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)
+lean /root/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lean Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)
 LEAN_PATH md5 2229e5db6c20c4f0e2a3b2d8eaf1984d (11 entries)
 vm.max_map_count 1048576
 == probe through COMPARATOR_LANDRUN with comparator's own flag shape
-landrun-bwrap: ro=[/] rw=[/dev /scratch/island/runs/probe_w] env=[PATH] cmd=/bin/sh
+landrun-bwrap: ro=[/] rw=[/dev $SCRATCH/island/runs/probe_w] env=[PATH] cmd=/bin/sh
 probe uid=0 CapEff: 0000000000000000
 probe mount-bind: mount: /: permission denied.
 probe remount-rw: mount: /: permission denied.
@@ -37,19 +37,19 @@ probe net: none
 probe no-escape: /etc/probe_escape absent
 == comparator
 Building Challenge.Basic
-landrun-bwrap: ro=[/ /scratch/island/rjfresh /elan/toolchains/leanprover--lean4---v4.35.0 /usr/bin/git] rw=[/dev /scratch/island/rjfresh/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
+landrun-bwrap: ro=[/ $SCRATCH/island/rjfresh /root/.elan/toolchains/leanprover--lean4---v4.35.0 /usr/bin/git] rw=[/dev $SCRATCH/island/rjfresh/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
 [warn] [3775/3775] Built Challenge.Basic (2.9s)
 warning: Challenge/Basic.lean:94:8: declaration uses `sorry`
 warning: Challenge/Basic.lean:100:8: declaration uses `sorry`
 warning: Challenge/Basic.lean:144:8: declaration uses `sorry`
 warning: Challenge/Basic.lean:154:8: declaration uses `sorry`
 Build completed successfully (3775 jobs).
-landrun-bwrap: ro=[/ /scratch/island/rjfresh /scratch/island/rjfresh/.lake /elan/toolchains/leanprover--lean4---v4.35.0] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=/scratch/tools35/lean4export/.lake/build/bin/lean4export
+landrun-bwrap: ro=[/ $SCRATCH/island/rjfresh $SCRATCH/island/rjfresh/.lake /root/.elan/toolchains/leanprover--lean4---v4.35.0] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=$SCRATCH/tools35/lean4export/.lake/build/bin/lean4export
 Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RiemannJensen.Challenge.exists_isDedekindZetaContinuation, RiemannJensen.Challenge.isDedekindZetaContinuation_unique, RiemannJensen.Challenge.dedekind_thm_main, RiemannJensen.Challenge.riemannJensen_main, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge.Basic
 Building Solution.Basic
-landrun-bwrap: ro=[/ /scratch/island/rjfresh /elan/toolchains/leanprover--lean4---v4.35.0 /usr/bin/git] rw=[/dev /scratch/island/rjfresh/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
+landrun-bwrap: ro=[/ $SCRATCH/island/rjfresh /root/.elan/toolchains/leanprover--lean4---v4.35.0 /usr/bin/git] rw=[/dev $SCRATCH/island/rjfresh/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
 Build completed successfully (9194 jobs).
-landrun-bwrap: ro=[/ /scratch/island/rjfresh /scratch/island/rjfresh/.lake /elan/toolchains/leanprover--lean4---v4.35.0] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=/scratch/tools35/lean4export/.lake/build/bin/lean4export
+landrun-bwrap: ro=[/ $SCRATCH/island/rjfresh $SCRATCH/island/rjfresh/.lake /root/.elan/toolchains/leanprover--lean4---v4.35.0] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=$SCRATCH/tools35/lean4export/.lake/build/bin/lean4export
 Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RiemannJensen.Challenge.exists_isDedekindZetaContinuation, RiemannJensen.Challenge.isDedekindZetaContinuation_unique, RiemannJensen.Challenge.dedekind_thm_main, RiemannJensen.Challenge.riemannJensen_main, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Solution.Basic
 uncaught exception: Challenge and solution theorem statement do not match: 'RiemannJensen.Challenge.riemannJensen_main'
 ISLAND-rj_spec_tamper-EXIT 1

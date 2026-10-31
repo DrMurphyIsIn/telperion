@@ -35,15 +35,27 @@ OLEAN = "0e" * 32
 FIXTURES = ROOT / "tests" / "fixtures" / "islands"
 
 
+#: What Comparator v4.35.0 exports besides the theorems, in its order (fixtures/islands/rj_spec.out): builtins, then
+#: the theorems, then the permitted axioms and the kernel primitives.
+EXPORT_HEAD = ["Quot", "Quot.mk", "Quot.lift", "Quot.ind"]
+EXPORT_TAIL = ["propext", "Quot.sound", "Classical.choice", "Nat.add", "Nat.sub", "Nat.mul", "Nat.pow", "Nat.gcd",
+               "Nat.div", "Nat.mod", "Nat.beq", "Nat.ble", "Nat.land", "Nat.lor", "Nat.xor", "Nat.shiftLeft",
+               "Nat.shiftRight", "String.ofList", "Char.ofNat", "List", "eagerReduce", "Nat", "String", "String.mk",
+               "Char", "optParam", "autoParam", "semiOutParam", "outParam"]
+
+
 def _log(*, name="demo", commit=COMMIT, sha=CHALLENGE_SHA, theorems=THEOREMS, nanoda=NANODA, rc=0,
-         nanoda_line="nanoda kernel accepts the solution", drop=(), extra=(), before_exit=()) -> str:
+         nanoda_line="nanoda kernel accepts the solution", drop=(), extra=(), before_exit=(), exports_extra=(),
+         exports_drop=(), config_sha=None) -> str:
     """A passing Comparator log in the shape of the real riemann-jensen spec run (fixtures/islands/rj_spec.out):
     `drop` removes lines containing any of its strings, `extra` appends lines at the end, `before_exit` inserts
-    lines just before the exit line."""
-    names = ", ".join(["Quot", "Quot.mk", *theorems, "propext", "Quot.sound", "Classical.choice"])
+    lines just before the exit line; `exports_extra` / `exports_drop` change both export lists (as a run under
+    another config would); `config_sha` adds a runner `COMPARATOR_CONFIG sha256 <hex>` line."""
+    names = ", ".join(n for n in [*EXPORT_HEAD, *theorems, *EXPORT_TAIL, *exports_extra] if n not in exports_drop)
     lines = [f"ISLAND-HEADER island={name} commit={commit} challenge_sha256={sha}",
              "== demo start",
              f"COMPARATOR_NANODA {'a8' * 16} (nanoda_lib {nanoda})",
+             *([f"COMPARATOR_CONFIG sha256 {config_sha}"] if config_sha else []),
              "== comparator",
              "Building Challenge.Basic",
              "warning: Challenge/Basic.lean:5:8: declaration uses `sorry`",
@@ -652,8 +664,9 @@ def _fake_fetch(config=None, *, head=COMMIT, challenge=CHALLENGE, toolchain="lea
 
 def _add(tmp_path, name="demo", **kw):
     fetch = kw.pop("fetch", None) or _fake_fetch()
+    run = kw.pop("run", None) or FakeRun()
     return islands.add_island(tmp_path / "repo", name, "https://github.com/AxiomMath/Demo", COMMIT, "a test island",
-                              fetch=fetch, tools=tmp_path / "tools", **kw)
+                              fetch=fetch, run=run, tools=tmp_path / "tools", **kw)
 
 
 def test_add_writes_registration(tmp_path):
@@ -769,8 +782,9 @@ class FakeRun:
     """The injected `run`: canned outputs by command, every argv recorded."""
 
     def __init__(self, *, head=COMMIT, nanoda_head=NANODA, comparator=None, comparator_rc=0, probes=None, fp=None,
-                 build_rc=0):
+                 build_rc=0, status="", status_rc=0):
         self.calls = []
+        self.status, self.status_rc = status, status_rc
         self.head, self.nanoda_head = head, nanoda_head
         self.comparator = _cmp_output() if comparator is None else comparator
         self.comparator_rc, self.build_rc = comparator_rc, build_rc
@@ -783,6 +797,8 @@ class FakeRun:
         if "rev-parse" in argv:
             nanoda = any(a.endswith(f"nanoda-{NANODA[:8]}") for a in argv)
             return islands.RunResult(0, (self.nanoda_head if nanoda else self.head) + "\n")
+        if "status" in argv:
+            return islands.RunResult(self.status_rc, self.status)
         if "cache" in argv or "build" in argv:
             return islands.RunResult(self.build_rc, "Build completed successfully.\n", 1.5, 1000)
         if "comparator" in argv:
@@ -838,8 +854,12 @@ def test_replay_pass_writes_replay_table(tmp_path):
     assert "2026-10-31" in md and "PASS" in md and rep.log_sha256 in md and "lake build" in md
     assert "wall" in md and "peak" in md
     # the commands, in order; names reach them as list elements, never through a shell
-    kinds = [c[c.index("lake") + 1] if "lake" in c else c[-1] for c in run.calls]
-    assert kinds[:5] == ["HEAD", "HEAD", "exe", "build", "env"]
+    kinds = [c[c.index("lake") + 1] if "lake" in c else ("status" if "status" in c else c[-1]) for c in run.calls]
+    assert kinds[:6] == ["HEAD", "status", "HEAD", "exe", "build", "env"]
+    assert run.calls[1][-2:] == ["--porcelain", "--untracked-files=normal"]
+    # the runner binds the log to our comparator.json
+    cfg_sha = _sha((root / "islands" / "demo" / "comparator.json").read_bytes())
+    assert f"COMPARATOR_CONFIG sha256 {cfg_sha}" in log.splitlines()
     probes = [c for c in run.calls if "probe-negation" in c]
     assert [c[c.index("--theorem") + 1] for c in probes] == THEOREMS
     cmp = next(c for c in run.calls if "comparator" in c)
@@ -847,9 +867,11 @@ def test_replay_pass_writes_replay_table(tmp_path):
 
 
 def test_sorry_axiom_fails(tmp_path):
-    # Review Focus 3: the PNT fork's sorry reaching a theorem; the accept lines alone must not carry it to PASS
-    out = _cmp_output(before_exit=['unpermitted axiom "sorryAx" used by Demo.Challenge.main'])
-    root, res = _replay(tmp_path, FakeRun(comparator=out))
+    # Review Focus 3: the PNT fork's sorry reaching a theorem. Comparator's own text (Comparator/Axioms.lean) is an
+    # uncaught exception, before any kernel runs, with exit 1
+    out = "\n".join(l for l in _cmp_output().splitlines() if "accepts" not in l and "okay" not in l)
+    out += "\nuncaught exception: Illegal axiom detected: 'sorryAx'\n"
+    root, res = _replay(tmp_path, FakeRun(comparator=out, comparator_rc=1))
     assert res.verdict == "fail" and any("axiom" in p for p in res.problems), res.problems
     assert islands.load_island(root, "demo").replay is None
     assert not (root / "islands" / "demo" / "replay").exists()
@@ -1164,8 +1186,6 @@ def _evidence_file(root, pattern):
      "probe_sha256"),
     (lambda r: _evidence_file(r, "probe-*.json").unlink(), "probe-"),
     (lambda r: (r / "islands/demo/replay/notes.txt").write_text("x"), "unexpected"),
-    (lambda r: (r / "islands/demo/replay/comparator.log.xz").write_bytes(b"\x00" * (islands.MAX_BYTES + 1)),
-     "larger than"),
 ])
 def test_archived_evidence_tamper_is_seen(tmp_path, tamper, needle):
     root = _island(tmp_path)
@@ -1264,3 +1284,227 @@ def test_archived_json_that_is_not_an_object_is_seen(tmp_path, which, content):
     probs = islands.island_problems(root, "demo")
     assert probs, "a non-object archived JSON must not read as verified"
     assert islands.status(root, "demo") == "self-reported"
+
+
+# --- Task 2 fix round 1 (Ruling 8) ------------------------------------------------------------------------------------
+
+ZZ2_THEOREMS = tuple(f"ZetaZeros.Challenge.{t}" for t in (
+    "prop_simple_real_lower", "prop_distinct_lower", "prop_simple_plus_real_lower", "prop_simple_or_real_lower",
+    "thm_simple", "thm_distinct", "thm_average", "thm_simple_or_critical", "thm_simple_numeric",
+    "thm_distinct_numeric", "thm_average_numeric", "thm_simple_or_critical_numeric"))
+ZZ2 = dict(name="zeta-zeros-v2", source="https://github.com/AxiomMath/ZetaZerosV2",
+           commit="1d7edeb4e67096f9da1b37cd4b763e8b73886655", toolchain="leanprover/lean4:v4.34.0-rc2",
+           challenge_sha256="dc3cc10e3fb36af0c966a5de73e1ac37ff379825a627807f973920b396fda0b7", theorems=ZZ2_THEOREMS)
+
+
+def test_real_zz2_log_passes():
+    # the auditor-held standalone Comparator v4.34.0-rc2 log of zeta-zeros-v2 @1d7edeb4 (md5 573d6ead), normalized
+    # (scratch prefix -> $SCRATCH), its Built lines trimmed to 3, glyphs made ASCII. rc2 exports no optParam & co.
+    text = (FIXTURES / "zz2_main.out").read_text()
+    assert islands.comparator_log_problems(text, _isl(**ZZ2), NANODA, comparator_tag="v4.34.0-rc2") == []
+    # and it is bound to its tag: judged as a v4.35.0 run, the export set is wrong
+    probs = islands.comparator_log_problems(text, _isl(**ZZ2), NANODA, comparator_tag="v4.35.0")
+    assert any("optParam" in p for p in probs), probs
+
+
+def test_fixtures_are_normalized():
+    for f in ("rj_spec.out", "rj_spec_tamper.out", "zz2_main.out"):
+        text = (FIXTURES / f).read_text()
+        assert "$SCRATCH/" in text and "/tmp/claude-0" not in text, f
+
+
+@pytest.mark.parametrize("kw,needle", [
+    ({"exports_extra": ["sorryAx"]}, "sorryAx"),                        # the library's own config permits sorryAx
+    ({"exports_extra": ["Demo.myAxiom"]}, "Demo.myAxiom"),              # any extra permitted axiom
+    ({"exports_extra": ["Demo.Challenge.helperDef"]}, "Demo.Challenge.helperDef"),   # a definition_names hole
+    ({"exports_drop": ["Classical.choice"]}, "Classical.choice"),        # a config that is not ours either way
+    ({"exports_extra": ["propext"]}, "more than once"),
+])
+def test_export_lists_are_bound_to_our_config(kw, needle):
+    # C1: a run under another config passes Comparator quietly; the export lists are how it shows
+    probs = islands.comparator_log_problems(_log(**kw), _isl(), NANODA)
+    assert any(needle in p and "export" in p for p in probs), probs
+
+
+def test_unknown_comparator_tag_fails():
+    probs = islands.comparator_log_problems(_log(), _isl(), NANODA, comparator_tag="v4.36.0")
+    assert any("v4.36.0" in p and "export" in p for p in probs), probs
+    probs = islands.comparator_log_problems(_log(), _isl(toolchain="leanprover/lean4:v4.36.0"), NANODA)
+    assert any("v4.36.0" in p for p in probs), probs
+
+
+def test_real_rj_log_with_sorryax_exported_fails():
+    # the reviewer's reproduction: the real log, as if run under Axiom's sorryAx-permitting config
+    text = (FIXTURES / "rj_spec.out").read_text().replace("Classical.choice, Nat.add", "Classical.choice, sorryAx, "
+                                                                                        "Nat.add")
+    probs = islands.comparator_log_problems(text, _isl(**RJ), NANODA)
+    assert any("sorryAx" in p for p in probs), probs
+
+
+def test_upstream_config_permitting_sorryax_fails_replay(tmp_path):
+    # Review Focus 3, the quiet way: Comparator accepted (nanoda on, exit 0) because the config permitted sorryAx
+    root, res = _replay(tmp_path, FakeRun(comparator=_cmp_output(exports_extra=["sorryAx"])))
+    assert res.verdict == "fail" and any("sorryAx" in p for p in res.problems), res.problems
+    assert islands.load_island(root, "demo").replay is None
+
+
+def test_archived_log_with_sorryax_exported_is_self_reported(tmp_path):
+    root = _island(tmp_path)
+    _rewrap(root, _log(exports_extra=["sorryAx"]))
+    probs = islands.island_problems(root, "demo")
+    assert any("archived" in p and "sorryAx" in p for p in probs), probs
+
+
+@pytest.mark.parametrize("line,ok", [
+    (None, True),                                                   # external logs carry no such line
+    ("right", True),
+    ("COMPARATOR_CONFIG sha256 " + "ab" * 32, False),               # another config's bytes
+    ("COMPARATOR_CONFIG md5 1c619f6c101866f65cc95b1bc53baa74", False),
+    ("two", False),
+])
+def test_comparator_config_line(tmp_path, line, ok):
+    _island(tmp_path / "repo", replay=None)
+    cfg_sha = _sha((tmp_path / "repo" / "islands" / "demo" / "comparator.json").read_bytes())
+    right = f"COMPARATOR_CONFIG sha256 {cfg_sha}"
+    extra = {None: [], "right": [right], "two": [right, right]}.get(line, [line])
+    _, res = _record(tmp_path, log=_log(before_exit=extra))
+    assert (res.verdict == "pass") is ok, res.problems
+    if not ok:
+        assert any("COMPARATOR_CONFIG" in p for p in res.problems), res.problems
+
+
+def test_comparator_json_rewritten_after_replay_is_seen(tmp_path):
+    # a replay that bound itself to our comparator.json's bytes stops counting when those bytes change
+    root, res = _replay(tmp_path, FakeRun())
+    assert res.verdict == "pass" and islands.status(root, "demo") == "verified"
+    cfg = root / "islands" / "demo" / "comparator.json"
+    cfg.write_text(json.dumps(json.loads(cfg.read_text()), indent=4) + "\n")    # same content, other bytes
+    probs = islands.island_problems(root, "demo")
+    assert any("COMPARATOR_CONFIG" in p for p in probs), probs
+
+
+SCRATCH = "/tmp/claude-0/-home-user-Arda/00000000-1111-4222-8333-444444444444/scratchpad"
+
+
+def test_record_replay_normalizes_the_scratch_prefix(tmp_path):
+    # Ruling 7: what is judged is what is archived, and it names no session scratch path
+    raw = _log(before_exit=[f"project {SCRATCH}/island/rjfresh", f"COMPARATOR_LANDRUN {SCRATCH}/pub/shim.sh"])
+    root = _island(tmp_path / "repo", replay=None)
+    res = islands.record_replay(root, "demo", date="2026-10-31", comparator_tag="v4.35.0", scratch_prefix=SCRATCH,
+                                **_inputs(tmp_path, log=raw))
+    assert res.verdict == "pass", res.problems
+    archived = lzma.decompress((root / "islands" / "demo" / "replay" / "comparator.log.xz").read_bytes()).decode()
+    assert archived == raw.replace(SCRATCH, "$SCRATCH") and SCRATCH not in archived
+    assert islands.load_island(root, "demo").replay.log_sha256 == _sha(archived.encode()) == res.log_sha256
+    md = (root / "islands" / "demo" / "REPLAY.md").read_text()
+    assert hashlib.md5(raw.encode()).hexdigest() in md and _sha(raw.encode()) in md and SCRATCH not in md
+    assert islands.status(root, "demo") == "verified"
+
+
+@pytest.mark.parametrize("prefix", ["relative/scratch", "/", "/tmp", "/tmp/a b", "/tmp/x/", "/tmp/../etc",
+                                    "/tmp/./x", "", "/tmp/$X", "/tmp/not-in-the-log"])
+def test_scratch_prefix_is_refused_unless_a_plain_absolute_path_in_the_log(tmp_path, prefix):
+    raw = _log(before_exit=[f"project {SCRATCH}/island"])
+    root = _island(tmp_path / "repo", replay=None)
+    with pytest.raises(islands.IslandError, match="scratch"):
+        islands.record_replay(root, "demo", date="2026-10-31", comparator_tag="v4.35.0", scratch_prefix=prefix,
+                              **_inputs(tmp_path, log=raw))
+    assert not (root / "islands" / "demo" / "replay").exists()
+
+
+def test_cli_record_replay_scratch_prefix(tmp_path):
+    root = _island(tmp_path / "repo", replay=None)
+    kw = _inputs(tmp_path, log=_log(before_exit=[f"project {SCRATCH}/island"]))
+    argv = ["island", "record-replay", "demo", "--root", str(root), "--log", str(kw["log"]), "--scratch-prefix",
+            SCRATCH, "--fingerprint-json", str(kw["fingerprint_json"]), "--date", "2026-10-31",
+            "--comparator-tag", "v4.35.0"]
+    for p in kw["probe_jsons"]:
+        argv += ["--probe-json", str(p)]
+    r = _cli(*argv)
+    assert r.returncode == 0, r.stdout + r.stderr
+    archived = lzma.decompress((root / "islands" / "demo" / "replay" / "comparator.log.xz").read_bytes()).decode()
+    assert "$SCRATCH/island" in archived
+
+
+@pytest.mark.parametrize("status,rc", [(" M Challenge/Basic.lean\n", 0), ("?? stray.lean\n", 0), ("", 128)])
+def test_add_refuses_a_dirty_clone(tmp_path, status, rc):
+    # I2: an existing clone with an edit (the tamper control's 2 <= d -> 3 <= d) must not register as the pin
+    run = FakeRun(status=status, status_rc=rc)
+    with pytest.raises(islands.IslandError, match="clean|status"):
+        _add(tmp_path, run=run)
+    assert not (tmp_path / "repo" / "islands" / "demo").exists()
+    assert any("status" in c for c in run.calls)
+
+
+@pytest.mark.parametrize("status,rc", [(" M Solution/Basic.lean\n", 0), ("?? Extra.lean\n", 0), ("", 1)])
+def test_replay_refuses_a_dirty_clone(tmp_path, status, rc):
+    run = FakeRun(status=status, status_rc=rc)
+    with pytest.raises(islands.IslandError, match="clean|status"):
+        _replay(tmp_path, run)
+    assert not any("lake" in c for c in run.calls)
+    assert islands.load_island(tmp_path / "repo", "demo").replay is None
+
+
+def test_deeply_nested_json_never_raises(tmp_path):
+    # M1: json.loads raises RecursionError, not ValueError, on deep nesting
+    deep = b"[" * 200000 + b"]" * 200000
+    root = _island(tmp_path)
+    d = root / "islands" / "demo"
+    old = _sha((d / "replay" / "fingerprint.json").read_bytes())
+    (d / "replay" / "fingerprint.json").write_bytes(deep)
+    (d / "island.toml").write_text((d / "island.toml").read_text().replace(old, _sha(deep)))
+    assert islands.island_problems(root, "demo")
+    root2 = _island(tmp_path / "b", replay=None)
+    kw = _inputs(tmp_path / "b")
+    kw["fingerprint_json"].write_bytes(deep)
+    with pytest.raises(islands.IslandError, match="JSON"):
+        islands.record_replay(root2, "demo", date="2026-10-31", comparator_tag="v4.35.0", **kw)
+
+
+def test_xz_memlimit(tmp_path, monkeypatch):
+    # M2: the decoder's memory is capped, whatever dictionary the stream's header declares
+    root = _island(tmp_path)
+    assert islands.status(root, "demo") == "verified"
+    monkeypatch.setattr(islands, "XZ_MEMLIMIT", 1 << 20)          # below the 8 MiB dictionary of the default preset
+    probs = islands.island_problems(root, "demo")
+    assert any("comparator.log.xz" in p and "xz" in p for p in probs), probs
+
+
+def test_a_large_passing_log_stays_verified(tmp_path):
+    # M3: a log record-replay accepts must not read self-reported because its archive exceeds a smaller cap
+    noise = [os.urandom(48).hex() for _ in range(25000)]                     # ~2.4 MB, incompressible
+    _, res = _record(tmp_path, log=_log(before_exit=noise))
+    assert res.verdict == "pass", res.problems
+    archive = tmp_path / "repo" / "islands" / "demo" / "replay" / "comparator.log.xz"
+    assert archive.stat().st_size > islands.MAX_BYTES
+    assert islands.island_problems(tmp_path / "repo", "demo") == []
+
+
+def test_archive_over_the_cap_is_seen(tmp_path, monkeypatch):
+    root = _island(tmp_path)
+    monkeypatch.setattr(islands, "LOG_MAX_BYTES", 50)
+    probs = islands.island_problems(root, "demo")
+    assert any("comparator.log.xz" in p and "larger than" in p for p in probs), probs
+
+
+def test_stale_staging_directories_are_reported(tmp_path):
+    # M5: a hard-killed add or replay leaves a dot-prefixed stage; it is named for what it is
+    root = _island(tmp_path)
+    (root / "islands" / ".demo.add-x1y2").mkdir()
+    names, probs = islands.island_names(root)
+    assert names == ["demo"] and any("stale staging directory" in p and ".demo.add-x1y2" in p for p in probs), probs
+    assert islands.island_problems(root, "demo") == []
+    (root / "islands" / "demo" / ".replay-new-abc").mkdir()
+    probs = islands.island_problems(root, "demo")
+    assert any("stale staging directory" in p and ".replay-new-abc" in p for p in probs), probs
+
+
+def test_subprocess_run_timeout_with_a_grandchild_holding_the_pipe(tmp_path):
+    # M8: a grandchild in its own session keeps stdout open after the group kill; the runner must still return
+    import time
+    script = ("import subprocess, time; subprocess.Popen(['sleep', '20'], start_new_session=True); "
+              "time.sleep(20)")
+    t0 = time.monotonic()
+    res = islands.subprocess_run([sys.executable, "-c", script], cwd=tmp_path, timeout=0.5)
+    assert res.rc == 124 and "timed out" in res.output
+    assert time.monotonic() - t0 < 15

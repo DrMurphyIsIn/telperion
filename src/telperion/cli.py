@@ -3129,7 +3129,8 @@ def cmd_kernel_policy_check(args) -> int:
 
 def cmd_island_list(args) -> int:
     """`island list`: one line per island under <root>/islands/ with its status. Exit 1 only when the registry
-    itself cannot be read (`islands/` a symlink or not a directory); an invalid island is listed as self-reported."""
+    itself has a problem (`islands/` a symlink or not a directory, a stale staging directory in it); an invalid
+    island is listed as self-reported."""
     from . import islands
 
     root = Path(args.root)
@@ -3137,9 +3138,7 @@ def cmd_island_list(args) -> int:
         names, problems = islands.island_names(root)
         for p in problems:
             print(p)
-        if problems:
-            return 1
-        if not names:
+        if not names and not problems:
             print("no islands")
         for name in names:
             probs = islands.island_problems(root, name)
@@ -3149,7 +3148,7 @@ def cmd_island_list(args) -> int:
             except islands.IslandError:
                 what = "(invalid registration; see `telperion island check`)"
             print(f"{name}  {'self-reported' if probs else 'verified'}  {what}")
-        return 0
+        return 1 if problems else 0
     except Exception as exc:  # the CLI never prints a traceback (fail closed)
         print(f"island list: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
@@ -3246,7 +3245,8 @@ def cmd_island_record_replay(args) -> int:
         res = islands.record_replay(root, args.name, log=Path(args.log),
                                     probe_jsons=[Path(p) for p in args.probe_json or ()],
                                     fingerprint_json=Path(args.fingerprint_json) if args.fingerprint_json else None,
-                                    date=args.date, comparator_tag=args.comparator_tag)
+                                    date=args.date, comparator_tag=args.comparator_tag,
+                                    scratch_prefix=args.scratch_prefix)
         return _island_replay_report(islands, root, args.name, res)
     except Exception as exc:  # the CLI never prints a traceback (fail closed)
         print(f"island record-replay: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -4157,6 +4157,9 @@ def main(argv=None) -> int:
                    help="`telperion probe-negation --json --file <challenge>` output, one per theorem (repeat)")
     p.add_argument("--fingerprint-json", default=None, metavar="FILE",
                    help="`telperion fingerprint --json --file <challenge>` output covering every theorem")
+    p.add_argument("--scratch-prefix", default=None, metavar="PATH",
+                   help="the sandbox's session scratch path (absolute, no whitespace): replaced by $SCRATCH in the "
+                        "log before it is judged and archived, so the public archive does not carry it")
     p.add_argument("--date", required=True, help="the date of the run (YYYY-MM-DD)")
     p.add_argument("--comparator-tag", required=True, help="the Comparator tag the run used (vX.Y.Z[-rcN])")
     p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
