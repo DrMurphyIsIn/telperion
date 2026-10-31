@@ -16,6 +16,8 @@ on:
       # Imported by the checks (lean_name_literal, DEFAULT_LIBRARY_ROOTS, CLEAN_AXIOMS).
       - "src/telperion/closure_audit.py"
       - "src/telperion/comparator.py"
+      # The checks' CLI (checks-record's isolation, fingerprint and env refusals, freeze --fingerprints).
+      - "src/telperion/cli.py"
       - "tests/test_negation_probe.py"
       - "tests/test_fingerprint.py"
       - "tests/test_lean_replay.py"
@@ -36,6 +38,8 @@ on:
       # Imported by the checks (lean_name_literal, DEFAULT_LIBRARY_ROOTS, CLEAN_AXIOMS).
       - "src/telperion/closure_audit.py"
       - "src/telperion/comparator.py"
+      # The checks' CLI (checks-record's isolation, fingerprint and env refusals, freeze --fingerprints).
+      - "src/telperion/cli.py"
       - "tests/test_negation_probe.py"
       - "tests/test_fingerprint.py"
       - "tests/test_lean_replay.py"
