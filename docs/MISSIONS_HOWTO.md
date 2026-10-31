@@ -139,9 +139,10 @@ verifier.
    structurally, so renaming a bound variable or a universe parameter keeps the hash, while a shadowed or edited local
    definition changes it. It refuses (exit 2) whenever it would otherwise have to hash something by its name alone:
    for example a local inductive, structure, opaque or axiom left after unfolding, or a `sorryAx` in the statement.
-3. **The closure audit** (`telperion audit-closure`, `src/telperion/closure_audit.py`). A Lean script that walks the
-   theorem's whole constant closure. It fails on a forbidden constant (by default `sorryAx`), on a forbidden module
-   prefix, on an axiom outside `propext`, `Quot.sound` and `Classical.choice`, or on a missing target.
+3. **The closure audit** (`telperion audit-closure`, `src/telperion/closure_audit.py`). A Lean metaprogram that walks
+   the theorem's whole constant closure, run on the kernel-replayed module like the other two checks. It fails on a
+   forbidden constant (by default `sorryAx`), on a forbidden module prefix, on an axiom outside `propext`,
+   `Quot.sound` and `Classical.choice`, or on a missing target.
 4. **The kernel-rejection verdict** (`telperion.verify`). When the verifier runs Lean, an error block whose first line
    starts with the `(kernel)` prefix is reported as `KERNEL_REJECTED`, separately from an ordinary elaboration failure
    (`VerifyResult.kernel_rejected` and the `KERNEL_REJECTED` tag in `VerifyResult.summary()`). It goes by that prefix
@@ -158,8 +159,9 @@ elaborate the check's own commands. A security re-review wrote a module that rea
 the check's own source and printed forged result lines, turning a vacuous theorem into WITNESSED and a true one into
 REFUTED. No output filter helps against code that runs in the same process.
 
-So the owner's decision ("Replay-isolate") is that **the probe and the fingerprint never import the untrusted module**.
-Instead, `src/telperion/checks/lean_replay.py` does what Comparator and lean4checker do:
+So the owner's decision ("Replay-isolate") is that **no check imports the untrusted module**: not the probe, not the
+fingerprint, and (since step 5) not the closure audit. Instead, `src/telperion/checks/lean_replay.py` does what
+Comparator and lean4checker do:
 - the Lean process imports TRUSTED modules only (Mathlib and the toolchain's own libraries, from a pinned env), with a
   `LEAN_PATH` of trusted directories only, so no `import` can reach a submitted `.olean`;
 - it reads the untrusted module and its untrusted imports as DATA, from private copies, without running anything;
@@ -177,12 +179,18 @@ The negation probe still has to evaluate the statement to test it. It does that 
 (plausible's, inside Mathlib). A replayed definition has no compiled code at all, and a statement that would need it
 is reported as PROBE_ONLY with a note, never REFUTED.
 
-One check is NOT isolated this way: the closure audit. `audit-closure` still runs `lake env lean` in the submission's
-project and imports its modules. That runs the project's lakefile and the modules' initializers, so an imported module
-can forge the closure audit's output, and it should be treated like a build of untrusted code. This is a known gap,
-accepted by the owner for this merge (2026-10-30). The interim guard is the replay axiom cross-check that
-`checks-record` applies (see "One closure, bound across the probe and the fingerprint"). Porting the closure audit to a
-replay callback is the step-5 follow-up (see the limitations below).
+Until step 5, one check was NOT isolated this way: the closure audit. `audit-closure` ran `lake env lean` in the
+submission's project on a script that imported its modules, so the project's lakefile and the modules' initializers
+and elaborators ran inside the audit. A module that replaces `#eval` can read the audit's per-run tag out of the
+script and print a forged PASS for a theorem proved by `sorry` (`tests/test_closure_audit_replay.py` builds exactly
+that module and shows it). The owner accepted that gap for the step 4 merge (2026-10-30), and **it was closed in
+step 5**: the closure audit's walk now runs as a replay callback, so the submission never reaches the audit process,
+an `axiom` in its closure is refused by the replay (an audit FAIL that names it), and the audit's JSON says
+`"isolated": true` and carries the same `olean_sha256` as the other two checks.
+
+The old path is still there as `audit-closure --legacy-import`, for comparing against old records and for projects
+outside a pinned env. It is NOT isolated: it prints a warning saying so, its JSON says `"isolated": false`, and
+`checks-record` refuses it for any node created on or after the cutoff.
 
 ### The trusted manifest
 
@@ -209,20 +217,22 @@ telperion trusted-manifest verify --env ~/telperion-tools/lean-env
   statement that the env as it is now is the trusted one, so it is meant to be a deliberate act, not a side effect.
 - **When to rebuild.** Only when you deliberately change the env (a new toolchain or Mathlib). If `verify` fails and you
   did not change anything, find out why before rebuilding.
-- The probe and fingerprint take `--trusted-env DIR` (default `$TELPERION_LEAN_ENV`) and `--trusted-manifest FILE` if
-  you need to point at a non-default env or manifest. Nothing from `--project` is ever trusted.
+- The probe, the fingerprint and the closure audit take `--trusted-env DIR` (default `$TELPERION_LEAN_ENV`) and
+  `--trusted-manifest FILE` if you need to point at a non-default env or manifest. Nothing from `--project` is ever
+  trusted.
 
-### One closure, bound across the probe and the fingerprint
+### One closure, bound across all three checks
 
-The probe and the fingerprint each report an `olean_sha256` in their `--json` output, along with `olean_closure`, the
-sorted list of `[module, part, sha256]` for every untrusted `.olean` file the replay read (the whole untrusted import
-closure, every part of a `module` file). `olean_sha256` is the digest of that list. The replay reads only private copies
-of those files and checks afterwards that it read exactly the copies and that they did not change, so the digest names
-exactly the bytes the check saw.
+The probe, the fingerprint and the closure audit each report an `olean_sha256` in their JSON output, along with
+`olean_closure`, the sorted list of `[module, part, sha256]` for every untrusted `.olean` file the replay read (the
+whole untrusted import closure, every part of a `module` file). `olean_sha256` is the digest of that list. The replay
+reads only private copies of those files and checks afterwards that it read exactly the copies and that they did not
+change, so the digest names exactly the bytes the check saw.
 
-`mission checks-record` refuses (exit 2) unless the probe JSON and the fingerprint JSON carry the SAME `olean_sha256`.
-That is how you know both checks ran on the same build. Rebuild between the two runs and the record is refused; run
-both again.
+`mission checks-record` refuses (exit 2) unless the probe JSON, the fingerprint JSON and the closure JSON carry the
+SAME `olean_sha256`. That is how you know all three checks ran on the same build. Rebuild between the runs and the
+record is refused; run them all again. The record stores `closure_isolated = true` to say the closure audit was one
+of them, and the gate refuses a record without it.
 
 The olean digest says which BUILD the checks saw. Both `--json` outputs also name the `module` and `theorem` they
 checked (the fingerprint names them only when it was given exactly one `--import` and one `--target`), and
@@ -243,14 +253,18 @@ before running the checks.**
   same thing, and also that the record's theorem is the Comparator record's, once there is one;
 - the probe's `theorem` is that theorem, it is one of the closure audit's targets, and the fingerprint's `theorem`,
   when it names one, is the same;
+- the closure JSON says `"isolated": true` (the kernel-replayed audit) and its `olean_sha256` is the probe's and the
+  fingerprint's. For a node created on or after 2026-10-28, `audit-closure --legacy-import` output, or a closure JSON
+  from before step 5 with no `isolated` key, is refused with a message saying why. For an older node it is recorded
+  with `closure_isolated = false`;
 - each `source_sha256` is PRESENT and equals the sha256 of the node's artifact as it is on disk NOW. There is no
   waiver: a JSON without one (a run without `--file`) is refused, so re-run the check with `--file`. (`--file` stays
   optional for interactive runs of the probe and the fingerprint.) A JSON that says `stale` is refused too;
 - both JSONs carry the replay's axiom list (`axioms`, `collectAxioms` over every constant of the target module, which
   an imported module cannot forge, since the replay imports nothing untrusted). The two lists must be equal and a
   subset of `propext`, `Quot.sound` and `Classical.choice`, and they must include the closure audit's axioms for the
-  target. The list is recorded, and the gate checks it again. This is the interim cross-check on the closure audit,
-  which still imports the submission (see the limitations).
+  target. The list is recorded, and the gate checks it again. This was the interim cross-check on the closure audit
+  while it imported the submission; now that the audit is replayed too, it stays as a second line.
 
 So **always run `probe-negation` and `fingerprint` with `--file` pointing at the node's artifact**, on a fresh build.
 
@@ -351,12 +365,18 @@ declaring theorem `Demo.my_thm`.
    `{"error": ...}`. Here `--file` is only hashed, into `source_sha256`. It takes the same
    `--trusted-env`, `--trusted-manifest`, `--olean-dir`, `--memory-mb`, `--wrapper` and `--timeout` options. The project
    (outside `.lake` and `.git`) must contain no symlink and no directory or `.lean` file named after a library root.
-3. **Closure audit.** Note that `--json` takes a FILE here, unlike the other two:
+3. **Closure audit**, on the same build. Note that `--json` takes a FILE here, unlike the other two:
    ```bash
    telperion audit-closure --project path/to/project --import Demo.MyNode \
      --target Demo.my_thm --json closure.json
    ```
-   Exit 0 PASS, 1 FAIL, 2 when the audit could not run.
+   Exit 0 PASS, 1 FAIL, 2 when the audit could not run (an unbuilt module, no trusted env or manifest, a Lean crash).
+   It replays `--import` like the probe does (an import that resolves to a trusted `.olean` of the pinned env is
+   imported instead), so pass the node's OWN module, the one the probe and the fingerprint replayed: a different set
+   of modules is a different `olean_sha256`, and `checks-record` refuses the mismatch. It takes the same
+   `--trusted-env`, `--trusted-manifest`, `--olean-dir`, `--memory-mb`, `--wrapper` and `--timeout` options. The JSON
+   is the old shape plus `isolated`, `olean_sha256` and `olean_closure`. An untrusted axiom in the closure is a FAIL
+   naming it. `--legacy-import` runs the old import-based script instead (NOT isolated, see above).
 4. **Record them:**
    ```bash
    telperion mission checks-record my_node --campaign demo \
@@ -366,7 +386,8 @@ declaring theorem `Demo.my_thm`.
    Every verdict is read from those JSON files, never from a flag. They are unsigned files you produced: reading the
    verdicts from them guards against mistakes, not against an operator who writes them by hand. It refuses (exit 2,
    nothing written) on an unreadable or malformed JSON, an unknown probe verdict, a missing or mismatched
-   `olean_sha256`, a target that is not the node's registered theorem, a fingerprinted theorem that the closure audit
+   `olean_sha256` (the closure JSON's included), a closure JSON that is not isolated for a node that needs checks, a
+   target that is not the node's registered theorem, a fingerprinted theorem that the closure audit
    did not audit, a probe of a different theorem, a `source_sha256` that is absent or not the artifact's current
    sha256, a stale build, missing, unequal or non-standard replay `axioms`, a missing artifact, or a node that is
    `deprecated` or `refuted`. Otherwise it writes
@@ -381,8 +402,8 @@ These are real, and you should know them before you rely on a `[checks]` record.
   nothing about building the submission, which you must do first: `lake build` runs the project's lakefile and the
   modules' compile-time code (`#eval`, `initialize`, macros) with YOUR permissions. That code can read or rewrite any
   file you can, including the trusted env (the manifest only catches tampering done before the check starts), open
-  network connections, or start a daemon. The same goes for `audit-closure`, which imports the submission, and for
-  fingerprinting submitted text (`run_fingerprint_on_text` compiles it). **Untrusted submissions must be built and
+  network connections, or start a daemon. The same goes for `audit-closure --legacy-import`, which imports the
+  submission, and for fingerprinting submitted text (`run_fingerprint_on_text` compiles it). **Untrusted submissions must be built and
   checked inside a sandbox**, for example Comparator's sandbox on Linux CI (whose bwrap shim must pass
   `--cap-drop ALL`; see `docs/COMPARATOR.md`). Outside one, run these checks only on code you would be willing to run
   anyway.
@@ -395,21 +416,13 @@ These are real, and you should know them before you rely on a `[checks]` record.
 - **The sign-off is free text.** `signoff: <who>` is a string in the note, written by whoever runs `checks-record`.
   Nothing checks that the reviewer is a different person or session from the author. Treat it as an honest
   declaration, and keep the read-back discipline below in mind: a self sign-off is no better than a self-audit.
-- **The closure audit still imports the submission.** The probe and the fingerprint are bound to each other by
-  `olean_sha256`, but `audit-closure` imports rather than replays, so an imported module could forge its output, and
-  its JSON carries no olean digest. Its ties to the other two are the theorem name and the interim axiom cross-check:
-  its axioms for the target must be among the REPLAY's axioms, which must be standard.
-  - What the cross-check buys: a forged closure PASS can no longer hide a non-standard axiom. That holds only while the
-    code `audit-closure` imports cannot write the probe and fingerprint JSONs or the node file, i.e. under a sandbox or
-    when the audit runs as a different user. Outside a sandbox the imported code runs as YOU and can rewrite those
-    files too.
-  - What it does not buy: a forged PASS can still hide a forbidden constant that is not an axiom, and a forbidden
-    module prefix.
-  - It bounds the target's axioms only when the target is a constant of the module the probe and the fingerprint
-    replayed (their axiom list covers that module's constants). So run the probe and the fingerprint on the
-    artifact's OWN module (`--module` / `--import`), not on a module that merely imports it.
-  - The owner accepted this gap for this merge (2026-10-30); porting the closure audit to a replay callback is step-5
-    work. Run all three on the same build.
+- **The closure audit's import gap is closed (step 5).** Through step 4, `audit-closure` imported the submission, so an
+  imported module could forge its output; the owner accepted that gap for the step 4 merge (2026-10-30). It now runs
+  as a kernel-replay callback on the same replayed closure as the probe and the fingerprint (same `olean_sha256`), and
+  the gate requires `closure_isolated`. What is left is what is left for every replayed check: the build itself and
+  the `.olean` reader (the two bullets above). `audit-closure --legacy-import` keeps the old, NOT isolated path; its
+  output is refused for nodes created on or after the cutoff. The replay axiom cross-check (the probe's and the
+  fingerprint's `axioms` must be standard and include the closure audit's) stays as a second line.
 - **The theorem tie is syntactic.** `checks-record` and the gate find the node's own theorem with the gate's syntactic
   resolver (`guard_anchors.resolve_theorem`), so an honest artifact cannot pass a helper lemma's checks. An
   adversarial artifact still has known ways to fool that resolver, all of which predate step 4: `s!`-interpolated

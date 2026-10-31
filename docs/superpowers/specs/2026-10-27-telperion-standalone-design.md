@@ -206,23 +206,28 @@ given, and `checks-record` refuses a probe of another theorem or a source that i
 sha256 (Ruling 12; the final review removed the `--allow-missing-source` waiver). The final review also requires the
 target to be the node's registered theorem (`guard_anchors.resolve_theorem`), and the probe and fingerprint JSONs to
 carry the replay's axiom list, equal, standard, and including the closure audit's axioms for the target. That
-cross-check is the interim guard for a known gap: `audit-closure` still imports the submission, so its output can be
-forged by an imported module. The owner accepted the gap for this merge (2026-10-30), and porting the closure audit to
-a replay callback is a step-5 follow-up. The grant rule applies to nodes
+cross-check was the interim guard for a known gap: `audit-closure` imported the submission, so its output could be
+forged by an imported module. The owner accepted the gap for the step 4 merge (2026-10-30). **Closed in step 5
+(Task 7):** the closure audit runs as a kernel-replay callback on the same replayed closure as the probe and the
+fingerprint, its JSON carries `isolated: true` and their `olean_sha256`, `checks-record` refuses a non-isolated
+closure JSON (`audit-closure --legacy-import`, the old import path, kept and documented as NOT isolated) for nodes
+that need checks, and the record's `closure_isolated` is a grant condition; the axiom cross-check stays as a second
+line. The grant rule applies to nodes
 created on or after 2026-10-28; a node whose `created` is empty or is not, as a whole, an ISO date is treated as created
 after it (Rulings 2 and 12, fail-closed). A grant that required checks records `checks_required = true` in `[grant]`,
 and from then on the node requires them whatever its `created` says (Ruling 13: the decision is recorded, not read off
 `gate_version`, because every new grant carries the new version, pre-cutoff nodes included). `mission verify` re-checks
 the record on every proved node the rule covers, and `GATE_VERSION` is `2026-10-29.1` (Ruling 11). Known limitations
-recorded by Rulings 11 and 12: the sign-off is free text; the closure audit, which imports rather than replays, is tied
-to the other two checks by the theorem name and the interim axiom cross-check; and a `created` back-dated before a node's first grant is not caught.
+recorded by Rulings 11 and 12: the sign-off is free text; and a `created` back-dated before a node's first grant is
+not caught. (A third, that the closure audit imported rather than replayed and was tied to the other two checks only
+by the theorem name and the interim axiom cross-check, was closed in step 5.)
 
 **Amendment (2026-10-30; step 4 Ruling 9 and the caveat recorded with the fingerprint re-review). These checks are NOT A
 SANDBOX.** Replay isolation keeps the submission's code out of the check's process, and nothing more. Building the
 submission (`lake build`, or compiling a submitted text for the fingerprint) runs its code with the caller's
-permissions, and so does `audit-closure`, which imports it. The `.olean` reader trusts its input bytes (a crafted file
-is a memory-safety attack on the reading process), the memory bound is Lean's own best-effort `--memory`, and a
-same-user process can still reach the private copies during a run. Untrusted submissions must therefore be built and
+permissions, and so does `audit-closure --legacy-import`, which imports it. The `.olean` reader trusts its input bytes
+(a crafted file is a memory-safety attack on the reading process), the memory bound is Lean's own best-effort
+`--memory`, and a same-user process can still reach the private copies during a run. Untrusted submissions must therefore be built and
 checked inside a sandbox, for example Comparator's sandbox on Linux CI. Providing that sandbox is the owner's separate
 decision.
 
