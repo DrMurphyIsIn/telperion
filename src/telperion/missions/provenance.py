@@ -945,12 +945,13 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       grammar, declaration-range and accounted-for checks stop accidental and casual mismatches
       between its text and what Lean elaborates, not an adversarial author: freeze an untrusted
       campaign inside the sandbox;
-    - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
-      of the statement and of each forall-body, but a vacuous sub-proposition under any other
-      conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
-      e.g. `forall m, m = m -> id (forall n, n < 0 -> n = 7)`) is invisible to it, and a
-      satisfiable pad can still reach WITNESSED without a sign-off. Witnessing over a reducing
-      telescope is a step-5 decision;
+    - WITNESSED is only as deep as the witness telescopes: since step 6 the witness must also
+      close the exists-closure over the REDUCING telescope (default transparency, descending into
+      `And` and `Iff`), so a vacuous sub-proposition under `id`, `Not`, a beta-redex, a `let`,
+      `And` or `Iff` (e.g. `forall m, m = m -> id (forall n, n < 0 -> n = 7)`) no longer reaches
+      WITNESSED with a satisfiable pad. One under another inductive or structure head (`Or`,
+      `Exists`, a local structure) or a library definition default transparency does not unfold
+      is still invisible to it;
     - hand-editing the node file is out of reach of this check: deleting `checks_required`
       from `[grant]`, like back-dating `created` before the first grant, removes the
       requirement. Both are the same documented limitation class (a CI diff check, step 5);

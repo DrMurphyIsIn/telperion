@@ -128,9 +128,17 @@ verifier.
    - `witness`: only if you pass `--witness`. Your term must prove that every antecedent of the statement can hold at
      once (the ∃-closure of the full ∀-telescope of the unfolded type, conclusion arrows included). If it elaborates,
      the KERNEL accepts it (checked before the result is printed) and it uses only the standard axioms:
-     **WITNESSED**. A statement with no Prop-typed antecedent at all (`True`, a bare conjunction) has nothing to
-     witness, and gives PROBE_ONLY with a note instead. A vacuous part nested under any other conclusion head (`id`,
-     `∧`, `¬`, a local structure, ...) is NOT seen by the witness; see the limitations below.
+     **WITNESSED**, provided it also passes the second check below. A statement with no Prop-typed antecedent at all
+     (`True`, a bare conjunction) has nothing to witness, and gives PROBE_ONLY with a note instead.
+   - The second witness check, over the REDUCING telescope. The first closure stops at any conclusion head that is not a
+     ∀ and not a non-library definition, so a vacuous part nested under `id`, `¬`, `∧`, a `let` and so on used to be
+     invisible to it. So the SAME term must also prove the ∃-closure that Lean's `forallTelescopeReducing` opens at
+     default transparency (which unfolds `id`, `¬`, `≠`, `let`, beta-redexes and any other head it can unfold),
+     descending into `∧` and `↔` as well. It is kernel-checked and axiom-audited the same way. If it does not elaborate
+     there, times out, or uses other axioms, the verdict is PROBE_ONLY with the note "witness does not survive
+     reduction". This check can only take WITNESSED away; it never changes any other verdict. When your statement
+     really has an antecedent under such a head, write a witness that covers both closures, for example
+     `by first | exact ⟨0, by norm_num, trivial⟩ | exact ⟨0, by norm_num, 0, by norm_num, trivial⟩`.
    - The witness is TRUSTED input: it is elaborated with the full elaborator inside the check process, so a term like
      `by run_tac ...` can do arbitrary IO there and forge result lines. Write it yourself, and never paste one from a
      submission unread.
@@ -273,8 +281,8 @@ So **always run `probe-negation` and `fingerprint` with `--file` pointing at the
 
 | Verdict | What happened | Effect on the grant |
 |---|---|---|
-| `WITNESSED` | Your `--witness` proved the antecedents jointly satisfiable (kernel-checked, standard axioms), and no counterexample was found | Passes |
-| `PROBE_ONLY` | Nothing was found: no contradiction derived, no counterexample, no witness given (or it did not count). Notes say if a probe could not run, timed out, or hit the memory bound | Passes ONLY with a reviewer's `signoff: <who>` in the `--note` |
+| `WITNESSED` | Your `--witness` proved the antecedents jointly satisfiable, over the reducing telescope too (kernel-checked, standard axioms), and no counterexample was found | Passes |
+| `PROBE_ONLY` | Nothing was found: no contradiction derived, no counterexample, no witness given (or it did not count, for example because it does not survive reduction). Notes say if a probe could not run, timed out, or hit the memory bound | Passes ONLY with a reviewer's `signoff: <who>` in the `--note` |
 | `VACUOUS` | The premises alone prove `False` | Blocks |
 | `REFUTED` | plausible found a counterexample | Blocks |
 | `ERROR` | No verdict could be read: an unbuilt module ("build <module> first"), an unknown constant, a refused replay, a manifest mismatch, a witness that does not elaborate, a refused axiom | Blocks |
@@ -421,7 +429,7 @@ These are real, and you should know them before you rely on a `[checks]` record.
   safety of the reading process itself, which no kernel check comes after. Another reason for the sandbox.
 - **The memory limit is best-effort.** The checks pass `--memory=<MB>` to Lean (default 8192), Lean's own allocation
   bound. It is not an operating-system limit. Inside a probe, hitting it is a probe failure (PROBE_ONLY with a note, or
-  ERROR for the witness probe); in the replay itself it is ERROR.
+  ERROR for the first witness check); in the replay itself it is ERROR.
 - **The sign-off is free text.** `signoff: <who>` is a string in the note, written by whoever runs `checks-record`.
   Nothing checks that the reviewer is a different person or session from the author. Treat it as an honest
   declaration, and keep the read-back discipline below in mind: a self sign-off is no better than a self-audit.
@@ -456,12 +464,25 @@ These are real, and you should know them before you rely on a `[checks]` record.
   so `m < 0` stays in the conclusion. (Restating the binders as hypotheses, `(m : ℕ) (h : m < 0) : False`, does NOT
   help: they are then premises by construction, and the probe reads exactly the same thing. Use that form only for
   binders that really are meant as hypotheses.)
-- **Vacuity nested under a closed head is not seen by the witness.** The probe unfolds only NON-library definitions,
-  and only at the head of the statement and of each ∀-body. Under any other conclusion head, the ∃-closure the
-  witness must prove stops: a library definition such as `id`, a local `structure`, `∧`, `↔`, `¬`, a beta-redex or a
-  `let`. So `∀ m : ℕ, m = m → id (∀ n : ℕ, n < 0 → n = 7)` is vacuously true, yet the witness `⟨0, rfl, trivial⟩`
-  satisfies the pad `m = m` and gives WITNESSED, without a sign-off. Read the conclusion of any WITNESSED statement
-  for a hidden vacuous part. Witnessing over a reducing telescope instead is a step-5 decision.
+- **Vacuity nested under a closed head: closed by the reducing check, except for heads reduction cannot open.**
+  Step 4 left a gap here: the witness's ∃-closure stopped at any conclusion head that was not a ∀ or a non-library
+  definition, so `∀ m : ℕ, m = m → id (∀ n : ℕ, n < 0 → n = 7)`, which is vacuously true, was WITNESSED by
+  `⟨0, rfl, trivial⟩`, a term that only satisfies the pad `m = m`. Since step 6 the same witness must also close the
+  ∃-closure over the reducing telescope, and that example, and the same thing under `∧`, `↔`, `¬`, a `let` and a
+  beta-redex, are PROBE_ONLY ("witness does not survive reduction"), each one a must-fail control in the Lean tests.
+  What remains:
+  - **Inductive and structure heads other than `∧` and `↔`.** Reduction stops at an inductive type, and the check only
+    descends into `∧` and `↔`. A vacuous part under `∨`, `∃`, a local `structure` (or a local `inductive`) is still
+    not seen, so `∀ m : ℕ, m = m → (∀ n : ℕ, n < 0 → n = 7) ∨ False` can still be WITNESSED by the pad. Read the
+    conclusion of any WITNESSED statement for a hidden vacuous part under one of these.
+  - **Library definitions that default transparency does not unfold**, such as a Mathlib `@[irreducible]` one. The
+    submission's own definitions are replayed without their attributes, so they always unfold, irreducible or not.
+  - **A cost for honest statements.** A true statement whose conclusion reduces to a negation (`¬ P`, `a ≠ b`, and
+    anything else that ends in `→ False`) exposes `P` as an antecedent, and `P` can never hold together with the
+    hypotheses, or the statement would be false. So such a statement is never WITNESSED any more; it needs a
+    sign-off. Likewise a conclusion that reduces to a ∀ (`s ⊆ t`, `f ≤ g` on functions) needs a witness for the
+    binders it exposes, as in the `by first | ...` example above.
+  - **A reduction that runs out of heartbeats** is PROBE_ONLY, never WITNESSED (fail closed).
 
 ### In CI
 

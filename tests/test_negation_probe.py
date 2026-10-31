@@ -14,8 +14,9 @@ from lean_env import fake_trusted_env, session_trusted_manifest  # noqa: E402
 
 # Phase 2 (replay isolation): the probes run as ONE callback on the module's kernel replay and report through the
 # replay's nonce'd lines (tag stripped here): `PREMISES n`, then one `FALSE`, `NEGATION` and (with a witness)
-# `WITNESS` result line. The inputs below are those lines; the expected verdicts are the ones the text-based probe had.
-OK = ["PREMISES 2", "FALSE PROVED axioms=[]", "WITNESS PROVED axioms=[propext]"]
+# `WITNESS` and `REDUCED` result line. The inputs below are those lines; the expected verdicts are the ones the
+# text-based probe had.
+OK = ["PREMISES 2", "FALSE PROVED axioms=[]", "WITNESS PROVED axioms=[propext]", "REDUCED PROVED axioms=[propext]"]
 NOT_FALSE = ["PREMISES 2", "FALSE FAILED linarith failed"]
 GAVE_UP = ["NEGATION GAVEUP 200"]
 
@@ -333,8 +334,9 @@ def test_c2_m1_render():
     assert "TelperionProbe.unfoldHeads (← getEnv) 1000 info.type" in src and "forallBoundedTelescope ty" in src
     assert "forallTelescope ty" in src and "Plausible.Decorations.addDecorations ty" in src
     assert "unless info matches .thmInfo _ do" in src and '"NOTTHEOREM' in src and '"WITNESS NOANTECEDENT"' in src
-    assert src.count("withOptions (fun o => Elab.async.set o false) do\n") == 2
-    assert src.count("withOptions (fun o => Elab.async.set o false) do\n          addDecl") == 1     # witness
+    # step 6 Task 0 adds the third site: the reduced witness check is kernel-checked synchronously too
+    assert src.count("withOptions (fun o => Elab.async.set o false) do\n") == 3
+    assert src.count("withOptions (fun o => Elab.async.set o false) do\n          addDecl") == 2     # witness, reduced
     assert src.count("withOptions (fun o => Elab.async.set o false) do\n            addDecl") == 1   # false
     assert "`Mathlib" in src and "`Init" in src                  # the library roots: the fingerprint's
 
@@ -357,6 +359,63 @@ def test_n2_unfold_fuel_exhausted_is_error():
     assert "let some ty := TelperionProbe.unfoldHeads (← getEnv) 1000 info.type" in render_callback("Foo.t", None)
     r = classify(["UNFOLD_EXHAUSTED"])
     assert r.verdict == "ERROR" and "did not unfold within 1000 steps" in r.detail
+
+
+# Step 6 Task 0 (C2 residual): WITNESSED also needs the same witness to close the ∃-closure over the REDUCING
+# telescope (the `REDUCED` line). That check only ever downgrades WITNESSED to PROBE_ONLY.
+WITNESS_OK = ["WITNESS PROVED axioms=[propext]"]
+SURVIVE = "witness does not survive reduction"
+
+
+def test_c2r_render():
+    src = render_callback("Foo.t", "trivial")
+    assert "partial def reducedClosure" in src and "forallTelescopeReducing e fun xs body" in src
+    assert "withTransparency .default (TelperionProbe.reducedClosure ty)" in src       # after unfoldHeads
+    assert "(``And, #[a, b])" in src and "(``Iff, #[a, b])" in src
+    assert 'TelperionProbe.budget "REDUCED" "FAILED" do' in src and "`_telperion_probe_reduced" in src
+    # the same witness, parsed from the same data literal, and kernel-checked synchronously like the first one
+    assert src.count('`term "trivial"') == 2
+    sync_add = "withOptions (fun o => Elab.async.set o false) do\n          addDecl (.thmDecl { name := `"
+    assert src.count(sync_add + "_telperion_probe_reduced") == 1
+    assert "REDUCED" not in render_callback("Foo.t", None)
+
+
+@pytest.mark.parametrize("reduced", [[], ["REDUCED FAILED type mismatch ⟨0, rfl, trivial⟩"],
+                                     ["REDUCED " + "TIMEOUT (deterministic) timeout at `whnf`, maximum number of "
+                                      "heartbeats (200000) has been reached"],
+                                     ["REDUCED INCOMPLETE mvars=false sorry=true"],
+                                     ["REDUCED PROVED axioms=[propext, sorryAx]"],
+                                     ["REDUCED PROVED"]])
+def test_c2r_witness_that_does_not_survive_reduction_is_probe_only(reduced):
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + reduced, witness=True)
+    assert r.verdict == "PROBE_ONLY" and SURVIVE in r.detail, r.detail
+
+
+def test_c2r_reduction_timeout_note():
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED " + TIMEOUT], witness=True)
+    assert r.verdict == "PROBE_ONLY" and SURVIVE in r.detail and "timed out at maxHeartbeats 200000" in r.detail
+
+
+def test_c2r_reduction_never_upgrades():
+    red = ["REDUCED PROVED axioms=[propext]"]
+    assert classify(NOT_FALSE + GAVE_UP + WITNESS_OK + red, witness=True).verdict == "WITNESSED"
+    # every non-WITNESSED witness outcome stays what it was with a clean REDUCED line
+    for w, verdict in ((["WITNESS NOANTECEDENT"], "PROBE_ONLY"), (["WITNESS INCOMPLETE mvars=true sorry=false"],
+                       "PROBE_ONLY"), (["WITNESS PROVED axioms=[sorryAx]"], "PROBE_ONLY"),
+                       (["WITNESS " + TIMEOUT], "PROBE_ONLY"), (["WITNESS FAILED type mismatch"], "ERROR")):
+        assert classify(AESOP + UNABLE + w + red, witness=True).verdict == verdict, w
+    assert classify(OK[:2] + GAVE_UP + WITNESS_OK + red, witness=True).verdict == "VACUOUS"
+    assert classify(NOT_FALSE + REFUTE + WITNESS_OK + red, witness=True).verdict == "REFUTED"
+    # without a witness a REDUCED line means nothing (the callback prints none)
+    assert classify(NOT_FALSE + GAVE_UP + red).verdict == "PROBE_ONLY"
+
+
+def test_c2r_reduced_protocol_is_strict():
+    two = ["REDUCED PROVED axioms=[]", "REDUCED FAILED later"]
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + two, witness=True)
+    assert r.verdict == "ERROR" and "2 REDUCED result lines" in r.detail
+    r = classify(NOT_FALSE + GAVE_UP + WITNESS_OK + ["REDUCED BOGUS"], witness=True)
+    assert r.verdict == "ERROR" and "unknown status 'BOGUS'" in r.detail
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -758,3 +817,72 @@ def test_lean_n3_padded_def_wrapped_vacuous_is_never_witnessed(c2_module):   # M
     r = _probe(c2_module, "TpVac.pad", "⟨0, rfl, trivial⟩")
     assert r.verdict != "WITNESSED", r.detail
     print(f"N3 padded def-wrapped: {r.verdict} -- {r.detail}")
+
+
+# Step 6 Task 0 (C2 residual, Lean): a vacuous sub-proposition under a conclusion head the probe does not unfold. The
+# satisfiable pad `m = m` closes the NON-reducing ∃-closure, so before the reducing check each of these was WITNESSED
+# with `⟨0, rfl, trivial⟩` (the step-4 re-review's example is `idv`). Each theorem is true (the module compiles; `slowv`
+# is sorry'd, see there).
+C2R_DEFS = """
+namespace TpRed
+-- `slow n k` = sum of 2^n distinct leaves; written with `Nat.rec`, not a `match`, because the replay carries no matcher
+-- or smart-unfolding data for replayed definitions, so whnf there could not evaluate a structural `match` at all
+noncomputable def slow (n : ℕ) : ℕ → ℕ :=
+  Nat.rec (motive := fun _ => ℕ → ℕ) (fun k => k) (fun _ ih k => ih (2 * k) + ih (2 * k + 1)) n
+theorem idv : ∀ m : ℕ, m = m → id (∀ n : ℕ, n < 0 → n = 7) :=
+  fun _ _ n hn => absurd hn (Nat.not_lt_zero n)
+theorem andv : ∀ m : ℕ, m = m → (∀ n : ℕ, n < 0 → n = 7) ∧ True :=
+  fun _ _ => ⟨fun n hn => absurd hn (Nat.not_lt_zero n), trivial⟩
+theorem iffv : ∀ m : ℕ, m = m → ((∀ n : ℕ, n < 0 → n = 7) ↔ True) :=
+  fun _ _ => ⟨fun _ => trivial, fun _ n hn => absurd hn (Nat.not_lt_zero n)⟩
+theorem notv : ∀ m : ℕ, m = m → ¬¬(∀ n : ℕ, n < 0 → n = 7) :=
+  fun _ _ h => h fun n hn => absurd hn (Nat.not_lt_zero n)
+theorem letv : ∀ m : ℕ, m = m → let k := 0; ∀ n : ℕ, n < k → n = 7 :=
+  fun _ _ n hn => absurd hn (Nat.not_lt_zero n)
+theorem betav : ∀ m : ℕ, m = m → (fun P : Prop => P) (∀ n : ℕ, n < 0 → n = 7) :=
+  fun _ _ n hn => absurd hn (Nat.not_lt_zero n)
+theorem honest (m : ℕ) (h : m < 3) : id (∀ n : ℕ, n < 5 → n < 6) := fun n hn => by omega
+noncomputable def R (k : ℕ) : Prop := Nat.rec (motive := fun _ => Prop) True (fun _ _ => True) k
+-- true, but the kernel would have to evaluate `slow 40 0` to check a proof, so it is sorry'd (the replay allows sorry;
+-- no verdict reads the theorem's own proof). Binders before the `:` would make `sorry` itself whnf the target.
+theorem slowv : ∀ m : ℕ, m = m → R (slow 40 0) := sorry
+end TpRed
+"""
+PAD = "⟨0, rfl, trivial⟩"
+
+
+@pytest.fixture(scope="module")
+def c2r_module():
+    built = _build_module(Path(LEAN_ENV), C2R_DEFS)
+    yield built
+    _remove_module(built)
+
+
+@lean
+@pytest.mark.parametrize("theorem", ["TpRed.idv", "TpRed.andv", "TpRed.iffv", "TpRed.notv", "TpRed.letv",
+                                     "TpRed.betav"])
+def test_lean_c2r_vacuity_under_a_closed_head_is_never_witnessed(c2r_module, theorem):   # MUST-FAIL control
+    r = _probe(c2r_module, theorem, PAD)
+    assert r.verdict == "PROBE_ONLY" and "witness does not survive reduction" in r.detail, r.detail
+    print(f"C2R {theorem} with {PAD}: {r.verdict} -- {r.detail}")
+
+
+@lean
+def test_lean_c2r_honest_witness_survives_reduction(c2r_module):          # MUST-PASS control
+    # the pad alone does not survive (`n < 5` is hidden under `id`); a witness that also covers it does
+    r = _probe(c2r_module, "TpRed.honest", "⟨0, by norm_num, trivial⟩")
+    assert r.verdict == "PROBE_ONLY" and "witness does not survive reduction" in r.detail, r.detail
+    w = "by first | exact ⟨0, by norm_num, trivial⟩ | exact ⟨0, by norm_num, 0, by norm_num, trivial⟩"
+    r = _probe(c2r_module, "TpRed.honest", w)
+    assert r.verdict == "WITNESSED", r.detail
+
+
+@lean
+def test_lean_c2r_reduction_timeout_is_probe_only(c2r_module):            # MUST-FAIL control (fail closed)
+    # `unfoldHeads` opens the local `R` (delta and beta only, cheap); whnf of the result then reduces the recursor's
+    # major `slow 40 0` at default transparency (a matcher's major, as in `ite`, is reduced at `instances` only and
+    # stays stuck): 2^40 distinct closed terms, so whnf's cache does not help. The reducing step runs out of its
+    # heartbeat budget, and the witness that closed the non-reducing closure does not count
+    r = _probe(c2r_module, "TpRed.slowv", PAD)
+    assert r.verdict == "PROBE_ONLY" and "witness does not survive reduction" in r.detail, r.detail
+    assert "the reducing check timed out at maxHeartbeats 200000" in r.detail, r.detail
