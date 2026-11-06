@@ -295,10 +295,20 @@ Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self
   `sorryAx`. A possible `sorry` in the PrimeNumberTheoremAnd fork was the worry
   going in, and none reached the theorems. A must-reject tamper was rejected. The
   auditor inspected the logs.
-- **Negation probes and fingerprint: pending.** They need their own v4.34.0-rc2 env.
-  Telperion's Lean-side checks have so far run only on v4.35.0, so whether they run
-  on rc2 is still an open question.
-- **Next:** the probes and the fingerprint, in the sandbox. Then `record-replay`.
+- **Negation probes and fingerprint: not yet run successfully.** The open question
+  was whether Telperion's Lean-side checks run on rc2. The first run answered it: **no,
+  at Telperion `289f078`**. It ran on 2026-11-06, in the sandbox, in its own
+  v4.34.0-rc2 env (Mathlib `85e3a25e`), and all twelve probes and the fingerprint ended
+  in ERROR. They all had one cause, on Telperion's side: the replay template compared
+  two constants with `==` on `ConstantInfo`, and v4.34.0-rc2 derives no `BEq` for
+  `ConstantInfo` (v4.35.0 does). Nothing about the library was decided by that run.
+- **Fixed in `f84eb11`.** The comparison is now written out by hand. It checks every
+  field of every constructor and compares every expression with `Expr.equal`, so it is
+  at least as strict as v4.35.0's derived one. On rc2, the replay template and the
+  probe and fingerprint callbacks now compile and run (`tests/test_rc2_compile.py`), and
+  the six fingerprint pins come out the same as on v4.35.0.
+- **Next:** a new Telperion pin, a fresh assignment, and a rerun of the probes and the
+  fingerprint in the sandbox, on the owner's word. Then `record-replay`.
 
 ## Open items
 
