@@ -1,0 +1,15 @@
+name = "riemann-jensen"
+source = "https://github.com/AxiomMath/RiemannJensen"
+commit = "c1e023fa3ae7161219dde3dcb73f0c28ff972be2"
+toolchain = "leanprover/lean4:v4.35.0"
+licence = "Apache-2.0"
+challenge_module = "Challenge.Basic"
+solution_module = "Solution.Basic"
+challenge_sha256 = "eeae0da96ab3d5784522a5745dc46353b1a804c3ea32972be4040cd4cd73354c"
+theorems = [
+  "RiemannJensen.Challenge.exists_isDedekindZetaContinuation",
+  "RiemannJensen.Challenge.isDedekindZetaContinuation_unique",
+  "RiemannJensen.Challenge.dedekind_thm_main",
+  "RiemannJensen.Challenge.riemannJensen_main",
+]
+intended_use = "RH Track 1 (Jensen-Polya hyperbolicity); upstream for Arda's rh_jensen lab"
