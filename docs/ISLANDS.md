@@ -196,8 +196,8 @@ A lab that depends on an island must load it with `islands.require_verified(root
 name)`. That call returns the island only if `island check` has nothing to say, and
 otherwise raises `IslandError` with every problem, including for an unknown name.
 Self-reported islands are fine to register, list and talk about, but nothing may
-build on one. No lab in this repository calls `require_verified` yet, because
-neither island is verified yet.
+build on one. No lab in this repository calls `require_verified` yet; riemann-jensen is the
+first verified island (2026-11-06).
 
 ## The kernel policy and islands
 
@@ -264,11 +264,11 @@ current challenge declares one.
 
 ## The current islands
 
-Status as of 2026-11-05. Both are registered and both are **self-reported**.
+Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self-reported**.
 
 | island | source @ commit | toolchain | theorems | registered | status |
 |---|---|---|---|---|---|
-| riemann-jensen | [AxiomMath/RiemannJensen](https://github.com/AxiomMath/RiemannJensen) @ `c1e023fa` | v4.35.0 | 4 (`RiemannJensen.Challenge.*`) | 2026-11-05 | self-reported |
+| riemann-jensen | [AxiomMath/RiemannJensen](https://github.com/AxiomMath/RiemannJensen) @ `c1e023fa` | v4.35.0 | 4 (`RiemannJensen.Challenge.*`) | 2026-11-05 | verified (2026-11-06) |
 | zeta-zeros-v2 | [AxiomMath/ZetaZerosV2](https://github.com/AxiomMath/ZetaZerosV2) @ `1d7edeb4` | v4.34.0-rc2 (kernel-policy exception) | 12 (`ZetaZeros.Challenge.*`) | 2026-11-05 | self-reported |
 
 ### riemann-jensen
@@ -277,12 +277,15 @@ Status as of 2026-11-05. Both are registered and both are **self-reported**.
   v4.35.0 with nanoda at `NANODA_REV` `37cb87b7`, using our config, which matches
   the library's own. Both kernels accepted, and a must-reject tamper of the
   challenge was rejected. The auditor inspected the logs.
-- **Negation probes and fingerprint: pending.** A first run on 2026-11-01, with
-  Telperion before Task 2b, gave PROBE_ONLY for all four probes. The fingerprint
-  refused by design, on the local structure and the `_proof_n` theorems that the
-  declaration closure now handles.
-- **Next:** a rerun of the probes and the fingerprint at the current Telperion, in
-  the sandbox. Then `record-replay`.
+- **Negation probes and fingerprint: done.** A first run on 2026-11-01, with
+  Telperion before Task 2b, gave PROBE_ONLY for all four probes, and the fingerprint
+  refused by design, on the local structure and the `_proof_n` theorems. The rerun on
+  2026-11-06, in the sandbox at Telperion `289f078` (with the declaration closure),
+  gave PROBE_ONLY for all four probes and a fingerprint over all four theorems, all
+  on one build (one `olean_sha256`). The auditor inspected the bundle.
+- **Recorded:** `island record-replay` on 2026-11-06, with the sandbox session's
+  scratch path normalised to `$SCRATCH` in the archived log. `island check` reports
+  `verified`.
 
 ### zeta-zeros-v2
 
