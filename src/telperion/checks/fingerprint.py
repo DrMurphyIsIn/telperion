@@ -85,6 +85,9 @@ WHAT IS REFUSED (fail closed, ``FP-REFUSED``, a ValueError).
   * A refused replay (below): an untrusted module whose constants the kernel rejects, a target .olean that does not
     resolve to the file Python hashed (``body-olean-mismatch`` for a body), or a process import outside the trusted
     prefixes (``untrusted-library-module``).
+  * A NESTED local inductive (``inductive Rose | node : List Rose → Rose``), a known limitation of the replay: after
+    re-adding the declaration it finds no auxiliary recursor (``No such recursor Rose.rec_1``) and refuses, so the
+    statement never reaches the serializer. The serializer's own ``numNested > 0`` block is pinned without the replay.
 
 REPLAY ISOLATION (owner decision "Replay-isolate", Ruling 9). The fingerprint never imports an untrusted module. The
 targets' modules are loaded by ``lean_replay.run_replay``: the script imports only trusted modules from the PINNED env

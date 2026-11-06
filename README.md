@@ -398,6 +398,16 @@ not independent statement authorship.
 The full reference — the bridge API, the v4.32.0 pins, the sharded path, and the
 landrun/nanoda operational notes — is [`docs/COMPARATOR.md`](docs/COMPARATOR.md).
 
+The same machinery also judges libraries we didn't write. An **island** is an
+external Lean library (AxiomMath's RiemannJensen and ZetaZerosV2, so far)
+registered at one exact commit in `islands/<name>/`, together with the archived
+evidence of a sandboxed replay: Comparator with nanoda, the negation probe and the
+statement fingerprint. `telperion island check` re-judges that evidence every time,
+and a lab may only build on an island that comes back `verified`. The replays
+themselves never run on the owner's machine. How that works, what `verified` does
+and doesn't promise, and where the two current islands stand are all in
+[`docs/ISLANDS.md`](docs/ISLANDS.md).
+
 ## The workflow (enforced, not advisory)
 
 ```
