@@ -603,6 +603,13 @@ def cases (env : Environment) : Except String (List (String × ConstantInfo × C
     ("defn-hints", D d, D { d with hints := if d.hints == .opaque then .abbrev else .opaque }),
     ("defn-safety", D d, D { d with safety := if d.safety == .safe then .unsafe else .safe }),
     ("defn-all", D d, D { d with all := d.all ++ [`TpSame.extra] }),
+    ("same-defn-regular", D { d with hints := .regular 7 }, D { d with hints := .regular 7 }),
+    ("defn-hints-height", D { d with hints := .regular 7 }, D { d with hints := .regular 8 }),
+    ("defn-hints-abbrev-opaque", D { d with hints := .abbrev }, D { d with hints := .opaque }),
+    ("defn-hints-regular-abbrev", D { d with hints := .regular 7 }, D { d with hints := .abbrev }),
+    ("same-defn-partial", D { d with safety := .partial }, D { d with safety := .partial }),
+    ("defn-safety-safe-partial", D { d with safety := .safe }, D { d with safety := .partial }),
+    ("defn-safety-unsafe-partial", D { d with safety := .unsafe }, D { d with safety := .partial }),
     ("thm-value", T t, T { t with value := other }),
     ("thm-value-binder-name", T t, T { t with value := rename t.value }),
     ("thm-all", T t, T { t with all := [] }),
@@ -610,6 +617,8 @@ def cases (env : Environment) : Except String (List (String × ConstantInfo × C
     ("opaque-isUnsafe", O o, O { o with isUnsafe := true }),
     ("opaque-all", O o, O { o with all := [] }),
     ("quot-kind", Q q, Q { q with kind := .lift }),
+    ("same-quot-ind", Q { q with kind := .ind }, Q { q with kind := .ind }),
+    ("quot-kind-type-ind", Q { q with kind := .type }, Q { q with kind := .ind }),
     ("induct-numParams", I i, I { i with numParams := i.numParams + 1 }),
     ("induct-numIndices", I i, I { i with numIndices := i.numIndices + 1 }),
     ("induct-all", I i, I { i with all := i.all ++ [`TpSame.extra] }),
@@ -870,9 +879,13 @@ def test_k3_same_const_is_at_least_as_strict_as_the_derived_beq(lib, manifest):
     rows = [ln.split() for ln in r.lines if ln.startswith("CB-DERIVED ")]
     assert len(rows) == SAME_CASE_COUNT, r.lines
     for _, label, derived, ours in rows:
-        assert not (derived == "false" and ours == "true"), label      # never looser
-        # stricter only where `==` (Expr.eqv) ignores a binder's name or annotation
-        assert (derived == ours) or "-binder-" in label, (label, derived, ours)
+        assert not (derived == "false" and ours == "true"), label      # never looser: sameConst a b → a == b
+        if label.startswith("same-"):
+            assert (derived, ours) == ("true", "true"), label
+        elif "-binder-" in label:          # stricter only where `==` (Expr.eqv) ignores a binder's name or annotation
+            assert ours == "false", (label, derived, ours)
+        else:                              # every other single-field flip is rejected by BOTH
+            assert (derived, ours) == ("false", "false"), (label, derived, ours)
 
 
 @lean

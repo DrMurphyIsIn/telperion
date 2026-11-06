@@ -569,8 +569,9 @@ v4.34.1) derives no `BEq` for `ConstantInfo`, `InductiveVal`, `QuotKind` or `Quo
 `src/lean/Lean/Declaration.lean` (`ConstantVal` :95, `AxiomVal` :101, `DefinitionVal` :120, `TheoremVal` :142,
 `OpaqueVal` :156, `InductiveVal` :261, `ConstructorVal` :328, `RecursorRule` :348, `RecursorVal` :357, `QuotVal` :418,
 `ConstantInfo` :430). v4.34.0-rc2's file has the same fields; it differs only in those four `deriving` lines.
-- It is at least as strict as the derived instance. Names, name lists, numbers, flags, `ReducibilityHints` and
-  `DefinitionSafety` are compared with `==`, as the derived instance compares them. Every `Expr` (each type, value
+- It is at least as strict as the derived instance. Names, name lists, numbers and flags are compared with `==`, as
+  the derived instance compares them. The enums `ReducibilityHints`, `DefinitionSafety` and `QuotKind` are matched
+  constructor by constructor, with no wildcard for an equal pair. Every `Expr` (each type, value
   and recursor rule's right-hand side) is compared with `Expr.equal`, which takes binder names and annotations into
   account (`Lean/Expr.lean:814-819`). The derived instance uses `==`, that is `Expr.eqv`, which ignores binder
   annotations (`:804-812`).
@@ -588,6 +589,15 @@ def sameRules : List RecursorRule → List RecursorRule → Bool
   | r :: rs, r' :: rs' => sameRule r r' && sameRules rs rs'
   | _, _ => false
 
+def sameHints : ReducibilityHints → ReducibilityHints → Bool
+  | .opaque, .opaque | .abbrev, .abbrev => true
+  | .regular h, .regular h' => h == h'
+  | _, _ => false
+
+def sameSafety : DefinitionSafety → DefinitionSafety → Bool
+  | .unsafe, .unsafe | .safe, .safe | .partial, .partial => true
+  | _, _ => false
+
 def sameQuotKind : QuotKind → QuotKind → Bool
   | .type, .type | .ctor, .ctor | .lift, .lift | .ind, .ind => true
   | _, _ => false
@@ -596,7 +606,7 @@ def sameQuotKind : QuotKind → QuotKind → Bool
 def sameConst : ConstantInfo → ConstantInfo → Bool
   | .axiomInfo ⟨c, u⟩, .axiomInfo ⟨c', u'⟩ => sameCV c c' && u == u'
   | .defnInfo ⟨c, v, h, s, all⟩, .defnInfo ⟨c', v', h', s', all'⟩ =>
-    sameCV c c' && v.equal v' && h == h' && s == s' && all == all'
+    sameCV c c' && v.equal v' && sameHints h h' && sameSafety s s' && all == all'
   | .thmInfo ⟨c, v, all⟩, .thmInfo ⟨c', v', all'⟩ => sameCV c c' && v.equal v' && all == all'
   | .opaqueInfo ⟨c, v, u, all⟩, .opaqueInfo ⟨c', v', u', all'⟩ =>
     sameCV c c' && v.equal v' && u == u' && all == all'
