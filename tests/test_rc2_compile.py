@@ -3,7 +3,7 @@ whose ``ConstantInfo`` derives no ``BEq``.
 
 Island #19 (zeta-zeros-v2, pinned to rc2) failed at 289f078 on the template's ``a == b`` in ``sameConst``
 (``failed to synthesize instance of type class BEq ConstantInfo``), and the probe and fingerprint callbacks had never
-been compiled on rc2. The toolchain-only tests need just the rc2 toolchain (an env with no packages: trusted
+been compiled on rc2. The closure-audit callback is covered here too. The toolchain-only tests need just the rc2 toolchain (an env with no packages: trusted
 imports ``Lean`` only). The env tests need ``TELPERION_LEAN_ENV_RC2``, a built Mathlib v4.34.0-rc2 project (the
 negation probe's tactics and plausible come from Mathlib). Every Lean run goes through ``default_wrapper``
 (leanlock)."""
@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from telperion.checks import fingerprint
+from telperion.closure_audit import CLEAN_AXIOMS, AuditSpec, run_closure_audit_replayed
 from telperion.checks.lean_replay import (build_trusted_manifest, default_wrapper, pinned_env, run_replay)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -124,6 +125,25 @@ def test_rc2_declaration_ranges_script(bare_rc2, tmp_path):
     assert ranges["TpBox.t"][0] == 8 and ranges["TpS"][0] == 6 and len(sha) == 64, ranges
 
 
+@rc2
+def test_rc2_closure_audit_callback(bare_rc2, tmp_path):
+    env, manifest = bare_rc2
+    module, build = _compile(env, BODY, tmp_path / "c")
+    spec = AuditSpec(imports=(module,), targets=("TpBox.t", "TpS.t"), scan_patterns=("tpbox",),
+                     absent_module_prefixes=("TpNeg",))
+    res = run_closure_audit_replayed(spec, None, untrusted_paths=[build], trusted_env=env, manifest=manifest)
+    assert res.verdict == "PASS" and res.ok and res.isolated, (res.failures, res.raw_tail)
+    assert "4.34.0-rc2" in res.lean_version, res.lean_version
+    assert [(t.name, t.kind) for t in res.targets] == [("TpBox.t", "theorem"), ("TpS.t", "theorem")]
+    assert set(res.closure_axioms) <= set(CLEAN_AXIOMS) and res.nonlib_modules.get(module)
+    assert any(h["constant"].startswith("TpBox") for h in res.scan_hits), res.scan_hits
+    # a must-fail control: a `sorry` in the closure fails the audit
+    smod, sbuild = _compile(env, "theorem TpSorry.t : 1 = 2 := sorry\n", tmp_path / "s")
+    bad = run_closure_audit_replayed(AuditSpec(imports=(smod,), targets=("TpSorry.t",)), None,
+                                     untrusted_paths=[sbuild], trusted_env=env, manifest=manifest)
+    assert bad.verdict == "FAIL" and not bad.ok and bad.isolated, (bad.failures, bad.raw_tail)
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # With a built Mathlib v4.34.0-rc2 env: the negation probe (Mathlib tactics, plausible) and the fingerprint pins.
 @pytest.fixture(scope="module")
@@ -167,3 +187,15 @@ def test_rc2_env_negation_probe_callback(rc2_manifest, rc2_cases, theorem, witne
 def rc2_cases(tmp_path_factory):
     from test_negation_probe import CASES
     return _compile(Path(RC2_ENV), "import Mathlib\n" + CASES, tmp_path_factory.mktemp("rc2cases") / "c")
+
+
+@rc2_env
+def test_rc2_env_closure_audit_callback(rc2_manifest, tmp_path):
+    from test_lean_replay import HONEST
+    module, build = _compile(Path(RC2_ENV), HONEST, tmp_path / "c")
+    spec = AuditSpec(imports=(module,), targets=("TpHonest.sq_le", "TpHonest.Color.toNat"),
+                     scan_patterns=("color", "nat.le_mul"), absent_module_prefixes=("TpNeg", "Mathlib.Tactic.Linarith"))
+    res = run_closure_audit_replayed(spec, None, untrusted_paths=[build], trusted_env=RC2_ENV, manifest=rc2_manifest)
+    assert res.verdict == "PASS" and res.ok and res.isolated, (res.failures, res.raw_tail)
+    assert res.closure_size > 100 and set(res.closure_axioms) <= set(CLEAN_AXIOMS)
+    assert [t.name for t in res.targets] == ["TpHonest.sq_le", "TpHonest.Color.toNat"]
