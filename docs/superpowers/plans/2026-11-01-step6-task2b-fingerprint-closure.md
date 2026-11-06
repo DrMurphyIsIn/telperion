@@ -30,6 +30,7 @@ fingerprint per theorem.
    then serialized as `(prf <its type, fingerprinted recursively>)`. By proof irrelevance any two proofs of the same Prop are
    definitionally equal, so this is faithful. Every other non-library theorem stays REFUSED, so a user `theorem` cannot slip
    through. A non-library axiom, opaque or quot stays REFUSED.
+   **Amended by the Ruling (lead, 2026-11-05) below: every non-library theorem is accepted by its type.**
 3. **Injectivity and determinism.** The new tags must be self-delimiting and must not collide with the existing ones.
    Re-running gives byte-identical output. Two statements that differ only in a local inductive's constructor type, field
    count or parameter count must hash differently.
@@ -73,3 +74,26 @@ These are the step-6 Global Constraints, plus:
 - Run the full non-Lean test suite plus the Lean fingerprint tests. Report counts.
 - The report is your final message, ≤ 20 lines, with the full detail in `docs/superpowers/plans/...-REPORT.md` in the
   worktree.
+
+## Ruling (lead, 2026-11-05)
+This amends requirement 2 and test (e). It follows bb's plan review REVIEW_PLAN_FP_CLOSURE (0aefdf7b), pre-flag 1, which
+offered two options; this ruling takes the first. No owner decision is on record for it.
+
+- **Every non-library theorem is accepted by its TYPE**, `(prf <type>)`, whatever its name. No `_proof_<n>` regex and no
+  `Name.isInternal` test selects which. `match_<n>` is dropped: matchers are definitions and already unfold.
+- **Why it is exact: proof irrelevance.** Any two proofs of one Prop are definitionally equal, so the type is all the
+  kernel sees of a theorem.
+- **The premise is a Prop type, and the kernel enforces it.** The kernel rejects a theorem whose type is not a
+  proposition. bb probed this on v4.34.1 and v4.35.0: a Nat-typed `thmDecl` gives "(kernel) type of theorem … is not
+  a proposition". The replay re-adds every untrusted constant through that kernel. As defence in depth, `tpBuildCtx`
+  re-checks the type with `Meta.isProp` and refuses `non-prop-theorem`.
+- **Why no name test.** It would protect nothing: a refused `theorem lem` inlined into a definition is lifted by the
+  elaborator to `f._proof_1`, which any name test accepts. It would also make the hash depend on a name.
+- **Consequences.**
+  - Test (e) becomes a positive control. `⟨3, lem⟩` hashes as `⟨3, by omega⟩`, and a lemma of another type hashes as
+    another statement.
+  - Test (g) is answered by the same policy: `foo._proof_1` is accepted and hashed by its type, and `foo._proof_1 :
+    False` gives a different statement.
+- **What guards a sorry inside a proof.** It is invisible to the fingerprint. The guard is the proof-side axiom audit
+  (`CLEAN_AXIOMS` over the replay's `collectAxioms`). `Fingerprints.axioms` alone is not that guard: a mission statement
+  file carries its own `:= by sorry`, so `sorryAx` is always listed there (bb's review of 3c49ed0, R-2).

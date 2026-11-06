@@ -30,20 +30,32 @@ than their name:
     in a ``def f : Fin 5 := ⟨3, by omega⟩``, ``abstractNestedProofs``; ``riemannXi._proof_1`` in the riemann-jensen
     island) or a user declared it (``theorem lem : 3 < 5``, ``theorem foo._proof_1 : …``). It serializes as
     ``(prf <its type>)``, the type level-instantiated, unfolded and fingerprinted recursively; its name and its proof
-    never enter the hash. By proof irrelevance any two proofs of one Prop are definitionally equal, so the type is
-    all the kernel sees of it, and ``def f : Fin 5 := ⟨3, lem⟩`` hashes the same as ``⟨3, by omega⟩``. POLICY
-    (owner amendment 1 to the Task 2b plan, bb's review 0aefdf7b): every non-library theorem is accepted by type, no
-    name test (``_proof_<n>`` regex or ``Name.isInternal``) selects which. A name test would protect nothing: a user
-    refused on ``theorem lem`` inlines the proof and the elaborator names it ``f._proof_1``, which any name test
-    accepts; and it would make the hash depend on a NAME, which is exactly what the extension is for not doing. What
-    a proof's name cannot hide, its CONTENT cannot hide either: a false-typed lemma (``theorem bad : False``) can only
-    enter a statement as ``(prf (c _."False" []))``, a different statement from the honest one; and a ``sorry`` or
-    an axiom INSIDE a proof, invisible to the fingerprint (it hashes the type), is reported by the replay's axiom
-    collection over the whole target module in ``Fingerprints.axioms`` (``sorryAx``, the axiom's name), which the
-    fingerprint carries and the gate reads (negative control: a ``_proof_1`` that goes through a sorry'd lemma keeps
-    the honest hash and reports ``sorryAx``). A proof written with ``sorry`` directly is never lifted at all
-    (``abstractNestedProofs`` skips any proof with ``hasSorry``), so it stays inline in the definition's value,
-    unfolding puts ``sorryAx`` in the statement, and the statement is refused.
+    never enter the hash. PREMISE: a theorem's type is a Prop. Then by proof irrelevance any two proofs of it are
+    definitionally equal, the type is all the kernel sees of it, and ``def f : Fin 5 := ⟨3, lem⟩`` hashes the same
+    as ``⟨3, by omega⟩``. The premise holds for every ``thmInfo`` the serializer can meet, because the kernel admits
+    no theorem whose type is not a proposition ("(kernel) type of theorem … is not a proposition"; bb's probe on
+    v4.34.1 and v4.35.0) and the replay re-adds every untrusted constant through that kernel. The check is
+    load-bearing: without it a Nat-typed "theorem" with value 5 and one with value 6 would collapse into one
+    statement. So ``tpBuildCtx`` re-checks it (``Meta.isProp`` on the theorem's type, ``non-prop-theorem`` refuses),
+    defence in depth against a kernel or loader change. POLICY (lead ruling 2026-11-05, following bb's plan review
+    REVIEW_PLAN_FP_CLOSURE 0aefdf7b; it amends requirement 2 of the Task 2b plan, see the plan's Ruling section):
+    every non-library theorem is accepted by type, no name test (``_proof_<n>`` regex or ``Name.isInternal``)
+    selects which. A name test would protect nothing: a user refused on ``theorem lem`` inlines the proof and the
+    elaborator names it ``f._proof_1``, which any name test accepts; and it would make the hash depend on a NAME,
+    which is exactly what the extension is for not doing. What a proof's name cannot hide, its CONTENT cannot hide
+    either: a false-typed lemma (``theorem bad : False``) can only enter a statement as ``(prf (c _."False" []))``,
+    a different statement from the honest one. A ``sorry`` or an axiom INSIDE a proof is invisible to the
+    fingerprint (it hashes the type). The guard against it is the PROOF-SIDE axiom audit (``missions/provenance.py``,
+    ``CLEAN_AXIOMS``; the replay's ``collectAxioms`` over the constants it adds): any proof of the statement reaches
+    the definition's value, then the lemma, then ``sorryAx``. ``Fingerprints.axioms``, the same collection over the
+    fingerprinted module, shows the sorry only when the module has no sorry of its own (value mode, the tests'
+    bodies): a mission statement file ends in the statement's own ``:= by sorry`` and is fingerprinted with
+    ``allow_sorry``, so for a type-mode statement fingerprint ``sorryAx`` is ALWAYS in ``Fingerprints.axioms`` and
+    a sorry in a supporting lemma is indistinguishable from it there. (Negative control on a body with no sorry of
+    its own: a ``_proof_1`` that goes through a sorry'd lemma keeps the honest hash and reports ``sorryAx``.) A
+    proof written with ``sorry`` directly is never lifted at all (``abstractNestedProofs`` skips any proof with
+    ``hasSorry``), so it stays inline in the definition's value, unfolding puts ``sorryAx`` in the statement, and
+    the statement is refused.
 Tags ``grp``, ``ind``, ``ctor`` and ``prf`` are self-delimiting and distinct from every other tag, so the extended
 serialization stays injective. Block order is the serializer's own traversal order (first occurrence in the emitted
 text; a mutual group is one unit, the visited set is keyed by group), never hash or pointer order, so re-running gives
@@ -63,6 +75,8 @@ WHAT IS REFUSED (fail closed, ``FP-REFUSED``, a ValueError).
     recursor, projection structure: DECLARATION CLOSURE above) nor a theorem, since it would be hashed by its NAME
     alone: an axiom, opaque or quotient, and an ``irreducible_def`` (whose wrapper is an opaque). The same check
     runs on every type in the declaration closure.
+  * A non-library theorem whose type is not a Prop (``non-prop-theorem``): the kernel never admits one, so this is
+    defence in depth for the ``(prf …)`` premise above.
   * ``sorryAx`` anywhere in the statement or its declaration closure; a free or meta variable; a level parameter
     that is not the target's own (or, inside a block, the inductive's own).
   * An unfolded statement, declaration blocks and inlined auxiliary types included, of more than ``2^22`` nodes
@@ -164,11 +178,19 @@ partial def tpLevelSize (l : Level) : TpSizeM Nat := do
 
 /-- Step 6 Task 2b. A non-library THEOREM, whatever its name (`f._proof_1` lifted out of a definition's value by
 the elaborator, or a user's `lem`): hashed by its type alone, `(prf …)`, which by proof irrelevance is all the
-kernel sees of it. An axiom, opaque or quotient is not a proof and stays refused. -/
+kernel sees of it, PROVIDED the type is a Prop (`tpIsPropType`, re-checked in `tpBuildCtx`). An axiom, opaque or
+quotient is not a proof and stays refused. -/
 def tpIsProof (env : Environment) (n : Name) : Bool :=
   !tpIsLib env n && match env.find? n with
     | some (.thmInfo _) => true
     | _ => false
+
+/-- Whether `t` is a proposition (`Meta.isProp`): the premise of `(prf …)`. The kernel admits no theorem whose type
+is not one; `tpBuildCtx`'s re-check is defence in depth. -/
+def tpIsPropType (env : Environment) (t : Expr) : IO Bool := do
+  let (b, _) ← (Meta.isProp t).run'.toIO
+    { fileName := "<fingerprint>", fileMap := default, maxRecDepth := 100000 } { env }
+  return b
 
 /-- The mutual group (`InductiveVal.all`, in declaration order) of the non-library inductive that `n` belongs to:
 `n` is the inductive itself (also as a projection's structure), one of its constructors or one of its recursors.
@@ -288,9 +310,9 @@ def tpExpand (env : Environment) (e : Expr) : IO Expr := do
   return e'
 
 /-- The declaration closure of the expanded statement `e`, to a fixpoint: every non-library theorem it (or the
-closure) mentions, with its expanded type, and every local inductive group, with the expanded type of each inductive
-and constructor. Every expression in the closure is `tpOffense`-checked like the statement; the first offense found
-refuses (`.error "<what> <kind>"`). -/
+closure) mentions, with its expanded type (which must be a Prop: `non-prop-theorem` refuses), and every local
+inductive group, with the expanded type of each inductive and constructor. Every expression in the closure is
+`tpOffense`-checked like the statement; the first offense found refuses (`.error "<what> <kind>"`). -/
 partial def tpBuildCtx (env : Environment) (e : Expr) : IO (Except String TpCtx) := do
   let mut ctx : TpCtx := {}
   let mut work : Array Expr := #[e]
@@ -305,6 +327,7 @@ partial def tpBuildCtx (env : Environment) (e : Expr) : IO (Except String TpCtx)
       if tpIsProof env n then
         unless ctx.aux.contains n do
           let some ci := env.find? n | return .error s!"{n} missing-constant"
+          unless ← tpIsPropType env ci.type do return .error s!"{n} non-prop-theorem"
           let t ← tpExpand env ci.type
           ctx := { ctx with aux := ctx.aux.insert n (ci.levelParams, t) }
           work := work.push t

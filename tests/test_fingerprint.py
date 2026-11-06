@@ -436,7 +436,7 @@ def _refused(text: str, what: str, **kw):
 
 
 # Step 6 Task 2b: the declaration closure. A local inductive (structure, mutual group) is hashed by its declaration
-# block; a non-library theorem (an elaborator-lifted `_proof_<n>` or a user's lemma: amendment 1, no name test) by
+# block; a non-library theorem (an elaborator-lifted `_proof_<n>` or a user's lemma: lead ruling 2026-11-05, no name test) by
 # its type. Negative controls first: each must give a DIFFERENT hash or a REFUSED.
 BOX = "import Mathlib\nstructure Box where\n  val : ℕ\ntheorem t : ∀ b : Box, b.val = b.val := fun _ => rfl\n"
 GOOD = "import Mathlib\ninductive Good : ℕ → Prop\n  | mk : Good 5\n  | other : Good 6\ntheorem t : Good 5 := .mk\n"
@@ -477,7 +477,7 @@ def test_closure_d_constructor_order_swapped_differs():     # MUST-FAIL control 
 
 
 @lean
-def test_closure_e_user_theorem_through_definition_hashes_by_type():    # policy (amendment 1), was control (e)
+def test_closure_e_user_theorem_through_definition_hashes_by_type():    # policy (lead ruling 2026-11-05), was control (e)
     # every non-library theorem is accepted by its TYPE: `⟨3, lem⟩` and `⟨3, by omega⟩` (lifted to `f._proof_1` by
     # the elaborator) are one statement, and a differently typed lemma is another
     a = "import Mathlib\ntheorem lem : 3 < 5 := by omega\ndef f : Fin 5 := ⟨3, lem⟩\ntheorem t : f = f := rfl\n"
@@ -496,11 +496,13 @@ def test_closure_f_axiom_inside_a_structure_field_refused():     # MUST-FAIL con
              "def f : Fin 5 := ⟨3, lem⟩\ntheorem t : f = f := rfl\n", "ax axiom")
 
 
-# (g) policy (amendment 1): a user-declared theorem, `foo._proof_1` or any other name, IS accepted, because only
-# its TYPE is hashed (`(prf <type>)`): the name and the proof never enter the hash, so it contributes exactly what an
-# elaborator-generated proof of the same proposition would. A false-typed lemma cannot change what the statement
+# (g) policy (lead ruling 2026-11-05, following bb's REVIEW_PLAN_FP_CLOSURE 0aefdf7b): a user-declared theorem,
+# `foo._proof_1` or any other name, IS accepted, because only its TYPE is hashed (`(prf <type>)`): the name and the
+# proof never enter the hash, so it contributes exactly what an elaborator-generated proof of the same proposition
+# would. A false-typed lemma cannot change what the statement
 # says: a proof of `False` serializes as `(prf (c _."False" []))`, a different statement from the honest one; and
-# its `sorry` is reported in the replay's axioms, which the fingerprint result carries.
+# a sorry in its proof is invisible to the hash and is caught by the proof-side axiom audit; on a body with no
+# sorry of its own the replay's axioms (`Fingerprints.axioms`) show it too.
 FIN_T = "theorem t : (⟨3, {p}⟩ : Fin 5) = ⟨3, {p}⟩ := rfl\n"
 
 
@@ -522,7 +524,7 @@ def test_closure_g_user_named_theorem_hashes_by_type():
 
 
 @lean
-def test_closure_sorry_inside_lifted_proof_reported_in_axioms():    # MUST-FAIL control (amendment 2)
+def test_closure_sorry_inside_lifted_proof_reported_in_axioms():    # MUST-FAIL control (bb pre-flag 2)
     from telperion.checks.fingerprint import _fingerprint
     honest = "import Mathlib\ndef f : Fin 5 := ⟨3, by omega⟩\ntheorem t : f = f := rfl\n"
     # A sorry'd proof is NEVER lifted to `f._proof_1`: `abstractNestedProofs` skips any proof with `sorry`
@@ -541,7 +543,7 @@ def test_closure_sorry_inside_lifted_proof_reported_in_axioms():    # MUST-FAIL 
 
 
 @lean
-def test_closure_projection_only_field_emits_the_whole_block():     # amendment 3: `.proj S i` emits S's block
+def test_closure_projection_only_field_emits_the_whole_block():     # bb pre-flag 3: `.proj S i` emits S's block
     # `p.b` unfolds to `Expr.proj Pair 1 p`: Pair is reached ONLY through a projection, and the statement never
     # mentions field `a`; the block still carries it, so changing `a`'s type changes the hash
     a = ("import Mathlib\nstructure Pair where\n  a : ℕ\n  b : ℕ\n"
@@ -588,6 +590,43 @@ def test_closure_mutual_inductive_pair_fingerprints():                   # MUST-
     _differs(a, a.replace("Ev n → Od (n + 1)", "Ev n → Od (n + 2)"))     # Od only reachable through Ev's group
 
 
+# bb's review of 3c49ed0 (REVIEW_TASK2B_3c49ed0 6f8ef0b4), recommended tests.
+@lean
+def test_closure_nested_inductive_refused_by_the_replay():              # fail closed (known replay limitation)
+    # A NESTED local inductive never reaches the serializer: the kernel replay (lean_replay, the same logic as
+    # upstream Lean/Replay.lean in v4.35.0) refuses it, since its auxiliary recursor `Rose.rec_1` is not found after
+    # re-adding the declaration. The serializer's handling of `numNested > 0` is pinned without the replay, in
+    # `test_serializer_injectivity_cases` (NESTED line).
+    a = "import Mathlib\ninductive Rose where\n  | node : List Rose → Rose\ntheorem t : ∀ r : Rose, r = r := fun _ => rfl\n"
+    with pytest.raises(ValueError, match=r"replay refused.*No such recursor Rose\.rec_1"):
+        _fp(a, "t")
+
+
+@lean
+def test_closure_universe_polymorphic_structure():                      # MUST-PASS + MUST-FAIL (level numbering)
+    # the block numbers Wrap's levels by ITS OWN levelParams (positionally), the use site carries the instantiation
+    a = ("import Mathlib\nstructure Wrap.{u} (α : Type u) where\n  x : α\n"
+         "theorem t : ∀ w : Wrap ℕ, w.x = w.x := fun _ => rfl\n")
+    b = a.replace(".{u}", ".{v}").replace("Type u", "Type v")             # renamed level: same declaration
+    assert len(_fp(a, "t")) == 64 and _fp(a, "t") == _fp(b, "t")
+    poly = ("import Mathlib\nstructure Wrap.{u} (α : Type u) where\n  x : α\n"
+            "theorem t.{w} : ∀ (β : Type w) (v : Wrap.{w} β), v.x = v.x := fun _ _ => rfl\n")
+    fixed = poly.replace("theorem t.{w}", "theorem t").replace("Type w", "Type").replace("Wrap.{w}", "Wrap.{0}")
+    assert _fp(poly, "t") != _fp(fixed, "t")                     # (P 0) at the use site vs z
+    _differs(a, a.replace("x : α", "x : List α"))
+
+
+@lean
+def test_closure_theorem_type_mentions_local_inductive():               # MUST-PASS + MUST-FAIL (across kinds)
+    # `Box` is reached ONLY through `lem`'s TYPE (`(fun _ : Box → ℕ => 3 < 5) Box.val`, defeq to `3 < 5`): the proof
+    # constant's type gets fingerprinted, which notes Box's block, so changing Box's field type changes the hash
+    a = ("import Mathlib\nstructure Box where\n  val : ℕ\n"
+         "theorem lem : (fun _ : Box → ℕ => 3 < 5) Box.val := by show 3 < 5; omega\n"
+         "def f : Fin 5 := ⟨3, lem⟩\ntheorem t : f = f := rfl\n")
+    assert len(_fp(a, "t")) == 64
+    _differs(a, a.replace("val : ℕ", "val : ℤ").replace("Box → ℕ", "Box → ℤ"))
+
+
 # Requirement 4: hashes recorded by the f90d983 code (scratch baseline, 2026-11-01) for statements with no local
 # inductive and no auxiliary proof; the extension must not move them.
 PINS = {
@@ -619,7 +658,9 @@ def test_render_has_declaration_closure_tags():
     s = render_fingerprint_callback(["t"], N)
     for tag in ('"(prf "', '"(ind ', '" (ctor ', '" (grp"', "tpIsProof", "tpBuildCtx", "numNested"):
         assert tag in s, tag
-    assert "_proof_" in fingerprint.__doc__ and "(prf" in fingerprint.__doc__ and "amendment 1" in fingerprint.__doc__
+    assert "_proof_" in fingerprint.__doc__ and "(prf" in fingerprint.__doc__ and "lead ruling 2026-11-05" in fingerprint.__doc__
+    assert "amendment 1" not in fingerprint.__doc__ and "proof-side axiom audit" in " ".join(fingerprint.__doc__.lower().split())
+    assert "tpIsPropType" in s and "non-prop-theorem" in s
 
 
 @lean
@@ -741,6 +782,21 @@ def nat : Expr := .const ``Nat []
   for (label, x, y) in cases do
     IO.println s!"CASE {label} | {ser x == ser y} | {ser x} | {ser y}"
   IO.println s!"TOSTRING-COLLIDES {(Name.str .anonymous "a.b»").toString == (Name.str (.str .anonymous "a") "b»").toString}"
+open Elab Command in
+#eval show CommandElabM Unit from do
+  let env ← getEnv
+  let all := Expr.forallE `n nat (mkApp3 (.const ``Eq [levelOne]) nat (.bvar 0) (.bvar 0)) .default
+  for (label, e) in [("Nat", nat), ("True", Expr.const ``True []), ("forall-eq", all)] do
+    IO.println s!"PROP {label} {← tpIsPropType env e}"
+inductive TpRose where
+  | node : List TpRose → TpRose
+open Elab Command in
+#eval show CommandElabM Unit from do
+  let env ← getEnv
+  let st : Expr := .forallE `r (.const `TpRose []) (mkApp3 (.const ``Eq [levelOne]) (.const `TpRose []) (.bvar 0) (.bvar 0)) .default
+  match ← tpFingerprintExpr env [] st with
+  | .ok s => IO.println s!"NESTED {s}"
+  | .error e => IO.println s!"NESTED-ERR {e}"
 '''
     rc, out = run_lean([*default_wrapper(), "lake", "env", "lean", "--stdin"], Path(LEAN_ENV), 600, input=script)
     assert rc == 0, out
@@ -748,6 +804,14 @@ def nat : Expr := .const ``Nat []
     assert eq == {"binderInfo": False, "instImplicit": False, "letE nonDep": False, "quote in name": False,
                   "» in name": False, "str lit": False, "binder name ignored": True}, out
     assert "TOSTRING-COLLIDES true" in out          # why tpSerName does not use Name.toString
+    # the `(prf …)` premise re-check: a Nat-typed "theorem" is refused (non-prop-theorem), a proposition is not
+    assert "PROP Nat false" in out and "PROP True true" in out and "PROP forall-eq true" in out, out
+    # a nested inductive (bb's review of 3c49ed0): one block, numParams 0, numIndices 0, numNested 1, its one
+    # constructor with its nested field type
+    nested = re.search(r"^NESTED (.*)$", out, re.M)
+    assert nested, out
+    assert '(grp (ind _."TpRose" 0 (s (S z)) 0 0 1 ' in nested.group(1), nested.group(1)
+    assert ' (ctor _."TpRose"."node" 1 ' in nested.group(1) and nested.group(1).count("(grp") == 1, nested.group(1)
 
 
 # CLI (restored: the round-2 rewrite of this file dropped it), with --trusted-env (I-B).
