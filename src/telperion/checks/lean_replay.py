@@ -48,9 +48,10 @@ HOW (the Comparator / lean4checker approach). The generated script imports TRUST
    returns a ``Kernel.Environment``, and the only way back, ``Environment.ofKernelEnv`` at
    ``Lean/Environment.lean:643``, drops the import's realization context: ``omega`` then fails with
    ``Environment.realizeConst: realizedImportedConsts is empty``.)
-   - Afterwards every replayed constant must be found exactly as its ``.olean`` gives it (types and values compared
-     with ``Expr.equal``). The one exception is upstream's skip: a theorem identical in name, type, universe parameters
-     and ``all`` to one already present keeps the present one.
+   - Afterwards every replayed constant must be found exactly as its ``.olean`` gives it (``sameConst``: every field
+     of every constructor, each ``Expr`` compared with ``Expr.equal``; a hand-written comparison at least as strict as
+     v4.35.0's derived ``BEq ConstantInfo``, which v4.34.0-rc2 lacks). The one exception is upstream's skip: a theorem
+     identical in name, type, universe parameters and ``all`` to one already present keeps the present one.
    - The axioms of the target module's constants (``collectAxioms``) go on the OK line, and ``sorryAx`` among them is
      refused.
    - A kernel rejection or any refusal is ``REPLAY FAILED``;
@@ -561,14 +562,55 @@ def replay (newConstants : Std.HashMap Name ConstantInfo) (env : Environment) : 
 
 end Replay
 
-/-- `a` and `b` are the same constant: equal as `ConstantInfo`s (whose `BEq` compares Exprs up to binder
-annotations), with the type and the value also `Expr.equal`. -/
-def sameConst (a b : ConstantInfo) : Bool :=
-  a == b && a.type.equal b.type &&
-    match a.value? (allowOpaque := true), b.value? (allowOpaque := true) with
-    | some x, some y => x.equal y
-    | none, none => true
-    | _, _ => false
+/-!
+`sameConst` is the derived `BEq ConstantInfo` of Lean v4.35.0, written out by hand, because v4.34.0-rc2 (through
+v4.34.1) derives no `BEq` for `ConstantInfo`, `InductiveVal`, `QuotKind` or `QuotVal` (`deriving Inhabited` at
+`src/lean/Lean/Declaration.lean:302, 416, 420, 439`). The fields are those of v4.35.0
+`src/lean/Lean/Declaration.lean` (`ConstantVal` :95, `AxiomVal` :101, `DefinitionVal` :120, `TheoremVal` :142,
+`OpaqueVal` :156, `InductiveVal` :261, `ConstructorVal` :328, `RecursorRule` :348, `RecursorVal` :357, `QuotVal` :418,
+`ConstantInfo` :430). v4.34.0-rc2's file has the same fields; it differs only in those four `deriving` lines.
+- It is at least as strict as the derived instance. Names, name lists, numbers, flags, `ReducibilityHints` and
+  `DefinitionSafety` are compared with `==`, as the derived instance compares them. Every `Expr` (each type, value
+  and recursor rule's right-hand side) is compared with `Expr.equal`, which takes binder names and annotations into
+  account (`Lean/Expr.lean:814-819`). The derived instance uses `==`, that is `Expr.eqv`, which ignores binder
+  annotations (`:804-812`).
+- Every pattern is an anonymous constructor that names each field, so a toolchain that adds or drops a field does not
+  compile this script (fail closed) rather than skip the field. A constructor pair not matched below is unequal.
+-/
+def sameCV : ConstantVal → ConstantVal → Bool
+  | ⟨n, lps, t⟩, ⟨n', lps', t'⟩ => n == n' && lps == lps' && t.equal t'
+
+def sameRule : RecursorRule → RecursorRule → Bool
+  | ⟨c, nf, rhs⟩, ⟨c', nf', rhs'⟩ => c == c' && nf == nf' && rhs.equal rhs'
+
+def sameRules : List RecursorRule → List RecursorRule → Bool
+  | [], [] => true
+  | r :: rs, r' :: rs' => sameRule r r' && sameRules rs rs'
+  | _, _ => false
+
+def sameQuotKind : QuotKind → QuotKind → Bool
+  | .type, .type | .ctor, .ctor | .lift, .lift | .ind, .ind => true
+  | _, _ => false
+
+/-- `a` and `b` are the same constant: the same constructor, and every field equal (see above). -/
+def sameConst : ConstantInfo → ConstantInfo → Bool
+  | .axiomInfo ⟨c, u⟩, .axiomInfo ⟨c', u'⟩ => sameCV c c' && u == u'
+  | .defnInfo ⟨c, v, h, s, all⟩, .defnInfo ⟨c', v', h', s', all'⟩ =>
+    sameCV c c' && v.equal v' && h == h' && s == s' && all == all'
+  | .thmInfo ⟨c, v, all⟩, .thmInfo ⟨c', v', all'⟩ => sameCV c c' && v.equal v' && all == all'
+  | .opaqueInfo ⟨c, v, u, all⟩, .opaqueInfo ⟨c', v', u', all'⟩ =>
+    sameCV c c' && v.equal v' && u == u' && all == all'
+  | .quotInfo ⟨c, k⟩, .quotInfo ⟨c', k'⟩ => sameCV c c' && sameQuotKind k k'
+  | .inductInfo ⟨c, np, ni, all, ctors, nn, isRec, u, refl⟩,
+    .inductInfo ⟨c', np', ni', all', ctors', nn', isRec', u', refl'⟩ =>
+    sameCV c c' && np == np' && ni == ni' && all == all' && ctors == ctors' && nn == nn' && isRec == isRec' &&
+      u == u' && refl == refl'
+  | .ctorInfo ⟨c, ind, cidx, np, nf, u⟩, .ctorInfo ⟨c', ind', cidx', np', nf', u'⟩ =>
+    sameCV c c' && ind == ind' && cidx == cidx' && np == np' && nf == nf' && u == u'
+  | .recInfo ⟨c, all, np, ni, nmot, nmin, rules, k, u⟩, .recInfo ⟨c', all', np', ni', nmot', nmin', rules', k', u'⟩ =>
+    sameCV c c' && all == all' && np == np' && ni == ni' && nmot == nmot' && nmin == nmin' &&
+      sameRules rules rules' && k == k' && u == u'
+  | _, _ => false
 
 /-- Every replayed (not skipped) constant is in `after` exactly as `consts` gives it. The one exception is upstream's
 skip: a theorem identical in name, type, universe parameters and `all` to one in `before` keeps that one. -/

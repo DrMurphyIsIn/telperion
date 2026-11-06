@@ -542,6 +542,147 @@ def TelperionReplay.callback : TermElabM Unit := do
     TelperionReplay.line s!"CB-FID {label} {r}"
 """
 
+# rc2: `sameConst` replaces the derived `BEq ConstantInfo` (absent before v4.35.0). One base per constructor; each other
+# pair differs from its base in exactly ONE field, including binder-only changes inside an Expr. Needs only `Lean`.
+SAME_CASES = r"""namespace TpSame
+open Lean
+
+def rename : Expr → Expr
+  | .forallE _ t b bi => .forallE `tpRenamed t b bi
+  | .lam _ t b bi => .lam `tpRenamed t b bi
+  | e => e
+
+def reannot : Expr → Expr
+  | .forallE n t b bi => .forallE n t b (if bi == .default then .implicit else .default)
+  | .lam n t b bi => .lam n t b (if bi == .default then .implicit else .default)
+  | e => e
+
+def onHead (f : RecursorRule → RecursorRule) : List RecursorRule → List RecursorRule
+  | r :: rs => f r :: rs
+  | [] => []
+
+def other : Expr := mkConst ``Bool
+
+/-- (label, a, b): the `same-*` pairs are equal; every other pair differs in the one field its label names. -/
+def cases (env : Environment) : Except String (List (String × ConstantInfo × ConstantInfo)) := do
+  let get (n : Name) : Except String ConstantInfo := match env.find? n with
+    | some ci => pure ci
+    | none => throw s!"{n} missing"
+  let .axiomInfo ax ← get ``propext | throw "propext is not an axiom"
+  let .defnInfo d ← get ``Nat.add | throw "Nat.add is not a definition"
+  let .thmInfo t ← get ``Nat.add_comm | throw "Nat.add_comm is not a theorem"
+  let .quotInfo q ← get ``Quot.mk | throw "Quot.mk is not a quotient constant"
+  let .inductInfo i ← get ``Nat | throw "Nat is not an inductive"
+  let .ctorInfo c ← get ``Nat.succ | throw "Nat.succ is not a constructor"
+  let .recInfo r ← get ``Nat.rec | throw "Nat.rec is not a recursor"
+  let o : OpaqueVal := { name := `TpSame.o, levelParams := [], type := mkConst ``Nat, value := mkNatLit 0,
+                         isUnsafe := false, all := [`TpSame.o] }
+  let cv := d.toConstantVal
+  let A := ConstantInfo.axiomInfo
+  let D := ConstantInfo.defnInfo
+  let T := ConstantInfo.thmInfo
+  let O := ConstantInfo.opaqueInfo
+  let Q := ConstantInfo.quotInfo
+  let I := ConstantInfo.inductInfo
+  let C := ConstantInfo.ctorInfo
+  let R := ConstantInfo.recInfo
+  return [
+    ("same-axiom", A ax, A ax), ("same-defn", D d, D d), ("same-thm", T t, T t), ("same-opaque", O o, O o),
+    ("same-quot", Q q, Q q), ("same-induct", I i, I i), ("same-ctor", C c, C c), ("same-rec", R r, R r),
+    ("same-defn-rebuilt", D d, D { d with toConstantVal := { cv with type := cv.type } }),
+    ("kind", T t, A { toConstantVal := t.toConstantVal, isUnsafe := false }),
+    ("cv-name", D d, D { d with name := `TpSame.other }),
+    ("cv-levelParams", D d, D { d with levelParams := [`u] }),
+    ("cv-type", D d, D { d with type := other }),
+    ("cv-type-binder-name", D d, D { d with type := rename d.type }),
+    ("cv-type-binder-info", D d, D { d with type := reannot d.type }),
+    ("axiom-isUnsafe", A ax, A { ax with isUnsafe := !ax.isUnsafe }),
+    ("defn-value", D d, D { d with value := other }),
+    ("defn-value-binder-name", D d, D { d with value := rename d.value }),
+    ("defn-value-binder-info", D d, D { d with value := reannot d.value }),
+    ("defn-hints", D d, D { d with hints := if d.hints == .opaque then .abbrev else .opaque }),
+    ("defn-safety", D d, D { d with safety := if d.safety == .safe then .unsafe else .safe }),
+    ("defn-all", D d, D { d with all := d.all ++ [`TpSame.extra] }),
+    ("thm-value", T t, T { t with value := other }),
+    ("thm-value-binder-name", T t, T { t with value := rename t.value }),
+    ("thm-all", T t, T { t with all := [] }),
+    ("opaque-value", O o, O { o with value := mkNatLit 1 }),
+    ("opaque-isUnsafe", O o, O { o with isUnsafe := true }),
+    ("opaque-all", O o, O { o with all := [] }),
+    ("quot-kind", Q q, Q { q with kind := .lift }),
+    ("induct-numParams", I i, I { i with numParams := i.numParams + 1 }),
+    ("induct-numIndices", I i, I { i with numIndices := i.numIndices + 1 }),
+    ("induct-all", I i, I { i with all := i.all ++ [`TpSame.extra] }),
+    ("induct-ctors", I i, I { i with ctors := i.ctors.reverse }),
+    ("induct-numNested", I i, I { i with numNested := i.numNested + 1 }),
+    ("induct-isRec", I i, I { i with isRec := !i.isRec }),
+    ("induct-isUnsafe", I i, I { i with isUnsafe := !i.isUnsafe }),
+    ("induct-isReflexive", I i, I { i with isReflexive := !i.isReflexive }),
+    ("ctor-induct", C c, C { c with induct := `TpSame.other }),
+    ("ctor-cidx", C c, C { c with cidx := c.cidx + 1 }),
+    ("ctor-numParams", C c, C { c with numParams := c.numParams + 1 }),
+    ("ctor-numFields", C c, C { c with numFields := c.numFields + 1 }),
+    ("ctor-isUnsafe", C c, C { c with isUnsafe := !c.isUnsafe }),
+    ("rec-all", R r, R { r with all := r.all ++ [`TpSame.extra] }),
+    ("rec-numParams", R r, R { r with numParams := r.numParams + 1 }),
+    ("rec-numIndices", R r, R { r with numIndices := r.numIndices + 1 }),
+    ("rec-numMotives", R r, R { r with numMotives := r.numMotives + 1 }),
+    ("rec-numMinors", R r, R { r with numMinors := r.numMinors + 1 }),
+    ("rec-rules-order", R r, R { r with rules := r.rules.reverse }),
+    ("rec-rules-length", R r, R { r with rules := r.rules.dropLast }),
+    ("rec-rule-ctor", R r, R { r with rules := onHead (fun x => { x with ctor := `TpSame.other }) r.rules }),
+    ("rec-rule-nfields", R r, R { r with rules := onHead (fun x => { x with nfields := x.nfields + 1 }) r.rules }),
+    ("rec-rule-rhs", R r, R { r with rules := onHead (fun x => { x with rhs := other }) r.rules }),
+    ("rec-rule-rhs-binder-name", R r, R { r with rules := onHead (fun x => { x with rhs := rename x.rhs }) r.rules }),
+    ("rec-rule-rhs-binder-info", R r, R { r with rules := onHead (fun x => { x with rhs := reannot x.rhs }) r.rules }),
+    ("rec-k", R r, R { r with k := !r.k }),
+    ("rec-isUnsafe", R r, R { r with isUnsafe := !r.isUnsafe })]
+
+end TpSame
+"""
+
+SAME_CB = SAME_CASES + r"""
+open Lean Meta Elab Term in
+def TelperionReplay.callback : TermElabM Unit := do
+  match TpSame.cases (← getEnv) with
+  | .error e => TelperionReplay.line s!"CB-SAME-ERROR {e}"
+  | .ok cs =>
+    for (label, a, b) in cs do
+      TelperionReplay.line s!"CB-SAME {label} {TelperionReplay.sameConst a b} {TelperionReplay.sameConst b a}"
+  -- every constant of the environment equals itself (nothing is refused that the derived instance accepts)
+  let (n, bad) := (← getEnv).constants.fold (fun (n, bad) _ ci =>
+    (n + 1, if TelperionReplay.sameConst ci ci then bad else bad + 1)) ((0 : Nat), (0 : Nat))
+  TelperionReplay.line s!"CB-SAME-REFL {n} {bad}"
+"""
+
+# Where the toolchain derives `BEq ConstantInfo` (v4.35.0): `sameConst` never accepts what `==` rejects.
+DERIVED_CB = SAME_CASES + r"""
+open Lean Meta Elab Term in
+def TelperionReplay.callback : TermElabM Unit := do
+  match TpSame.cases (← getEnv) with
+  | .error e => TelperionReplay.line s!"CB-DERIVED-ERROR {e}"
+  | .ok cs =>
+    for (label, a, b) in cs do
+      TelperionReplay.line s!"CB-DERIVED {label} {a == b} {TelperionReplay.sameConst a b}"
+"""
+
+
+SAME_LABELS = re.findall(r'\("([a-z][A-Za-z0-9-]*)", [A-Z] ', SAME_CASES)
+SAME_CASE_COUNT = len(SAME_LABELS)
+
+
+def check_same_lines(lines: list[str]) -> None:
+    """The `SAME_CB` lines: every `same-*` pair equal both ways, every other pair unequal both ways, and every
+    constant equal to itself."""
+    same = [ln.split() for ln in lines if ln.startswith("CB-SAME ")]
+    labels = [s[1] for s in same]
+    assert labels == SAME_LABELS and len(set(labels)) == SAME_CASE_COUNT, lines
+    for _, label, ab, ba in same:
+        want = "true" if label.startswith("same-") else "false"
+        assert (ab, ba) == (want, want), (label, ab, ba)
+    refl = [ln.split() for ln in lines if ln.startswith("CB-SAME-REFL ")]
+    assert len(refl) == 1 and int(refl[0][1]) > 1000 and refl[0][2] == "0", lines
+
 
 def _wrapper(lib: Path | None = None) -> list[str]:
     return (["env", f"LEAN_PATH={lib}"] if lib else []) + lean_replay.default_wrapper()
@@ -709,6 +850,29 @@ def test_k_fidelity_comparison(lib, manifest):
     assert r.axioms == []
     assert r.lines == ["CB-FID same ok", "CB-FID value refused", "CB-FID binder refused", "CB-FID dedup ok",
                        "CB-FID missing refused"]
+
+
+@lean
+def test_k2_same_const_rejects_a_change_in_any_one_field(lib, manifest):       # MUST-REJECT control, per field
+    _build(lib, "TpTiny", TINY)
+    r = _replay(lib, manifest, "TpTiny", SAME_CB, trusted_imports=("Lean",))
+    assert r.status == "OK", (r.status, r.detail, r.output[-3000:])
+    check_same_lines(r.lines)
+
+
+@lean
+def test_k3_same_const_is_at_least_as_strict_as_the_derived_beq(lib, manifest):
+    if not pinned_env(LEAN_ENV).toolchain.startswith("leanprover/lean4:v4.35"):
+        pytest.skip("the env's toolchain derives no BEq ConstantInfo")
+    _build(lib, "TpTiny", TINY)
+    r = _replay(lib, manifest, "TpTiny", DERIVED_CB, trusted_imports=("Lean",))
+    assert r.status == "OK", (r.status, r.detail, r.output[-3000:])
+    rows = [ln.split() for ln in r.lines if ln.startswith("CB-DERIVED ")]
+    assert len(rows) == SAME_CASE_COUNT, r.lines
+    for _, label, derived, ours in rows:
+        assert not (derived == "false" and ours == "true"), label      # never looser
+        # stricter only where `==` (Expr.eqv) ignores a binder's name or annotation
+        assert (derived == ours) or "-binder-" in label, (label, derived, ours)
 
 
 @lean
