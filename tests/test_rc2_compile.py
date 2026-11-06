@@ -137,6 +137,18 @@ def test_rc2_closure_audit_callback(bare_rc2, tmp_path):
     assert [(t.name, t.kind) for t in res.targets] == [("TpBox.t", "theorem"), ("TpS.t", "theorem")]
     assert set(res.closure_axioms) <= set(CLEAN_AXIOMS) and res.nonlib_modules.get(module)
     assert any(h["constant"].startswith("TpBox") for h in res.scan_hits), res.scan_hits
+    # must-reject control: a planted change. The same spec, with `TpPlanted.lem` required absent, PASSes on BODY and
+    # FAILs once `TpS.t` is re-proved through the planted lemma
+    planted = BODY.replace("theorem TpS.t : TpS := fun _ => rfl",
+                           "theorem TpPlanted.lem : TpS := fun _ => rfl\n\ntheorem TpS.t : TpS := TpPlanted.lem")
+    assert planted != BODY
+    for body, verdict in ((BODY, "PASS"), (planted, "FAIL")):
+        pmod, pbuild = _compile(env, body, tmp_path / f"p{verdict}")
+        pres = run_closure_audit_replayed(AuditSpec(imports=(pmod,), targets=("TpS.t",),
+                                                    absent_constants=("TpPlanted.lem",)), None,
+                                          untrusted_paths=[pbuild], trusted_env=env, manifest=manifest)
+        assert pres.verdict == verdict and pres.isolated, (verdict, pres.failures, pres.raw_tail)
+        assert pres.absent_constants == {"TpPlanted.lem": verdict == "FAIL"}, pres.absent_constants
     # a must-fail control: a `sorry` in the closure fails the audit
     smod, sbuild = _compile(env, "theorem TpSorry.t : 1 = 2 := sorry\n", tmp_path / "s")
     bad = run_closure_audit_replayed(AuditSpec(imports=(smod,), targets=("TpSorry.t",)), None,
