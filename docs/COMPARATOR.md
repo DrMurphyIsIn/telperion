@@ -87,8 +87,9 @@ accepting a stuck type it shouldn't have), #14808 (a gap in the recursor checks)
 on its own, is the kind of bug that lets a false theorem through the kernel — exactly
 what Telperion's whole trust model exists to rule out. So we don't treat "the kernel
 accepted it" as good enough until the kernel in question is new enough to have all
-five fixes. `leanprover/lean4:v4.34.1` is the first tagged release that carries the
-complete set, and that's why it's the floor: `telperion.checks.kernel_policy.FLOOR`.
+five fixes. All five are already in `leanprover/lean4:v4.33.1` (and backported to v4.34.0-rc2); the
+floor, `leanprover/lean4:v4.34.1` (`telperion.checks.kernel_policy.FLOOR`), also carries the later runtime
+reference-count fixes (#15241, #15288, #15307).
 
 The policy itself (`src/telperion/checks/kernel_policy.py`, spec 5.1) walks every
 tracked `lean-toolchain` file in the repo (skipping anything under `.lake/`, since

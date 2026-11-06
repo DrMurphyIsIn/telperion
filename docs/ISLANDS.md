@@ -217,8 +217,8 @@ so it is on the exception list. Its reason says exactly what is true:
   #14808 and #14849 (and the follow-up #14843).
 - **It lacks v4.34.1's later runtime fixes,** such as the reference-count ones
   (#15241, #15288 and #15307).
-- **It is never built locally.** The island is verified only from a recorded
-  sandbox replay with nanoda.
+- **It is never built locally.** The island can be verified only from a
+  recorded sandbox replay with nanoda.
 
 The kernel policy's shrink-only check (`kernel-policy check --base REF`) reports
 this entry as "exception added" against any base that predates it. That report is
@@ -248,7 +248,8 @@ closure**:
   changes the hash; the same declaration in another module does not.
 - **A non-library theorem** is hashed by its type, never by its name or its proof.
   Proof irrelevance makes that sound, and it rests on one premise: a theorem's type
-  is a Prop. The kernel enforces that premise, and the fingerprint re-checks it.
+  is a Prop. The kernel enforces that premise (checked on v4.34.1 and v4.35.0), and the fingerprint's
+  `Meta.isProp` re-check carries it on toolchains where that was not checked, such as v4.34.0-rc2.
   A `sorry` *inside* such a proof is invisible to the fingerprint, which hashes the
   type. Guarding against it is the job of the proof-side axiom audit, which for an
   island is Comparator's axiom whitelist: a `sorryAx` reaching a theorem fails it.
