@@ -21,3 +21,41 @@ theorems = [
   "ZetaZeros.Challenge.thm_simple_or_critical_numeric",
 ]
 intended_use = "positive-proportion results (Lamzouri 67.25%); reference for RH emitter work"
+
+[replay]
+date = "2026-11-07"
+commit = "1d7edeb4e67096f9da1b37cd4b763e8b73886655"
+challenge_sha256 = "dc3cc10e3fb36af0c966a5de73e1ac37ff379825a627807f973920b396fda0b7"
+nanoda_rev = "37cb87b7e6cd6862ef2bd121faa9f4604f59fe96"
+comparator_tag = "v4.34.0-rc2"
+verdict = "pass"
+log_sha256 = "be8249fe4d4bd3d2b585686fb55880ec9456a6c968cf64618ceca7ee247e6328"
+fingerprint_sha256 = "052c3fafb46be9fe07e362c889982a35a56ea6bed3b28a3ea1088d9e2e38a864"
+
+[replay.probe_sha256]
+"ZetaZeros.Challenge.prop_simple_real_lower" = "0b88cbcd2b7d162b31ce2d1f1a4e2baeb779546bcc8127f38a00f56ef43c9d6b"
+"ZetaZeros.Challenge.prop_distinct_lower" = "dcabcddea3a5113bae952641d1a1da344121723b1452847a69f2df2128447f8f"
+"ZetaZeros.Challenge.prop_simple_plus_real_lower" = "1980e8bb13e848ccf658ba48a625b129a8bad2c8ffb28714a8b41c737def4de9"
+"ZetaZeros.Challenge.prop_simple_or_real_lower" = "041c3c2b7ad5f0fdfd53a8e8bf6807eb2504ad3564cc447f8275fae3b91da7ea"
+"ZetaZeros.Challenge.thm_simple" = "5bce287f29a79cf47b82c55f98e66560d1f49e22758fba62ed2361f694b96998"
+"ZetaZeros.Challenge.thm_distinct" = "e68e4cbfe233adfe5acc7bad1125e0c2ca33311ae44c96ff643d03b13d7dfdc6"
+"ZetaZeros.Challenge.thm_average" = "4737dc0d12572e1a01d191a65082b8c4d2db58eb41bb90e45175bb03f72357d0"
+"ZetaZeros.Challenge.thm_simple_or_critical" = "e61b1ef8f5589329565db6d35305051801e818bbdacf0a0f2a4aad3ab6c6d62a"
+"ZetaZeros.Challenge.thm_simple_numeric" = "6db0a15b7c57e76a4dc8515c231abfbe542ecb0267175e7f840f3bfce2497b8e"
+"ZetaZeros.Challenge.thm_distinct_numeric" = "c00827fc11a06b4f40a767d98d3618d8afca03b252bf28a29b5cd95263cfec7a"
+"ZetaZeros.Challenge.thm_average_numeric" = "a7862ff061664020593c0c6ea958c935d1340643ead8eb6f24d475b1447fea39"
+"ZetaZeros.Challenge.thm_simple_or_critical_numeric" = "7962a934926261ba31abe1d1d513fca04ea3e86a77d5dd51e124cad3361bb6c2"
+
+[replay.checks]
+"ZetaZeros.Challenge.prop_simple_real_lower" = { probe = "PROBE_ONLY", fingerprint = "b756a5401778089caa5bb3a9e78913eedcb132298f26619eb7b6a47b39040c5e" }
+"ZetaZeros.Challenge.prop_distinct_lower" = { probe = "PROBE_ONLY", fingerprint = "7ea7988ea2ce3c46b56a6d561f1209dafd801309bc32dbe1d39ea08128b75b5a" }
+"ZetaZeros.Challenge.prop_simple_plus_real_lower" = { probe = "PROBE_ONLY", fingerprint = "a15cb74cec32caa8bef7d22d485ad76a97be8efd9c8d9257e5c38de82c58ce04" }
+"ZetaZeros.Challenge.prop_simple_or_real_lower" = { probe = "PROBE_ONLY", fingerprint = "a06b2f775e0ef12dbb6552df2e299223f4f17dbd5ff387bbd2e1038a163b67b6" }
+"ZetaZeros.Challenge.thm_simple" = { probe = "PROBE_ONLY", fingerprint = "a167966cc3f803f73e4bd291ff626ad14826deaa5cc03d64afe3925a9acd12ff" }
+"ZetaZeros.Challenge.thm_distinct" = { probe = "PROBE_ONLY", fingerprint = "1862326fd8248c739d9c3475fea9a240be6f98efa654aee85bd25f030a814326" }
+"ZetaZeros.Challenge.thm_average" = { probe = "PROBE_ONLY", fingerprint = "291fec3d453ff4ec5a2ecab74bb79a50fea781e9e0ecaa3a0dab18e3a1d5c24e" }
+"ZetaZeros.Challenge.thm_simple_or_critical" = { probe = "PROBE_ONLY", fingerprint = "48a6e1d57bfb460823a04b90b121a0869e60d20c298cef130db13fb2090d5f50" }
+"ZetaZeros.Challenge.thm_simple_numeric" = { probe = "PROBE_ONLY", fingerprint = "071b40d09c94e6d41e47787812b5f8f18512e64b1478a51ca16842bfd3d1a70a" }
+"ZetaZeros.Challenge.thm_distinct_numeric" = { probe = "PROBE_ONLY", fingerprint = "23f3418c596baaa8cc27c4954427cb30e9af42452d238f3cdf1ced6e43bb160f" }
+"ZetaZeros.Challenge.thm_average_numeric" = { probe = "PROBE_ONLY", fingerprint = "8691619518a24d6216f560de8c5bc9e49a82b3d3f2f69055f0257ebac395b004" }
+"ZetaZeros.Challenge.thm_simple_or_critical_numeric" = { probe = "PROBE_ONLY", fingerprint = "be683c94c3ab67684934066d2033634b06222ead00dcdee0a9f408dc2d13daad" }
