@@ -2146,3 +2146,37 @@ def test_replay_copy_space_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(lean_replay.shutil, "disk_usage", lambda p: u)
     problem = lean_replay.copy_space_problem([f], tmp_path)
     assert problem and "TMPDIR" in problem and "1000" in problem and str(tmp_path) in problem
+
+
+def _replay_calls(tmp_path, kind):
+    """Run replay_island for an upstream or an overlay island with a recording runner; `(calls, solution, challenge)`."""
+    if kind == "upstream":
+        run = FakeRun()
+        _replay(tmp_path, run)
+        return run.calls, "Solution.Basic", "Challenge.Basic"
+    root = _ov_island(tmp_path / "repo")
+    tools = _ov_tools(tmp_path)
+    probes = {t: _probe_doc(t, module=OV_MODULE, source_sha256=OVERLAY_SHA) for t in OV_THEOREMS}
+    run = OverlayRun(head=OV_COMMIT, comparator="\n".join(_ov_log().splitlines()[4:-1]) + "\n", probes=probes,
+                     fp=_fp_doc(OV_THEOREMS, module=OV_MODULE, source_sha256=OVERLAY_SHA))
+    res = islands.replay_island(root, "demo", run=run, tools=tools, date="2026-11-06", leanlock=None)
+    assert res.verdict == "pass", res.problems
+    return run.calls, OV_SOLUTION, OV_MODULE
+
+
+@pytest.mark.parametrize("kind", ["upstream", "overlay"])
+def test_replay_call_order_never_compiles_the_solution_before_comparator(tmp_path, kind):
+    # R-1 (bb): in the recorded subprocess sequence, no step before Comparator names the solution module, the only
+    # build before it is `lake build <challenge>` (never a default-target `lake build`), and Comparator is the first
+    # step that can compile the solution
+    calls, solution, challenge = _replay_calls(tmp_path, kind)
+    cmp_idx = next(i for i, c in enumerate(calls) if "comparator" in c and "env" in c)
+    before = calls[:cmp_idx]
+    assert not any(solution in a for c in before for a in c), before
+    builds = [c[c.index("lake") + 1:] for c in before if "lake" in c and "build" in c]
+    assert builds == [["build", challenge]], builds
+    # nothing before Comparator could run lake or Lean on anything else: only git, the cache fetch and that build
+    for c in before:
+        assert c[0] == "git" or c[c.index("lake") + 1:] in (["exe", "cache", "get"], ["build", challenge]), c
+    # and the solution reaches no later step by name either (Comparator builds it from our config)
+    assert not any(solution in a for c in calls for a in c)
