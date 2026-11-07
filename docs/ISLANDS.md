@@ -291,7 +291,9 @@ pushed branch, but it never produced evidence: every replay so far was run by ha
 Between the build and Comparator, `island replay` records the sha256 of every file in
 the clone's build dirs (`prebuild.sha256`, with its digest on a `COMPARATOR_PREBUILD`
 line of the log). Each of those files must be unchanged after Comparator and the
-checks have run.
+checks have run. That means hashing every package's build dir twice, Mathlib's (about
+6 GB) included, and for weil Stacks' (about 15 GB) too. It is correct, and it costs
+minutes of disk reads per replay.
 
 In a sandbox that is run by hand, `telperion island place-overlay NAME --tree DIR` does
 the placing. It runs only git. After the last command,
@@ -542,7 +544,12 @@ This is the first overlay island. It was registered on 2026-11-06 by
 - **The replay's private copy goes to the temp dir.** The probe and the fingerprint copy
   their untrusted closure under `TMPDIR`, not under the project. A sandbox whose `/tmp`
   is a tmpfs puts that copy in RAM. `run_replay` refuses the copy up front when the temp
-  dir's filesystem cannot hold it (`copy_space_problem`). Point `TMPDIR` at disk.
+  dir's filesystem cannot hold it (`copy_space_problem`). When the copy fits but the
+  filesystem is a tmpfs, it warns on stderr (`copy_space_warning`), since the copy then
+  competes for RAM with the replay itself. Point `TMPDIR` at disk.
+- **Comparator's export goes to the temp dir too.** Comparator writes each module's
+  export to a temp file, which nanoda reads. For weil that is 5–15 GB. Point `TMPDIR`
+  at disk for the Comparator step as well, not only for the probe and the fingerprint.
 - **An overlay's replay closure is its definition modules' whole closure.** For weil
   that is about 17,800 Stacks modules, which the probe and the fingerprint each copy
   and kernel-replay. That costs hours and many GB per run, though the statements unfold

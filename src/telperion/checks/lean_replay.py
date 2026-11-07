@@ -92,6 +92,7 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -921,6 +922,15 @@ def copy_space_problem(files, dest) -> str | None:
             "with room for it")
 
 
+def copy_space_warning(dest) -> str | None:
+    """N-2 (bb, REVIEW_OVERLAY_R1R2_FIX): a warning when the run dir *dest* is on a tmpfs, even though the copy fits:
+    the copy then lives in RAM, next to a replay that may be given most of it (`--memory-mb`). None otherwise."""
+    if _fs_type(dest) != "tmpfs":
+        return None
+    return (f"warning: the private copy of the untrusted closure is on a tmpfs ({dest}), so it takes RAM from the "
+            "replay; set TMPDIR to a disk-backed directory")
+
+
 def run_replay(target_module, callback_src: str, *, project=None, untrusted_paths=(),
                trusted_imports=("Mathlib",), trusted_env=None, manifest=None, elan_home=None,
                wrapper: list[str] | None = None, timeout: int = 1800, heartbeats: int = 200000,
@@ -1006,6 +1016,9 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
         problem = copy_space_problem([f for _, f in closure], rdir)
         if problem:
             return ReplayResult("ERROR", problem, [], "")
+        warning = copy_space_warning(rdir)
+        if warning:
+            print(warning, file=sys.stderr)
         copies: dict[str, tuple[str, str]] = {}            # copy realpath -> (module, part)
         main_copy: dict[str, str] = {}
         try:

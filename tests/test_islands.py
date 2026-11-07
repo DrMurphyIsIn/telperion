@@ -2180,3 +2180,13 @@ def test_replay_call_order_never_compiles_the_solution_before_comparator(tmp_pat
         assert c[0] == "git" or c[c.index("lake") + 1:] in (["exe", "cache", "get"], ["build", challenge]), c
     # and the solution reaches no later step by name either (Comparator builds it from our config)
     assert not any(solution in a for c in calls for a in c)
+
+
+def test_replay_copy_on_tmpfs_warns_even_when_it_fits(tmp_path, monkeypatch):
+    # N-2 (bb): a tmpfs temp dir puts the copy in RAM; warn even though it fits, say nothing on disk
+    from telperion.checks import lean_replay
+    monkeypatch.setattr(lean_replay, "_fs_type", lambda p: "tmpfs")
+    w = lean_replay.copy_space_warning(tmp_path)
+    assert w and "tmpfs" in w and "TMPDIR" in w
+    monkeypatch.setattr(lean_replay, "_fs_type", lambda p: "ext4")
+    assert lean_replay.copy_space_warning(tmp_path) is None
