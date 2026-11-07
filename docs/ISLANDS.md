@@ -16,8 +16,8 @@ fingerprint). Telperion keeps that evidence and re-checks it every time anyone a
 about the island. A lab may build on an island only once the evidence is complete.
 
 This page covers what is in a registration, the commands, what `verified` does and
-does not mean, how islands fit with the kernel policy, and the two islands that are
-registered today.
+does not mean, overlay islands (for a library that ships no challenge module), how
+islands fit with the kernel policy, and the two islands that are registered today.
 
 ## Where replays run: a sandbox, never this machine
 
@@ -49,6 +49,7 @@ islands/<name>/
   island.toml       the pin (source, commit, toolchain, licence), the challenge module and
                     its sha256, the intended theorems, and, once a replay passes, [replay]
   challenge.lean    a byte copy of the library's challenge file; its sha256 is in island.toml
+                    (for an overlay island: the overlay the lead wrote; see "Overlay islands")
   comparator.json   OUR Comparator config: the three standard axioms, enable_nanoda,
                     exactly the island's theorems
   replay/           the archived evidence of the passing replay (absent until one is recorded):
@@ -80,6 +81,9 @@ A few details matter here.
 
 ```
 telperion island add NAME --source URL --commit SHA --use TEXT [--licence SPDX]
+telperion island add NAME --source URL --commit SHA --use TEXT [--licence SPDX] \
+    --overlay FILE --overlay-path PATH --overlay-import MODULE ... --solution-module MODULE
+telperion island place-overlay NAME --tree DIR [--check-only]   # git only; for a sandbox run by hand
 telperion island record-replay NAME --log FILE --probe-json FILE ... --fingerprint-json FILE \
     --date YYYY-MM-DD --comparator-tag vX.Y.Z[-rcN] [--scratch-prefix PATH]
 telperion island list
@@ -198,6 +202,173 @@ otherwise raises `IslandError` with every problem, including for an unknown name
 Self-reported islands are fine to register, list and talk about, but nothing may
 build on one. No lab in this repository calls `require_verified` yet; riemann-jensen is the
 first verified island (2026-11-06).
+
+## Overlay islands: a challenge the lead writes
+
+Both of the first two islands came with a challenge module of their own:
+`Challenge/Basic.lean`, which states the theorems and proves nothing, plus a
+`Comparator/comparator.json` that names it. Some libraries ship neither. AxiomMath's
+Weil is one of them. Its main theorems sit in the middle of proof files, next to
+their proofs, and there is no file that only states them.
+
+For such a library the owner chose, on 2026-11-06, what we call **option A**. The
+Telperion lead writes the statement-only module, an **overlay**, and Telperion pins it
+by sha256. At replay the overlay is placed into a fresh copy of the pinned tree, and
+Comparator treats it as the challenge.
+
+### What the registration says
+
+An overlay island's island.toml has four keys that an ordinary island does not have:
+
+```toml
+challenge_source = "overlay"
+challenge_module = "Weil.TelperionChallenge"       # the overlay's module, from its path
+solution_module = "Weil.AlgebraicGeometry.EtaleCohomology.Trace.WeilRiemannHypothesisForm"
+overlay_path = "Weil/TelperionChallenge.lean"      # where the overlay goes in the tree
+overlay_sha256 = "012753bf..."                     # in place of challenge_sha256
+overlay_imports = ["Weil.Definitions"]             # the upstream definition modules it may import
+```
+
+`overlay_sha256` is the sha256 of `islands/<name>/challenge.lean`, which for an overlay
+island is the overlay itself. It is called `overlay_sha256`, not `challenge_sha256`,
+everywhere it appears: in island.toml, in `[replay]`, and in the log's first line. That
+way nobody can mistake the lead's file for a byte copy of the library's.
+
+`overlay_imports` is the lead's declaration of which upstream modules are *definition*
+modules. An overlay may import Mathlib and these modules, and nothing else. The tool
+can enforce that list, but it cannot decide what belongs on it, so bb checks the list
+against the library.
+
+### What the tooling enforces
+
+On every `island check`, from the text of challenge.lean alone, with nothing built:
+
+- **The sha256 matches.** challenge.lean must have the recorded `overlay_sha256`. An edit
+  drops the island to self-reported, as it would for an upstream island.
+- **It is statement-only.** After `module` and the imports, the overlay may contain only
+  `namespace`, `section` and `end`, `open`, `universe`, `variable`, `omit ... in`, and
+  theorems. Every theorem must be proved exactly `:= by sorry`. It may contain no `def`,
+  `instance`, `abbrev`, attribute, `set_option`, macro, notation, `axiom`, `#eval`, and
+  no string literal at all. That last rule leaves out tags such as `@[weil "..."]`, which
+  are not part of any statement anyway.
+- **Its imports are Mathlib plus exactly `overlay_imports`.**
+- **It declares exactly the island's theorems,** each one once and under its fully
+  qualified name, and each carries a comment of the form
+  `-- upstream: <path>:<line>` right above it. The comment names the line of the
+  library's own declaration.
+
+At `island add --overlay`, and again every time the overlay is placed, it is checked
+against the pinned tree. This is text only; nothing is built.
+
+- **Each pointer must name a `theorem` with the same fully qualified name,** and with the
+  same statement text, whitespace aside. The statement text runs from `theorem` to the
+  `:=` that ends the statement.
+- **The overlay must import no module that declares one of its theorems,** directly or
+  through the library's own import graph.
+- **The solution module must import every module that declares one of the theorems.**
+- **The overlay's path must not exist in the tree.** An overlay is always an *added*
+  file, never a replacement for one of the library's files. Its directory must exist, and
+  must be under the solution module's root, so that `lake build` finds it in the library.
+
+### Placing the overlay, and the clean-tree guard
+
+The overlay only ever goes into a **fresh** copy of the pin: a git checkout whose HEAD is
+the commit and whose working tree passes the same strict clean check that `island add`
+uses (see "`island add`" above). Once the overlay is placed, the tree must be exactly
+the pin plus that one file. The status check must print exactly `?? <overlay_path>` and
+nothing else, and the placed file must have the registered sha256. Anything else is
+refused: a second untracked file, an edited library file, an overlay that is already
+there (a reused tree), or a placed overlay that was edited.
+
+`island replay` does all of this itself, before it builds anything. It then builds the
+solution and the challenge by name (`lake build <solution> <overlay module>`), because
+the overlay is in no default target.
+
+In a sandbox that is run by hand, `telperion island place-overlay NAME --tree DIR` does
+the placing. It runs only git. After the last command,
+`telperion island place-overlay NAME --tree DIR --check-only` checks that the tree is
+still exactly the pin plus the overlay.
+
+The log's first line binds the overlay rather than an upstream challenge:
+
+```
+ISLAND-HEADER island=weil commit=<pin> overlay_sha256=<the overlay's sha256>
+```
+
+`evaluate_replay` refuses a `challenge_sha256=` header for an overlay island, an
+`overlay_sha256=` header for an upstream island, and a sha256 other than the registered
+one. A run on an edited overlay therefore cannot be recorded against the registered
+one.
+
+### How Comparator is set up
+
+- **The challenge module is the overlay** (`Weil.TelperionChallenge`).
+- **The solution module is an upstream module that imports the proof of every theorem.**
+  For Weil this is `WeilRiemannHypothesisForm`, which imports `ZetaRationality`. A
+  narrower module also means a smaller build than the library's root module, which
+  imports all 980 files.
+- **Our comparator.json is the config,** as for every island: the three axioms,
+  nanoda on, and exactly the theorems.
+
+The theorem names are the same in the challenge and in the solution, because Comparator
+matches theorems by name. The two declarations never clash, because they are never in
+one environment:
+
+- The overlay imports only definition modules, and their import closure contains no
+  module that declares any of the theorems. `upstream_problems` checks that against
+  the library's own import graph, and if a clash slipped past that check, the overlay
+  would fail to build, which fails closed.
+- Nothing imports the overlay. It is in no library module's imports, and the library's
+  root module does not list it.
+- Comparator builds the two modules separately, and exports each one with
+  `lean4export` in a process of its own. The negation probe and the fingerprint replay
+  only the overlay's closure.
+
+Here is what Comparator then establishes. Each of the overlay's statements has exactly
+the type of the solution's theorem of the same name. Every definition those types
+mention is the same constant on both sides, and comes from the same upstream modules.
+And the solution's proofs pass both kernels with only the three axioms. An overlay
+that changes a statement fails this. It fails earlier too, at `island add` and at
+placement, where the statement text is compared with upstream's
+(`tests/test_islands.py`, `test_overlay_add_refuses_and_writes_nothing`).
+
+### The trust model
+
+**The overlay is a trusted statement layer.** The lead writes it, and nobody runs it as
+evidence of anything. What it contributes is the *choice* of statements: which
+theorems, and the claim that each one says what the island's description says. The
+tooling makes the overlay faithful to the library, in that it has the same names, the
+same statement text and, at replay, the same types. It cannot make the library's
+statements mean what we think they mean. That is the reviewer's job, exactly as it is
+for a library's own challenge file.
+
+**bb checks an overlay against upstream, statement by statement,** before any replay is
+assigned:
+
+1. **Each theorem's `-- upstream:` line is the library's declaration,** and the overlay's
+   text from `theorem` to `:=` is identical to upstream's.
+2. **The context is upstream's.** That means the `open`, `universe` and `variable`
+   commands, and any `omit ... in`, that are in scope at upstream's declaration. The
+   tool does not check these, and Comparator would catch a difference only as a type
+   mismatch, so bb compares them by eye.
+3. **Every module in `overlay_imports` is a definition module.** It must declare
+   definitions and the lemmas their definitions need, not the theorems themselves.
+4. **The definitions that the statements unfold to mean what the island's description
+   claims.** For Weil's point-count statements that is `zetaSeries`, then
+   `pointCountOfDegree`, then `pointCount`, then
+   `Stacks.EtaleCohomology.fieldValuedPoints`, which is a Mathlib-only subtype of
+   morphisms `Spec K ⟶ X`.
+
+**What the overlay adds to the residual gaps above.** An overlay changes nothing about
+what `verified` means. What it adds is one more file whose content is a matter of
+judgement, and so one more thing that bb reviews.
+
+**One cost of an overlay.** The overlay's import closure is the closure of its
+definition modules, and the probe and the fingerprint kernel-replay that whole closure.
+For Weil, `Weil.Definitions` imports `StacksFrontier`'s ℓ-adic trace formula. Its
+closure is therefore about 17,800 modules of AxiomMath/Stacks, roughly 5.3 million
+lines, even though the two statements unfold only to Mathlib and a few small
+definitions.
 
 ## The kernel policy and islands
 

@@ -72,6 +72,23 @@ package `ten-proofs`, module `Permanent`). The Comparator matches theorems by
 fully-qualified name, so challenge and solution are different *modules* under the
 same names.
 
+The same holds for an island's **overlay challenge** (option A, see
+[ISLANDS.md](ISLANDS.md), "Overlay islands"). When a library ships no challenge module,
+the challenge is a statement-only file that the Telperion lead writes, placed into a
+fresh copy of the library at replay. The solution is the library's own module that
+imports the proofs. The overlay declares each theorem under the library's own name,
+and the two declarations never meet:
+
+- the overlay imports only the library's definition modules, which do not
+  (transitively) import the theorems;
+- nothing imports the overlay;
+- Comparator exports the challenge and the solution in separate `lean4export`
+  processes.
+
+Here the namespace is the library's choice, and may equal its package name, as
+`Weil` does. The landrun `--` gotcha below is what made that matter, so the bwrap
+wrapper or the shim must preserve `--`.
+
 ## Kernel policy
 
 Comparator's second kernel is one of our two defenses against a bad Lean kernel. The
