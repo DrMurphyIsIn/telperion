@@ -130,7 +130,7 @@ it checked is verified.
 ### `island replay`
 
 `island replay` does the whole replay itself:
-1. `lake exe cache get` and `lake build` in the clone;
+1. `lake exe cache get`, and `lake build` of the challenge module only, in the clone;
 2. Comparator with the pinned nanoda;
 3. the negation probe for each theorem;
 4. the fingerprint.
@@ -281,8 +281,17 @@ refused: a second untracked file, an edited library file, an overlay that is alr
 there (a reused tree), or a placed overlay that was edited.
 
 `island replay` does all of this itself, before it builds anything. It then builds the
-solution and the challenge by name (`lake build <solution> <overlay module>`), because
-the overlay is in no default target.
+challenge only, by name (`lake build <overlay module>`). It never compiles the solution
+itself: Comparator does that, after it has built and exported the challenge. That is
+Comparator's assumption 2: no potentially adversarial file was compiled before it ran
+(bb, REVIEW_OVERLAY_WEIL_236dea6, R-1). The same holds for upstream islands. Before
+2026-11-07, `island replay` ran a default-target `lake build`, which could compile the
+solution first, depending on the library's `defaultTargets`. That version is in the
+pushed branch, but it never produced evidence: every replay so far was run by hand.
+Between the build and Comparator, `island replay` records the sha256 of every file in
+the clone's build dirs (`prebuild.sha256`, with its digest on a `COMPARATOR_PREBUILD`
+line of the log). Each of those files must be unchanged after Comparator and the
+checks have run.
 
 In a sandbox that is run by hand, `telperion island place-overlay NAME --tree DIR` does
 the placing. It runs only git. After the last command,
@@ -530,6 +539,10 @@ This is the first overlay island. It was registered on 2026-11-06 by
 - **Nested inductives** are refused by the fingerprint's replay (see above).
 - **The trusted env's digest** is not yet recorded in `[replay]` (see "What
   `verified` does not mean").
+- **The replay's private copy goes to the temp dir.** The probe and the fingerprint copy
+  their untrusted closure under `TMPDIR`, not under the project. A sandbox whose `/tmp`
+  is a tmpfs puts that copy in RAM. `run_replay` refuses the copy up front when the temp
+  dir's filesystem cannot hold it (`copy_space_problem`). Point `TMPDIR` at disk.
 - **An overlay's replay closure is its definition modules' whole closure.** For weil
   that is about 17,800 Stacks modules, which the probe and the fingerprint each copy
   and kernel-replay. That costs hours and many GB per run, though the statements unfold

@@ -2251,6 +2251,56 @@ def _json_output(text: str) -> tuple[Optional[dict], bytes]:
     return (doc, (lines[-1] + "\n").encode("utf-8")) if isinstance(doc, dict) else (None, b"")
 
 
+#: Where `island replay` lists the challenge build's artifacts (sha256 and path) before Comparator runs.
+PREBUILD_SNAPSHOT = "prebuild.sha256"
+#: Packages whose oleans the trusted env supplies: never handed to the replay as untrusted dirs.
+_ENV_PACKAGES = frozenset({"mathlib", "batteries", "aesop", "qq", "proofwidgets", "plausible", "leansearchclient",
+                           "importgraph", "cli"})
+
+
+def _build_lib_dirs(src: Path) -> list[Path]:
+    """`<src>/.lake/build/lib/lean` and every `<src>/.lake/packages/<p>/.lake/build/lib/lean` that exists."""
+    dirs = [Path(src) / ".lake" / "build" / "lib" / "lean"]
+    pkgs = Path(src) / ".lake" / "packages"
+    if pkgs.is_dir() and not pkgs.is_symlink():
+        dirs += sorted(p / ".lake" / "build" / "lib" / "lean" for p in pkgs.iterdir())
+    return [d for d in dirs if d.is_dir() and not d.is_symlink()]
+
+
+def _package_olean_dirs(src: Path) -> list[Path]:
+    """The build dirs of the clone's packages that the trusted env does not supply (Stacks for weil): the probe and
+    the fingerprint replay the challenge's closure from them as untrusted dirs, besides the clone's own."""
+    root = Path(src) / ".lake" / "packages"
+    return [d for d in _build_lib_dirs(src) if d.is_relative_to(root)
+            and d.relative_to(root).parts[0].lower() not in _ENV_PACKAGES]
+
+
+def _build_snapshot(src: Path) -> dict[str, str]:
+    """sha256 of every file under the clone's build dirs (`_build_lib_dirs`), by path relative to the clone."""
+    out = {}
+    for d in _build_lib_dirs(src):
+        for dirpath, _, files in os.walk(d):
+            for f in files:
+                p = Path(dirpath) / f
+                if p.is_file() and not p.is_symlink():
+                    h = hashlib.sha256()
+                    with open(p, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(chunk)
+                    out[str(p.relative_to(src))] = h.hexdigest()
+    return out
+
+
+def _snapshot_problems(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """R-1: every artifact of the challenge build must be unchanged after Comparator built the solution and the checks
+    ran; new files (the solution's) are expected."""
+    changed = sorted(r for r in before if after.get(r) != before[r])
+    if not changed:
+        return []
+    return [f"{len(changed)} artifact(s) of the challenge build changed or vanished after Comparator built the solution "
+            f"(e.g. {', '.join(changed[:3])}); the checks may not have run on the challenge as built"]
+
+
 def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools: Optional[Path] = None,
                   date: Optional[str] = None, leanlock: Optional[Path] = DEFAULT_LEANLOCK,
                   python: Optional[str] = None, timeout: float = 6 * 3600,
@@ -2264,13 +2314,17 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     lean-toolchain is the island's; the Comparator tag for the toolchain is known; Comparator, lean4export,
     nanoda_bin (at NANODA_REV) and the landrun shim are all in *tools*. An OVERLAY island's clone must not contain
     the overlay yet: after those refusals the overlay is placed (`_place_overlay`: checked against the tree, then the
-    tree must be exactly the pin plus that one file), and `lake build` names the solution and challenge modules,
-    since the overlay is in no default target. Then, through leanlock unless *leanlock* is
-    None: `lake exe cache get`, `lake build`, `lake env comparator <our comparator.json>` (PATH and COMPARATOR_* as
-    rejudge_queue.sh sets them), `probe-negation` per theorem and `fingerprint` for all of them, on the challenge.
+    tree must be exactly the pin plus that one file). Then, through leanlock unless *leanlock* is None:
+    `lake exe cache get`; `lake build <challenge module>`, the challenge ONLY (R-1: the solution is first compiled by
+    Comparator, after its challenge export); a sha256 snapshot of the clone's build dirs (`prebuild.sha256`, its
+    digest on a COMPARATOR_PREBUILD line; every entry must be unchanged at the end); `lake env comparator <our
+    comparator.json>` (PATH and COMPARATOR_* as rejudge_queue.sh sets them); `probe-negation` per theorem and
+    `fingerprint` for all of them, on the challenge, with `--olean-dir` for each package the trusted env does not
+    supply.
     The log `<tools>/islands/<name>/comparator.log` starts with the ISLAND-HEADER, the COMPARATOR_NANODA line and the
     COMPARATOR_CONFIG line (the sha256 of our comparator.json, which the verdict then requires) and ends with the
     exit line. The verdict is `evaluate_replay`'s, plus a failed build; `_conclude` writes it."""
+    from .missions.schema import atomic_write_text
     isl = _registered(root, name)
     date = date or datetime.date.today().isoformat()
     _check_date(name, date)
@@ -2357,9 +2411,11 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
         commands.append((show(argv), r))
         return r
 
-    # an overlay is in no default target: build it, and the solution, by name
-    build = ["lake", "build", *([isl.solution_module, isl.challenge_module] if isl.is_overlay else [])]
-    for argv in ([*lock, "lake", "exe", "cache", "get"], [*lock, *build]):
+    # R-1 (bb, REVIEW_OVERLAY_WEIL_236dea6): build the CHALLENGE only. The solution is never compiled before Comparator
+    # has built and exported the challenge (Comparator's assumption 2: no potentially adversarial file was compiled
+    # before); Comparator builds the solution itself, after its challenge export. A default-target `lake build`
+    # (before 2026-11-07) could compile the solution first, depending on the library's defaultTargets.
+    for argv in ([*lock, "lake", "exe", "cache", "get"], [*lock, "lake", "build", isl.challenge_module]):
         r = step(argv, lock_env, timeout)
         log += [f"== {show(argv)}", *r.output.rstrip("\n").splitlines(), f"== exit {r.rc}"]
         if r.rc != 0:
@@ -2368,7 +2424,14 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
     probes: list[tuple[str, bytes]] = []
     probe_docs: list = []
     fp_raw = fp_doc = None
+    prebuild: dict[str, str] = {}
     if not run_probs:
+        # the challenge's build as it stood before any solution code ran; it must be unchanged after everything
+        prebuild = _build_snapshot(src)
+        snap = "".join(f"{sha}  {rel}\n" for rel, sha in sorted(prebuild.items()))
+        atomic_write_text(tools / ISLANDS_DIR / name / PREBUILD_SNAPSHOT, snap)
+        log.append(f"COMPARATOR_PREBUILD {len(prebuild)} files sha256 {hashlib.sha256(snap.encode()).hexdigest()} "
+                   f"(the challenge build, before Comparator; listed in {PREBUILD_SNAPSHOT})")
         env = {**lock_env, "PATH": os.pathsep.join([str(tools / "bin"), str(cmpdir / ".lake" / "build" / "bin"),
                                                     os.environ.get("PATH", "")]),
                "COMPARATOR_LANDRUN": str(landrun), "COMPARATOR_LEAN4EXPORT": str(l4x),
@@ -2376,9 +2439,10 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
         argv = [*lock, "lake", "env", "comparator", str(cfg)]
         r = step(argv, env, timeout)
         log += ["== comparator", *r.output.rstrip("\n").splitlines(), f"ISLAND-replay-EXIT {r.rc}"]
+        extra = [x for d in _package_olean_dirs(src) for x in ("--olean-dir", str(d))]
         for thm in isl.theorems:
             r = step([*lock, *py, "probe-negation", "--project", str(src), "--module", isl.challenge_module,
-                      "--theorem", thm, "--file", str(src / rel), "--json"], lock_env, check_timeout)
+                      "--theorem", thm, "--file", str(src / rel), *extra, "--json"], lock_env, check_timeout)
             doc, raw = _json_output(r.output)
             if doc is None:
                 run_probs.append(f"probe-negation of {thm!r} printed no JSON object (exit {r.rc})")
@@ -2387,12 +2451,12 @@ def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools
                 probes.append((doc.get("theorem"), raw))
         targets = [x for t in isl.theorems for x in ("--target", t)]
         r = step([*lock, *py, "fingerprint", "--project", str(src), "--import", isl.challenge_module, *targets,
-                  "--file", str(src / rel), "--json"], lock_env, check_timeout)
+                  "--file", str(src / rel), *extra, "--json"], lock_env, check_timeout)
         fp_doc, fp_raw = _json_output(r.output)
         if fp_doc is None:
             run_probs.append(f"fingerprint printed no JSON object (exit {r.rc})")
+        run_probs += _snapshot_problems(prebuild, _build_snapshot(src))
     log_bytes = ("\n".join(log) + "\n").encode("utf-8")
-    from .missions.schema import atomic_write_text
     atomic_write_text(tools / ISLANDS_DIR / name / "comparator.log", log_bytes.decode("utf-8"))
     v = evaluate_replay(isl, log_text=log_bytes.decode("utf-8"), probe_docs=probe_docs, fingerprint_doc=fp_doc,
                         nanoda_rev=pinned, comparator_tag=tag, config_sha256=_config_sha256(root, name))

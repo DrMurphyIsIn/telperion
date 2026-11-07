@@ -1965,7 +1965,7 @@ def test_overlay_replay_places_the_overlay_and_builds_it(tmp_path):
     log = (tools / "islands" / "demo" / "comparator.log").read_text()
     assert log.splitlines()[0] == f"ISLAND-HEADER island=demo commit={OV_COMMIT} overlay_sha256={OVERLAY_SHA}"
     build = next(c for c in run.calls if "build" in c and "lake" in c)
-    assert build[build.index("build") + 1:] == [OV_SOLUTION, OV_MODULE]
+    assert build[build.index("build") + 1:] == [OV_MODULE]                     # R-1: the challenge only
     probe = next(c for c in run.calls if "probe-negation" in c)
     assert probe[probe.index("--module") + 1] == OV_MODULE and probe[probe.index("--file") + 1].endswith(OV_PATH)
     assert islands.status(root, "demo") == "verified"
@@ -2071,3 +2071,78 @@ def test_overlay_matches_an_upstream_lemma_with_an_attribute_on_its_line(tmp_pat
     assert "@[simp] lemma two_eq : two = 1 + 1 := by" in files["Demo/Main.lean"]
     isl = _ov_add(tmp_path, files=files)
     assert isl.theorems == tuple(OV_THEOREMS)
+
+
+
+# --- R-1 / R-2 (bb, REVIEW_OVERLAY_WEIL_236dea6) ----------------------------------------------------------------------
+
+class TouchingRun(FakeRun):
+    """FakeRun that writes into the clone as the real steps would: `lake build` leaves the challenge build's artifacts
+    (the clone's own and two packages'), and the Comparator step runs *touch* (a solution build)."""
+
+    def __init__(self, *, touch=None, **kw):
+        super().__init__(**kw)
+        self.touch = touch
+
+    def __call__(self, argv, *, cwd, env=None, timeout):
+        if "lake" in argv and "build" in argv:
+            for rel in (".lake/build/lib/lean/Challenge/Basic.olean",
+                        ".lake/packages/mathlib/.lake/build/lib/lean/M.olean",
+                        ".lake/packages/Stacks/.lake/build/lib/lean/S.olean"):
+                (Path(cwd) / rel).parent.mkdir(parents=True, exist_ok=True)
+                (Path(cwd) / rel).write_bytes(rel.encode())
+        if "comparator" in argv and self.touch:
+            self.touch(Path(cwd))
+        return super().__call__(argv, cwd=cwd, env=env, timeout=timeout)
+
+
+def test_replay_never_builds_the_solution_before_comparator(tmp_path):
+    # R-1: the only pre-build names the challenge; Comparator compiles the solution after its challenge export
+    run = FakeRun()
+    root, res = _replay(tmp_path, run)
+    assert res.verdict == "pass", res.problems
+    lake = [c for c in run.calls if "lake" in c]
+    assert [c[c.index("lake") + 1:] for c in lake[:2]] == [["exe", "cache", "get"], ["build", "Challenge.Basic"]]
+    assert lake[2][lake[2].index("lake") + 1:][:2] == ["env", "comparator"]
+    assert not any("Solution.Basic" in a for c in run.calls for a in c)
+    log = (tmp_path / "tools" / "islands" / "demo" / "comparator.log").read_text()
+    assert any(l.startswith("COMPARATOR_PREBUILD ") for l in log.splitlines())
+    assert islands.status(root, "demo") == "verified"
+
+
+def test_replay_snapshots_the_challenge_build_and_refuses_a_change(tmp_path):
+    tools = _tools(tmp_path)
+    root, res = _replay(tmp_path, TouchingRun())
+    assert res.verdict == "pass", res.problems
+    snap = (tools / "islands" / "demo" / "prebuild.sha256").read_text().splitlines()
+    assert len(snap) == 3 and any(l.endswith(".lake/build/lib/lean/Challenge/Basic.olean") for l in snap)
+    # a solution build that rewrites one of the challenge build's artifacts fails the replay; a new file does not
+    def touch(src):
+        (src / ".lake/build/lib/lean/Solution.olean").write_bytes(b"new")
+        (src / ".lake/packages/Stacks/.lake/build/lib/lean/S.olean").write_bytes(b"rewritten")
+    root2, res2 = _replay(tmp_path / "b", TouchingRun(touch=touch))
+    assert res2.verdict == "fail" and any("artifact(s) of the challenge build changed" in p and "S.olean" in p
+                                          for p in res2.problems), res2.problems
+    assert islands.load_island(root2, "demo").replay is None
+
+
+def test_replay_hands_non_env_packages_to_the_checks(tmp_path):
+    run = TouchingRun()
+    _replay(tmp_path, run)
+    for c in (c for c in run.calls if "probe-negation" in c or "fingerprint" in c):
+        dirs = [c[i + 1] for i, a in enumerate(c) if a == "--olean-dir"]
+        assert len(dirs) == 1 and dirs[0].endswith(".lake/packages/Stacks/.lake/build/lib/lean"), c
+
+
+def test_replay_copy_space_gate(tmp_path, monkeypatch):
+    # R-2: the private copy of the untrusted closure goes to the temp dir; refuse before copying when it cannot fit
+    from telperion.checks import lean_replay
+    f = tmp_path / "a.olean"
+    f.write_bytes(b"x" * 1000)
+    assert lean_replay.copy_space_problem([f], tmp_path) is None
+    Usage = type("Usage", (), {})
+    u = Usage()
+    u.total, u.used, u.free = 10 ** 9, 10 ** 9, 10
+    monkeypatch.setattr(lean_replay.shutil, "disk_usage", lambda p: u)
+    problem = lean_replay.copy_space_problem([f], tmp_path)
+    assert problem and "TMPDIR" in problem and "1000" in problem and str(tmp_path) in problem
