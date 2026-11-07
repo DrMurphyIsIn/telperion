@@ -17,7 +17,7 @@ about the island. A lab may build on an island only once the evidence is complet
 
 This page covers what is in a registration, the commands, what `verified` does and
 does not mean, overlay islands (for a library that ships no challenge module), how
-islands fit with the kernel policy, and the two islands that are registered today.
+islands fit with the kernel policy, and the three islands that are registered today.
 
 ## Where replays run: a sandbox, never this machine
 
@@ -368,7 +368,7 @@ definition modules, and the probe and the fingerprint kernel-replay that whole c
 For Weil, `Weil.Definitions` imports `StacksFrontier`'s ℓ-adic trace formula. Its
 closure is therefore about 17,800 modules of AxiomMath/Stacks, roughly 5.3 million
 lines, even though the two statements unfold only to Mathlib and a few small
-definitions.
+definitions. See "weil" below.
 
 ## The kernel policy and islands
 
@@ -380,8 +380,9 @@ from its island.toml and treats `islands/<name>` as a project. Registering a lib
 therefore cannot bypass the floor. A `lean-toolchain` file inside `islands/<name>/`
 is itself an error, because it would be a second, competing pin.
 
-zeta-zeros-v2 is pinned at `leanprover/lean4:v4.34.0-rc2`, which is below the floor,
-so it is on the exception list. Its reason says exactly what is true:
+zeta-zeros-v2 and weil are pinned at `leanprover/lean4:v4.34.0-rc2`, which is below the
+floor, so both are on the exception list, with the same reason. It says exactly what is
+true:
 
 - **v4.34.0-rc2 does have the five v4.33.1 kernel soundness fixes,** as backports:
   the commits between v4.34.0-rc1 and v4.34.0-rc2 include #14582, #14806, #14807,
@@ -435,12 +436,13 @@ current challenge declares one.
 
 ## The current islands
 
-Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self-reported**.
+Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 and weil are **self-reported**.
 
 | island | source @ commit | toolchain | theorems | registered | status |
 |---|---|---|---|---|---|
 | riemann-jensen | [AxiomMath/RiemannJensen](https://github.com/AxiomMath/RiemannJensen) @ `c1e023fa` | v4.35.0 | 4 (`RiemannJensen.Challenge.*`) | 2026-11-05 | verified (2026-11-06) |
 | zeta-zeros-v2 | [AxiomMath/ZetaZerosV2](https://github.com/AxiomMath/ZetaZerosV2) @ `1d7edeb4` | v4.34.0-rc2 (kernel-policy exception) | 12 (`ZetaZeros.Challenge.*`) | 2026-11-05 | self-reported |
+| weil | [AxiomMath/Weil](https://github.com/AxiomMath/Weil) @ `27cdb204` (overlay `012753bf`) | v4.34.0-rc2 (kernel-policy exception) | 2 (point counts) | 2026-11-06 | self-reported |
 
 ### riemann-jensen
 
@@ -481,6 +483,42 @@ Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self
 - **Next:** a new Telperion pin, a fresh assignment, and a rerun of the probes and the
   fingerprint in the sandbox, on the owner's word. Then `record-replay`.
 
+### weil
+
+This is the first overlay island. It was registered on 2026-11-06 by
+`island add weil --overlay`, at the owner's decision of that day.
+
+- **The pin.** AxiomMath/Weil at `27cdb2049be62ee2911429b47f54774078450e32`, on
+  v4.34.0-rc2 (kernel-policy exception, as for zeta-zeros-v2), with Mathlib `16edf57d`
+  and AxiomMath/Stacks `012108f6`.
+- **The scope: the two point-count statements.** These are stated only through
+  `zetaSeries`, the exponential of the point counts, and so they do not depend on
+  trusting the étale-cohomology definitions.
+  - `Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd`, the classical form of the
+    Riemann hypothesis for the zeta series
+    (`Weil/AlgebraicGeometry/EtaleCohomology/Trace/WeilRiemannHypothesisForm.lean:206`).
+  - `AlgebraicGeometry.exists_mul_zetaSeries_eq`, the rationality of the zeta series
+    (`Weil/AlgebraicGeometry/EtaleCohomology/Trace/ZetaRationality.lean:170`).
+- **The overlay.** `islands/weil/challenge.lean` (sha256 `012753bf…`) imports only
+  `Weil.Definitions`, and is placed at `Weil/TelperionChallenge.lean`. The solution is
+  `Weil.AlgebraicGeometry.EtaleCohomology.Trace.WeilRiemannHypothesisForm`.
+- **Left out: the Betti theorem**
+  (`Weil.natDegree_rationalFrobeniusCharpolyReverse_eq_bettiNumber`, `BettiNumber.lean:48`).
+  Its statement unfolds through `Weil.rationalFrobeniusCharpolyReverse` into
+  StacksFrontier's ℓ-adic compactly supported cohomology and its Frobenius
+  (`LAdicSheaf.rationalGeometricCompactlySupportedCohomology` and
+  `…Frobenius`, which are built on derived functors over the big étale site), and also
+  through `Scheme.complexCohomology`. Those definitions are not small enough to
+  fingerprint. Adding the theorem would also need the library's root module as the
+  solution.
+- **Next:** bb's statement-by-statement check of the overlay, then assignment #20 in a
+  fresh contrarian session (`ASSIGNMENT_20_weil.md`, kept outside this repository), and
+  then `record-replay`.
+- **The cost.** Nothing of Stacks comes from a cache, so the solution's cone, about
+  20,400 Stacks modules, is compiled from source. The probe and fingerprint replay the
+  overlay's whole untrusted closure, about 17,800 modules. Both are large; the
+  assignment estimates them and gates the run on free disk.
+
 ## Open items
 
 - **There is no Comparator tag for v4.34.1.** Comparator's tags go from v4.34.0
@@ -492,3 +530,8 @@ Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self
 - **Nested inductives** are refused by the fingerprint's replay (see above).
 - **The trusted env's digest** is not yet recorded in `[replay]` (see "What
   `verified` does not mean").
+- **An overlay's replay closure is its definition modules' whole closure.** For weil
+  that is about 17,800 Stacks modules, which the probe and the fingerprint each copy
+  and kernel-replay. That costs hours and many GB per run, though the statements unfold
+  to little. Making the replay take only the constants that the statements reach would
+  change the replay's trust argument, and is not done.

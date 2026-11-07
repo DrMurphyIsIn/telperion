@@ -1,0 +1,10 @@
+{
+  "challenge_module": "Weil.TelperionChallenge",
+  "solution_module": "Weil.AlgebraicGeometry.EtaleCohomology.Trace.WeilRiemannHypothesisForm",
+  "theorem_names": [
+    "Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd",
+    "AlgebraicGeometry.exists_mul_zetaSeries_eq"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": true
+}

@@ -2043,6 +2043,26 @@ def test_cli_overlay_flags(tmp_path):
     assert r.returncode == 0 and r.stdout.startswith("OVERLAY-CHECKED"), r.stderr
 
 
+def test_weil_is_registered_as_an_overlay_island():
+    # island #3 (owner decision 2026-11-06): AxiomMath/Weil @ 27cdb204, a lead-authored overlay of the two point-count
+    # statements; self-reported until the sandbox replay is recorded
+    isl = islands.load_island(ROOT, "weil")
+    assert isl.is_overlay and isl.commit == "27cdb2049be62ee2911429b47f54774078450e32"
+    assert isl.toolchain == "leanprover/lean4:v4.34.0-rc2" and isl.overlay_imports == ("Weil.Definitions",)
+    assert isl.theorems == ("Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd",
+                            "AlgebraicGeometry.exists_mul_zetaSeries_eq")
+    text = (ROOT / "islands" / "weil" / "challenge.lean").read_text()
+    assert islands.overlay_problems(text, isl) == []
+    assert {t.name: t.upstream for t in islands.parse_overlay(text).theorems} == {
+        "Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd":
+            ("Weil/AlgebraicGeometry/EtaleCohomology/Trace/WeilRiemannHypothesisForm.lean", 206),
+        "AlgebraicGeometry.exists_mul_zetaSeries_eq":
+            ("Weil/AlgebraicGeometry/EtaleCohomology/Trace/ZetaRationality.lean", 170)}
+    probs = islands.island_problems(ROOT, "weil")
+    assert len(probs) == 1 and "not replayed" in probs[0], probs
+    assert islands._dumps_island(isl, None) == (ROOT / "islands" / "weil" / "island.toml").read_text()
+
+
 def test_overlay_matches_an_upstream_lemma_with_an_attribute_on_its_line(tmp_path):
     # `@[simp] lemma` on the declaration's own line: the attribute is not part of the statement, `lemma` is `theorem`
     main = OV_UPSTREAM["Demo/Main.lean"].replace("@[simp]\ntheorem two_eq", "@[simp] lemma two_eq\n")
