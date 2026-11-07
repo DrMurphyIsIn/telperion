@@ -264,12 +264,12 @@ current challenge declares one.
 
 ## The current islands
 
-Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self-reported**.
+Status as of 2026-11-07. riemann-jensen and zeta-zeros-v2 are both **verified**.
 
 | island | source @ commit | toolchain | theorems | registered | status |
 |---|---|---|---|---|---|
 | riemann-jensen | [AxiomMath/RiemannJensen](https://github.com/AxiomMath/RiemannJensen) @ `c1e023fa` | v4.35.0 | 4 (`RiemannJensen.Challenge.*`) | 2026-11-05 | verified (2026-11-06) |
-| zeta-zeros-v2 | [AxiomMath/ZetaZerosV2](https://github.com/AxiomMath/ZetaZerosV2) @ `1d7edeb4` | v4.34.0-rc2 (kernel-policy exception) | 12 (`ZetaZeros.Challenge.*`) | 2026-11-05 | self-reported |
+| zeta-zeros-v2 | [AxiomMath/ZetaZerosV2](https://github.com/AxiomMath/ZetaZerosV2) @ `1d7edeb4` | v4.34.0-rc2 (kernel-policy exception) | 12 (`ZetaZeros.Challenge.*`) | 2026-11-05 | verified (2026-11-07) |
 
 ### riemann-jensen
 
@@ -307,8 +307,13 @@ Status as of 2026-11-06. riemann-jensen is **verified**; zeta-zeros-v2 is **self
   at least as strict as v4.35.0's derived one. On rc2, the replay template and the
   probe and fingerprint callbacks now compile and run (`tests/test_rc2_compile.py`), and
   the six fingerprint pins come out the same as on v4.35.0.
-- **Next:** a new Telperion pin, a fresh assignment, and a rerun of the probes and the
-  fingerprint in the sandbox, on the owner's word. Then `record-replay`.
+- **Negation probes and fingerprint: done (rerun).** On 2026-11-07, in the sandbox at
+  Telperion `c6f1e09` with the same v4.34.0-rc2 env, all twelve probes gave PROBE_ONLY
+  and the fingerprint covered all twelve theorems, all on one build (one
+  `olean_sha256`). The auditor inspected the bundle.
+- **Recorded:** `island record-replay` on 2026-11-07, with the sandbox session's
+  scratch path normalised to `$SCRATCH` in the archived log. `island check` reports
+  `verified`.
 
 ## Open items
 
