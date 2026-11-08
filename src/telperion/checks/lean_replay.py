@@ -48,9 +48,10 @@ HOW (the Comparator / lean4checker approach). The generated script imports TRUST
    returns a ``Kernel.Environment``, and the only way back, ``Environment.ofKernelEnv`` at
    ``Lean/Environment.lean:643``, drops the import's realization context: ``omega`` then fails with
    ``Environment.realizeConst: realizedImportedConsts is empty``.)
-   - Afterwards every replayed constant must be found exactly as its ``.olean`` gives it (types and values compared
-     with ``Expr.equal``). The one exception is upstream's skip: a theorem identical in name, type, universe parameters
-     and ``all`` to one already present keeps the present one.
+   - Afterwards every replayed constant must be found exactly as its ``.olean`` gives it (``sameConst``: every field
+     of every constructor, each ``Expr`` compared with ``Expr.equal``; a hand-written comparison at least as strict as
+     v4.35.0's derived ``BEq ConstantInfo``, which v4.34.0-rc2 lacks). The one exception is upstream's skip: a theorem
+     identical in name, type, universe parameters and ``all`` to one already present keeps the present one.
    - The axioms of the target module's constants (``collectAxioms``) go on the OK line, and ``sorryAx`` among them is
      refused.
    - A kernel rejection or any refusal is ``REPLAY FAILED``;
@@ -91,6 +92,7 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -561,14 +563,65 @@ def replay (newConstants : Std.HashMap Name ConstantInfo) (env : Environment) : 
 
 end Replay
 
-/-- `a` and `b` are the same constant: equal as `ConstantInfo`s (whose `BEq` compares Exprs up to binder
-annotations), with the type and the value also `Expr.equal`. -/
-def sameConst (a b : ConstantInfo) : Bool :=
-  a == b && a.type.equal b.type &&
-    match a.value? (allowOpaque := true), b.value? (allowOpaque := true) with
-    | some x, some y => x.equal y
-    | none, none => true
-    | _, _ => false
+/-!
+`sameConst` is the derived `BEq ConstantInfo` of Lean v4.35.0, written out by hand, because v4.34.0-rc2 (through
+v4.34.1) derives no `BEq` for `ConstantInfo`, `InductiveVal`, `QuotKind` or `QuotVal` (`deriving Inhabited` at
+`src/lean/Lean/Declaration.lean:302, 416, 420, 439`). The fields are those of v4.35.0
+`src/lean/Lean/Declaration.lean` (`ConstantVal` :95, `AxiomVal` :101, `DefinitionVal` :120, `TheoremVal` :142,
+`OpaqueVal` :156, `InductiveVal` :261, `ConstructorVal` :328, `RecursorRule` :348, `RecursorVal` :357, `QuotVal` :418,
+`ConstantInfo` :430). v4.34.0-rc2's file has the same fields; it differs only in those four `deriving` lines.
+- It is at least as strict as the derived instance. Names, name lists, numbers and flags are compared with `==`, as
+  the derived instance compares them. The enums `ReducibilityHints`, `DefinitionSafety` and `QuotKind` are matched
+  constructor by constructor, with no wildcard for an equal pair. Every `Expr` (each type, value
+  and recursor rule's right-hand side) is compared with `Expr.equal`, which takes binder names and annotations into
+  account (`Lean/Expr.lean:814-819`). The derived instance uses `==`, that is `Expr.eqv`, which ignores binder
+  annotations (`:804-812`).
+- Every pattern is an anonymous constructor that names each field, so a toolchain that adds or drops a field does not
+  compile this script (fail closed) rather than skip the field. A constructor pair not matched below is unequal.
+-/
+def sameCV : ConstantVal → ConstantVal → Bool
+  | ⟨n, lps, t⟩, ⟨n', lps', t'⟩ => n == n' && lps == lps' && t.equal t'
+
+def sameRule : RecursorRule → RecursorRule → Bool
+  | ⟨c, nf, rhs⟩, ⟨c', nf', rhs'⟩ => c == c' && nf == nf' && rhs.equal rhs'
+
+def sameRules : List RecursorRule → List RecursorRule → Bool
+  | [], [] => true
+  | r :: rs, r' :: rs' => sameRule r r' && sameRules rs rs'
+  | _, _ => false
+
+def sameHints : ReducibilityHints → ReducibilityHints → Bool
+  | .opaque, .opaque | .abbrev, .abbrev => true
+  | .regular h, .regular h' => h == h'
+  | _, _ => false
+
+def sameSafety : DefinitionSafety → DefinitionSafety → Bool
+  | .unsafe, .unsafe | .safe, .safe | .partial, .partial => true
+  | _, _ => false
+
+def sameQuotKind : QuotKind → QuotKind → Bool
+  | .type, .type | .ctor, .ctor | .lift, .lift | .ind, .ind => true
+  | _, _ => false
+
+/-- `a` and `b` are the same constant: the same constructor, and every field equal (see above). -/
+def sameConst : ConstantInfo → ConstantInfo → Bool
+  | .axiomInfo ⟨c, u⟩, .axiomInfo ⟨c', u'⟩ => sameCV c c' && u == u'
+  | .defnInfo ⟨c, v, h, s, all⟩, .defnInfo ⟨c', v', h', s', all'⟩ =>
+    sameCV c c' && v.equal v' && sameHints h h' && sameSafety s s' && all == all'
+  | .thmInfo ⟨c, v, all⟩, .thmInfo ⟨c', v', all'⟩ => sameCV c c' && v.equal v' && all == all'
+  | .opaqueInfo ⟨c, v, u, all⟩, .opaqueInfo ⟨c', v', u', all'⟩ =>
+    sameCV c c' && v.equal v' && u == u' && all == all'
+  | .quotInfo ⟨c, k⟩, .quotInfo ⟨c', k'⟩ => sameCV c c' && sameQuotKind k k'
+  | .inductInfo ⟨c, np, ni, all, ctors, nn, isRec, u, refl⟩,
+    .inductInfo ⟨c', np', ni', all', ctors', nn', isRec', u', refl'⟩ =>
+    sameCV c c' && np == np' && ni == ni' && all == all' && ctors == ctors' && nn == nn' && isRec == isRec' &&
+      u == u' && refl == refl'
+  | .ctorInfo ⟨c, ind, cidx, np, nf, u⟩, .ctorInfo ⟨c', ind', cidx', np', nf', u'⟩ =>
+    sameCV c c' && ind == ind' && cidx == cidx' && np == np' && nf == nf' && u == u'
+  | .recInfo ⟨c, all, np, ni, nmot, nmin, rules, k, u⟩, .recInfo ⟨c', all', np', ni', nmot', nmin', rules', k', u'⟩ =>
+    sameCV c c' && all == all' && np == np' && ni == ni' && nmot == nmot' && nmin == nmin' &&
+      sameRules rules rules' && k == k' && u == u'
+  | _, _ => false
 
 /-- Every replayed (not skipped) constant is in `after` exactly as `consts` gives it. The one exception is upstream's
 skip: a theorem identical in name, type, universe parameters and `all` to one in `before` keeps that one. -/
@@ -827,6 +880,57 @@ def _lean_cmd(prefix, pinned: PinnedEnv, script: Path, memory_mb) -> list[str]:
     return [*prefix, "env", f"LEAN_PATH={os.pathsep.join(pinned.entries)}", pinned.lean, *mem, str(script)]
 
 
+#: Free space the temp dir must keep beyond the private copy of the untrusted closure.
+COPY_FREE_MARGIN = 1 << 30
+
+
+def _fs_type(path) -> str | None:
+    """The filesystem type of *path* from /proc/self/mounts (Linux), or None."""
+    try:
+        mounts = Path("/proc/self/mounts").read_text().splitlines()
+    except OSError:
+        return None
+    real, best = os.path.realpath(path), (None, "")
+    for line in mounts:
+        parts = line.split()
+        if len(parts) >= 3 and (real == parts[1] or real.startswith(parts[1].rstrip("/") + "/")) \
+                and len(parts[1]) >= len(best[1]):
+            best = (parts[2], parts[1])
+    return best[0]
+
+
+def copy_space_problem(files, dest) -> str | None:
+    """R-2 (bb, REVIEW_OVERLAY_WEIL_236dea6): the private copy of the untrusted closure goes to the run dir *dest*,
+    which is under the TEMP dir (TMPDIR), not under the project. Why it cannot fit there (the files' total plus
+    `COPY_FREE_MARGIN` against the free space of *dest*'s filesystem), or None. A large closure (weil's is about 13 GB)
+    on a tmpfs /tmp lands in RAM, so the message names the filesystem type when it can."""
+    need = 0
+    for f in files:
+        try:
+            need += os.path.getsize(f)
+        except OSError:
+            pass                    # a listed file that vanished: the copy itself reports it
+    try:
+        free = shutil.disk_usage(dest).free
+    except OSError as exc:
+        return f"cannot read the free space of the temp dir {dest}: {exc}"
+    if free >= need + COPY_FREE_MARGIN:
+        return None
+    fs = _fs_type(dest)
+    return (f"the private copy of the untrusted closure needs {need} bytes (+{COPY_FREE_MARGIN} margin) in the temp dir "
+            f"{dest} ({fs or 'filesystem type unknown'}), which has {free} free; set TMPDIR to a disk-backed directory "
+            "with room for it")
+
+
+def copy_space_warning(dest) -> str | None:
+    """N-2 (bb, REVIEW_OVERLAY_R1R2_FIX): a warning when the run dir *dest* is on a tmpfs, even though the copy fits:
+    the copy then lives in RAM, next to a replay that may be given most of it (`--memory-mb`). None otherwise."""
+    if _fs_type(dest) != "tmpfs":
+        return None
+    return (f"warning: the private copy of the untrusted closure is on a tmpfs ({dest}), so it takes RAM from the "
+            "replay; set TMPDIR to a disk-backed directory")
+
+
 def run_replay(target_module, callback_src: str, *, project=None, untrusted_paths=(),
                trusted_imports=("Mathlib",), trusted_env=None, manifest=None, elan_home=None,
                wrapper: list[str] | None = None, timeout: int = 1800, heartbeats: int = 200000,
@@ -841,7 +945,8 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
 
     1. a LIST run (``import Lean`` only, nothing replayed) walks the untrusted closure over the submission's dirs and
        prints every file the replay would read;
-    2. those files are COPIED into the private 0700 run dir and hashed there;
+    2. those files are COPIED into the private 0700 run dir and hashed there (the run dir is under the TEMP dir,
+       TMPDIR; `copy_space_problem` refuses first when the copy cannot fit there);
     3. the replay run resolves the untrusted modules ONLY from the copies (expect_oleans = the copies' realpaths) and
        prints every untrusted file it read, which must be exactly the copies; the copies must hash the same after
        the run (a sanity check: no other process should reach them, though a same-user writer still can, as long as
@@ -908,6 +1013,12 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
                     return ReplayResult("ERROR", f"malformed CLOSURE line {ln!r}", [], out)
                 closure.append((mod, f))
         # 2. copy every listed file into the private run dir, keeping its path below its submission dir
+        problem = copy_space_problem([f for _, f in closure], rdir)
+        if problem:
+            return ReplayResult("ERROR", problem, [], "")
+        warning = copy_space_warning(rdir)
+        if warning:
+            print(warning, file=sys.stderr)
         copies: dict[str, tuple[str, str]] = {}            # copy realpath -> (module, part)
         main_copy: dict[str, str] = {}
         try:

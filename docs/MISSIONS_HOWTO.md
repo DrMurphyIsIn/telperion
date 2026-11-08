@@ -128,9 +128,34 @@ verifier.
    - `witness`: only if you pass `--witness`. Your term must prove that every antecedent of the statement can hold at
      once (the ∃-closure of the full ∀-telescope of the unfolded type, conclusion arrows included). If it elaborates,
      the KERNEL accepts it (checked before the result is printed) and it uses only the standard axioms:
-     **WITNESSED**. A statement with no Prop-typed antecedent at all (`True`, a bare conjunction) has nothing to
-     witness, and gives PROBE_ONLY with a note instead. A vacuous part nested under any other conclusion head (`id`,
-     `∧`, `¬`, a local structure, ...) is NOT seen by the witness; see the limitations below.
+     **WITNESSED**, provided it also passes the second check below. A statement with no Prop-typed antecedent at all
+     (`True`, a bare conjunction) has nothing to witness, and gives PROBE_ONLY with a note instead.
+   - The second witness check, over the REDUCING telescope. The first closure stops at any conclusion head that is not a
+     ∀ and not a non-library definition, so a vacuous part nested under `id`, `¬`, `∧`, a `let` and so on used to be
+     invisible to it. So the SAME term must also prove the ∃-closure that Lean's `forallTelescopeReducing` opens at
+     default transparency (which unfolds `id`, `¬`, `≠`, `let`, beta-redexes and any other head it can unfold),
+     descending into `∧` and `↔` as well. It is kernel-checked and axiom-audited the same way. If it does not elaborate
+     there, times out, or uses other axioms, the verdict is PROBE_ONLY with the note "witness does not survive
+     reduction". This check can only take WITNESSED away (or turn a malformed protocol into ERROR, as for every
+     probe). When your statement really has an antecedent under such a head, write a witness that covers both
+     closures, for example
+     `by first | exact ⟨0, by norm_num, trivial⟩ | exact ⟨0, by norm_num, 0, by norm_num, trivial⟩`.
+   - The allowlist. Even a witness that passes both checks gives WITNESSED only for an ATOMIC statement; anything
+     else is PROBE_ONLY with the note "outside the WITNESSED allowlist: <why>", and needs a sign-off. The shape is
+     checked, in its own heartbeat budget, on the same term the second check built its closure from: the statement
+     with every definition of your own project unfolded everywhere (so a local `def` or `instance` cannot hide
+     anything), opened by the same reducing telescope, `∧` and `↔` included. An ATOM is one of `=`, `≤`, `<`, `≥`,
+     `>`, `True`, `Nat.le` or `∣` applied to data: library constants and variables only, with no proposition or
+     predicate anywhere inside (`decide P`, `if P then … else …`, `{x // P x}`, `{x | P x}` and `PLift P` are all
+     propositions inside data). Then:
+     - (1) every hypothesis is an atom or a conjunction of atoms: no `→`, `↔`, `¬`, `∨`, `∀` or `∃` inside one;
+     - (2) every conclusion is an atom (`a ↔ b` and `a ∧ b` are split first, and each side of an `↔` is then a
+       hypothesis too); they are not all `True`, and none is an `=` between functions (`f = g` with
+       `f g : Fin 0 → ℕ` is, by extensionality, a ∀ over the empty `Fin 0`; so is a `Matrix` equality). The same goes
+       for an `=` between functions in a hypothesis;
+     - (3) every data binder has a library type (not a structure or inductive of your own project), and no binder is
+       a proposition or a predicate variable (`∀ P : Prop`, `∀ F : ℕ → Prop`, `∀ s : Set ℕ`).
+     If the walk itself fails or runs out of heartbeats, the note is "allowlist check failed: <why>" instead.
    - The witness is TRUSTED input: it is elaborated with the full elaborator inside the check process, so a term like
      `by run_tac ...` can do arbitrary IO there and forge result lines. Write it yourself, and never paste one from a
      submission unread.
@@ -273,8 +298,8 @@ So **always run `probe-negation` and `fingerprint` with `--file` pointing at the
 
 | Verdict | What happened | Effect on the grant |
 |---|---|---|
-| `WITNESSED` | Your `--witness` proved the antecedents jointly satisfiable (kernel-checked, standard axioms), and no counterexample was found | Passes |
-| `PROBE_ONLY` | Nothing was found: no contradiction derived, no counterexample, no witness given (or it did not count). Notes say if a probe could not run, timed out, or hit the memory bound | Passes ONLY with a reviewer's `signoff: <who>` in the `--note` |
+| `WITNESSED` | Your `--witness` proved the antecedents jointly satisfiable, over the reducing telescope too (kernel-checked, standard axioms), the statement has the atomic shape of the WITNESSED allowlist, and no counterexample was found | Passes |
+| `PROBE_ONLY` | Nothing was found: no contradiction derived, no counterexample, no witness given (or it did not count, for example because it does not survive reduction). Notes say if a probe could not run, timed out, or hit the memory bound | Passes ONLY with a reviewer's `signoff: <who>` in the `--note` |
 | `VACUOUS` | The premises alone prove `False` | Blocks |
 | `REFUTED` | plausible found a counterexample | Blocks |
 | `ERROR` | No verdict could be read: an unbuilt module ("build <module> first"), an unknown constant, a refused replay, a manifest mismatch, a witness that does not elaborate, a refused axiom | Blocks |
@@ -421,7 +446,7 @@ These are real, and you should know them before you rely on a `[checks]` record.
   safety of the reading process itself, which no kernel check comes after. Another reason for the sandbox.
 - **The memory limit is best-effort.** The checks pass `--memory=<MB>` to Lean (default 8192), Lean's own allocation
   bound. It is not an operating-system limit. Inside a probe, hitting it is a probe failure (PROBE_ONLY with a note, or
-  ERROR for the witness probe); in the replay itself it is ERROR.
+  ERROR for the first witness check); in the replay itself it is ERROR.
 - **The sign-off is free text.** `signoff: <who>` is a string in the note, written by whoever runs `checks-record`.
   Nothing checks that the reviewer is a different person or session from the author. Treat it as an honest
   declaration, and keep the read-back discipline below in mind: a self sign-off is no better than a self-audit.
@@ -456,12 +481,45 @@ These are real, and you should know them before you rely on a `[checks]` record.
   so `m < 0` stays in the conclusion. (Restating the binders as hypotheses, `(m : ℕ) (h : m < 0) : False`, does NOT
   help: they are then premises by construction, and the probe reads exactly the same thing. Use that form only for
   binders that really are meant as hypotheses.)
-- **Vacuity nested under a closed head is not seen by the witness.** The probe unfolds only NON-library definitions,
-  and only at the head of the statement and of each ∀-body. Under any other conclusion head, the ∃-closure the
-  witness must prove stops: a library definition such as `id`, a local `structure`, `∧`, `↔`, `¬`, a beta-redex or a
-  `let`. So `∀ m : ℕ, m = m → id (∀ n : ℕ, n < 0 → n = 7)` is vacuously true, yet the witness `⟨0, rfl, trivial⟩`
-  satisfies the pad `m = m` and gives WITNESSED, without a sign-off. Read the conclusion of any WITNESSED statement
-  for a hidden vacuous part. Witnessing over a reducing telescope instead is a step-5 decision.
+- **WITNESSED is an atomic allowlist; everything else needs a sign-off.** Step 4 left a gap: the witness's
+  ∃-closure stopped at any conclusion head that was not a ∀ or a non-library definition, so `∀ m : ℕ, m = m → id (∀ n
+  : ℕ, n < 0 → n = 7)`, which is vacuously true, was WITNESSED by `⟨0, rfl, trivial⟩`, a term that only satisfies the
+  pad `m = m`. Step 6 makes the same witness also close the ∃-closure over the reducing telescope, and then restricts
+  WITNESSED to the atomic shape above. Two weaker rules were tried first and beaten by reviews: a denylist of closed
+  conclusion heads, and a rule allowing propositions at "logical positions" of a hypothesis. A vacuous `V` can hide
+  one level down inside data (`decide V = true`, `Nonempty (PLift V)`), behind a library structure over an empty type
+  (`Subsingleton (Fin 0)`), in a pinned proposition variable (`∀ P : Prop, P = V → P`), in a hypothesis that carries
+  it as data (`x = (if V then 0 else 1) → x = 0`) or at a negative position of a hypothesis
+  (`(x = 0 ↔ V) → x = 0`, `(V → x = 0) → x = 0`, `(x = 0 ∨ ¬V) → x = 0`), in the fields of a local structure used as
+  a binder type, or behind a local `match` definition under a library head. Each of those, and the `id`, `∧`, `↔`,
+  `¬`, `let`, beta-redex, `∨`, `∃`, local-structure, `(… = True)` and bare-`True` forms, is a must-fail control in
+  the Lean tests. So:
+  - **Exactly this can be WITNESSED:** a statement whose binders are variables of library types and hypotheses that
+    are atoms or conjunctions of atoms, and whose conclusions (after reduction and splitting `∧` and `↔`) are atoms,
+    not all `True` and not equalities between functions. `(x : ℕ) (h : x < 3) : x < 5`, the same over ℝ, and `(m :
+    ℕ) (h : m < 3) : id (∀ n : ℕ, n < 5 → n < 6)` (with a witness for `n` too) are measured must-pass controls.
+  - **What WITNESSED means, and what it does not.** The probe targets VACUITY. WITNESSED says the hypotheses can hold
+    together and every bound type is inhabited (the kernel checked a witness for all of it). It does NOT say the
+    statement is non-trivial: `x = x`, `0 ≤ n` on ℕ, `1 ∣ n`, an equation at a one-element type (`Unit`, `PUnit`,
+    `Fin 1`) and an equation between bundled maps out of an empty type (`Fin 0 ≃ Fin 0`, `Fin 0 ↪ ℕ`; the
+    function-equality rule covers plain functions only) can all be WITNESSED. Refusing `True` is only
+    the cheapest special case. Whether the statement says anything worth proving is checked by the read-back of the
+    frozen statement, by a person, not by the probe.
+  - **Everything else needs a sign-off**, even with a witness that checks. That includes any hypothesis with `→`,
+    `↔`, `¬`, `∨`, `∀`, `∃` or a non-allowed head (`x ≠ 0`, `Even n`, `Nat.Prime p`, `x ∈ s`, `Continuous f`); any
+    conclusion that is a disjunction, an existential, a structure (`Nat.Prime p` unfolds to the library structure
+    `Irreducible p`, `Continuous f` is one), `¬ P` or `a ≠ b` (they reduce to `→ False`, and `False` is not an atom),
+    or a library definition outside the heads (`Even n`, `Odd n`, `IsUnit a`, `Set.Nonempty s`); any statement with
+    an `if`, a set-builder, a `Finset.filter`, a `decide` or a subtype inside; any statement over a type, structure or
+    instance of your own project; any statement generic over a proposition, predicate or set; and `True`.
+  - **Stated assumptions.** Library definitions are trusted text: their bodies are not walked, so a Mathlib definition
+    applied to data (for example `Real.lt`, which default transparency does not unfold) counts as data, and an allowed
+    head whose LIBRARY instance reduces to something else (`a ∣ b` is `∃ c, b = a * c` on ℕ) is taken at its head.
+    A statement whose unfolding or reduction runs out of heartbeats is PROBE_ONLY, never WITNESSED (fail closed); the
+    unfolding has no size cap of its own, so an exponentially large one can instead run into the run's time limit,
+    which is ERROR (it blocks too). Witness costs remain: an `↔` needs one point where both sides hold, and a
+    conclusion that reduces to a ∀ (`s ⊆ t`, `f ≤ g` on functions) needs a witness for the binders it exposes, as in
+    the `by first | ...` example above.
 
 ### In CI
 

@@ -1,0 +1,89 @@
+ISLAND-HEADER island=zeta-zeros-v2 commit=1d7edeb4e67096f9da1b37cd4b763e8b73886655 challenge_sha256=dc3cc10e3fb36af0c966a5de73e1ac37ff379825a627807f973920b396fda0b7
+== zz2_main start Sat Oct 31 18:52:39 UTC 2026  (standalone comparator, no --paranoid flag exists in it)
+project $SCRATCH/island2/zzrun (git archive 1d7edeb4; no .git)
+config $SCRATCH/island2/configs/comparator_zz2.json md5 4bc0dc4644235234f2a00679c3f733a6
+{
+  "challenge_module": "Challenge.Basic",
+  "solution_module": "Solution.Basic",
+  "theorem_names": [
+    "ZetaZeros.Challenge.prop_simple_real_lower",
+    "ZetaZeros.Challenge.prop_distinct_lower",
+    "ZetaZeros.Challenge.prop_simple_plus_real_lower",
+    "ZetaZeros.Challenge.prop_simple_or_real_lower",
+    "ZetaZeros.Challenge.thm_simple",
+    "ZetaZeros.Challenge.thm_distinct",
+    "ZetaZeros.Challenge.thm_average",
+    "ZetaZeros.Challenge.thm_simple_or_critical",
+    "ZetaZeros.Challenge.thm_simple_numeric",
+    "ZetaZeros.Challenge.thm_distinct_numeric",
+    "ZetaZeros.Challenge.thm_average_numeric",
+    "ZetaZeros.Challenge.thm_simple_or_critical_numeric"
+  ],
+  "permitted_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ],
+  "enable_nanoda": true
+}
+comparator $SCRATCH/toolsrc2/comparator/.lake/build/bin/comparator 9c2cb128374cb613dc99473b40755160 (tag v4.34.0-rc2 = 19e111e2141cf333c7daff0f64c5f24acc91dd2e)
+COMPARATOR_LEAN4EXPORT 131bc230f040caec1be73cb205567ab0 (tag v4.34.0-rc2 = cacf989bd75f608700820f6afc595f32e7a99a4d)
+COMPARATOR_NANODA a89bb94318dc602b8cad0b068eeb428e (nanoda_lib 37cb87b7e6cd6862ef2bd121faa9f4604f59fe96)
+COMPARATOR_LANDRUN $SCRATCH/pub/sandbox/landrun-bwrap.sh 13a13e8b042cb95de4e07956e8d1f6d2; --cap-add occurrences in shim: 0; --cap-drop ALL in shim: 1
+241b8c8afe15f0f4843b5d1874cc87ce  lakefile.toml
+9ddd8238b1db6aa0914633cb4c32b825  lake-manifest.json
+ab383bc4528cc950b0ed43e564411d4a  lean-toolchain
+fe4fcd4cafc2fc19f6648a8276bfd9c7  Challenge/Basic.lean
+6471b4de8458ce3af3c927ba7c5c9007  Solution/Basic.lean
+lean /root/.elan/toolchains/leanprover--lean4---v4.34.0-rc2/bin/lean Lean (version 4.34.0-rc2, x86_64-unknown-linux-gnu, commit 6a10ac8c22beadecabdbb0919c2b50214762f91d, Release)
+LEAN_PATH md5 5a60db7726ca954b0ba8178e0acfb5d0 (14 entries)
+vm.max_map_count 1048576
+== probe through COMPARATOR_LANDRUN with comparator's own flag shape
+landrun-bwrap: ro=[/] rw=[/dev $SCRATCH/island2/runs/probe_w] env=[PATH] cmd=/bin/sh
+probe uid=0 CapEff: 0000000000000000
+probe mount-bind: mount: /: permission denied.
+probe remount-rw: mount: /: permission denied.
+probe write-outside: touch: cannot touch '/etc/probe_escape': Read-only file system
+probe write-inside: OK
+probe net: none
+probe no-escape: /etc/probe_escape absent
+== comparator
+Building Challenge.Basic
+landrun-bwrap: ro=[/ $SCRATCH/island2/zzrun /root/.elan/toolchains/leanprover--lean4---v4.34.0-rc2 /usr/bin/git] rw=[/dev $SCRATCH/island2/zzrun/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
+[warn] [3158/3158] Built Challenge.Basic (3.6s)
+warning: Challenge/Basic.lean:146:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:155:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:169:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:182:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:209:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:217:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:229:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:238:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:256:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:262:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:268:8: declaration uses `sorry`
+warning: Challenge/Basic.lean:276:8: declaration uses `sorry`
+Build completed successfully (3158 jobs).
+landrun-bwrap: ro=[/ $SCRATCH/island2/zzrun $SCRATCH/island2/zzrun/.lake /root/.elan/toolchains/leanprover--lean4---v4.34.0-rc2] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=$SCRATCH/toolsrc2/lean4export/.lake/build/bin/lean4export
+Exporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, ZetaZeros.Challenge.prop_simple_real_lower, ZetaZeros.Challenge.prop_distinct_lower, ZetaZeros.Challenge.prop_simple_plus_real_lower, ZetaZeros.Challenge.prop_simple_or_real_lower, ZetaZeros.Challenge.thm_simple, ZetaZeros.Challenge.thm_distinct, ZetaZeros.Challenge.thm_average, ZetaZeros.Challenge.thm_simple_or_critical, ZetaZeros.Challenge.thm_simple_numeric, ZetaZeros.Challenge.thm_distinct_numeric, ZetaZeros.Challenge.thm_average_numeric, ZetaZeros.Challenge.thm_simple_or_critical_numeric, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge.Basic
+Building Solution.Basic
+landrun-bwrap: ro=[/ $SCRATCH/island2/zzrun /root/.elan/toolchains/leanprover--lean4---v4.34.0-rc2 /usr/bin/git] rw=[/dev $SCRATCH/island2/zzrun/.lake] env=[PATH HOME LEAN_ABORT_ON_PANIC] cmd=lake
+[ok] [3174/3195] Built Architect.Command (1.3s)
+[ok] [3178/3195] Built Architect.Basic (1.9s)
+Build completed successfully (4027 jobs).
+landrun-bwrap: ro=[/ $SCRATCH/island2/zzrun $SCRATCH/island2/zzrun/.lake /root/.elan/toolchains/leanprover--lean4---v4.34.0-rc2] rw=[/dev] env=[PATH HOME LEAN_PATH LEAN_ABORT_ON_PANIC] cmd=$SCRATCH/toolsrc2/lean4export/.lake/build/bin/lean4export
+Exporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, ZetaZeros.Challenge.prop_simple_real_lower, ZetaZeros.Challenge.prop_distinct_lower, ZetaZeros.Challenge.prop_simple_plus_real_lower, ZetaZeros.Challenge.prop_simple_or_real_lower, ZetaZeros.Challenge.thm_simple, ZetaZeros.Challenge.thm_distinct, ZetaZeros.Challenge.thm_average, ZetaZeros.Challenge.thm_simple_or_critical, ZetaZeros.Challenge.thm_simple_numeric, ZetaZeros.Challenge.thm_distinct_numeric, ZetaZeros.Challenge.thm_average_numeric, ZetaZeros.Challenge.thm_simple_or_critical_numeric, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution.Basic
+Running nanoda kernel on solution
+landrun-bwrap: ro=[/ /tmp/tmp.XX6OqyP3 /tmp/tmp.XXCcwPz7] rw=[/dev] env=[] cmd=$SCRATCH/tools35/nanoda_lib/target/release/nanoda_bin
+nanoda kernel accepts the solution
+Running Lean default kernel on solution.
+Lean default kernel accepts the solution
+Your solution is okay!
+ISLAND-zz2_main-EXIT 0
+landrun-bwrap calls this run (excl. probe): 5; --cap-add in shim: 0
+exports kept: 2
+-rw------- 1 root root       202 Oct 31 19:02 tmp.XX6OqyP3
+-rw------- 1 root root 585000653 Oct 31 19:02 tmp.XXCcwPz7
+e123cf46ed915f09cee84ac1367ee41b  tmp.XX6OqyP3
+f7f2c7354a0f61e4c3384c645d45c0a7  tmp.XXCcwPz7
+Sat Oct 31 19:06:13 UTC 2026

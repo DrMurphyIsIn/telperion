@@ -72,6 +72,23 @@ package `ten-proofs`, module `Permanent`). The Comparator matches theorems by
 fully-qualified name, so challenge and solution are different *modules* under the
 same names.
 
+The same holds for an island's **overlay challenge** (option A, see
+[ISLANDS.md](ISLANDS.md), "Overlay islands"). When a library ships no challenge module,
+the challenge is a statement-only file that the Telperion lead writes, placed into a
+fresh copy of the library at replay. The solution is the library's own module that
+imports the proofs. The overlay declares each theorem under the library's own name,
+and the two declarations never meet:
+
+- the overlay imports only the library's definition modules, which do not
+  (transitively) import the theorems;
+- nothing imports the overlay;
+- Comparator exports the challenge and the solution in separate `lean4export`
+  processes.
+
+Here the namespace is the library's choice, and may equal its package name, as
+`Weil` does. The landrun `--` gotcha below is what made that matter, so the bwrap
+wrapper or the shim must preserve `--`.
+
 ## Kernel policy
 
 Comparator's second kernel is one of our two defenses against a bad Lean kernel. The
@@ -87,8 +104,9 @@ accepting a stuck type it shouldn't have), #14808 (a gap in the recursor checks)
 on its own, is the kind of bug that lets a false theorem through the kernel — exactly
 what Telperion's whole trust model exists to rule out. So we don't treat "the kernel
 accepted it" as good enough until the kernel in question is new enough to have all
-five fixes. `leanprover/lean4:v4.34.1` is the first tagged release that carries the
-complete set, and that's why it's the floor: `telperion.checks.kernel_policy.FLOOR`.
+five fixes. All five are already in `leanprover/lean4:v4.33.1` (and backported to v4.34.0-rc2); the
+floor, `leanprover/lean4:v4.34.1` (`telperion.checks.kernel_policy.FLOOR`), also carries the later runtime
+reference-count fixes (#15241, #15288, #15307).
 
 The policy itself (`src/telperion/checks/kernel_policy.py`, spec 5.1) walks every
 tracked `lean-toolchain` file in the repo (skipping anything under `.lake/`, since

@@ -1,0 +1,21 @@
+Telperion islands: third-party notice
+
+The islands/ directory holds Telperion's records of external Lean libraries ("islands"): their registrations
+(island.toml), replay evidence (replay/), summaries (REPLAY.md), Comparator configs, and challenge files.
+The whole directory is licensed under the Apache License 2.0 (islands/LICENSE, a byte-identical copy of
+LICENSE-APACHE); it is not part of the BSL-licensed engine.
+
+Third-party material:
+
+- islands/riemann-jensen/challenge.lean is a verbatim copy of the challenge file of AxiomMath/RiemannJensen
+  (https://github.com/AxiomMath/RiemannJensen, commit c1e023fa), Copyright (c) 2026 Axiom Math, licensed under
+  Apache-2.0.
+- islands/zeta-zeros-v2/challenge.lean is a verbatim copy of Challenge/Basic.lean of AxiomMath/ZetaZerosV2
+  (https://github.com/AxiomMath/ZetaZerosV2, commit 1d7edeb4), Copyright (c) 2026 Axiom Math, licensed under
+  Apache-2.0.
+- islands/weil/challenge.lean is a challenge overlay written for Telperion. Its two theorem statements, and their
+  docstrings, are copied verbatim from AxiomMath/Weil (https://github.com/AxiomMath/Weil, commit 27cdb204; WeilRiemannHypothesisForm.lean
+  and ZetaRationality.lean), Copyright (c) 2026 Axiom Math, licensed under Apache-2.0.
+
+These files are hash-pinned (their sha256 is recorded in each island.toml) and are kept byte-for-byte as copied,
+so their own headers are not edited; this NOTICE carries the attribution for files that have none.

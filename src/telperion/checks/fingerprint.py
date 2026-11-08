@@ -10,6 +10,57 @@ strict implicit, instance) is kept, because it is part of the meaning. Universe 
 Nothing goes through the pretty-printer. Constants declared in a non-library module always unfold. ``whnf`` is never
 used, because it would unfold library constants too.
 
+DECLARATION CLOSURE (step 6 Task 2b). Two kinds of non-library constant survive unfolding and are hashed by more
+than their name:
+  * A LOCAL INDUCTIVE (a ``structure``, ``inductive``, ``class`` or mutual group), reached as a constant (the
+    inductive, a constructor or a recursor) or as a projection's structure. The constant itself serializes as any
+    constant does, name included, and the serialization then gets one DECLARATION BLOCK per mutual group
+    (``InductiveVal.all``), ``(grp (ind …) …)``, appended after the statement in order of first occurrence (a
+    block's own types may add groups, which follow). Each ``(ind …)`` holds the inductive's name, its level-parameter
+    COUNT (its expressions are numbered by its own ``levelParams``), its type, ``numParams``, ``numIndices``,
+    ``numNested`` (``isNested`` is ``numNested > 0``; the count says more), ``isRec``, ``isUnsafe``, ``isReflexive``
+    and, in order, every constructor as ``(ctor <name> <numFields> <type>)``. Every type goes through the SAME
+    ``deltaExpand`` and the SAME ``tpSer``, so a local inductive inside a block gets its own block (recursive), and
+    an offense inside a block (an axiom in a field's type, say) refuses the statement. Recursors are not serialized:
+    they are determined by the declaration. Two statements that differ only in a constructor's type, field count,
+    order or name, or in a parameter count, hash differently; the same declaration under the same name in another
+    module hashes the same. A statement with no local inductive gets no block and serializes byte-identically to
+    before the extension.
+  * A PROOF: any non-library THEOREM, whether the elaborator lifted it out of a definition's value (``f._proof_1``
+    in a ``def f : Fin 5 := ⟨3, by omega⟩``, ``abstractNestedProofs``; ``riemannXi._proof_1`` in the riemann-jensen
+    island) or a user declared it (``theorem lem : 3 < 5``, ``theorem foo._proof_1 : …``). It serializes as
+    ``(prf <its type>)``, the type level-instantiated, unfolded and fingerprinted recursively; its name and its proof
+    never enter the hash. PREMISE: a theorem's type is a Prop. Then by proof irrelevance any two proofs of it are
+    definitionally equal, the type is all the kernel sees of it, and ``def f : Fin 5 := ⟨3, lem⟩`` hashes the same
+    as ``⟨3, by omega⟩``. The premise holds for every ``thmInfo`` the serializer can meet, because the kernel admits
+    no theorem whose type is not a proposition ("(kernel) type of theorem … is not a proposition"; bb's probe on
+    v4.34.1 and v4.35.0) and the replay re-adds every untrusted constant through that kernel. The check is
+    load-bearing: without it a Nat-typed "theorem" with value 5 and one with value 6 would collapse into one
+    statement. So ``tpBuildCtx`` re-checks it (``Meta.isProp`` on the theorem's type, ``non-prop-theorem`` refuses),
+    defence in depth against a kernel or loader change. POLICY (lead ruling 2026-11-05, following bb's plan review
+    REVIEW_PLAN_FP_CLOSURE 0aefdf7b; it amends requirement 2 of the Task 2b plan, see the plan's Ruling section):
+    every non-library theorem is accepted by type, no name test (``_proof_<n>`` regex or ``Name.isInternal``)
+    selects which. A name test would protect nothing: a user refused on ``theorem lem`` inlines the proof and the
+    elaborator names it ``f._proof_1``, which any name test accepts; and it would make the hash depend on a NAME,
+    which is exactly what the extension is for not doing. What a proof's name cannot hide, its CONTENT cannot hide
+    either: a false-typed lemma (``theorem bad : False``) can only enter a statement as ``(prf (c _."False" []))``,
+    a different statement from the honest one. A ``sorry`` or an axiom INSIDE a proof is invisible to the
+    fingerprint (it hashes the type). The guard against it is the PROOF-SIDE axiom audit (``missions/provenance.py``,
+    ``CLEAN_AXIOMS``; the replay's ``collectAxioms`` over the constants it adds): any proof of the statement reaches
+    the definition's value, then the lemma, then ``sorryAx``. ``Fingerprints.axioms``, the same collection over the
+    fingerprinted module, shows the sorry only when the module has no sorry of its own (value mode, the tests'
+    bodies): a mission statement file ends in the statement's own ``:= by sorry`` and is fingerprinted with
+    ``allow_sorry``, so for a type-mode statement fingerprint ``sorryAx`` is ALWAYS in ``Fingerprints.axioms`` and
+    a sorry in a supporting lemma is indistinguishable from it there. (Negative control on a body with no sorry of
+    its own: a ``_proof_1`` that goes through a sorry'd lemma keeps the honest hash and reports ``sorryAx``.) A
+    proof written with ``sorry`` directly is never lifted at all (``abstractNestedProofs`` skips any proof with
+    ``hasSorry``), so it stays inline in the definition's value, unfolding puts ``sorryAx`` in the statement, and
+    the statement is refused.
+Tags ``grp``, ``ind``, ``ctor`` and ``prf`` are self-delimiting and distinct from every other tag, so the extended
+serialization stays injective. Block order is the serializer's own traversal order (first occurrence in the emitted
+text; a mutual group is one unit, the visited set is keyed by group), never hash or pointer order, so re-running gives
+byte-identical output. The size cap counts the blocks and each inlined proof type.
+
 VALUE MODE (step 5 Task 6). ``mode="value"`` hashes a ``def S : Prop``'s VALUE instead of its type, with the same
 unfolding, the same library roots and the same serializer, level parameters numbered by ``S``'s own ``levelParams``.
 Since ``S`` is a non-library definition, a ``theorem t : S`` (type mode) unfolds to ``S``'s value and so gets the
@@ -20,16 +71,23 @@ mode, a target that is not a definition (theorem, axiom, opaque, inductive, ...)
 
 WHAT IS REFUSED (fail closed, ``FP-REFUSED``, a ValueError).
   * An axiom declared by any untrusted module (Ruling 10: the replay refuses it, so it never enters the env).
-  * Any non-library constant still left after unfolding, which would be hashed by its NAME alone: a local inductive,
-    constructor, recursor, structure (also through a projection's structure name), axiom, opaque, quotient or theorem,
-    and an ``irreducible_def`` (whose wrapper is an opaque structure). Hashing an inductive's full declaration closure
-    would let these through, but that is a later extension.
-  * ``sorryAx`` anywhere in the statement; a free or meta variable; a level parameter that is not the target's own.
-  * An unfolded statement of more than ``2^22`` nodes (``too-large``), counted DAG-linearly before serializing, so a
-    chain of doubling definitions is refused in seconds instead of serialized exponentially.
+  * Any non-library constant still left after unfolding that is neither a local inductive's (inductive, constructor,
+    recursor, projection structure: DECLARATION CLOSURE above) nor a theorem, since it would be hashed by its NAME
+    alone: an axiom, opaque or quotient, and an ``irreducible_def`` (whose wrapper is an opaque). The same check
+    runs on every type in the declaration closure.
+  * A non-library theorem whose type is not a Prop (``non-prop-theorem``): the kernel never admits one, so this is
+    defence in depth for the ``(prf …)`` premise above.
+  * ``sorryAx`` anywhere in the statement or its declaration closure; a free or meta variable; a level parameter
+    that is not the target's own (or, inside a block, the inductive's own).
+  * An unfolded statement, declaration blocks and inlined auxiliary types included, of more than ``2^22`` nodes
+    (``too-large``), counted DAG-linearly before serializing, so a chain of doubling definitions is refused in
+    seconds instead of serialized exponentially.
   * A refused replay (below): an untrusted module whose constants the kernel rejects, a target .olean that does not
     resolve to the file Python hashed (``body-olean-mismatch`` for a body), or a process import outside the trusted
     prefixes (``untrusted-library-module``).
+  * A NESTED local inductive (``inductive Rose | node : List Rose → Rose``), a known limitation of the replay: after
+    re-adding the declaration it finds no auxiliary recursor (``No such recursor Rose.rec_1``) and refuses, so the
+    statement never reaches the serializer. The serializer's own ``numNested > 0`` block is pinned without the replay.
 
 REPLAY ISOLATION (owner decision "Replay-isolate", Ruling 9). The fingerprint never imports an untrusted module. The
 targets' modules are loaded by ``lean_replay.run_replay``: the script imports only trusted modules from the PINNED env
@@ -121,34 +179,106 @@ partial def tpLevelSize (l : Level) : TpSizeM Nat := do
   modify fun (m, lm) => (m, lm.insert l n)
   return n
 
-/-- Tree size of an expression (what `tpSer` would walk), memoized (DAG-linear), saturating at `tpCap + 1`. -/
-partial def tpSize (e : Expr) : TpSizeM Nat := do
+/-- Step 6 Task 2b. A non-library THEOREM, whatever its name (`f._proof_1` lifted out of a definition's value by
+the elaborator, or a user's `lem`): hashed by its type alone, `(prf …)`, which by proof irrelevance is all the
+kernel sees of it, PROVIDED the type is a Prop (`tpIsPropType`, re-checked in `tpBuildCtx`). An axiom, opaque or
+quotient is not a proof and stays refused. -/
+def tpIsProof (env : Environment) (n : Name) : Bool :=
+  !tpIsLib env n && match env.find? n with
+    | some (.thmInfo _) => true
+    | _ => false
+
+/-- Whether `t` is a proposition (`Meta.isProp`): the premise of `(prf …)`. The kernel admits no theorem whose type
+is not one; `tpBuildCtx`'s re-check is defence in depth. -/
+def tpIsPropType (env : Environment) (t : Expr) : IO Bool := do
+  let (b, _) ← (Meta.isProp t).run'.toIO
+    { fileName := "<fingerprint>", fileMap := default, maxRecDepth := 100000 } { env }
+  return b
+
+/-- The mutual group (`InductiveVal.all`, in declaration order) of the non-library inductive that `n` belongs to:
+`n` is the inductive itself (also as a projection's structure), one of its constructors or one of its recursors.
+`none` for a library constant and for anything else. -/
+def tpLocalGroup (env : Environment) (n : Name) : Option (List Name) :=
+  if tpIsLib env n then none else
+  match env.find? n with
+  | some (.inductInfo v) => some v.all
+  | some (.ctorInfo v) =>
+    match env.find? v.induct with
+    | some (.inductInfo iv) => some iv.all
+    | _ => none
+  | some (.recInfo v) => some v.all
+  | _ => none
+
+/-- One local inductive, as its declaration block serializes it; every `Expr` is already `deltaExpand`ed. -/
+structure TpInd where
+  name : Name
+  lps : List Name
+  type : Expr
+  numParams : Nat
+  numIndices : Nat
+  numNested : Nat
+  isRec : Bool
+  isUnsafe : Bool
+  isReflexive : Bool
+  /-- In declaration order: name, `numFields`, type. -/
+  ctors : List (Name × Nat × Expr)
+
+/-- The declaration closure of a statement (`tpBuildCtx`): what the serializer needs beyond the term itself. -/
+structure TpCtx where
+  /-- Group key (the first name of `all`) → the group's inductives, in `all` order. -/
+  groups : Std.HashMap Name (List TpInd) := {}
+  /-- Every inductive, constructor and recursor name met → its group key. -/
+  groupOf : Std.HashMap Name Name := {}
+  /-- Non-library theorem → (its level parameters, its expanded type). -/
+  aux : Std.HashMap Name (List Name × Expr) := {}
+
+/-- Tree size of an expression (what `tpSer` would walk, an auxiliary proof's type inlined at each occurrence),
+memoized (DAG-linear), saturating at `tpCap + 1`. -/
+partial def tpSize (aux : Std.HashMap Name (List Name × Expr)) (e : Expr) : TpSizeM Nat := do
   if let some n := (← get).1[e]? then return n
   let n ← match e with
-    | .app f a => pure <| 1 + (← tpSize f) + (← tpSize a)
-    | .lam _ t b _ => pure <| 1 + (← tpSize t) + (← tpSize b)
-    | .forallE _ t b _ => pure <| 1 + (← tpSize t) + (← tpSize b)
-    | .letE _ t v b _ => pure <| 1 + (← tpSize t) + (← tpSize v) + (← tpSize b)
-    | .mdata _ b => tpSize b
-    | .proj _ _ b => pure <| 1 + (← tpSize b)
+    | .app f a => pure <| 1 + (← tpSize aux f) + (← tpSize aux a)
+    | .lam _ t b _ => pure <| 1 + (← tpSize aux t) + (← tpSize aux b)
+    | .forallE _ t b _ => pure <| 1 + (← tpSize aux t) + (← tpSize aux b)
+    | .letE _ t v b _ => pure <| 1 + (← tpSize aux t) + (← tpSize aux v) + (← tpSize aux b)
+    | .mdata _ b => tpSize aux b
+    | .proj _ _ b => pure <| 1 + (← tpSize aux b)
     | .sort u => pure <| 1 + (← tpLevelSize u)
-    | .const _ us => pure <| 1 + (← us.foldlM (fun acc u => do pure (acc + (← tpLevelSize u))) 0)
+    | .const n us =>
+      match aux[n]? with
+      | some (lps, t) => pure <| 1 + (← tpSize aux (t.instantiateLevelParams lps us))
+      | none => pure <| 1 + (← us.foldlM (fun acc u => do pure (acc + (← tpLevelSize u))) 0)
     | _ => pure 1
   let n := min n (tpCap + 1)
   modify fun (m, lm) => (m.insert e n, lm)
   return n
 
+/-- The size of the whole serialization: the statement plus every declaration block's types, one memo. -/
+def tpTotalSize (ctx : TpCtx) (e : Expr) : Nat :=
+  let act : TpSizeM Nat := do
+    let mut n ← tpSize ctx.aux e
+    for (_, inds) in ctx.groups.toList do
+      for v in inds do
+        n := n + (← tpSize ctx.aux v.type)
+        for (_, _, t) in v.ctors do
+          n := n + (← tpSize ctx.aux t)
+    return min n (tpCap + 1)
+  Id.run (act.run' ({}, {}))
+
 /-- The first thing left after unfolding that cannot be hashed: `sorryAx`, a non-library constant or projection
-structure, or a free or meta variable. Memoized on visited subterms. -/
+structure that is neither a local inductive's (`tpLocalGroup`) nor a theorem (`tpIsProof`), or a free
+or meta variable. Memoized on visited subterms. -/
 partial def tpOffense (env : Environment) (e : Expr) : StateM (Std.HashSet Expr) (Option (String × String)) := do
   if (← get).contains e then return none
   modify (·.insert e)
   match e with
   | .const n _ =>
     if n == ``sorryAx then return some ("sorryAx", "sorry")
-    return if tpIsLib env n then none else some (n.toString, tpKind (env.find? n))
+    if tpIsLib env n || tpIsProof env n || (tpLocalGroup env n).isSome then return none
+    return some (n.toString, tpKind (env.find? n))
   | .proj s _ b =>
-    if tpIsLib env s then tpOffense env b else return some (s.toString, tpKind (env.find? s))
+    if tpIsLib env s || (tpLocalGroup env s).isSome then tpOffense env b
+    else return some (s.toString, tpKind (env.find? s))
   | .fvar _ => return some ("free-variable", "fvar")
   | .mvar _ => return some ("metavariable", "mvar")
   | .app f a => return (← tpOffense env f) <|> (← tpOffense env a)
@@ -158,15 +288,92 @@ partial def tpOffense (env : Environment) (e : Expr) : StateM (Std.HashSet Expr)
   | .mdata _ b => tpOffense env b
   | _ => return none
 
+/-- The non-library constant names in `e` (`.const` names and `.proj` structures, repeats possible), memoized on
+visited subterms. -/
+partial def tpLocals (env : Environment) (e : Expr) : StateM (Std.HashSet Expr × Array Name) Unit := do
+  if (← get).1.contains e then return
+  modify fun (s, a) => (s.insert e, a)
+  match e with
+  | .const n _ => unless tpIsLib env n do modify fun (s, a) => (s, a.push n)
+  | .proj s _ b => do
+    unless tpIsLib env s do modify fun (st, a) => (st, a.push s)
+    tpLocals env b
+  | .app f a => do tpLocals env f; tpLocals env a
+  | .lam _ t b _ => do tpLocals env t; tpLocals env b
+  | .forallE _ t b _ => do tpLocals env t; tpLocals env b
+  | .letE _ t v b _ => do tpLocals env t; tpLocals env v; tpLocals env b
+  | .mdata _ b => tpLocals env b
+  | _ => pure ()
+
+/-- `deltaExpand` of every non-library definition in `e` (the one unfolding, used for the statement and for every
+type in its declaration closure). -/
+def tpExpand (env : Environment) (e : Expr) : IO Expr := do
+  let (e', _) ← (deltaExpand e (fun n => !tpIsLib env n && tpIsDef env n)).toIO
+    { fileName := "<fingerprint>", fileMap := default, maxRecDepth := 100000 } { env }
+  return e'
+
+/-- The declaration closure of the expanded statement `e`, to a fixpoint: every non-library theorem it (or the
+closure) mentions, with its expanded type (which must be a Prop: `non-prop-theorem` refuses), and every local
+inductive group, with the expanded type of each inductive and constructor. Every expression in the closure is
+`tpOffense`-checked like the statement; the first offense found refuses (`.error "<what> <kind>"`). -/
+partial def tpBuildCtx (env : Environment) (e : Expr) : IO (Except String TpCtx) := do
+  let mut ctx : TpCtx := {}
+  let mut work : Array Expr := #[e]
+  let mut i := 0
+  while i < work.size do
+    let cur := work[i]!
+    i := i + 1
+    if let some (c, k) := Id.run ((tpOffense env cur).run' {}) then
+      return .error s!"{c} {k}"
+    let (_, _, names) := Id.run ((tpLocals env cur).run ({}, #[]))
+    for n in names do
+      if tpIsProof env n then
+        unless ctx.aux.contains n do
+          let some ci := env.find? n | return .error s!"{n} missing-constant"
+          unless ← tpIsPropType env ci.type do return .error s!"{n} non-prop-theorem"
+          let t ← tpExpand env ci.type
+          ctx := { ctx with aux := ctx.aux.insert n (ci.levelParams, t) }
+          work := work.push t
+      else if let some all := tpLocalGroup env n then
+        let some key := all.head? | return .error s!"{n} empty-inductive-group"
+        ctx := { ctx with groupOf := ctx.groupOf.insert n key }
+        unless ctx.groups.contains key do
+          let mut inds : Array TpInd := #[]
+          for iname in all do
+            let some (.inductInfo v) := env.find? iname | return .error s!"{iname} missing-inductive"
+            let t ← tpExpand env v.type
+            work := work.push t
+            let mut ctors : Array (Name × Nat × Expr) := #[]
+            for cname in v.ctors do
+              let some (.ctorInfo cv) := env.find? cname | return .error s!"{cname} missing-constructor"
+              let ct ← tpExpand env cv.type
+              work := work.push ct
+              ctors := ctors.push (cname, cv.numFields, ct)
+            inds := inds.push { name := iname, lps := v.levelParams, type := t, numParams := v.numParams,
+                                numIndices := v.numIndices, numNested := v.numNested, isRec := v.isRec,
+                                isUnsafe := v.isUnsafe, isReflexive := v.isReflexive, ctors := ctors.toList }
+          ctx := { ctx with groups := ctx.groups.insert key inds.toList }
+  return .ok ctx
+
 /-- Injective: every component is self-delimiting (a quoted string, or `#` and a number). -/
 partial def tpSerName : Name → String
   | .anonymous => "_"
   | .str p s => tpSerName p ++ "." ++ s.quote
   | .num p n => tpSerName p ++ "#" ++ toString n
 
-abbrev TpSerM := StateT String (Except String)
+/-- Serializer state: the output so far, and the local inductive groups met, in order of first occurrence. -/
+structure TpSt where
+  out : String := ""
+  groups : Array Name := #[]
+  seen : Std.HashSet Name := {}
 
-def tpEmit (s : String) : TpSerM Unit := modify (· ++ s)
+abbrev TpSerM := StateT TpSt (Except String)
+
+def tpEmit (s : String) : TpSerM Unit := modify fun st => { st with out := st.out ++ s }
+
+/-- Record group `g` for a declaration block, once. -/
+def tpNote (g : Name) : TpSerM Unit := modify fun st =>
+  if st.seen.contains g then st else { st with groups := st.groups.push g, seen := st.seen.insert g }
 
 partial def tpSerLevel (lps : List Name) : Level → TpSerM Unit
   | .zero => tpEmit "z"
@@ -184,47 +391,83 @@ def tpSerBi : BinderInfo → String
   | .strictImplicit => "s"
   | .instImplicit => "c"
 
-/-- Appends to the state string (linear, so a deep term is not re-copied at every level). -/
-partial def tpSer (lps : List Name) : Expr → TpSerM Unit
+/-- Appends to the state string (linear, so a deep term is not re-copied at every level). A non-library theorem
+(`ctx.aux`) is serialized as `(prf <its type, level-instantiated>)`, name and proof dropped; a local inductive's
+constant or projection structure (`ctx.groupOf`) is serialized as any constant is, and its group is noted for a
+declaration block (`tpSerBlocks`). -/
+partial def tpSer (ctx : TpCtx) (lps : List Name) : Expr → TpSerM Unit
   | .bvar i => tpEmit s!"(b {i})"
   | .fvar _ => throw "free-variable"
   | .mvar _ => throw "metavariable"
   | .sort u => do tpEmit "(s "; tpSerLevel lps u; tpEmit ")"
   | .const n us => do
-    tpEmit s!"(c {tpSerName n} ["
-    let mut first := true
-    for u in us do
-      unless first do tpEmit " "
-      first := false
-      tpSerLevel lps u
-    tpEmit "])"
-  | .app f a => do tpEmit "(a "; tpSer lps f; tpEmit " "; tpSer lps a; tpEmit ")"
-  | .lam _ t b bi => do tpEmit s!"(l {tpSerBi bi} "; tpSer lps t; tpEmit " "; tpSer lps b; tpEmit ")"
-  | .forallE _ t b bi => do tpEmit s!"(p {tpSerBi bi} "; tpSer lps t; tpEmit " "; tpSer lps b; tpEmit ")"
+    match ctx.aux[n]? with
+    | some (tlps, t) => do tpEmit "(prf "; tpSer ctx lps (t.instantiateLevelParams tlps us); tpEmit ")"
+    | none =>
+      if let some g := ctx.groupOf[n]? then tpNote g
+      tpEmit s!"(c {tpSerName n} ["
+      let mut first := true
+      for u in us do
+        unless first do tpEmit " "
+        first := false
+        tpSerLevel lps u
+      tpEmit "])"
+  | .app f a => do tpEmit "(a "; tpSer ctx lps f; tpEmit " "; tpSer ctx lps a; tpEmit ")"
+  | .lam _ t b bi => do tpEmit s!"(l {tpSerBi bi} "; tpSer ctx lps t; tpEmit " "; tpSer ctx lps b; tpEmit ")"
+  | .forallE _ t b bi => do
+    tpEmit s!"(p {tpSerBi bi} "; tpSer ctx lps t; tpEmit " "; tpSer ctx lps b; tpEmit ")"
   | .letE _ t v b nd => do
-    tpEmit "(t "; tpSer lps t; tpEmit " "; tpSer lps v; tpEmit " "; tpSer lps b; tpEmit s!" {nd})"
+    tpEmit "(t "; tpSer ctx lps t; tpEmit " "; tpSer ctx lps v; tpEmit " "; tpSer ctx lps b; tpEmit s!" {nd})"
   | .lit (.natVal n) => tpEmit s!"(n {n})"
   | .lit (.strVal s) => tpEmit s!"(str {s.quote})"
-  | .mdata _ e => tpSer lps e
-  | .proj s i e => do tpEmit s!"(j {tpSerName s} {i} "; tpSer lps e; tpEmit ")"
+  | .mdata _ e => tpSer ctx lps e
+  | .proj s i e => do
+    if let some g := ctx.groupOf[s]? then tpNote g
+    tpEmit s!"(j {tpSerName s} {i} "; tpSer ctx lps e; tpEmit ")"
+
+/-- One inductive's declaration block, its expressions numbered by ITS level parameters:
+`(ind <name> <#lps> <type> <numParams> <numIndices> <numNested> <isRec> <isUnsafe> <isReflexive> (ctor <name>
+<numFields> <type>)…)`. -/
+def tpSerInd (ctx : TpCtx) (v : TpInd) : TpSerM Unit := do
+  tpEmit s!"(ind {tpSerName v.name} {v.lps.length} "
+  tpSer ctx v.lps v.type
+  tpEmit s!" {v.numParams} {v.numIndices} {v.numNested} {v.isRec} {v.isUnsafe} {v.isReflexive}"
+  for (c, nf, t) in v.ctors do
+    tpEmit s!" (ctor {tpSerName c} {nf} "
+    tpSer ctx v.lps t
+    tpEmit ")"
+  tpEmit ")"
+
+/-- After the statement, from group `i` on: one ` (grp <ind>…)` block per local inductive group, in order of first
+occurrence in the serialization so far; a block's own types may note further groups, which follow. -/
+partial def tpSerBlocks (ctx : TpCtx) (i : Nat) : TpSerM Unit := do
+  let some g ← modifyGet fun st => (st.groups[i]?, st) | return
+  let some inds := ctx.groups[g]? | throw s!"group-{g}-missing"
+  tpEmit " (grp"
+  for v in inds do
+    tpEmit " "
+    tpSerInd ctx v
+  tpEmit ")"
+  tpSerBlocks ctx (i + 1)
 
 /-- The fingerprint of the closed term `e0` (whose level parameters are `lps`) in `env`: `.ok <serialization>` or
 `.error "<what> <why>"` (a refusal). Self-contained: it needs only `env` and `tpRoots`, so a loader that builds `env`
-some other way can call it. -/
+some other way can call it. The serialization is the statement's, then its declaration blocks; with no local
+inductive it is the statement's alone, byte-identical to the pre-closure serializer's. -/
 def tpFingerprintExpr (env : Environment) (lps : List Name) (e0 : Expr) : IO (Except String String) := do
-  let (e, _) ← (deltaExpand e0 (fun n => !tpIsLib env n && tpIsDef env n)).toIO
-    { fileName := "<fingerprint>", fileMap := default, maxRecDepth := 100000 } { env }
-  let n := Id.run ((tpSize e).run' ({}, {}))
-  if n > tpCap then
-    return .error s!"too-large {n} nodes (counted up to the cap {tpCap} + 1)"
-  match Id.run ((tpOffense env e).run' {}) with
-  | some (c, k) =>
+  let e ← tpExpand env e0
+  match ← tpBuildCtx env e with
+  | .error what =>
     let uses := e0.getUsedConstants.filter (!tpIsLib env ·) |>.toList.map toString
-    return .error s!"{c} {k} (statement uses: {", ".intercalate uses})"
-  | none =>
-    match (tpSer lps e).run "" with
+    return .error s!"{what} (statement uses: {", ".intercalate uses})"
+  | .ok ctx =>
+    let n := tpTotalSize ctx e
+    if n > tpCap then
+      return .error s!"too-large {n} nodes (counted up to the cap {tpCap} + 1)"
+    let act : TpSerM Unit := do tpSer ctx lps e; tpSerBlocks ctx 0
+    match act.run {} with
     | .error msg => return .error s!"{msg} unserializable"
-    | .ok ((), s) => return .ok s
+    | .ok ((), st) => return .ok st.out
 
 /-- Type mode: the fingerprint of `ci`'s statement (its TYPE). -/
 def tpFingerprint (env : Environment) (ci : ConstantInfo) : IO (Except String String) :=

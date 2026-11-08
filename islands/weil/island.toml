@@ -1,0 +1,18 @@
+name = "weil"
+source = "https://github.com/AxiomMath/Weil"
+commit = "27cdb2049be62ee2911429b47f54774078450e32"
+toolchain = "leanprover/lean4:v4.34.0-rc2"
+licence = "Apache-2.0"
+challenge_source = "overlay"
+challenge_module = "Weil.TelperionChallenge"
+solution_module = "Weil.AlgebraicGeometry.EtaleCohomology.Trace.WeilRiemannHypothesisForm"
+overlay_path = "Weil/TelperionChallenge.lean"
+overlay_sha256 = "012753bfbab54efb5e7aa50ca90e826549feb07089fd093eb394a5bc83866b33"
+overlay_imports = [
+  "Weil.Definitions",
+]
+theorems = [
+  "Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd",
+  "AlgebraicGeometry.exists_mul_zetaSeries_eq",
+]
+intended_use = "point-count statements of the Weil conjectures (classical RH form for the zeta series, rationality); reference for function-field RH work"

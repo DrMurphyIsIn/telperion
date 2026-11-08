@@ -114,6 +114,16 @@ toolchain = "leanprover/lean4:v4.32.0"
 reason = "support example pinned before the v4.33.1 kernel fixes; not yet re-checked by a second kernel; upgrade pending"
 
 [[exception]]
+project = "islands/zeta-zeros-v2"
+toolchain = "leanprover/lean4:v4.34.0-rc2"
+reason = "external island (AxiomMath/ZetaZerosV2) pinned at a pre-release below the floor; rc2 carries backports of the five v4.33.1 kernel fixes but not v4.34.1's later runtime reference-count fixes; never built locally, and can be verified only from a recorded sandbox replay with nanoda"
+
+[[exception]]
+project = "islands/weil"
+toolchain = "leanprover/lean4:v4.34.0-rc2"
+reason = "external island (AxiomMath/Weil) pinned at a pre-release below the floor; rc2 carries backports of the five v4.33.1 kernel fixes but not v4.34.1's later runtime reference-count fixes; never built locally, and can be verified only from a recorded sandbox replay with nanoda"
+
+[[exception]]
 project = "tests/fixtures/missions/demo_root/examples/demo_island/lean"
 toolchain = "leanprover/lean4:v4.32.0"
 reason = "synthetic test fixture; never judged; pinned below the floor on purpose for the missions tests"

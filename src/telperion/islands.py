@@ -1,0 +1,2465 @@
+"""The island registry (step 6): an island is an external Lean library whose replay evidence Telperion has archived
+and re-checks (a Comparator run with nanoda at the pinned NANODA_REV, plus the step-4 statement checks; the run
+itself happens in a sandbox elsewhere). Its pinned registration lives in `<root>/islands/<name>/`, and library
+source never does:
+
+    island.toml       the pin, the intended theorems and, once a replay passes, its [replay] record
+    challenge.lean    a byte copy of the library's challenge file, its sha256 in island.toml
+    comparator.json   OUR Comparator config: the three standard axioms, enable_nanoda, exactly the theorems
+    replay/           the archived evidence of the passing replay (Ruling 6): comparator.log.xz (the Comparator log,
+                      xz-compressed; with the sandbox's scratch path replaced by $SCRATCH when record-replay is
+                      given --scratch-prefix, Ruling 7), probe-<sha256>.json (one `probe-negation --json` output per
+                      theorem) and fingerprint.json (one `fingerprint --json` output for all of them); their sha256s
+                      are in [replay] (log_sha256 is of the UNCOMPRESSED log)
+    REPLAY.md         a generated human summary of the registration and of every replay; nothing reads it
+
+Three commands write a registration (Task 2):
+
+- `island add` clones the library at the pin (into `~/telperion-tools/islands/<name>/src`, outside the repo),
+  copies the challenge file byte for byte, and writes island.toml without [replay], our comparator.json and
+  REPLAY.md. It builds nothing.
+- `island record-replay` ingests a replay run elsewhere (owner decision 2026-10-31: island replays run in a remote
+  sandbox, never on the owner's machine): the Comparator log, the probe JSONs and the fingerprint JSON.
+- `island replay` runs the same replay itself, through an injected `run`. It builds and executes the library's
+  code, so it MUST RUN INSIDE A SANDBOX; we never run it locally.
+
+Both replay commands judge their evidence with ONE function, `evaluate_replay`, and `island_problems` re-judges the
+archived evidence with that same function on every check. On PASS the evidence is archived under replay/ and
+[replay] is written; on FAIL nothing is written but a REPLAY.md section, and an earlier [replay] is dropped.
+
+What `verified` means: island.toml is well formed and pinned, the challenge copy is intact, our comparator.json
+is the standard one, and the archived evidence is present, matches its recorded sha256s and still parses to PASS
+for this pin, this challenge and the pinned nanoda. It does NOT prove that a run happened: whoever ran the
+sandbox could have written the log and the JSONs by hand. The anchor is the independent auditor's review of the
+run itself; `verified` only says the evidence on file is complete and internally consistent.
+
+`verified` is all or nothing: `island_problems` lists everything that keeps an island from it, including "not
+replayed yet", and `status` is "verified" iff that list is empty, "self-reported" otherwise. In particular a
+replay counts only for the pin and the challenge it ran on (the plan's Review Focus 1 and 2): moving `commit`,
+editing challenge.lean, or bumping NANODA_REV drops the island to self-reported until it is re-replayed.
+
+OVERLAY islands (option A, owner decision 2026-11-06). A library that ships no statement-only challenge module gets
+one written by the Telperion lead: island.toml says `challenge_source = "overlay"`, `overlay_path` (where it goes in
+the tree; its module is the challenge module), `overlay_sha256` (in place of `challenge_sha256`) and `overlay_imports`
+(the upstream definition modules it may import besides Mathlib), and challenge.lean is the overlay. It is a TRUSTED
+statement layer that bb checks against the library statement by statement. On every check it must still be
+statement-only and declare exactly the theorems (`overlay_problems`); at `island add --overlay` and before every
+placement it must match the pinned tree (`upstream_problems`: same names, same statement text, no clashing import).
+At replay it is placed into a FRESH copy of the pin (`_place_overlay`, or `island place-overlay` in a sandbox run by
+hand), and the clean-tree guard then allows exactly that one added file with that sha256. The ISLAND-HEADER binds
+`overlay_sha256=` instead of `challenge_sha256=`. Comparator compares the overlay's statements with the upstream
+solution module's theorems of the same names.
+
+Every read fails closed: `islands/`, `islands/<name>/` and `islands/<name>/replay/` must be real directories, not
+symlinks; every file goes through `guarded_read.read_guarded` (no symlink, a regular file, at most `MAX_BYTES`,
+and the log at most `LOG_MAX_BYTES` once decompressed); a decode, TOML, JSON or xz error is a problem string, never
+an exception. A name is checked against `[a-z0-9-]+` before any path is built from it, so nothing outside
+`<root>/islands/<name>/` is ever read on a caller's say-so. Names reach git, lake and Lean only as list elements of
+an argv (no shell).
+"""
+from __future__ import annotations
+
+import datetime
+import hashlib
+import json
+import lzma
+import os
+import re
+import shlex
+import shutil
+import stat
+import sys
+import tempfile
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Optional, Sequence
+
+from .guarded_read import read_guarded
+
+ISLANDS_DIR = "islands"
+ISLAND_TOML = "island.toml"
+CHALLENGE_FILE = "challenge.lean"
+COMPARATOR_FILE = "comparator.json"
+REPLAY_FILE = "REPLAY.md"
+REPLAY_DIR = "replay"
+LOG_ARCHIVE = "comparator.log.xz"
+FINGERPRINT_ARCHIVE = "fingerprint.json"
+
+#: Upper bound on every registry file. A real one is a few kilobytes; refusing anything larger before decoding keeps
+#: a hostile file from costing more than a stat.
+MAX_BYTES = 1 << 20
+#: Upper bound on a Comparator log, uncompressed (the real riemann-jensen log is 16 KB). Decompression stops here.
+LOG_MAX_BYTES = 32 << 20
+
+#: The xz decoder's memory cap, whatever dictionary size a stream's header declares (liblzma allocates that much).
+XZ_MEMLIMIT = 64 << 20
+#: What `record-replay --scratch-prefix` puts in the archived log in place of the sandbox's session scratch path.
+SCRATCH_TOKEN = "$SCRATCH"
+#: N2: what a Claude session scratch path looks like (`/tmp/claude-0/-home-user-Arda/<session uuid>/scratchpad`): a
+#: `/claude-<digits>/` component followed, later in the same path, by a UUID-shaped component. record-replay refuses
+#: to archive one: without --scratch-prefix (it was forgotten), or left over after it (a second session's path).
+_SESSION_PATH_RE = re.compile(r"/claude-\d+/(?:[^/\s]*/)*?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                              r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])")
+
+#: C1 (Ruling 8): what Comparator exports besides the theorems, by Comparator tag. Comparator exports
+#: `builtinTargets ++ theoremNames ++ legalAxioms ++ primitiveTargets ++ definitionNames` (Main.lean, compareIt),
+#: so a run under any config but ours (an extra permitted axiom such as sorryAx, definition holes, a missing axiom)
+#: shows in these lists even when Comparator accepts quietly. Each export list minus the island's theorems must be
+#: exactly this set. Taken from the two real island logs: v4.35.0 from riemann-jensen's spec run (md5 76bc5e06),
+#: v4.34.0-rc2 from zeta-zeros-v2's (md5 573d6ead), which exports no optParam/autoParam/semiOutParam/outParam. A tag
+#: not listed here is a FAIL; a new tag needs its entry, read off a real log.
+_CLEAN = ("propext", "Quot.sound", "Classical.choice")
+_PRIMITIVES = ("Nat.add", "Nat.sub", "Nat.mul", "Nat.pow", "Nat.gcd", "Nat.div", "Nat.mod", "Nat.beq", "Nat.ble",
+               "Nat.land", "Nat.lor", "Nat.xor", "Nat.shiftLeft", "Nat.shiftRight", "String.ofList", "Char.ofNat",
+               "List", "eagerReduce")
+_BUILTINS_RC2 = ("Nat", "String", "String.mk", "Char", "Quot", "Quot.mk", "Quot.lift", "Quot.ind")
+COMPARATOR_EXPORTS = {
+    "v4.34.0-rc2": frozenset(_BUILTINS_RC2 + _CLEAN + _PRIMITIVES),
+    "v4.35.0": frozenset(_BUILTINS_RC2 + _CLEAN + _PRIMITIVES + ("optParam", "autoParam", "semiOutParam", "outParam")),
+}
+
+#: The negation-probe verdicts a verified island's theorems may carry (step 4).
+PASSING_PROBES = ("PROBE_ONLY", "WITNESSED")
+
+#: Where `island add` clones and `island replay` finds its tools, unless told otherwise.
+DEFAULT_TOOLS = Path.home() / "telperion-tools"
+DEFAULT_LEANLOCK = Path.home() / "hodge-engine" / "leanlock.sh"
+
+_NAME_RE = re.compile(r"[a-z0-9-]+")
+_HEX40 = re.compile(r"[0-9a-f]{40}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_TAG_RE = re.compile(r"v\d+\.\d+\.\d+(?:-rc\d+)?")
+_TOOLCHAIN_PREFIX = "leanprover/lean4:"
+
+#: `challenge_source` of an island whose challenge is a Telperion lead-authored overlay (option A, 2026-11-06): the
+#: library ships no statement-only challenge module, so the lead writes one, it is sha-pinned here, and at replay it is
+#: placed into a fresh copy of the pinned tree at `overlay_path`. An island without the key is an upstream one (its
+#: challenge.lean is a byte copy of the library's own challenge file).
+OVERLAY = "overlay"
+
+_TOP_KEYS = ("name", "source", "commit", "toolchain", "licence", "challenge_module", "solution_module",
+             "challenge_sha256", "theorems", "intended_use")
+#: An overlay island's keys: `overlay_sha256` takes the place of `challenge_sha256` (it is the sha256 of the same
+#: file, challenge.lean, under a name that says who wrote it), and `overlay_imports` lists the upstream DEFINITION
+#: modules the overlay may import (Mathlib aside); bb checks that list against the library.
+_OVERLAY_TOP_KEYS = ("name", "source", "commit", "toolchain", "licence", "challenge_source", "challenge_module",
+                     "solution_module", "overlay_path", "overlay_sha256", "overlay_imports", "theorems",
+                     "intended_use")
+_REPLAY_KEYS = ("date", "commit", "challenge_sha256", "nanoda_rev", "comparator_tag", "log_sha256", "probe_sha256",
+                "fingerprint_sha256", "verdict", "checks")
+_CHECK_KEYS = ("probe", "fingerprint")
+_COMPARATOR_KEYS = ("challenge_module", "solution_module", "theorem_names", "permitted_axioms", "enable_nanoda")
+
+
+class IslandError(Exception):
+    """An island that does not exist, cannot be read, or is not verified where that is required."""
+
+
+@dataclass(frozen=True)
+class TheoremCheck:
+    probe: str
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class Replay:
+    date: str
+    commit: str
+    challenge_sha256: str
+    nanoda_rev: str
+    comparator_tag: str
+    log_sha256: str
+    verdict: str
+    checks: tuple[tuple[str, TheoremCheck], ...]
+    probe_sha256: tuple[tuple[str, str], ...] = ()
+    fingerprint_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class Island:
+    name: str
+    source: str
+    commit: str
+    toolchain: str
+    licence: str
+    challenge_module: str
+    solution_module: str
+    challenge_sha256: str
+    theorems: tuple[str, ...]
+    intended_use: str
+    replay: Optional[Replay]
+    challenge_source: str = "upstream"          # or OVERLAY
+    overlay_path: str = ""                      # overlay islands: where the overlay goes in the tree
+    overlay_imports: tuple[str, ...] = ()       # overlay islands: the upstream definition modules it may import
+
+    @property
+    def is_overlay(self) -> bool:
+        return self.challenge_source == OVERLAY
+
+    @property
+    def sha_key(self) -> str:
+        """The name the challenge file's sha256 goes by in island.toml, [replay] and the ISLAND-HEADER."""
+        return "overlay_sha256" if self.is_overlay else "challenge_sha256"
+
+
+# --- paths and guarded reads ------------------------------------------------------------------------------------------
+
+def _name_problem(name) -> Optional[str]:
+    if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+        return "not a valid island name (lowercase letters, digits and '-' only)"
+    return None
+
+
+def _root_problem(root: Path) -> Optional[str]:
+    """Why `<root>/islands` cannot be trusted, or None (also None when it does not exist)."""
+    try:
+        st = (Path(root) / ISLANDS_DIR).lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return f"{ISLANDS_DIR}/ could not be read ({exc.strerror or exc})"
+    if stat.S_ISLNK(st.st_mode):
+        return f"{ISLANDS_DIR}/ is a symlink in the working tree; refusing to read the registry through it"
+    if not stat.S_ISDIR(st.st_mode):
+        return f"{ISLANDS_DIR} is not a directory; refusing to read the registry"
+    return None
+
+
+def _dir_problem(root: Path, name: str) -> Optional[str]:
+    """Why `<root>/islands/<name>/` cannot be read as an island directory, or None. *name* is already valid."""
+    problem = _root_problem(root)
+    if problem:
+        return problem
+    try:
+        st = (Path(root) / ISLANDS_DIR / name).lstat()
+    except FileNotFoundError:
+        return f"no such island (no directory {ISLANDS_DIR}/{name}/)"
+    except OSError as exc:
+        return f"{ISLANDS_DIR}/{name}/ could not be read ({exc.strerror or exc})"
+    if stat.S_ISLNK(st.st_mode):
+        return f"{ISLANDS_DIR}/{name}/ is a symlink in the working tree; refusing to read the island through it"
+    if not stat.S_ISDIR(st.st_mode):
+        return f"{ISLANDS_DIR}/{name} is not a directory"
+    return None
+
+
+def _read(root: Path, name: str, filename: str) -> tuple[Optional[bytes], Optional[str]]:
+    """`(data, None)` or `(None, problem)`; a missing file is a problem too. Call only after `_dir_problem`."""
+    data, problem = read_guarded(Path(root) / ISLANDS_DIR / name / filename, label=filename, max_bytes=MAX_BYTES)
+    if data is None:
+        return None, problem or f"{filename} is missing"
+    return data, None
+
+
+def _read_text(root: Path, name: str, filename: str) -> tuple[Optional[str], Optional[str]]:
+    data, problem = _read(root, name, filename)
+    if data is None:
+        return None, problem
+    try:
+        return data.decode("utf-8"), None
+    except UnicodeDecodeError:
+        return None, f"{filename} is not valid UTF-8; refusing to trust it."
+
+
+def _load_doc(root: Path, name: str) -> tuple[Optional[dict], Optional[str]]:
+    """island.toml as a dict, or `(None, problem)`: a bad name, an untrusted directory, or an unreadable file."""
+    problem = _name_problem(name) or _dir_problem(root, name)
+    if problem:
+        return None, problem
+    text, problem = _read_text(root, name, ISLAND_TOML)
+    if text is None:
+        return None, problem
+    try:
+        return tomllib.loads(text), None
+    except Exception as exc:  # TOMLDecodeError, or whatever else a hostile file provokes
+        return None, f"{ISLAND_TOML} is not valid TOML ({exc})"
+
+
+def island_names(root: Path) -> tuple[list[str], list[str]]:
+    """`(names, problems)`: every entry of `<root>/islands/` that is a directory or a symlink (a symlinked island is
+    listed so that checking it reports the refusal), sorted; plain files there (a README) are not islands, and a
+    dot-prefixed directory is a stale staging directory, a problem rather than a name. No `islands/` at all is an
+    empty registry. A symlinked or unreadable `islands/` gives no names and a problem."""
+    problem = _root_problem(root)
+    if problem:
+        return [], [problem]
+    d = Path(root) / ISLANDS_DIR
+    if not d.exists():
+        return [], []
+    names = []
+    try:
+        for entry in d.iterdir():
+            st = entry.lstat()
+            if stat.S_ISDIR(st.st_mode) and entry.name.startswith("."):
+                continue                            # a stage, reported below rather than listed as an island
+            if stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode):
+                names.append(entry.name)
+    except OSError as exc:
+        return [], [f"{ISLANDS_DIR}/ could not be listed ({exc.strerror or exc})"]
+    return sorted(names), _stale_stages(d, f"{ISLANDS_DIR}/")
+
+
+def island_toolchain(root: Path, name: str) -> tuple[Optional[str], Optional[str]]:
+    """`(toolchain, None)` or `(None, problem)`, for the kernel policy: island.toml's `toolchain`, read through the
+    SAME guarded read and strict schema as `island check` (Ruling 6), so the two never disagree about whether a
+    registration is well formed; any schema problem is the policy's problem too."""
+    doc, problem = _load_doc(root, name)
+    if doc is None:
+        return None, problem
+    isl, probs = _schema(doc, name)
+    if isl is None:
+        return None, f"island {name!r}: " + "; ".join(probs)
+    return isl.toolchain, None
+
+
+def pinned_nanoda_rev() -> tuple[Optional[str], Optional[str]]:
+    """The engine's pinned nanoda rev (`<project>/NANODA_REV`), or `(None, problem)`."""
+    from . import paths
+    data, problem = read_guarded(paths.project_root() / "NANODA_REV", label="NANODA_REV", max_bytes=4096)
+    if data is None:
+        return None, problem or "NANODA_REV is missing"
+    rev = data.decode("utf-8", errors="replace").strip()
+    if not _HEX40.fullmatch(rev):
+        return None, "NANODA_REV is not 40 lowercase hex digits"
+    return rev, None
+
+
+# --- the schema -------------------------------------------------------------------------------------------------------
+
+def _hex_problem(where: str, value, pattern: re.Pattern, n: int) -> Optional[str]:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        return f"{where} must be {n} lowercase hex digits"
+    return None
+
+
+def _lean_name_problem(where: str, value) -> Optional[str]:
+    from .checks.negation_probe import name_components
+    if not isinstance(value, str) or not value.isascii():
+        return f"{where} {value!r} is not an ASCII dotted Lean identifier"
+    try:
+        name_components(value)
+    except ValueError:
+        return f"{where} {value!r} is not a plain dotted Lean identifier"
+    return None
+
+
+def _str_problem(where: str, value) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return f"{where} must be a non-empty string"
+    return None
+
+
+def _date_ok(date) -> bool:
+    try:
+        return isinstance(date, str) and len(date) == 10 and datetime.date.fromisoformat(date) is not None
+    except ValueError:
+        return False
+
+
+def _unknown_keys(where: str, table: dict, allowed) -> list[str]:
+    return [f"{where} has an unknown key {k!r}" for k in sorted(set(table) - set(allowed))]
+
+
+def _replay_schema(rep, sha_key: str = "challenge_sha256") -> tuple[Optional[Replay], list[str]]:
+    """[replay], whose challenge-file sha256 is under *sha_key* (`overlay_sha256` for an overlay island)."""
+    if not isinstance(rep, dict):
+        return None, ["[replay] must be a table"]
+    keys = tuple(sha_key if k == "challenge_sha256" else k for k in _REPLAY_KEYS)
+    probs = _unknown_keys("[replay]", rep, keys)
+    probs += [f"[replay] is missing {k!r}" for k in keys if k not in rep]
+    if probs:
+        return None, probs
+    if not _date_ok(rep["date"]):
+        probs.append("[replay] date must be an ISO date string (YYYY-MM-DD)")
+    for key, pattern, n in (("commit", _HEX40, 40), ("nanoda_rev", _HEX40, 40), (sha_key, _HEX64, 64),
+                            ("log_sha256", _HEX64, 64), ("fingerprint_sha256", _HEX64, 64)):
+        p = _hex_problem(f"[replay] {key}", rep[key], pattern, n)
+        if p:
+            probs.append(p)
+    if not isinstance(rep["comparator_tag"], str) or not _TAG_RE.fullmatch(rep["comparator_tag"]):
+        probs.append("[replay] comparator_tag must look like vX.Y.Z or vX.Y.Z-rcN")
+    if rep["verdict"] not in ("pass", "fail"):
+        probs.append("[replay] verdict must be \"pass\" or \"fail\"")
+    probe_sha: list[tuple[str, str]] = []
+    if not isinstance(rep["probe_sha256"], dict):
+        probs.append("[replay.probe_sha256] must be a table { <theorem> = <sha256 of its probe JSON> }")
+    else:
+        for thm, sha in rep["probe_sha256"].items():
+            p = (_lean_name_problem("[replay.probe_sha256] key", thm)
+                 or _hex_problem(f"[replay.probe_sha256] {thm!r}", sha, _HEX64, 64))
+            if p:
+                probs.append(p)
+            else:
+                probe_sha.append((thm, sha))
+    from .checks.negation_probe import VERDICTS
+    checks = rep["checks"]
+    entries: list[tuple[str, TheoremCheck]] = []
+    if not isinstance(checks, dict):
+        probs.append("[replay.checks] must be a table")
+    else:
+        for thm, entry in checks.items():
+            p = _lean_name_problem("[replay.checks] key", thm)
+            if p:
+                probs.append(p)
+                continue
+            if not isinstance(entry, dict):
+                probs.append(f"[replay.checks] {thm!r} must be a table {{ probe, fingerprint }}")
+                continue
+            sub = _unknown_keys(f"[replay.checks] {thm!r}", entry, _CHECK_KEYS)
+            sub += [f"[replay.checks] {thm!r} is missing {k!r}" for k in _CHECK_KEYS if k not in entry]
+            if not sub:
+                if entry["probe"] not in VERDICTS:
+                    sub.append(f"[replay.checks] {thm!r} probe {entry['probe']!r} is not one of {', '.join(VERDICTS)}")
+                p = _hex_problem(f"[replay.checks] {thm!r} fingerprint", entry["fingerprint"], _HEX64, 64)
+                if p:
+                    sub.append(p)
+            probs += sub
+            if not sub:
+                entries.append((thm, TheoremCheck(entry["probe"], entry["fingerprint"])))
+    if probs:
+        return None, probs
+    return Replay(date=rep["date"], commit=rep["commit"], challenge_sha256=rep[sha_key],
+                  nanoda_rev=rep["nanoda_rev"], comparator_tag=rep["comparator_tag"], log_sha256=rep["log_sha256"],
+                  verdict=rep["verdict"], checks=tuple(sorted(entries)), probe_sha256=tuple(sorted(probe_sha)),
+                  fingerprint_sha256=rep["fingerprint_sha256"]), []
+
+
+def _schema(doc: dict, name: str) -> tuple[Optional[Island], list[str]]:
+    """`(island, [])` when *doc* has exactly island.toml's shape, else `(None, every problem found)`. An island with
+    `challenge_source = "overlay"` has the overlay shape (`_OVERLAY_TOP_KEYS`); any other has the upstream one."""
+    overlay = "challenge_source" in doc
+    top_keys = _OVERLAY_TOP_KEYS if overlay else _TOP_KEYS
+    sha_key = "overlay_sha256" if overlay else "challenge_sha256"
+    probs = _unknown_keys(ISLAND_TOML, doc, top_keys + ("replay",))
+    probs += [f"{ISLAND_TOML} is missing {k!r}" for k in top_keys if k not in doc]
+    g = doc.get
+    if overlay and g("challenge_source") != OVERLAY:
+        probs.append(f"challenge_source {_short(g('challenge_source'))} must be \"{OVERLAY}\" (an island whose "
+                     "challenge is the library's own file has no challenge_source)")
+    if "name" in doc and g("name") != name:
+        probs.append(f"name {g('name')!r} must equal the directory name {name!r}")
+    if "source" in doc and _source_problem(g("source")):
+        probs.append(_source_problem(g("source")))
+    if "commit" in doc:
+        probs += filter(None, [_hex_problem("commit", g("commit"), _HEX40, 40)])
+    if sha_key in doc:
+        probs += filter(None, [_hex_problem(sha_key, g(sha_key), _HEX64, 64)])
+    if "toolchain" in doc:
+        probs += filter(None, [_toolchain_problem(g("toolchain"))])
+    for key in ("licence", "intended_use"):
+        if key in doc:
+            probs += filter(None, [_str_problem(key, g(key))])
+    for key in ("challenge_module", "solution_module"):
+        if key in doc:
+            probs += filter(None, [_lean_name_problem(key, g(key))])
+    theorems = g("theorems")
+    if "theorems" in doc:
+        if not isinstance(theorems, list) or not theorems:
+            probs.append("theorems must be a non-empty array of theorem names")
+        else:
+            probs += filter(None, [_lean_name_problem("theorem", t) for t in theorems])
+            dups = sorted({t for t in theorems if isinstance(t, str) and theorems.count(t) > 1})
+            probs += [f"theorem {t!r} is listed more than once" for t in dups]
+    if overlay:
+        probs += _overlay_keys_problems(doc)
+    replay = None
+    if "replay" in doc:
+        replay, rprobs = _replay_schema(doc["replay"], sha_key)
+        probs += rprobs
+    if probs:
+        return None, probs
+    extra = ({"challenge_source": OVERLAY, "overlay_path": g("overlay_path"),
+              "overlay_imports": tuple(g("overlay_imports"))} if overlay else {})
+    return Island(name=g("name"), source=g("source"), commit=g("commit"), toolchain=g("toolchain"),
+                  licence=g("licence"), challenge_module=g("challenge_module"),
+                  solution_module=g("solution_module"), challenge_sha256=g(sha_key),
+                  theorems=tuple(theorems), intended_use=g("intended_use"), replay=replay, **extra), []
+
+
+def _overlay_path_problem(path) -> Optional[str]:
+    """Why *path* cannot be where an overlay goes in the tree: a plain relative POSIX path to a `.lean` file, ASCII,
+    with no empty, `.` or `..` component."""
+    if not isinstance(path, str) or not path.isascii() or not path.endswith(".lean") or path.startswith("/"):
+        return f"overlay_path {_short(path)} must be a relative path to a .lean file"
+    if any(c in ("", ".", "..") or any(ch.isspace() or ch in "\\\"'$" for ch in c) for c in path.split("/")):
+        return f"overlay_path {path!r} must be a plain relative path (no empty, '.' or '..' component, no whitespace)"
+    return None
+
+
+def _overlay_keys_problems(doc: dict) -> list[str]:
+    """The overlay keys of island.toml: `overlay_path` is exactly the challenge module's file, the challenge module
+    is not the solution module, and `overlay_imports` is a non-empty list of distinct module names, none of them
+    Mathlib (Mathlib needs no declaring), the challenge or the solution module."""
+    g = doc.get
+    probs = []
+    path, cm, sm = g("overlay_path"), g("challenge_module"), g("solution_module")
+    if "overlay_path" in doc:
+        p = _overlay_path_problem(path)
+        if p:
+            probs.append(p)
+        elif isinstance(cm, str) and _lean_name_problem("challenge_module", cm) is None and path != _module_path(cm):
+            probs.append(f"overlay_path {path!r} must be the challenge module's file {_module_path(cm)!r}")
+    if isinstance(cm, str) and cm == sm:
+        probs.append("an overlay's challenge_module must differ from its solution_module (the solution is upstream's)")
+    if "overlay_imports" in doc:
+        imps = g("overlay_imports")
+        if not isinstance(imps, list) or not imps:
+            probs.append("overlay_imports must be a non-empty array of the upstream definition modules the overlay "
+                         "imports")
+        else:
+            probs += filter(None, [_lean_name_problem("overlay_imports entry", m) for m in imps])
+            probs += [f"overlay_imports lists {m!r} more than once"
+                      for m in sorted({m for m in imps if isinstance(m, str) and imps.count(m) > 1})]
+            probs += [f"overlay_imports lists {m!r}; Mathlib modules are always allowed and are not listed"
+                      for m in imps if isinstance(m, str) and (m == "Mathlib" or m.startswith("Mathlib."))]
+            probs += [f"overlay_imports lists {m!r}, the challenge or solution module" for m in imps
+                      if isinstance(m, str) and m in (cm, sm)]
+    return probs
+
+
+def _source_problem(source) -> Optional[str]:
+    if not isinstance(source, str) or not source.startswith("https://") or any(ch.isspace() for ch in source):
+        return "source must be an https:// URL"
+    return None
+
+
+def _toolchain_problem(tc) -> Optional[str]:
+    if (not isinstance(tc, str) or not tc.startswith(_TOOLCHAIN_PREFIX)
+            or not _TAG_RE.fullmatch(tc[len(_TOOLCHAIN_PREFIX):])):
+        return f"toolchain {tc!r} must be {_TOOLCHAIN_PREFIX}vX.Y.Z or {_TOOLCHAIN_PREFIX}vX.Y.Z-rcN"
+    return None
+
+
+def load_island(root: Path, name: str) -> Island:
+    """island.toml of `<root>/islands/<name>/`, schema-checked. `IslandError` for an invalid or unknown name, an
+    untrusted directory, an unreadable file or any schema problem. Says nothing about whether it is verified."""
+    doc, problem = _load_doc(root, name)
+    if doc is None:
+        raise IslandError(f"island {name!r}: {problem}")
+    isl, probs = _schema(doc, name)
+    if isl is None:
+        raise IslandError(f"island {name!r}: " + "; ".join(probs))
+    return isl
+
+
+# --- the overlay (option A) -------------------------------------------------------------------------------------------
+#
+# An overlay island's challenge.lean is written by the Telperion lead, because the library ships no statement-only
+# challenge module. It is a TRUSTED statement layer: bb checks it against the library, statement by statement. What
+# the tooling enforces, on every check (`overlay_problems`, from the text alone, nothing built):
+#
+#   - it is statement-only: after `module` and the imports, only namespace/section/end, `open`, `universe`, `variable`
+#     and `omit ... in` commands and `theorem`s, every theorem's proof exactly `:= by sorry`; no def, instance,
+#     attribute, macro, option, axiom or string literal (so no `@[weil "..."]` tag: it is not part of a statement);
+#   - it imports Mathlib modules and exactly the island's `overlay_imports` (the upstream DEFINITION modules), nothing
+#     else;
+#   - it declares exactly the island's theorems, each once, and each one carries a `-- upstream: <path>:<line>` comment
+#     above it, naming the line of the library's own declaration.
+#
+# What it enforces against the pinned tree, at `island add` and again before a replay (`upstream_problems`): each
+# pointer names a `theorem` with the SAME fully qualified name and, whitespace aside, the SAME statement text (from
+# `theorem` to the `:=` that ends its statement); the overlay imports no module that declares one of its theorems
+# (the two declarations would clash); the solution module imports every such module; and the overlay's path is not
+# in the tree (an overlay is an ADDED file, never a replacement), but its directory is, under the solution module's
+# root (so that `lake build <overlay module>` finds it in the library). The verdict that the statements ARE upstream's is
+# Comparator's: it exports the overlay's theorems and the solution's under the same names and accepts only if each
+# pair has the same type, every definition they mention is the same constant, and the solution's proofs pass both
+# kernels with the three axioms.
+
+_POINTER_RE = re.compile(r"-- upstream: (?P<path>\S+\.lean):(?P<line>[1-9]\d*)")
+_IMPORT_LINE_RE = re.compile(r"(?:public )?import (?P<mod>\S+)")
+_SECTION_RE = re.compile(r"(?:@\[expose\] )?(?:public )?(?:noncomputable )?section(?: (?P<name>\S+))?")
+_ANY_IMPORT_RE = re.compile(r"^(?:public\s+)?(?:meta\s+)?import\s+(\S+)", re.M)
+_SORRY_PROOF_RE = re.compile(r":=\s*by\s+sorry\s*\Z")
+_OPEN_BRACKETS, _CLOSE_BRACKETS = "([{⟨⦃", ")]}⟩⦄"
+_OVERLAY_ALLOWED = ("module, imports, namespace / section / end, open, universe, variable, `omit ... in`, and "
+                    "theorems proved `by sorry`")
+
+
+@dataclass(frozen=True)
+class OverlayTheorem:
+    name: str                                   # fully qualified
+    header: str                                 # `theorem ...` up to the `:=` of its `:= by sorry`, whitespace-folded
+    line: int                                   # 1-based line of `theorem` in the overlay
+    upstream: Optional[tuple[str, int]]         # (path, line) from its `-- upstream: <path>:<line>` comment
+
+
+@dataclass(frozen=True)
+class OverlayParse:
+    imports: tuple[str, ...]
+    theorems: tuple[OverlayTheorem, ...]
+    problems: tuple[str, ...]
+
+
+def _strip_comments(text: str) -> tuple[str, Optional[str]]:
+    """*text* with every comment (`--` to the end of its line; `/- ... -/`, nested, `/--` and `/-!` included) blanked
+    to spaces, newlines kept, so line numbers are unchanged; string literals are skipped over intact. `(text, None)`,
+    or `(text, problem)` for an unterminated block comment or string."""
+    out: list[str] = []
+    i, n, depth = 0, len(text), 0
+    while i < n:
+        c, two = text[i], text[i:i + 2]
+        if depth:
+            if two in ("/-", "-/"):
+                depth += 1 if two == "/-" else -1
+                out.append("  ")
+                i += 2
+            else:
+                out.append("\n" if c == "\n" else " ")
+                i += 1
+        elif two == "/-":
+            depth = 1
+            out.append("  ")
+            i += 2
+        elif two == "--":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            if j >= n:
+                return "".join(out), "an unterminated string literal"
+            out.append(text[i:j + 1])
+            i = j + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out), ("an unterminated block comment" if depth else None)
+
+
+def _commands(stripped: str) -> list[tuple[int, int, str]]:
+    """`(first line, last line, text)` per command of comment-stripped Lean: a command starts on a line that begins
+    in column 0, and every following line that begins with whitespace (or is blank) continues it."""
+    cmds: list[list] = []
+    for no, line in enumerate(stripped.splitlines(), 1):
+        if not line.strip():
+            continue
+        if line[0].isspace() and cmds:
+            cmds[-1][1] = no
+            cmds[-1][2] += "\n" + line
+        else:
+            cmds.append([no, no, line])
+    return [(a, b, t) for a, b, t in cmds]
+
+
+def _depth0_assign(text: str) -> Optional[int]:
+    """The index of the first `:=` outside every bracket in *text*, or None."""
+    depth = 0
+    for i, c in enumerate(text):
+        if c in _OPEN_BRACKETS:
+            depth += 1
+        elif c in _CLOSE_BRACKETS:
+            depth -= 1
+        elif depth == 0 and text.startswith(":=", i):
+            return i
+    return None
+
+
+def _scope_step(scopes: list, flat: str) -> Optional[str]:
+    """Apply one whitespace-folded command to the scope stack (`("namespace", components)`, `("section", name)`,
+    `("mutual", None)`); a problem for an `end` that matches nothing open. Other commands leave it alone."""
+    head = flat.split(" ", 1)[0]
+    if head == "namespace" and len(flat.split(" ")) == 2:
+        scopes.append(("namespace", tuple(flat.split(" ")[1].split("."))))
+    elif head == "mutual" and flat == "mutual":
+        scopes.append(("mutual", None))
+    elif _SECTION_RE.fullmatch(flat):
+        scopes.append(("section", _SECTION_RE.fullmatch(flat)["name"]))
+    elif head == "end":
+        name = flat[4:] or None
+        if not scopes:
+            return f"`{flat}` closes nothing"
+        kind, what = scopes[-1]
+        if (kind == "namespace" and name == ".".join(what)) or (kind in ("section", "mutual") and name == what):
+            scopes.pop()
+        else:
+            return f"`{flat}` does not close the innermost scope ({kind} {'.'.join(what) if kind == 'namespace' else what})"
+    return None
+
+
+def _full_name(scopes: list, name: str) -> str:
+    if name.startswith("_root_."):
+        return name[len("_root_."):]
+    return ".".join([c for kind, comps in scopes if kind == "namespace" for c in comps] + [name])
+
+
+def _is_mathlib(module: str) -> bool:
+    return module == "Mathlib" or module.startswith("Mathlib.")
+
+
+def parse_overlay(text: str) -> OverlayParse:
+    """Read a statement-only overlay (see the section comment): its imports, its theorems (fully qualified name,
+    statement header, upstream pointer) and every way it is not statement-only. Never raises."""
+    stripped, problem = _strip_comments(text)
+    if problem:
+        return OverlayParse((), (), (f"the overlay has {problem}",))
+    probs: list[str] = []
+    if '"' in stripped:
+        probs.append("the overlay has a string literal outside comments; a statement needs none (a tag such as "
+                     "@[weil \"...\"] is not part of the statement and is left out)")
+    if "«" in stripped or "»" in stripped:
+        probs.append("the overlay uses a «quoted» identifier; write plain names")
+    pointers = {no: (m["path"], int(m["line"])) for no, line in enumerate(text.splitlines(), 1)
+                if (m := _POINTER_RE.fullmatch(line.rstrip()))}
+    imports: list[str] = []
+    theorems: list[OverlayTheorem] = []
+    scopes: list = []
+    in_body = False
+    pending: Optional[str] = None          # an `omit ... in` / `open ... in` still waiting for its theorem
+    window_lo = 0                          # pointers between this line and a theorem's group belong to it
+    group_start = 0
+    for k, (start, end, cmd) in enumerate(_commands(stripped)):
+        flat = " ".join(cmd.split())
+        head = flat.split(" ", 1)[0]
+        where = f"line {start}"
+        if flat == "module":
+            if k:
+                probs.append(f"{where}: `module` must be the first command")
+            continue
+        imp = _IMPORT_LINE_RE.fullmatch(flat)
+        if imp:
+            if in_body:
+                probs.append(f"{where}: an import after the first command")
+            imports.append(imp["mod"])
+            window_lo = end
+            continue
+        in_body = True
+        if pending and head not in ("theorem", "omit", "open"):
+            probs.append(f"{where}: the `{pending} ... in` before this line must be followed by a theorem")
+            pending = None
+        if head in ("omit", "open") and flat.endswith(" in"):
+            if pending is None:
+                group_start = start
+            pending = head
+            continue
+        if head == "theorem":
+            if pending is None:
+                group_start = start
+            pending = None
+            m = re.match(r"theorem\s+(\S+)", cmd)
+            name = m[1] if m else ""
+            bad = _lean_name_problem("theorem", name.removeprefix("_root_.")) if name else "a theorem with no name"
+            proof = _SORRY_PROOF_RE.search(cmd)
+            header = cmd[:proof.start()] if proof else cmd
+            if bad:
+                probs.append(f"{where}: {bad}")
+            if not proof:
+                probs.append(f"{where}: theorem {name} is not proved `:= by sorry` (an overlay states; it never "
+                             "proves)")
+            elif _depth0_assign(header) is not None:
+                probs.append(f"{where}: theorem {name} has a `:=` outside brackets before its final `:= by sorry`")
+            mine = [pointers[no] for no in sorted(pointers) if window_lo < no < group_start]
+            if len(mine) > 1:
+                probs.append(f"{where}: theorem {name} has more than one `-- upstream:` comment above it")
+            theorems.append(OverlayTheorem(_full_name(scopes, name), " ".join(header.split()), start,
+                                           mine[-1] if mine else None))
+            window_lo = end
+            continue
+        if pending:
+            probs.append(f"{where}: the `{pending} ... in` before this line must be followed by a theorem")
+            pending = None
+        window_lo = end
+        if head in ("namespace", "end") or _SECTION_RE.fullmatch(flat):
+            if head == "namespace" and len(flat.split(" ")) != 2:
+                probs.append(f"{where}: `{flat[:80]}` is not `namespace <Name>`")
+                continue
+            problem = _scope_step(scopes, flat)
+            if problem:
+                probs.append(f"{where}: {problem}")
+        elif head in ("open", "universe", "variable"):
+            pass
+        elif head == "omit":
+            probs.append(f"{where}: `omit` is allowed only as `omit ... in` before a theorem")
+        else:
+            probs.append(f"{where}: `{head[:40]}` is not allowed in a statement-only overlay (allowed: "
+                         f"{_OVERLAY_ALLOWED})")
+    if pending:
+        probs.append(f"the overlay ends with an `{pending} ... in` that has no theorem after it")
+    if not theorems:
+        probs.append("the overlay declares no theorem")
+    return OverlayParse(tuple(imports), tuple(theorems), tuple(probs))
+
+
+def overlay_problems(text: str, isl: Island) -> list[str]:
+    """Everything that keeps *text* (an overlay island's challenge.lean) from being the island's statement-only
+    overlay: `parse_overlay`'s problems; an import that is neither Mathlib nor in `overlay_imports`, or an
+    `overlay_imports` entry it does not import; a theorem set other than `theorems` (each once); a theorem with no
+    `-- upstream:` pointer, or one whose path is not a plain relative .lean path. Empty iff it passes."""
+    parse = parse_overlay(text)
+    probs = list(parse.problems)
+    mine = [m for m in parse.imports if not _is_mathlib(m)]
+    probs += [f"it imports {m!r} more than once" for m in sorted({m for m in parse.imports
+                                                                   if parse.imports.count(m) > 1})]
+    probs += [f"it imports {m!r}, which is neither Mathlib nor one of overlay_imports "
+              f"({', '.join(isl.overlay_imports)})" for m in sorted(set(mine) - set(isl.overlay_imports))]
+    probs += [f"overlay_imports lists {m!r}, which it does not import" for m in
+              sorted(set(isl.overlay_imports) - set(mine))]
+    names = [t.name for t in parse.theorems]
+    probs += [f"it declares {t!r} more than once" for t in sorted({t for t in names if names.count(t) > 1})]
+    probs += [f"it declares {t!r}, which is not one of the island's theorems" for t in sorted(set(names) -
+                                                                                              set(isl.theorems))]
+    probs += [f"it does not declare the island's theorem {t!r}" for t in isl.theorems if t not in names]
+    for t in parse.theorems:
+        if t.upstream is None:
+            probs.append(f"theorem {t.name} has no `-- upstream: <path>:<line>` comment naming the library's "
+                         "declaration")
+        elif _overlay_path_problem(t.upstream[0]):
+            probs.append(f"theorem {t.name}'s upstream pointer {t.upstream[0]!r} is not a plain relative .lean path")
+    return [f"{CHALLENGE_FILE} (the overlay): {p}" for p in probs]
+
+
+def _module_of_path(path: str) -> str:
+    return path[:-len(".lean")].replace("/", ".")
+
+
+def _tree_import_closure(tree: Path, roots: Sequence[str]) -> dict[str, str]:
+    """Every module of *roots*' import closure whose file is in *tree* (the library's own modules; a dependency's or
+    Mathlib's are not in it), each mapped to the root it was reached from. Read by text (the `import` lines),
+    through guarded reads; nothing is built."""
+    seen: dict[str, str] = {}
+    stack = [(r, r) for r in roots]
+    while stack:
+        mod, root = stack.pop()
+        if mod in seen or _lean_name_problem("module", mod):
+            continue
+        data, _ = read_guarded(Path(tree) / _module_path(mod), label=mod, max_bytes=MAX_BYTES)
+        if data is None:
+            continue
+        seen[mod] = root
+        stripped, _ = _strip_comments(data.decode("utf-8", errors="replace"))
+        stack += [(m, root) for m in _ANY_IMPORT_RE.findall(stripped)]
+    return seen
+
+
+def upstream_problems(isl: Island, overlay_text: str, tree: Path) -> list[str]:
+    """Everything that keeps the overlay *overlay_text* from matching the pinned library in *tree* (a clean tree at
+    the pin, the overlay not yet placed; see the section comment). Read by text; nothing is built. Empty iff it
+    matches."""
+    tree = Path(tree)
+    parse = parse_overlay(overlay_text)
+    probs = []
+    if (tree / isl.overlay_path).exists() or (tree / isl.overlay_path).is_symlink():
+        probs.append(f"{isl.overlay_path} already exists in the tree; an overlay is an ADDED file, never a "
+                     "replacement (use a fresh copy of the pin)")
+    for mod in (*isl.overlay_imports, isl.solution_module):
+        if not (tree / _module_path(mod)).is_file():
+            probs.append(f"the tree has no module {mod} ({_module_path(mod)})")
+    parent = isl.overlay_path.rsplit("/", 1)[0] if "/" in isl.overlay_path else ""
+    if parent and ((tree / parent).is_symlink() or not (tree / parent).is_dir()):
+        probs.append(f"the overlay's directory {parent}/ is not a directory of the tree")
+    if isl.challenge_module.split(".")[0] != isl.solution_module.split(".")[0]:
+        probs.append(f"the overlay's module {isl.challenge_module} is not under the solution module's root "
+                     f"{isl.solution_module.split('.')[0]}, so `lake build` would not find it in the library")
+    imported = _tree_import_closure(tree, isl.overlay_imports)
+    solution = _tree_import_closure(tree, [isl.solution_module])
+    for t in parse.theorems:
+        if t.upstream is None or _overlay_path_problem(t.upstream[0]):
+            continue                                       # overlay_problems reports it
+        path, line = t.upstream
+        mod = _module_of_path(path)
+        where = f"theorem {t.name} (upstream {path}:{line})"
+        if mod in imported:
+            probs.append(f"{where}: the overlay imports {mod} (through {imported[mod]}), which declares the same "
+                         "theorem; the two declarations would clash")
+        if mod not in solution:
+            probs.append(f"{where}: the solution module {isl.solution_module} does not import {mod}")
+        data, problem = read_guarded(tree / path, label=f"the tree's {path}", max_bytes=MAX_BYTES)
+        if data is None:
+            probs.append(f"{where}: {problem or 'no such file in the tree'}")
+            continue
+        stripped, problem = _strip_comments(data.decode("utf-8", errors="replace"))
+        scopes: list = []
+        cmd = None
+        for start, _, text in _commands(stripped):
+            if start == line:
+                cmd = text
+                break
+            if start > line:
+                break
+            _scope_step(scopes, " ".join(text.split()))
+        if cmd is not None:
+            # an attribute on the declaration's own line is not part of the statement; `lemma` is Mathlib's `theorem`
+            cmd = re.sub(r"\Alemma(?=\s)", "theorem", cmd[re.match(r"(?:@\[[^\]]*\]\s*)*", cmd).end():])
+        if cmd is None or not re.match(r"theorem\s", cmd):
+            probs.append(f"{where}: that line does not begin a `theorem`")
+            continue
+        name = re.match(r"theorem\s+(\S+)", cmd)[1]
+        if _full_name(scopes, name) != t.name:
+            probs.append(f"{where}: the theorem there is {_full_name(scopes, name)}, not {t.name}")
+        idx = _depth0_assign(cmd)
+        theirs = " ".join(cmd[:idx].split()) if idx is not None else None
+        if theirs != t.header:
+            probs.append(f"{where}: the statement differs from upstream's (whitespace aside); an overlay copies it "
+                         "verbatim")
+    return probs
+
+
+# --- the Comparator log -----------------------------------------------------------------------------------------------
+#
+# The format is the one the real riemann-jensen spec run wrote (standalone Comparator e3dcf308, v4.35.0; the
+# auditor holds the log, md5 76bc5e06; a scrubbed copy is tests/fixtures/islands/rj_spec.out) and the one
+# `replay_island` writes:
+#
+#   ISLAND-HEADER island=<name> commit=<40 hex> challenge_sha256=<64 hex>      the first line, written by the runner
+#                 (an overlay island's says overlay_sha256=<64 hex> instead: the sha256 of the overlay that was placed)
+#   COMPARATOR_NANODA <md5 of nanoda_bin> (nanoda_lib <40 hex>)                 which nanoda the runner gave Comparator
+#   COMPARATOR_CONFIG sha256 <64 hex>         optional; `island replay` writes it: sha256 of our comparator.json
+#   Exporting #[..., <every theorem>, ...] from <challenge module>             Comparator's own lines from here on
+#   Exporting #[..., <every theorem>, ...] from <solution module>
+#   nanoda kernel accepts the solution            (v4.32.0 / v4.33.0-rc2 print "Nanoda kernel ...")
+#   Lean default kernel accepts the solution
+#   Your solution is okay!
+#   ISLAND-<label>-EXIT <Comparator's exit code>                                written by the runner
+
+_HEADER_RE = re.compile(r"ISLAND-HEADER island=(?P<island>\S+) commit=(?P<commit>[0-9a-f]{40}) "
+                        r"(?P<kind>challenge|overlay)_sha256=(?P<sha>[0-9a-f]{64})")
+_EXIT_RE = re.compile(r"ISLAND-(?P<label>[A-Za-z0-9_.-]+?)-EXIT (?P<rc>-?\d+)")
+_NANODA_RE = re.compile(r"COMPARATOR_NANODA [0-9a-f]{32} \(nanoda_lib (?P<rev>[0-9a-f]{40})\)")
+_CONFIG_RE = re.compile(r"COMPARATOR_CONFIG sha256 (?P<sha>[0-9a-f]{64})")
+_EXPORT_RE = re.compile(r"Exporting #\[(?P<names>[^\]]*)\] from (?P<module>\S+)")
+#: The three accept lines, in the order Comparator prints them; each must be a whole line, exactly once.
+ACCEPT_LINES = (("nanoda kernel accepts the solution", "Nanoda kernel accepts the solution"),
+                ("Lean default kernel accepts the solution",),
+                ("Your solution is okay!",))
+
+
+@dataclass(frozen=True)
+class ComparatorLog:
+    """What `parse_comparator_log` read. `problems` are the format rules, independent of any island; the binding to
+    an island (header, nanoda rev, exported theorems) is `comparator_log_problems`."""
+    header: Optional[tuple[str, str, str]]          # (island, commit, challenge_sha256), from the first line
+    nanoda_rev: Optional[str]                       # from the one COMPARATOR_NANODA line
+    exit_code: Optional[int]                        # from the one ISLAND-<label>-EXIT line
+    config_sha256: Optional[str]                    # from the one COMPARATOR_CONFIG line, if there is one
+    exports: tuple[tuple[str, tuple[str, ...]], ...]  # (module, exported names) per Exporting line
+    problems: tuple[str, ...]
+    header_kind: Optional[str] = None               # "challenge" or "overlay": which sha256 the header binds
+
+
+def parse_comparator_log(text: str) -> ComparatorLog:
+    """Read one island Comparator log. A problem for: a first line that is not the ISLAND-HEADER, an ISLAND-HEADER
+    anywhere else, an unknown `ISLAND-` line; not exactly one COMPARATOR_NANODA line; a malformed or second
+    COMPARATOR_CONFIG line; any accept line missing, repeated or out of order; any error line (starting "error" or
+    "uncaught exception", as `rejudge` reads them) or any line reporting an unpermitted or illegal axiom; not exactly
+    one exit line, a nonzero exit, or an exit line before "Your solution is okay!". Never raises."""
+    from .missions.rejudge import _is_error_line
+    lines = text.splitlines()
+    probs: list[str] = []
+    m = _HEADER_RE.fullmatch(lines[0].rstrip()) if lines else None
+    header = (m["island"], m["commit"], m["sha"]) if m else None
+    if m is None:
+        probs.append("the first line is not an ISLAND-HEADER line (`ISLAND-HEADER island=<name> commit=<40 hex> "
+                     "challenge_sha256=<64 hex>`, or `overlay_sha256=<64 hex>` for an overlay island, written by the "
+                     "runner before Comparator starts)")
+    nanoda: list[str] = []
+    configs: list[str] = []
+    exits: list[tuple[int, int]] = []
+    accepts: list[list[int]] = [[] for _ in ACCEPT_LINES]
+    exports: list[tuple[str, tuple[str, ...]]] = []
+    for i, raw in enumerate(lines):
+        s = raw.strip()
+        if i == 0 and s.startswith("ISLAND-"):
+            continue                       # the header, or a first line already reported as no header
+        if s.startswith("ISLAND-"):
+            e = _EXIT_RE.fullmatch(s)
+            if s.startswith("ISLAND-HEADER"):
+                probs.append("an ISLAND-HEADER line appears after the first line (two runs in one log?)")
+            elif e:
+                exits.append((i, int(e["rc"])))
+            else:
+                probs.append(f"an unrecognised ISLAND- line {s[:120]!r}")
+            continue
+        if s.startswith("COMPARATOR_NANODA"):
+            n = _NANODA_RE.fullmatch(s)
+            if n:
+                nanoda.append(n["rev"])
+            else:
+                probs.append(f"a malformed COMPARATOR_NANODA line {s[:120]!r}")
+        if s.startswith("COMPARATOR_CONFIG"):
+            c = _CONFIG_RE.fullmatch(s)
+            if c:
+                configs.append(c["sha"])
+            else:
+                probs.append(f"a malformed COMPARATOR_CONFIG line {s[:120]!r} (want `COMPARATOR_CONFIG sha256 "
+                             "<64 hex>`)")
+        if _is_error_line(raw):
+            probs.append(f"an error line: {s[:200]!r}")
+        low = s.lower()
+        if "unpermitted axiom" in low or "illegal axiom" in low:
+            probs.append(f"an axiom outside the permitted three: {s[:200]!r}")
+        for k, variants in enumerate(ACCEPT_LINES):
+            if s in variants:
+                accepts[k].append(i)
+        x = _EXPORT_RE.fullmatch(s)
+        if x:
+            exports.append((x["module"], tuple(n.strip() for n in x["names"].split(","))))
+    if not nanoda:
+        probs.append("no COMPARATOR_NANODA line (`COMPARATOR_NANODA <md5> (nanoda_lib <40 hex>)`): the log does not "
+                     "say which nanoda Comparator ran")
+    elif len(nanoda) > 1:
+        probs.append("more than one COMPARATOR_NANODA line")
+    if len(configs) > 1:
+        probs.append("more than one COMPARATOR_CONFIG line")
+    for k, variants in enumerate(ACCEPT_LINES):
+        if not accepts[k]:
+            alt = f" (or {variants[1]!r})" if len(variants) > 1 else ""
+            probs.append(f"no line {variants[0]!r}{alt}: Comparator did not accept the solution")
+        elif len(accepts[k]) > 1:
+            probs.append(f"the line {variants[0]!r} appears more than once (two runs in one log?)")
+    firsts = [a[0] for a in accepts if len(a) == 1]
+    if len(firsts) == len(ACCEPT_LINES) and firsts != sorted(firsts):
+        probs.append("the accept lines are out of order (nanoda, then the Lean kernel, then 'Your solution is okay!')")
+    exit_code = None
+    if not exits:
+        probs.append("no exit line (`ISLAND-<label>-EXIT <code>`): Comparator's exit code is not recorded")
+    elif len(exits) > 1:
+        probs.append("more than one exit line (`ISLAND-<label>-EXIT`)")
+    else:
+        idx, exit_code = exits[0]
+        if exit_code != 0:
+            probs.append(f"the exit line says Comparator exited {exit_code}, not 0")
+        if len(accepts[2]) == 1 and idx < accepts[2][0]:
+            probs.append("the exit line comes before 'Your solution is okay!'")
+    return ComparatorLog(header=header, nanoda_rev=nanoda[0] if len(nanoda) == 1 else None, exit_code=exit_code,
+                         config_sha256=configs[0] if len(configs) == 1 else None, exports=tuple(exports),
+                         problems=tuple(probs), header_kind=m["kind"] if m else None)
+
+
+def comparator_log_problems(text: str, isl: Island, nanoda_rev: Optional[str], comparator_tag: Optional[str] = None,
+                            config_sha256: Optional[str] = None) -> list[str]:
+    """Everything that keeps *text* from being a passing Comparator log for *isl*: the format rules
+    (`parse_comparator_log`), a header naming another island, commit or challenge sha256, a nanoda other than
+    *nanoda_rev*, a COMPARATOR_CONFIG line (optional: logs run elsewhere lack it) that is not *config_sha256*, and an
+    export from the challenge or the solution module (exactly one each, and from no other module) that is not
+    exactly the island's theorems, once each, plus `COMPARATOR_EXPORTS[comparator_tag]` (C1: the export lists show
+    the config the run really used). *comparator_tag* defaults to the island toolchain's version. Empty iff it
+    passes. Never raises."""
+    log = parse_comparator_log(text)
+    probs = list(log.problems)
+    tag = comparator_tag if comparator_tag is not None else isl.toolchain[len(_TOOLCHAIN_PREFIX):]
+    fixed = COMPARATOR_EXPORTS.get(tag)
+    if fixed is None:
+        probs.append(f"no known Comparator export set for tag {tag!r} (known: {', '.join(sorted(COMPARATOR_EXPORTS))});"
+                     " the export lists cannot be checked against our config")
+    if log.config_sha256 is not None and log.config_sha256 != config_sha256:
+        probs.append(f"the log's COMPARATOR_CONFIG sha256 {log.config_sha256} is not that of our comparator.json "
+                     f"({config_sha256}): Comparator ran another config")
+    if log.header is not None:
+        island, commit, sha = log.header
+        if island != isl.name:
+            probs.append(f"the ISLAND-HEADER names island {island!r}, not {isl.name!r}")
+        if commit != isl.commit:
+            probs.append(f"the ISLAND-HEADER commit {commit} is not the pin {isl.commit}")
+        kind = log.header_kind
+        if f"{kind}_sha256" != isl.sha_key:
+            probs.append(f"the ISLAND-HEADER binds a {kind}_sha256, but {isl.name!r} is "
+                         + ("an overlay island: its header binds the placed overlay, `overlay_sha256=<sha>`"
+                            if isl.is_overlay else "an upstream island: its header binds `challenge_sha256=<sha>`"))
+        if sha != isl.challenge_sha256:
+            probs.append(f"the ISLAND-HEADER {kind}_sha256 {sha} is not the registered {isl.challenge_sha256}")
+    if nanoda_rev is None:
+        probs.append("cannot compare the log's nanoda with NANODA_REV: the pin could not be read")
+    elif log.nanoda_rev is not None and log.nanoda_rev != nanoda_rev:
+        probs.append(f"Comparator ran nanoda_lib {log.nanoda_rev}, not the pinned NANODA_REV {nanoda_rev}")
+    for module in (isl.challenge_module, isl.solution_module):
+        found = [names for mod, names in log.exports if mod == module]
+        if not found:
+            probs.append(f"no `Exporting #[...] from {module}` line: Comparator did not export {module}")
+        elif len(found) > 1:
+            probs.append(f"more than one `Exporting #[...] from {module}` line")
+        else:
+            names = found[0]
+            missing = [t for t in isl.theorems if t not in names]
+            if missing:
+                probs.append(f"the export from {module} does not include {', '.join(missing)}")
+            dups = sorted({n for n in names if names.count(n) > 1})
+            if dups:
+                probs.append(f"the export from {module} lists {', '.join(dups)} more than once")
+            if fixed is not None:
+                rest = set(names) - set(isl.theorems)
+                extra, lacking = sorted(rest - fixed), sorted(fixed - rest)
+                if extra:
+                    probs.append(f"the export from {module} includes {', '.join(extra)}, which is neither one of the "
+                                 f"island's theorems nor in Comparator {tag}'s fixed set: an extra permitted axiom "
+                                 "or a definition hole, so the run's config was not ours")
+                if lacking:
+                    probs.append(f"the export from {module} lacks {', '.join(lacking)} from Comparator {tag}'s fixed "
+                                 "set, so the run's config (or Comparator) was not ours")
+    for mod in sorted({mod for mod, _ in log.exports} - {isl.challenge_module, isl.solution_module}):
+        probs.append(f"an export from {mod}, which is neither the challenge nor the solution module")
+    return probs
+
+
+# --- the probe and fingerprint JSONs ----------------------------------------------------------------------------------
+
+def _short(value) -> str:
+    """repr(value), cut to 80 characters: a hostile JSON value never floods a problem string."""
+    r = repr(value)
+    return r if len(r) <= 80 else r[:77] + "..."
+
+
+def _common_json_problems(what: str, doc: dict, isl: Island) -> list[str]:
+    """The fields `probe-negation --json` and `fingerprint --json` share: the challenge module, the challenge
+    file's sha256 (both must be run with `--file <the challenge file>`), not stale, a replayed closure digest."""
+    probs = []
+    if doc.get("module") != isl.challenge_module:
+        probs.append(f"{what} is of module {_short(doc.get('module'))}, not the challenge module "
+                     f"{isl.challenge_module!r}")
+    if doc.get("source_sha256") != isl.challenge_sha256:
+        probs.append(f"{what} ran on source_sha256 {_short(doc.get('source_sha256'))}, not the registered challenge "
+                     f"{isl.challenge_sha256} (run it with --file <the challenge file>)")
+    if doc.get("stale"):
+        probs.append(f"{what} says its --file was newer than the module's build (stale)")
+    if not isinstance(doc.get("olean_sha256"), str) or not _HEX64.fullmatch(doc["olean_sha256"]):
+        probs.append(f"{what} carries no olean_sha256 (the replayed closure it ran on)")
+    return probs
+
+
+def _probe_problems(doc, isl: Island) -> tuple[Optional[str], list[str]]:
+    """`(theorem, problems)` for one `probe-negation --json` output; theorem is None when it names none of the
+    island's theorems."""
+    from .checks.negation_probe import VERDICTS
+    if not isinstance(doc, dict):
+        return None, ["a probe JSON is not a JSON object"]
+    thm = doc.get("theorem")
+    if not isinstance(thm, str) or thm not in isl.theorems:
+        return None, [f"a probe JSON probed {_short(thm)}, which is not one of the island's theorems"]
+    what = f"the probe JSON of {thm!r}"
+    probs = []
+    if doc.get("verdict") not in VERDICTS:
+        probs.append(f"{what} has verdict {_short(doc.get('verdict'))}, not one of {', '.join(VERDICTS)}")
+    return thm, probs + _common_json_problems(what, doc, isl)
+
+
+def _fingerprint_problems(doc, isl: Island) -> list[str]:
+    """Problems with the one `fingerprint --json` output, which must fingerprint exactly the island's theorems."""
+    what = "the fingerprint JSON"
+    if not isinstance(doc, dict):
+        return [f"{what} is not a JSON object"]
+    if "error" in doc:
+        return [f"{what} reports an error ({str(doc['error'])[:200]!r}) and holds no fingerprints"]
+    fps = doc.get("fingerprints")
+    if not isinstance(fps, dict):
+        return [f"{what} has no \"fingerprints\" object"]
+    probs = [f"{what} has no fingerprint for theorem {t!r}" for t in isl.theorems if t not in fps]
+    probs += [f"{what} fingerprints {_short(t)}, which is not one of the island's theorems"
+              for t in sorted(set(fps) - set(isl.theorems), key=str)]
+    probs += [f"{what}: the fingerprint of {t!r} is not 64 lowercase hex digits" for t in isl.theorems
+              if t in fps and (not isinstance(fps[t], str) or not _HEX64.fullmatch(fps[t]))]
+    if doc.get("mode") != "type":
+        probs.append(f"{what} is a {_short(doc.get('mode'))}-mode fingerprint; a theorem's statement is "
+                     "fingerprinted in type mode")
+    return probs + _common_json_problems(what, doc, isl)
+
+
+# --- the one verdict --------------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReplayVerdict:
+    problems: tuple[str, ...]                 # empty iff the evidence passes
+    checks: dict                              # theorem -> TheoremCheck, for each theorem fully evidenced
+
+
+def evaluate_replay(isl: Island, *, log_text: str, probe_docs: Sequence, fingerprint_doc,
+                    nanoda_rev: Optional[str], comparator_tag: str,
+                    config_sha256: Optional[str] = None) -> ReplayVerdict:
+    """THE verdict on one replay's evidence (Ruling 1), used by `island replay`, by `island record-replay` and, on
+    the archived evidence, by every `island_problems`. PASS iff the problem list is empty:
+
+    - the Comparator log passes for this island (`comparator_log_problems`): header = this pin and challenge, the
+      three accept lines, nanoda at *nanoda_rev*, the export lists exactly the theorems plus Comparator's fixed set
+      for *comparator_tag* (so the run used our config), a COMPARATOR_CONFIG line if any = *config_sha256* (the
+      sha256 of our comparator.json), exit 0;
+    - *comparator_tag* is the island toolchain's version (the plan: tag = island toolchain);
+    - exactly one probe JSON per theorem, each PROBE_ONLY or WITNESSED, of the challenge module and the challenge
+      file; one fingerprint JSON covering exactly the theorems (type mode, same module and file);
+    - every probe and the fingerprint ran on the same replayed closure (one `olean_sha256`).
+    """
+    probs = comparator_log_problems(log_text, isl, nanoda_rev, comparator_tag, config_sha256)
+    want_tag = isl.toolchain[len(_TOOLCHAIN_PREFIX):]
+    if comparator_tag != want_tag:
+        probs.append(f"comparator_tag {comparator_tag} differs from the island toolchain's {want_tag}")
+    by_thm: dict[str, list[dict]] = {}
+    if not probe_docs:
+        probs.append("no negation-probe JSON given (one per theorem: `telperion probe-negation --json --module "
+                     f"{isl.challenge_module} --theorem <name> --file <the challenge file>`)")
+    for doc in probe_docs:
+        thm, p = _probe_problems(doc, isl)
+        probs += p
+        if thm is not None:
+            by_thm.setdefault(thm, []).append(doc)
+    verdicts: dict[str, str] = {}
+    for thm in isl.theorems:
+        docs = by_thm.get(thm, [])
+        if probe_docs and not docs:
+            probs.append(f"theorem {thm!r} has no probe JSON")
+        elif len(docs) > 1:
+            probs.append(f"theorem {thm!r} has more than one probe JSON")
+        elif docs:
+            v = docs[0].get("verdict")
+            verdicts[thm] = v
+            if v not in PASSING_PROBES:
+                probs.append(f"theorem {thm!r} probe is {v if isinstance(v, str) else _short(v)}, not one of "
+                         f"{', '.join(PASSING_PROBES)}")
+    fps: dict = {}
+    if fingerprint_doc is None:
+        probs.append("no fingerprint JSON given (`telperion fingerprint --json --import "
+                     f"{isl.challenge_module} --target <each theorem> --file <the challenge file>`)")
+    else:
+        fprobs = _fingerprint_problems(fingerprint_doc, isl)
+        probs += fprobs
+        if isinstance(fingerprint_doc, dict) and isinstance(fingerprint_doc.get("fingerprints"), dict):
+            fps = fingerprint_doc["fingerprints"]
+        oleans = {d.get("olean_sha256") for docs in by_thm.values() for d in docs
+                  if isinstance(d.get("olean_sha256"), str)}
+        f_olean = fingerprint_doc.get("olean_sha256") if isinstance(fingerprint_doc, dict) else None
+        for o in sorted(o for o in oleans if o != f_olean):
+            probs.append(f"a probe ran on olean_sha256 {o[:12]}..., the fingerprint on {str(f_olean)[:12]}...; run "
+                         "every check on one build")
+    checks = {thm: TheoremCheck(verdicts[thm], fps[thm]) for thm in isl.theorems
+              if thm in verdicts and isinstance(fps.get(thm), str) and _HEX64.fullmatch(fps[thm])}
+    return ReplayVerdict(problems=tuple(probs), checks=checks)
+
+
+# --- validation -------------------------------------------------------------------------------------------------------
+
+def _comparator_problems(root: Path, isl: Island) -> list[str]:
+    from .checks.kernel_policy import judge_config_problems
+    text, problem = _read_text(root, isl.name, COMPARATOR_FILE)
+    if text is None:
+        return [problem]
+    try:
+        cfg = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        return [f"{COMPARATOR_FILE} is not valid JSON ({type(exc).__name__}: {str(exc)[:120]})"]
+    if not isinstance(cfg, dict):
+        return [f"{COMPARATOR_FILE} is not a JSON object"]
+    probs = [f"{COMPARATOR_FILE}: {p}" for p in _unknown_keys("the config", cfg, _COMPARATOR_KEYS)]
+    probs += [f"{COMPARATOR_FILE} is missing {k!r}" for k in _COMPARATOR_KEYS if k not in cfg]
+    if probs:
+        return probs
+    for key in ("challenge_module", "solution_module"):
+        if cfg[key] != getattr(isl, key):
+            probs.append(f"{COMPARATOR_FILE} {key} {cfg[key]!r} differs from {ISLAND_TOML}'s {getattr(isl, key)!r}")
+    names = cfg["theorem_names"]
+    if (not isinstance(names, list) or len(names) != len(set(map(str, names)))
+            or sorted(map(str, names)) != sorted(isl.theorems)):
+        probs.append(f"{COMPARATOR_FILE} theorem_names must list exactly the island's theorems, once each")
+    if cfg["enable_nanoda"] is not True:
+        probs.append(f"{COMPARATOR_FILE} enable_nanoda must be true (an island is always judged with nanoda)")
+    axioms = cfg["permitted_axioms"]
+    if not isinstance(axioms, list) or not all(isinstance(a, str) for a in axioms):
+        probs.append(f"{COMPARATOR_FILE} permitted_axioms must be an array of names")
+    else:
+        # the axiom half of the judge's own rule; node_heavy=True only because the stricter nanoda rule is above
+        probs += [f"{COMPARATOR_FILE}: {p}" for p in judge_config_problems(cfg, node_heavy=True)]
+    return probs
+
+
+def _log_archive_cap() -> int:
+    """The cap on comparator.log.xz itself: a log of at most `LOG_MAX_BYTES` compresses to less than this even when
+    it is incompressible (xz adds well under 1/64 plus a few headers), so whatever record-replay archives, the check
+    reads back (M3)."""
+    return LOG_MAX_BYTES + LOG_MAX_BYTES // 64 + 4096
+
+
+def _xz_decode(raw: bytes, label: str) -> tuple[Optional[bytes], Optional[str]]:
+    """One xz stream, at most `LOG_MAX_BYTES` once decompressed (decompression stops there), nothing after it, with
+    the decoder's memory capped at `XZ_MEMLIMIT` whatever dictionary the header declares."""
+    dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMLIMIT)
+    try:
+        data = dec.decompress(raw, max_length=LOG_MAX_BYTES + 1)
+    except lzma.LZMAError as exc:
+        return None, f"{label} is not a valid xz stream ({exc})"
+    if len(data) > LOG_MAX_BYTES:
+        return None, f"{label} is larger than {LOG_MAX_BYTES} bytes uncompressed; refusing to trust it."
+    if not dec.eof:
+        return None, f"{label} is a truncated xz stream"
+    if dec.unused_data:
+        return None, f"{label} has trailing data after its xz stream"
+    return data, None
+
+
+def _evidence_problems(root: Path, isl: Island, nanoda_rev: Optional[str]) -> list[str]:
+    """Ruling 6: re-verify the archived evidence of `isl.replay` on every check. The files under replay/ must be
+    exactly the recorded ones, each readable through the guarded reader with its recorded sha256; then the log and
+    the JSONs are judged again by `evaluate_replay`, and the checks it derives must be [replay.checks]."""
+    rep = isl.replay
+    d = Path(root) / ISLANDS_DIR / isl.name / REPLAY_DIR
+    try:
+        st = d.lstat()
+    except FileNotFoundError:
+        return [f"no archived replay evidence: {REPLAY_DIR}/ is missing (a replay is recorded by "
+                "`telperion island record-replay`, which archives its evidence)"]
+    except OSError as exc:
+        return [f"{REPLAY_DIR}/ could not be read ({exc.strerror or exc})"]
+    if stat.S_ISLNK(st.st_mode):
+        return [f"{REPLAY_DIR}/ is a symlink in the working tree; refusing to read the evidence through it"]
+    if not stat.S_ISDIR(st.st_mode):
+        return [f"{REPLAY_DIR} is not a directory"]
+    probe_files = {f"probe-{sha}.json": (thm, sha) for thm, sha in rep.probe_sha256}
+    try:
+        present = set(os.listdir(d))
+    except OSError as exc:
+        return [f"{REPLAY_DIR}/ could not be listed ({exc.strerror or exc})"]
+    probs = [f"{REPLAY_DIR}/{n} is an unexpected file in the archived evidence"
+             for n in sorted(present - {LOG_ARCHIVE, FINGERPRINT_ARCHIVE, *probe_files})]
+
+    def evidence(fname: str, max_bytes: int) -> Optional[bytes]:
+        label = f"{REPLAY_DIR}/{fname}"
+        data, problem = read_guarded(d / fname, label=label, max_bytes=max_bytes)
+        if data is None:
+            probs.append(problem or f"{label} is missing")
+        return data
+
+    def as_json(fname: str, raw: Optional[bytes], key: str, want: str) -> tuple[bool, object]:
+        """`(True, the parsed JSON, whatever it is)` or `(False, None)` with the problem recorded."""
+        if raw is None:
+            return False, None
+        if hashlib.sha256(raw).hexdigest() != want:
+            probs.append(f"{REPLAY_DIR}/{fname} has sha256 {hashlib.sha256(raw).hexdigest()}, not the recorded "
+                         f"{key} {want}")
+            return False, None
+        try:
+            return True, json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError) as exc:   # UnicodeDecodeError is a ValueError; deep nesting recurses
+            probs.append(f"{REPLAY_DIR}/{fname} is not valid JSON ({type(exc).__name__}: {str(exc)[:120]})")
+            return False, None
+
+    log_text = None
+    raw = evidence(LOG_ARCHIVE, _log_archive_cap())
+    if raw is not None:
+        data, problem = _xz_decode(raw, f"{REPLAY_DIR}/{LOG_ARCHIVE}")
+        if data is None:
+            probs.append(problem)
+        elif hashlib.sha256(data).hexdigest() != rep.log_sha256:
+            probs.append(f"{REPLAY_DIR}/{LOG_ARCHIVE} holds a log with sha256 {hashlib.sha256(data).hexdigest()}, "
+                         f"not the recorded log_sha256 {rep.log_sha256}")
+        else:
+            try:
+                log_text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                probs.append(f"{REPLAY_DIR}/{LOG_ARCHIVE} holds a log that is not valid UTF-8")
+    _, fp_doc = as_json(FINGERPRINT_ARCHIVE, evidence(FINGERPRINT_ARCHIVE, MAX_BYTES), "fingerprint_sha256",
+                        rep.fingerprint_sha256)
+    if fp_doc is None and not probs:
+        probs.append(f"{REPLAY_DIR}/{FINGERPRINT_ARCHIVE} holds no fingerprint JSON object")
+    probe_docs = []
+    for fname, (thm, sha) in sorted(probe_files.items(), key=lambda kv: kv[1]):
+        ok, doc = as_json(fname, evidence(fname, MAX_BYTES), f"probe_sha256 of {thm!r}", sha)
+        if not ok:
+            continue
+        if not isinstance(doc, dict) or doc.get("theorem") != thm:
+            got = doc.get("theorem") if isinstance(doc, dict) else doc
+            probs.append(f"[replay.probe_sha256] {thm!r} names the probe JSON of {_short(got)}, not of {thm!r}")
+            continue
+        probe_docs.append(doc)
+    if probs or log_text is None:
+        return probs   # log_text is None only with a problem recorded; this keeps the invariant explicit
+    v = evaluate_replay(isl, log_text=log_text, probe_docs=probe_docs, fingerprint_doc=fp_doc,
+                        nanoda_rev=nanoda_rev, comparator_tag=rep.comparator_tag,
+                        config_sha256=_config_sha256(root, isl.name))
+    probs += [f"archived evidence: {p}" for p in v.problems]
+    recorded = dict(rep.checks)
+    for thm in isl.theorems:
+        got, want = v.checks.get(thm), recorded.get(thm)
+        if got is None or want is None:
+            continue
+        if got.probe != want.probe:
+            probs.append(f"[replay.checks] {thm!r} says probe {want.probe} but the archived probe JSON says "
+                         f"{got.probe}")
+        if got.fingerprint != want.fingerprint:
+            probs.append(f"[replay.checks] {thm!r} fingerprint {want.fingerprint} differs from the archived "
+                         f"fingerprint JSON's {got.fingerprint}")
+    return probs
+
+
+def _replay_problems(root: Path, isl: Island) -> list[str]:
+    rep = isl.replay
+    if rep is None:
+        return ["not replayed: no [replay] record (self-reported until a replay passes and is recorded)"]
+    probs = []
+    if rep.verdict != "pass":
+        probs.append(f"replay verdict is {rep.verdict!r}, not \"pass\"")
+    if rep.commit != isl.commit:
+        probs.append(f"replay ran at commit {rep.commit} but the pin is {isl.commit}; re-replay at the pin")
+    if rep.challenge_sha256 != isl.challenge_sha256:
+        probs.append(f"replay {isl.sha_key} {rep.challenge_sha256} differs from the registered "
+                     f"{isl.challenge_sha256}; re-replay")
+    pinned, problem = pinned_nanoda_rev()
+    if pinned is None:
+        probs.append(f"cannot read the pinned nanoda rev: {problem}")
+    elif rep.nanoda_rev != pinned:
+        probs.append(f"replay ran nanoda {rep.nanoda_rev}, not the pinned NANODA_REV {pinned}; re-replay")
+    want_tag = isl.toolchain[len(_TOOLCHAIN_PREFIX):]
+    if rep.comparator_tag != want_tag:
+        probs.append(f"replay comparator_tag {rep.comparator_tag} differs from the island toolchain's {want_tag}")
+    checks = dict(rep.checks)
+    for thm in isl.theorems:
+        if thm not in checks:
+            probs.append(f"theorem {thm!r} has no [replay.checks] entry (probe and fingerprint)")
+        elif checks[thm].probe not in PASSING_PROBES:
+            probs.append(f"theorem {thm!r} probe is {checks[thm].probe}, not one of {', '.join(PASSING_PROBES)}")
+    probs += [f"[replay.checks] {thm!r} is not in theorems" for thm in sorted(set(checks) - set(isl.theorems))]
+    probs += _evidence_problems(root, isl, pinned)
+    return probs
+
+
+def _config_sha256(root: Path, name: str) -> Optional[str]:
+    """sha256 of `islands/<name>/comparator.json` as it is now (guarded read), or None when it cannot be read (and
+    `_comparator_problems` says why)."""
+    data, _ = _read(root, name, COMPARATOR_FILE)
+    return None if data is None else hashlib.sha256(data).hexdigest()
+
+
+def _stale_stages(d: Path, where: str) -> list[str]:
+    """M5: dot-prefixed directories under *d* are stages a hard-killed `add` or `replay` left behind."""
+    try:
+        entries = sorted(e for e in d.iterdir() if e.name.startswith(".") and e.is_dir() and not e.is_symlink())
+    except OSError:
+        return []
+    return [f"{where}{e.name} is a stale staging directory (an interrupted `telperion island add` or replay left "
+            "it); remove it" for e in entries]
+
+
+def _registration_problems(root: Path, isl: Island) -> list[str]:
+    """The challenge copy against its recorded sha256 (an overlay's: `overlay_sha256`, and the overlay must still be
+    statement-only, `overlay_problems`), and our comparator.json: what a replay needs to be about."""
+    probs = []
+    data, problem = _read(root, isl.name, CHALLENGE_FILE)
+    if data is None:
+        probs.append(problem)
+    elif hashlib.sha256(data).hexdigest() != isl.challenge_sha256:
+        probs.append(f"{CHALLENGE_FILE} sha256 {hashlib.sha256(data).hexdigest()} differs from the recorded "
+                     f"{isl.sha_key} {isl.challenge_sha256}; the registered "
+                     f"{'overlay' if isl.is_overlay else 'copy'} was edited")
+    if isl.is_overlay and data is not None:
+        try:
+            probs += overlay_problems(data.decode("utf-8"), isl)
+        except UnicodeDecodeError:
+            probs.append(f"{CHALLENGE_FILE} (the overlay) is not valid UTF-8")
+    return probs + _comparator_problems(root, isl)
+
+
+def island_problems(root: Path, name: str) -> list[str]:
+    """Everything that keeps `<root>/islands/<name>/` from `verified`; empty iff it is verified. Never raises."""
+    doc, problem = _load_doc(root, name)
+    if doc is None:
+        return [problem]
+    isl, probs = _schema(doc, name)
+    probs += _stale_stages(Path(root) / ISLANDS_DIR / name, f"{ISLANDS_DIR}/{name}/")
+    if isl is None:
+        data, problem = _read(root, name, CHALLENGE_FILE)
+        return probs + ([problem] if data is None else [])
+    return probs + _registration_problems(root, isl) + _replay_problems(root, isl)
+
+
+def status(root: Path, name: str) -> str:
+    """"verified" iff `island_problems` is empty, else "self-reported"."""
+    return "self-reported" if island_problems(root, name) else "verified"
+
+
+def require_verified(root: Path, name: str) -> Island:
+    """The island, if it is verified; `IslandError("island <name>: ...")` otherwise, unknown names included."""
+    probs = island_problems(root, name)
+    if probs:
+        raise IslandError(f"island {name!r}: " + "; ".join(probs))
+    return load_island(root, name)
+
+
+# --- writing a registration -------------------------------------------------------------------------------------------
+
+def comparator_json_text(challenge_module: str, solution_module: str, theorems: Sequence[str]) -> str:
+    """OUR comparator.json: the three standard axioms, nanoda on, exactly *theorems* in their order. Byte for byte the
+    config the riemann-jensen spec run used (its log records md5 1c619f6c)."""
+    from .comparator import CLEAN_AXIOMS
+    q = json.dumps
+    names = ",\n".join(f"    {q(t)}" for t in theorems)
+    return ("{\n"
+            f"  \"challenge_module\": {q(challenge_module)},\n"
+            f"  \"solution_module\": {q(solution_module)},\n"
+            f"  \"theorem_names\": [\n{names}\n  ],\n"
+            f"  \"permitted_axioms\": [{', '.join(q(a) for a in CLEAN_AXIOMS)}],\n"
+            "  \"enable_nanoda\": true\n"
+            "}\n")
+
+
+def _dumps_island(isl: Island, rep: Optional[Replay]) -> str:
+    """island.toml for *isl* with [replay] *rep* (or none). A JSON string literal (ASCII, escaped) is a valid TOML
+    basic string, so every value is written with json.dumps. The text is re-read through the strict schema before
+    it is returned: a writer bug is an IslandError, never a registration `island check` would read differently."""
+    q = json.dumps
+
+    def value(k: str) -> str:
+        if k in ("theorems", "overlay_imports"):
+            return "[\n" + "".join(f"  {q(t)},\n" for t in getattr(isl, k)) + "]"
+        return q(isl.challenge_sha256 if k == "overlay_sha256" else getattr(isl, k))
+
+    lines = [f"{k} = {value(k)}" for k in (_OVERLAY_TOP_KEYS if isl.is_overlay else _TOP_KEYS)]
+    if rep is not None:
+        lines += ["", "[replay]"]
+        lines += [f"{isl.sha_key if k == 'challenge_sha256' else k} = {q(getattr(rep, k))}"
+                  for k in ("date", "commit", "challenge_sha256", "nanoda_rev", "comparator_tag", "verdict",
+                            "log_sha256", "fingerprint_sha256")]
+        probe_sha, checks = dict(rep.probe_sha256), dict(rep.checks)
+        lines += ["", "[replay.probe_sha256]"] + [f"{q(t)} = {q(probe_sha[t])}" for t in isl.theorems if t in probe_sha]
+        lines += ["", "[replay.checks]"] + [f"{q(t)} = {{ probe = {q(checks[t].probe)}, fingerprint = "
+                                            f"{q(checks[t].fingerprint)} }}" for t in isl.theorems if t in checks]
+    text = "\n".join(lines) + "\n"
+    back, probs = _schema(tomllib.loads(text), isl.name)
+    if back != Island(**{**isl.__dict__, "replay": rep}):
+        raise IslandError(f"island {isl.name!r}: internal error writing {ISLAND_TOML} ({'; '.join(probs)})")
+    return text
+
+
+_REPLAY_MD_HEAD = ("This file is a generated human summary. `telperion island check` never reads it: whether the "
+                   "island is verified is decided from island.toml's [replay] record and the evidence archived "
+                   "under replay/, which is re-parsed on every check. Verified means that evidence is present and "
+                   "internally consistent; it does not prove the run happened (whoever ran the sandbox could write "
+                   "a log by hand). The independent auditor's review of the run is the anchor.")
+
+
+def _replay_md_preamble(isl: Island, date: str, differences: Sequence[str]) -> str:
+    lines = [f"# Replay record: {isl.name}", "", _REPLAY_MD_HEAD, "",
+             f"- source: {isl.source}", f"- commit: {isl.commit}", f"- toolchain: {isl.toolchain}",
+             f"- licence: {isl.licence}", f"- challenge: {isl.challenge_module} (challenge.lean, sha256 "
+             f"{isl.challenge_sha256})", f"- intended use: {isl.intended_use}", "- theorems:"]
+    lines += [f"  - `{t}`" for t in isl.theorems]
+    lines += ["", f"## {date}: registered (`telperion island add`)", ""]
+    if differences:
+        lines.append("The library's own Comparator/comparator.json differs from ours; ours is used:")
+        lines += [f"- {d}" for d in differences]
+    else:
+        lines.append("The library's own Comparator/comparator.json matches ours.")
+    lines += ["", "Status: not yet replayed (self-reported)."]
+    return "\n".join(lines) + "\n"
+
+
+def _append_replay_md(root: Path, isl: Island, section: str) -> None:
+    from .missions.schema import atomic_write_text
+    text, _ = _read_text(root, isl.name, REPLAY_FILE)
+    if text is None:   # missing or untrusted: start again (atomic_write_text replaces a symlink, never follows it)
+        text = f"# Replay record: {isl.name}\n\n{_REPLAY_MD_HEAD}\n"
+    atomic_write_text(Path(root) / ISLANDS_DIR / isl.name / REPLAY_FILE, text.rstrip("\n") + "\n\n" + section)
+
+
+def _config_differences(upstream: dict, ours: dict) -> list[str]:
+    """One line per key where the library's Comparator config and ours differ (ours wins; REPLAY.md says how)."""
+    out = []
+    for key in sorted(set(upstream) | set(ours)):
+        if key not in ours:
+            out.append(f"`{key}`: upstream sets {json.dumps(upstream[key])}; ours has no such key")
+        elif key not in upstream or json.dumps(upstream[key]) != json.dumps(ours[key]):   # 1 is not true
+            up = json.dumps(upstream[key]) if key in upstream else "(absent)"
+            out.append(f"`{key}`: upstream {up}, ours {json.dumps(ours[key])}")
+    return out
+
+
+def _clone_read(src: Path, rel: str, max_bytes: int = MAX_BYTES) -> bytes:
+    data, problem = read_guarded(src / rel, label=f"the clone's {rel}", max_bytes=max_bytes)
+    if data is None:
+        raise IslandError(problem or f"the clone has no {rel}")
+    return data
+
+
+def _module_path(module: str) -> str:
+    """`Challenge.Basic` -> `Challenge/Basic.lean`; *module* is already a validated plain dotted identifier."""
+    return "/".join(module.split(".")) + ".lean"
+
+
+def _detect_licence(src: Path) -> Optional[str]:
+    for fname in ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"):
+        data, _ = read_guarded(src / fname, label=fname, max_bytes=MAX_BYTES)
+        if data is None:
+            continue
+        text = data.decode("utf-8", errors="replace")
+        if "Apache License" in text and "Version 2.0" in text:
+            return "Apache-2.0"
+        if "MIT License" in text or "Permission is hereby granted, free of charge" in text:
+            return "MIT"
+        return None
+    return None
+
+
+def _known_tag(name: str, toolchain: str, what: str) -> str:
+    """N3: the Comparator tag for *toolchain*, refused up front unless COMPARATOR_EXPORTS knows its export set (a
+    replay on any other tag would build for hours and then FAIL on the export check)."""
+    from .missions import judge
+    try:
+        tag = judge.comparator_tag(toolchain)
+    except judge.JudgeError as exc:
+        raise IslandError(f"island {name!r}: {exc}; refusing to {what}") from None
+    if tag not in COMPARATOR_EXPORTS:
+        raise IslandError(f"island {name!r}: Comparator {tag} has no export set in COMPARATOR_EXPORTS (known: "
+                          f"{', '.join(sorted(COMPARATOR_EXPORTS))}), so no replay on it can pass; add the entry from "
+                          f"a real {tag} log first. Refusing to {what}")
+    return tag
+
+
+def _dirty_clone_problem(run: Callable[..., "RunResult"], src: Path, added: Optional[str] = None) -> Optional[str]:
+    """I2 + N1: the clone's working tree must be exactly the commit. A leftover edit (a tamper control's, say) would
+    otherwise be registered or judged under the pin's name. With *added* (an overlay island's `overlay_path`, once
+    the overlay is placed), the tree must be exactly the commit plus that one untracked file: the status below must
+    print exactly `?? <added>`, and nothing else. Refused, in this order:
+
+    - anything `git -c core.excludesFile=/dev/null status --porcelain --untracked-files=all --ignore-submodules=none`
+      prints: tracked and untracked files alike, every untracked file listed, submodules never ignored (whatever the
+      committed .gitmodules says), the user's global excludes file switched off. Files the repo's own .gitignore
+      ignores (a build's .lake) do not count;
+    - a `.git/info/exclude` with any pattern (it hides untracked files from that status), or a `.git` that is not a
+      directory (a worktree or gitdir link, whose exclude file lives elsewhere);
+    - any `git ls-files -v` entry marked assume-unchanged (a lowercase tag) or skip-worktree (`S`): git does not even
+      look at such a file's edits.
+    """
+    def out(r: "RunResult") -> str:
+        return "; ".join(r.output.strip().splitlines()[:5])[:300]
+
+    r = run(["git", "-C", str(src), "-c", "core.excludesFile=/dev/null", "status", "--porcelain",
+             "--untracked-files=all", "--ignore-submodules=none"], cwd=src, timeout=120)
+    if r.rc != 0:
+        return f"`git status` on the clone failed (exit {r.rc}); refusing to trust its working tree"
+    if added is not None:
+        if [l for l in r.output.splitlines() if l.strip()] != [f"?? {added}"]:
+            return (f"the tree is not exactly the pin plus the overlay {added} (`git status --porcelain`: "
+                    f"{out(r) or 'nothing'}); any other modified or untracked file would be judged as the pin's")
+    elif r.output.strip():
+        return (f"the clone's working tree is not clean (`git status --porcelain`: {out(r)}); a modified or "
+                "untracked file would be taken for the pin. Re-clone it, or restore it with git")
+    git_dir = Path(src) / ".git"
+    if git_dir.is_symlink() or not git_dir.is_dir():
+        return ("the clone's working tree cannot be shown clean: its .git is not a directory (a worktree or a gitdir "
+                "link); use a plain clone")
+    data, problem = read_guarded(git_dir / "info" / "exclude", label="the clone's .git/info/exclude",
+                                 max_bytes=MAX_BYTES)
+    if problem:
+        return f"the clone's working tree cannot be shown clean: {problem}"
+    patterns = [l.strip() for l in (data or b"").decode("utf-8", errors="replace").splitlines()
+                if l.strip() and not l.strip().startswith("#")]
+    if patterns:
+        return (f"the clone's working tree cannot be shown clean: .git/info/exclude hides {', '.join(patterns[:5])!r} "
+                "from `git status`; empty it, or re-clone")
+    r = run(["git", "-C", str(src), "ls-files", "-v"], cwd=src, timeout=120)
+    if r.rc != 0:
+        return f"`git ls-files -v` on the clone failed (exit {r.rc}); refusing to trust its working tree"
+    flagged = [l for l in r.output.splitlines() if l[:1].islower() or l[:1] == "S"]
+    if flagged:
+        return (f"the clone's working tree is not clean: {len(flagged)} file(s) marked assume-unchanged (lowercase "
+                f"tag) or skip-worktree (S), whose edits git does not report ({'; '.join(flagged[:5])[:300]}); "
+                "re-clone it")
+    return None
+
+
+def _add_preflight(root: Path, name: str, source: str, commit: str, intended_use: str,
+                   fetch: Callable[[str, str, Path], str], tools: Optional[Path],
+                   run: Optional[Callable[..., "RunResult"]]) -> tuple[Path, Path]:
+    """What both kinds of `island add` check first: the arguments, an unregistered name, and a clone (fetched into
+    `<tools>/islands/<name>/src`) whose HEAD is the pin and whose working tree is clean. `(dest, src)`."""
+    problem = (_name_problem(name) or _source_problem(source)
+               or (None if isinstance(commit, str) and _HEX40.fullmatch(commit) else
+                   "commit must be the full 40-hex commit (a branch or tag can move)")
+               or _str_problem("intended_use", intended_use) or _root_problem(root))
+    if problem:
+        raise IslandError(f"island {name!r}: {problem}")
+    dest = Path(root) / ISLANDS_DIR / name
+    if dest.exists() or dest.is_symlink():
+        raise IslandError(f"island {name!r}: already registered ({ISLANDS_DIR}/{name}/ exists)")
+    src = Path(tools or DEFAULT_TOOLS) / ISLANDS_DIR / name / "src"
+    head = fetch(source, commit, src)
+    if head != commit:
+        raise IslandError(f"island {name!r}: the clone's HEAD {str(head)[:40]!r} is not the pin {commit}; refusing to "
+                          "register")
+    problem = _dirty_clone_problem(run or subprocess_run, src)
+    if problem:
+        raise IslandError(f"island {name!r}: {problem}; refusing to register")
+    return dest, src
+
+
+def _licence_of(name: str, src: Path, licence: Optional[str]) -> str:
+    if licence is None:
+        licence = _detect_licence(src)
+        if licence is None:
+            raise IslandError(f"island {name!r}: cannot tell the licence from the clone's LICENSE; pass --licence "
+                              "<SPDX id>")
+    return licence
+
+
+def _write_registration(root: Path, isl: Island, challenge: bytes, ours: str, md: str) -> Island:
+    """Stage the four files and rename the stage into place: the island directory appears whole or not at all."""
+    from .missions.schema import atomic_write_text
+    (Path(root) / ISLANDS_DIR).mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(dir=Path(root) / ISLANDS_DIR, prefix=f".{isl.name}.add-"))
+    try:
+        (stage / CHALLENGE_FILE).write_bytes(challenge)
+        for fname, text in ((ISLAND_TOML, _dumps_island(isl, None)), (COMPARATOR_FILE, ours), (REPLAY_FILE, md)):
+            atomic_write_text(stage / fname, text)
+        os.chmod(stage / CHALLENGE_FILE, 0o644)
+        os.chmod(stage, 0o755)
+        os.rename(stage, Path(root) / ISLANDS_DIR / isl.name)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return load_island(root, isl.name)
+
+
+def add_island(root: Path, name: str, source: str, commit: str, intended_use: str, *,
+               fetch: Callable[[str, str, Path], str], tools: Optional[Path] = None,
+               licence: Optional[str] = None, date: Optional[str] = None,
+               run: Optional[Callable[..., "RunResult"]] = None) -> Island:
+    """Register `<root>/islands/<name>/` from the library at *source* @ *commit*. `fetch(source, commit, dest)`
+    clones it into `<tools>/islands/<name>/src` and returns the clone's HEAD, which must be *commit*. From the
+    clone, whose working tree must be clean (`git status --porcelain` through *run*, default `subprocess_run`), and
+    through guarded reads, come the toolchain (`lean-toolchain`), the theorem names and modules
+    (`Comparator/comparator.json`), the challenge file and, unless *licence* is given, the licence (Apache-2.0 or MIT
+    from LICENSE). Writes island.toml without [replay], a byte copy of the challenge, OUR comparator.json and
+    REPLAY.md (which records how the library's config differs from ours). Nothing is built. Everything is checked
+    before anything is written, and the island directory appears whole or not at all. `IslandError` otherwise."""
+    dest, src = _add_preflight(root, name, source, commit, intended_use, fetch, tools, run)
+    try:
+        toolchain = _clone_read(src, "lean-toolchain", 4096).decode("utf-8").strip()
+        upstream = json.loads(_clone_read(src, "Comparator/comparator.json").decode("utf-8"))
+    except (ValueError, RecursionError) as exc:   # UnicodeDecodeError is a ValueError
+        raise IslandError(f"island {name!r}: the clone's lean-toolchain or Comparator/comparator.json cannot be "
+                          f"read ({type(exc).__name__}: {str(exc)[:120]})") from None
+    except IslandError as exc:
+        raise IslandError(f"island {name!r}: {exc}") from None
+    if not isinstance(upstream, dict) or not isinstance(upstream.get("theorem_names"), list):
+        raise IslandError(f"island {name!r}: the clone's Comparator/comparator.json has no theorem_names list")
+    cm, sm = upstream.get("challenge_module"), upstream.get("solution_module")
+    problem = _lean_name_problem("challenge_module", cm) or _lean_name_problem("solution_module", sm)
+    if problem:
+        raise IslandError(f"island {name!r}: the clone's Comparator/comparator.json: {problem}")
+    try:
+        challenge = _clone_read(src, _module_path(cm))
+    except IslandError as exc:
+        raise IslandError(f"island {name!r}: {exc}") from None
+    licence = _licence_of(name, src, licence)
+    isl, probs = _schema({"name": name, "source": source, "commit": commit, "toolchain": toolchain,
+                          "licence": licence, "challenge_module": cm, "solution_module": sm,
+                          "challenge_sha256": hashlib.sha256(challenge).hexdigest(),
+                          "theorems": list(upstream["theorem_names"]), "intended_use": intended_use}, name)
+    if isl is None:
+        raise IslandError(f"island {name!r}: " + "; ".join(probs))
+    _known_tag(name, isl.toolchain, "register")
+    ours = comparator_json_text(cm, sm, isl.theorems)
+    md = _replay_md_preamble(isl, date or datetime.date.today().isoformat(),
+                             _config_differences(upstream, json.loads(ours)))
+    return _write_registration(root, isl, challenge, ours, md)
+
+
+def _overlay_md_preamble(isl: Island, date: str, parse: OverlayParse) -> str:
+    where = {t.name: t.upstream for t in parse.theorems}
+    lines = [f"# Replay record: {isl.name}", "", _REPLAY_MD_HEAD, "",
+             f"- source: {isl.source}", f"- commit: {isl.commit}", f"- toolchain: {isl.toolchain}",
+             f"- licence: {isl.licence}",
+             f"- challenge: {isl.challenge_module}, a Telperion lead-authored statement-only OVERLAY (challenge.lean, "
+             f"overlay_sha256 {isl.challenge_sha256}); at replay it is placed at `{isl.overlay_path}` in a fresh "
+             "copy of the pin, the one file added to it",
+             f"- overlay imports (upstream definition modules, besides Mathlib): "
+             + ", ".join(f"`{m}`" for m in isl.overlay_imports),
+             f"- solution: {isl.solution_module} (upstream)", f"- intended use: {isl.intended_use}",
+             "- theorems (each with the upstream line its statement was copied from):"]
+    lines += [f"  - `{t}`: `{where[t][0]}:{where[t][1]}`" if where.get(t) else f"  - `{t}`" for t in isl.theorems]
+    lines += ["", f"## {date}: registered (`telperion island add --overlay`)", "",
+              "The library ships no Comparator config or challenge module; the overlay is the challenge and our "
+              "comparator.json is the config. The overlay is a TRUSTED statement layer: bb checks it against the "
+              "library, statement by statement, and Comparator checks at replay that each of its statements has "
+              "exactly the type of the solution's theorem of the same name.", "",
+              "Status: not yet replayed (self-reported)."]
+    return "\n".join(lines) + "\n"
+
+
+def add_overlay_island(root: Path, name: str, source: str, commit: str, intended_use: str, *, overlay: Path,
+                       overlay_path: str, overlay_imports: Sequence[str], solution_module: str,
+                       fetch: Callable[[str, str, Path], str], tools: Optional[Path] = None,
+                       licence: Optional[str] = None, date: Optional[str] = None,
+                       run: Optional[Callable[..., "RunResult"]] = None) -> Island:
+    """Register an OVERLAY island (option A): the library at *source* @ *commit* ships no statement-only challenge,
+    so the lead's *overlay* file is the challenge. Clones and checks the clone exactly as `add_island` does; the
+    clone must have no Comparator/comparator.json (a library that ships one is registered from it). The theorems
+    are the overlay's own, in its order; the challenge module is *overlay_path*'s; the solution module is the
+    upstream *solution_module*. Refused unless the overlay passes `overlay_problems` and, against the clone,
+    `upstream_problems` (same names and statement text as upstream, no clashing import, the solution imports every
+    theorem's module, the path not in the tree). Writes island.toml (`challenge_source = "overlay"`,
+    `overlay_path`, `overlay_sha256`, `overlay_imports`), the overlay as challenge.lean, OUR comparator.json and
+    REPLAY.md. Nothing is built."""
+    dest, src = _add_preflight(root, name, source, commit, intended_use, fetch, tools, run)
+    raw = _input(name, overlay, "the overlay", MAX_BYTES)
+    try:
+        text = raw.decode("utf-8")
+        toolchain = _clone_read(src, "lean-toolchain", 4096).decode("utf-8").strip()
+    except UnicodeDecodeError:
+        raise IslandError(f"island {name!r}: the overlay or the clone's lean-toolchain is not valid UTF-8") from None
+    except IslandError as exc:
+        raise IslandError(f"island {name!r}: {exc}") from None
+    upstream_cfg = Path(src) / "Comparator" / "comparator.json"
+    if upstream_cfg.exists() or upstream_cfg.is_symlink():
+        raise IslandError(f"island {name!r}: the clone ships Comparator/comparator.json; register the library's own "
+                          "challenge (`island add` without --overlay), not an overlay")
+    if not isinstance(overlay_path, str) or not overlay_path.endswith(".lean"):
+        raise IslandError(f"island {name!r}: --overlay-path must be a relative .lean path")
+    parse = parse_overlay(text)
+    isl, probs = _schema({"name": name, "source": source, "commit": commit, "toolchain": toolchain,
+                          "licence": _licence_of(name, src, licence), "challenge_source": OVERLAY,
+                          "challenge_module": _module_of_path(overlay_path), "solution_module": solution_module,
+                          "overlay_path": overlay_path, "overlay_sha256": hashlib.sha256(raw).hexdigest(),
+                          "overlay_imports": list(overlay_imports),
+                          "theorems": [t.name for t in parse.theorems] or [""], "intended_use": intended_use},
+                         name)
+    if isl is None:
+        raise IslandError(f"island {name!r}: " + "; ".join(probs + list(parse.problems)))
+    probs = overlay_problems(text, isl) + upstream_problems(isl, text, src)
+    if probs:
+        raise IslandError(f"island {name!r}: refusing to register the overlay: " + "; ".join(probs))
+    _known_tag(name, isl.toolchain, "register")
+    ours = comparator_json_text(isl.challenge_module, isl.solution_module, isl.theorems)
+    md = _overlay_md_preamble(isl, date or datetime.date.today().isoformat(), parse)
+    return _write_registration(root, isl, raw, ours, md)
+
+
+def _place_overlay(run: Callable[..., "RunResult"], tree: Path, root: Path, isl: Island) -> str:
+    """Put the registered overlay into *tree*, a FRESH copy of the pin (HEAD the pin, the working tree clean): checked
+    against the tree by `upstream_problems`, written at `overlay_path` (which must not exist; its directory must be a
+    real one already in the tree), and then the tree must be exactly the pin plus that one file with the registered
+    sha256 (`_overlay_tree_problem`). Returns the overlay's sha256; `IslandError` otherwise."""
+    data, problem = _read(root, isl.name, CHALLENGE_FILE)
+    if data is None or hashlib.sha256(data).hexdigest() != isl.challenge_sha256:
+        raise IslandError(f"island {isl.name!r}: the registered overlay cannot be read or does not have the recorded "
+                          f"overlay_sha256 ({problem or 'sha256 differs'}); refusing to place it")
+    problem = _dirty_clone_problem(run, tree)
+    if problem:
+        raise IslandError(f"island {isl.name!r}: {problem}; the overlay goes only into a fresh copy of the pin")
+    probs = upstream_problems(isl, data.decode("utf-8"), tree)
+    if probs:
+        raise IslandError(f"island {isl.name!r}: the overlay does not match the tree: " + "; ".join(probs))
+    target = Path(tree)
+    for part in isl.overlay_path.split("/")[:-1]:
+        target = target / part
+        if target.is_symlink() or not target.is_dir():
+            raise IslandError(f"island {isl.name!r}: {target} is not a directory of the tree; refusing to place the "
+                              "overlay")
+    fd = os.open(Path(tree) / isl.overlay_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                 0o644)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    problem = _overlay_tree_problem(run, tree, isl)
+    if problem:
+        raise IslandError(f"island {isl.name!r}: {problem}")
+    return isl.challenge_sha256
+
+
+def _overlay_tree_problem(run: Callable[..., "RunResult"], tree: Path, isl: Island) -> Optional[str]:
+    """Why *tree* is not exactly the pin plus the placed overlay: the status guard with the overlay as the one
+    allowed added file, then the placed file's sha256 against `overlay_sha256`."""
+    problem = _dirty_clone_problem(run, tree, added=isl.overlay_path)
+    if problem:
+        return problem
+    data, problem = read_guarded(Path(tree) / isl.overlay_path, label=f"the placed {isl.overlay_path}",
+                                 max_bytes=MAX_BYTES)
+    if data is None:
+        return problem or f"the placed overlay {isl.overlay_path} is missing"
+    if hashlib.sha256(data).hexdigest() != isl.challenge_sha256:
+        return (f"the placed {isl.overlay_path} has sha256 {hashlib.sha256(data).hexdigest()}, not the registered "
+                f"overlay_sha256 {isl.challenge_sha256}")
+    return None
+
+
+def place_overlay(root: Path, name: str, tree: Path, *, run: Optional[Callable[..., "RunResult"]] = None,
+                  check_only: bool = False) -> str:
+    """`island place-overlay`: for a sandbox run by hand. *tree* is a fresh git copy of the pin (a clone or a fetch of
+    exactly the commit, never built). Without *check_only*: refuse unless its HEAD is the pin and it is clean, then
+    place the overlay (`_place_overlay`). With *check_only* (after the last command of the run): refuse unless its
+    HEAD is the pin and it is exactly the pin plus the overlay with the registered sha256. Runs git only, never
+    lake or Lean. Returns a one-line summary; `IslandError` otherwise."""
+    isl = _registered(root, name)
+    if not isl.is_overlay:
+        raise IslandError(f"island {name!r} is not an overlay island; nothing to place")
+    run = run or subprocess_run
+    tree = Path(tree)
+    if tree.is_symlink() or not tree.is_dir():
+        raise IslandError(f"island {name!r}: {tree} is not a directory")
+    head = run(["git", "-C", str(tree), "rev-parse", "HEAD"], cwd=tree, timeout=120)
+    if head.rc != 0 or head.output.strip() != isl.commit:
+        raise IslandError(f"island {name!r}: the tree's HEAD {head.output.strip()[:40]!r} is not the pin "
+                          f"{isl.commit}")
+    if check_only:
+        problem = _overlay_tree_problem(run, tree, isl)
+        if problem:
+            raise IslandError(f"island {name!r}: {problem}")
+        return (f"OVERLAY-CHECKED {name} {isl.overlay_path} overlay_sha256={isl.challenge_sha256} commit={isl.commit}: "
+                "the tree is exactly the pin plus the overlay")
+    sha = _place_overlay(run, tree, root, isl)
+    return (f"OVERLAY-PLACED {name} {isl.overlay_path} overlay_sha256={sha} commit={isl.commit}: the tree is exactly "
+            "the pin plus the overlay")
+
+
+# --- running commands (the real runner; tests inject fakes) -----------------------------------------------------------
+
+@dataclass(frozen=True)
+class RunResult:
+    rc: int
+    output: str                    # stdout and stderr together
+    wall_s: float = 0.0
+    peak_kb: Optional[int] = None  # the largest child RSS so far (getrusage RUSAGE_CHILDREN), in kB
+
+
+#: The landrun pass-through shim, verbatim from Arda's missions/judge/rejudge_queue.sh setup (copied from
+#: missions-comparator-heavy.yml). It does NOT sandbox anything: it drops landrun's flags and execs the command.
+#: Install it as `<tools>/bin/landrun` only inside a sandbox that already isolates the whole replay (the cap-drop
+#: container), or use a real landrun / a bwrap wrapper there instead.
+LANDRUN_PASSTHROUGH_SHIM = """#!/usr/bin/env bash
+set -euo pipefail
+args=("$@"); i=0; n=${#args[@]}
+while (( i < n )); do
+  a="${args[$i]}"
+  case "$a" in
+    --ro|--rw|--rwx|--rox|--env|--log-level)
+      v="${args[$((i+1))]:-}"
+      [[ "$a" == "--env" && "$v" == *"="* ]] && export "$v"
+      i=$((i+2)) ;;
+    --env=*) export "${a#--env=}"; i=$((i+1)) ;;
+    --*=*) i=$((i+1)) ;;
+    -*) i=$((i+1)) ;;
+    *) break ;;
+  esac
+done
+exec "${args[@]:$i}"
+"""
+
+
+#: How long to wait for the pipe to close after a timeout's process-group kill (M8).
+_POST_KILL_WAIT = 5.0
+
+
+def _raise_stack_limit() -> None:  # pragma: no cover - runs in the child
+    # Comparator and Lean need a large stack (rejudge_queue.sh: `ulimit -s 65520`); on macOS 65520 KB is the hard
+    # limit and "unlimited" makes every exec'd binary die, so never ask for more than that.
+    import resource
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
+        want = 65520 * 1024 if hard == resource.RLIM_INFINITY else min(hard, 65520 * 1024)
+        if soft != resource.RLIM_INFINITY and soft < want:
+            resource.setrlimit(resource.RLIMIT_STACK, (want, hard))
+    except (ValueError, OSError):
+        pass
+
+
+def subprocess_run(argv: Sequence[str], *, cwd: Path, env: Optional[dict] = None, timeout: float) -> RunResult:
+    """The real `run`: *argv* as a list (never a shell), *env* laid over the current environment, stdin closed,
+    stdout and stderr together, the child in its own session so a timeout kills its whole process group.
+    Never raises for a failing, missing or timed-out command: rc 124 is a timeout, 127 a command that cannot run."""
+    import resource
+    import signal
+    import subprocess
+    import time
+    argv = [str(a) for a in argv]
+    t0 = time.monotonic()
+    try:
+        p = subprocess.Popen(argv, cwd=str(cwd), env={**os.environ, **(env or {})}, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+                             preexec_fn=_raise_stack_limit)
+    except OSError as exc:
+        return RunResult(127, f"cannot run {argv[0]}: {exc.strerror or exc}\n", time.monotonic() - t0)
+    try:
+        out, _ = p.communicate(timeout=timeout)
+        rc = p.returncode
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            out, _ = p.communicate(timeout=_POST_KILL_WAIT)
+        except subprocess.TimeoutExpired:
+            # a descendant that left the process group still holds the pipe open: give up on the output
+            p.kill()
+            if p.stdout is not None:
+                p.stdout.close()
+            p.wait(timeout=_POST_KILL_WAIT)
+            out = b""
+        out = (out or b"") + f"\n{argv[0]}: timed out after {timeout} s; killed\n".encode()
+        rc = 124
+    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    return RunResult(rc, (out or b"").decode("utf-8", errors="replace"), time.monotonic() - t0,
+                     peak // 1024 if sys.platform == "darwin" else peak)
+
+
+def git_fetch(source: str, commit: str, dest: Path, *, timeout: float = 3600) -> str:
+    """The real `fetch` for `island add`: a shallow fetch of exactly *commit* from *source* into a fresh *dest*,
+    checked out detached; returns `git rev-parse HEAD`. An existing *dest* is never updated, only re-read (its HEAD
+    is returned, and `add_island` refuses it unless it is the pin). Nothing in the clone is built or run."""
+    dest = Path(dest)
+    env = {"GIT_TERMINAL_PROMPT": "0"}
+
+    def git(*args) -> str:
+        r = subprocess_run(["git", *args], cwd=dest.parent, env=env, timeout=timeout)
+        if r.rc != 0:
+            raise IslandError(f"`{shlex.join(['git', *args])}` failed (exit {r.rc}): {r.output.strip()[-500:]}")
+        return r.output
+
+    if dest.is_symlink() or (dest.exists() and not dest.is_dir()):
+        raise IslandError(f"{dest} exists and is not a directory; refusing to clone into it")
+    if not dest.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        git("init", "-q", str(dest))
+        git("-C", str(dest), "remote", "add", "origin", source)
+        git("-C", str(dest), "fetch", "-q", "--depth", "1", "origin", commit)
+        git("-C", str(dest), "-c", "advice.detachedHead=false", "checkout", "-q", "--detach", commit)
+    return git("-C", str(dest), "rev-parse", "HEAD").strip()
+
+
+# --- recording a replay -----------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReplayResult:
+    verdict: str                    # "pass" or "fail"
+    problems: tuple[str, ...]
+    log_sha256: str
+
+
+def _registered(root: Path, name: str) -> Island:
+    """The island, if its registration is sound enough to replay against; `IslandError` otherwise."""
+    isl = load_island(root, name)
+    probs = _registration_problems(root, isl)
+    if probs:
+        raise IslandError(f"island {name!r}: the registration is not valid ({'; '.join(probs)}); fix it before "
+                          "recording a replay")
+    return isl
+
+
+def _remove_evidence(d: Path) -> None:
+    """Delete `<island>/replay/` (ours: written only by `_archive_evidence`). A symlink there is unlinked, never
+    followed; rmtree does not follow symlinks inside it either."""
+    p = d / REPLAY_DIR
+    if p.is_symlink() or p.is_file():
+        p.unlink()
+    elif p.exists():
+        shutil.rmtree(p)
+
+
+def _archive_evidence(d: Path, log_bytes: bytes, log_xz: bytes, probes: Sequence[tuple[str, bytes]],
+                      fp_raw: bytes) -> dict:
+    """Write replay/ whole (staged, then renamed into place) and return the sha256s for [replay]."""
+    stage = Path(tempfile.mkdtemp(dir=d, prefix=".replay-new-"))
+    try:
+        (stage / LOG_ARCHIVE).write_bytes(log_xz)
+        probe_sha = {}
+        for thm, raw in probes:
+            sha = hashlib.sha256(raw).hexdigest()
+            probe_sha[thm] = sha
+            (stage / f"probe-{sha}.json").write_bytes(raw)
+        (stage / FINGERPRINT_ARCHIVE).write_bytes(fp_raw)
+        for f in stage.iterdir():
+            os.chmod(f, 0o644)
+        os.chmod(stage, 0o755)
+        _remove_evidence(d)
+        os.rename(stage, d / REPLAY_DIR)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return {"log_sha256": hashlib.sha256(log_bytes).hexdigest(), "probe_sha256": probe_sha,
+            "fingerprint_sha256": hashlib.sha256(fp_raw).hexdigest()}
+
+
+def _conclude(root: Path, isl: Island, problems: Sequence[str], checks: dict, *, how: str, date: str, tag: str,
+              nanoda_rev: str, log_bytes: bytes, probes: Sequence[tuple[str, bytes]], fp_raw: Optional[bytes],
+              commands: Sequence[tuple[str, RunResult]] = (), raw_log: Optional[bytes] = None,
+              scratch_hits: int = 0) -> ReplayResult:
+    """Write the outcome, shared by both replay commands. *log_bytes* is the log as judged and archived (normalized,
+    when a scratch prefix was given; *raw_log* is then the log as received). PASS: archive the evidence, then write
+    [replay] (in that order, so a crash between leaves an old [replay] whose evidence no longer matches:
+    self-reported, never a false verified). A log the check could not read back (over `LOG_MAX_BYTES`, or an archive
+    over its cap) is a FAIL here rather than a PASS that reads self-reported. FAIL: write no [replay]; an earlier one
+    is dropped with its evidence. Either way REPLAY.md gets a dated section."""
+    from .missions.schema import atomic_write_text
+    d = Path(root) / ISLANDS_DIR / isl.name
+    log_sha = hashlib.sha256(log_bytes).hexdigest()
+    problems = list(problems)
+    log_xz = b""
+    if not problems:
+        log_xz = lzma.compress(log_bytes, format=lzma.FORMAT_XZ)
+        if len(log_bytes) > LOG_MAX_BYTES or len(log_xz) > _log_archive_cap():
+            problems.append(f"the log ({len(log_bytes)} bytes, {len(log_xz)} compressed) is over the caps "
+                            f"({LOG_MAX_BYTES} bytes, {_log_archive_cap()} compressed) the check reads it back under")
+    passed = not problems
+    prior = isl.replay
+    if passed:
+        shas = _archive_evidence(d, log_bytes, log_xz, probes, fp_raw)
+        rep = Replay(date=date, commit=isl.commit, challenge_sha256=isl.challenge_sha256, nanoda_rev=nanoda_rev,
+                     comparator_tag=tag, log_sha256=log_sha, verdict="pass",
+                     checks=tuple(sorted(checks.items())), probe_sha256=tuple(sorted(shas["probe_sha256"].items())),
+                     fingerprint_sha256=shas["fingerprint_sha256"])
+        atomic_write_text(d / ISLAND_TOML, _dumps_island(isl, rep))
+    else:
+        if prior is not None:
+            atomic_write_text(d / ISLAND_TOML, _dumps_island(isl, None))
+        _remove_evidence(d)
+    lines = [f"## {date}: {'PASS' if passed else 'FAIL'} (`telperion {how}`)", "",
+             f"- commit {isl.commit}, challenge_sha256 {isl.challenge_sha256}",
+             f"- nanoda_lib {nanoda_rev} (NANODA_REV), Comparator {tag}",
+             f"- Comparator log sha256 {log_sha}, md5 {hashlib.md5(log_bytes).hexdigest()} ({len(log_bytes)} bytes)"
+             + (f"; archived as {REPLAY_DIR}/{LOG_ARCHIVE}" if passed else "")]
+    if raw_log is not None:
+        lines.append(f"- the log as received: md5 {hashlib.md5(raw_log).hexdigest()}, sha256 "
+                     f"{hashlib.sha256(raw_log).hexdigest()} ({len(raw_log)} bytes); the sandbox's session scratch "
+                     f"path was replaced by {SCRATCH_TOKEN} ({scratch_hits} occurrences) before it was judged and "
+                     "archived (Ruling 7)")
+    for thm in isl.theorems:
+        if thm in checks:
+            lines.append(f"- `{thm}`: probe {checks[thm].probe}, fingerprint {checks[thm].fingerprint}")
+    if commands:
+        lines += ["", "Commands (in the clone; wall time, and the largest child RSS so far):"]
+        lines += [f"- `{cmd}`: exit {r.rc}, wall {r.wall_s:.1f} s, peak {r.peak_kb} kB" for cmd, r in commands]
+    if not passed:
+        lines += ["", "Problems:"] + [f"- {p}" for p in problems]
+        lines += ["", "No [replay] was recorded."]
+        if prior is not None:
+            lines.append(f"The earlier [replay] ({prior.date}, log sha256 {prior.log_sha256}) was dropped with its "
+                         "evidence: the island is self-reported until a replay passes again.")
+    _append_replay_md(root, isl, "\n".join(lines) + "\n")
+    return ReplayResult("pass" if passed else "fail", tuple(problems), log_sha)
+
+
+def _input(name: str, path, label: str, max_bytes: int) -> bytes:
+    data, problem = read_guarded(Path(path), label=f"{label} {path}", max_bytes=max_bytes)
+    if data is None:
+        raise IslandError(f"island {name!r}: {problem or f'{label} {path} is missing'}")
+    return data
+
+
+def _normalized(name: str, text: str, scratch_prefix: Optional[str], what: str) -> str:
+    """Ruling 7 on one input: *scratch_prefix* (if any) replaced by `$SCRATCH`; then N2: no Claude session scratch
+    path may remain, so a forgotten --scratch-prefix (or a second session's path) is refused, never archived."""
+    if scratch_prefix is not None:
+        text = text.replace(scratch_prefix, SCRATCH_TOKEN)
+    m = _SESSION_PATH_RE.search(text)
+    if m:
+        how = ("pass --scratch-prefix <that session's scratch path> so it is replaced by $SCRATCH" if scratch_prefix
+               is None else "it is not under --scratch-prefix (a second session?)")
+        raise IslandError(f"island {name!r}: {what} contains a Claude session scratch path ({m.group(0)[:100]}...); "
+                          f"the archive is public, so {how}")
+    return text
+
+
+def _input_json(name: str, path, label: str, scratch_prefix: Optional[str] = None):
+    """`(archived bytes, parsed JSON)` for one probe or fingerprint JSON: guarded read, UTF-8, normalized like the
+    log (the bytes returned are the normalized ones, which is what is judged and archived), then parsed."""
+    raw = _input(name, path, label, MAX_BYTES)
+    try:
+        text = _normalized(name, raw.decode("utf-8"), scratch_prefix, f"{label} {path}")
+        raw = text.encode("utf-8")
+        return raw, json.loads(text)
+    except (ValueError, RecursionError) as exc:   # UnicodeDecodeError is a ValueError
+        raise IslandError(f"island {name!r}: {label} {path} is not valid JSON ({type(exc).__name__}: "
+                          f"{str(exc)[:120]})") from None
+
+
+def _check_date(name: str, date) -> None:
+    if not _date_ok(date):
+        raise IslandError(f"island {name!r}: --date must be an ISO date (YYYY-MM-DD), not {date!r}")
+
+
+def _check_date_tag(name: str, date, tag) -> None:
+    _check_date(name, date)
+    if not isinstance(tag, str) or not _TAG_RE.fullmatch(tag):
+        raise IslandError(f"island {name!r}: --comparator-tag must look like vX.Y.Z or vX.Y.Z-rcN, not {tag!r}")
+
+
+def _scratch_prefix_problem(prefix) -> Optional[str]:
+    """Why *prefix* cannot be a `--scratch-prefix`: it must be a plain absolute path of at least two components,
+    with no whitespace, `$`, empty, `.` or `..` component and no trailing `/`. So the replacement can only ever touch
+    path text, never an accept, header, export or exit line (none of which contains a `/`)."""
+    if not isinstance(prefix, str) or not prefix.startswith("/"):
+        return "must be an absolute path"
+    if any(ch.isspace() for ch in prefix) or "$" in prefix:
+        return "must not contain whitespace or '$'"
+    parts = prefix.split("/")[1:]
+    if prefix.endswith("/") or any(c in ("", ".", "..") for c in parts):
+        return "must be a plain path (no trailing '/', no empty, '.' or '..' component)"
+    if len(parts) < 2:
+        return "must have at least two components (a prefix as short as '/tmp' would rewrite far too much)"
+    return None
+
+
+def record_replay(root: Path, name: str, *, log, probe_jsons: Sequence = (), fingerprint_json=None, date: str,
+                  comparator_tag: str, scratch_prefix: Optional[str] = None) -> ReplayResult:
+    """Ingest a replay run elsewhere (Ruling 1): the Comparator log *log* (its first line the ISLAND-HEADER), one
+    `probe-negation --json` output per theorem and one `fingerprint --json` output, all produced in the sandbox.
+    Judged by `evaluate_replay`, exactly as `replay_island` judges its own run; on PASS the files are archived
+    under replay/ and [replay] is written. Every input goes through the guarded reader; an unreadable, non-UTF-8,
+    oversized or non-JSON input, a bad date, tag or scratch prefix, or an invalid registration is an `IslandError`
+    and nothing is written. A FAIL is recorded in REPLAY.md only.
+
+    Ruling 7: with *scratch_prefix* (the sandbox's session scratch path, which the archive must not publish), every
+    occurrence is replaced by `$SCRATCH` FIRST, and the normalized text is what is judged, archived and hashed into
+    log_sha256; REPLAY.md records the raw log's md5 and sha256 (never the prefix). The prefix must occur in the
+    log. The probe and fingerprint JSONs get the same replacement, and their normalized bytes are what is judged and
+    archived. N2: a log or JSON that still holds a Claude session scratch path (`/claude-<n>/.../<uuid>`), because
+    the flag was forgotten or a second session's path is in it, is refused."""
+    isl = _registered(root, name)
+    _check_date_tag(name, date, comparator_tag)
+    if scratch_prefix is not None:
+        problem = _scratch_prefix_problem(scratch_prefix)
+        if problem:
+            raise IslandError(f"island {name!r}: --scratch-prefix {problem}")
+    raw_log = _input(name, log, "the Comparator log", LOG_MAX_BYTES)
+    try:
+        log_text = raw_log.decode("utf-8")
+    except UnicodeDecodeError:
+        raise IslandError(f"island {name!r}: the Comparator log {log} is not valid UTF-8") from None
+    hits = 0
+    if scratch_prefix is not None:
+        hits = log_text.count(scratch_prefix)
+        if not hits:
+            raise IslandError(f"island {name!r}: --scratch-prefix does not occur in the Comparator log {log}")
+    log_text = _normalized(name, log_text, scratch_prefix, f"the Comparator log {log}")
+    log_bytes = log_text.encode("utf-8")
+    probes = [_input_json(name, p, "the probe JSON", scratch_prefix) for p in probe_jsons]
+    fp = (_input_json(name, fingerprint_json, "the fingerprint JSON", scratch_prefix)
+          if fingerprint_json is not None else None)
+    pinned, problem = pinned_nanoda_rev()
+    if pinned is None:
+        raise IslandError(f"island {name!r}: cannot read the pinned nanoda rev: {problem}")
+    v = evaluate_replay(isl, log_text=log_text, probe_docs=[doc for _, doc in probes],
+                        fingerprint_doc=None if fp is None else fp[1], nanoda_rev=pinned, comparator_tag=comparator_tag,
+                        config_sha256=_config_sha256(root, name))
+    return _conclude(root, isl, v.problems, v.checks, how="island record-replay", date=date, tag=comparator_tag,
+                     nanoda_rev=pinned, log_bytes=log_bytes, fp_raw=None if fp is None else fp[0],
+                     probes=[(doc.get("theorem"), raw) for raw, doc in probes if isinstance(doc, dict)],
+                     raw_log=raw_log if scratch_prefix is not None else None, scratch_hits=hits)
+
+
+def _md5_file(path: Path) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _json_output(text: str) -> tuple[Optional[dict], bytes]:
+    """`(doc, raw)`: the JSON object a check printed as its last stdout line and that line's bytes (what is archived),
+    or `(None, b"")`."""
+    lines = text.strip().splitlines()
+    try:
+        doc = json.loads(lines[-1]) if lines else None
+    except (ValueError, RecursionError):
+        doc = None
+    return (doc, (lines[-1] + "\n").encode("utf-8")) if isinstance(doc, dict) else (None, b"")
+
+
+#: Where `island replay` lists the challenge build's artifacts (sha256 and path) before Comparator runs.
+PREBUILD_SNAPSHOT = "prebuild.sha256"
+#: Packages whose oleans the trusted env supplies: never handed to the replay as untrusted dirs.
+_ENV_PACKAGES = frozenset({"mathlib", "batteries", "aesop", "qq", "proofwidgets", "plausible", "leansearchclient",
+                           "importgraph", "cli"})
+
+
+def _build_lib_dirs(src: Path) -> list[Path]:
+    """`<src>/.lake/build/lib/lean` and every `<src>/.lake/packages/<p>/.lake/build/lib/lean` that exists."""
+    dirs = [Path(src) / ".lake" / "build" / "lib" / "lean"]
+    pkgs = Path(src) / ".lake" / "packages"
+    if pkgs.is_dir() and not pkgs.is_symlink():
+        dirs += sorted(p / ".lake" / "build" / "lib" / "lean" for p in pkgs.iterdir())
+    return [d for d in dirs if d.is_dir() and not d.is_symlink()]
+
+
+def _package_olean_dirs(src: Path) -> list[Path]:
+    """The build dirs of the clone's packages that the trusted env does not supply (Stacks for weil): the probe and
+    the fingerprint replay the challenge's closure from them as untrusted dirs, besides the clone's own."""
+    root = Path(src) / ".lake" / "packages"
+    return [d for d in _build_lib_dirs(src) if d.is_relative_to(root)
+            and d.relative_to(root).parts[0].lower() not in _ENV_PACKAGES]
+
+
+def _build_snapshot(src: Path) -> dict[str, str]:
+    """sha256 of every file under the clone's build dirs (`_build_lib_dirs`), by path relative to the clone."""
+    out = {}
+    for d in _build_lib_dirs(src):
+        for dirpath, _, files in os.walk(d):
+            for f in files:
+                p = Path(dirpath) / f
+                if p.is_file() and not p.is_symlink():
+                    h = hashlib.sha256()
+                    with open(p, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(chunk)
+                    out[str(p.relative_to(src))] = h.hexdigest()
+    return out
+
+
+def _snapshot_problems(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """R-1: every artifact of the challenge build must be unchanged after Comparator built the solution and the checks
+    ran; new files (the solution's) are expected."""
+    changed = sorted(r for r in before if after.get(r) != before[r])
+    if not changed:
+        return []
+    return [f"{len(changed)} artifact(s) of the challenge build changed or vanished after Comparator built the solution "
+            f"(e.g. {', '.join(changed[:3])}); the checks may not have run on the challenge as built"]
+
+
+def replay_island(root: Path, name: str, *, run: Callable[..., RunResult], tools: Optional[Path] = None,
+                  date: Optional[str] = None, leanlock: Optional[Path] = DEFAULT_LEANLOCK,
+                  python: Optional[str] = None, timeout: float = 6 * 3600,
+                  check_timeout: float = 3600) -> ReplayResult:
+    """Replay the island in `<tools>/islands/<name>/src` through *run* (`subprocess_run`, or a fake in tests). It
+    builds and runs the library's code: it MUST RUN INSIDE A SANDBOX, and we never run it locally (owner decision
+    2026-10-31; replays are ingested with `record_replay` instead).
+
+    Refuses (`IslandError`, nothing run but `git rev-parse` and `git status`) unless: the registration is valid; the
+    clone's HEAD is the pin and its working tree is clean; its challenge file has the registered sha256 and its
+    lean-toolchain is the island's; the Comparator tag for the toolchain is known; Comparator, lean4export,
+    nanoda_bin (at NANODA_REV) and the landrun shim are all in *tools*. An OVERLAY island's clone must not contain
+    the overlay yet: after those refusals the overlay is placed (`_place_overlay`: checked against the tree, then the
+    tree must be exactly the pin plus that one file). Then, through leanlock unless *leanlock* is None:
+    `lake exe cache get`; `lake build <challenge module>`, the challenge ONLY (R-1: the solution is first compiled by
+    Comparator, after its challenge export); a sha256 snapshot of the clone's build dirs (`prebuild.sha256`, its
+    digest on a COMPARATOR_PREBUILD line; every entry must be unchanged at the end); `lake env comparator <our
+    comparator.json>` (PATH and COMPARATOR_* as rejudge_queue.sh sets them); `probe-negation` per theorem and
+    `fingerprint` for all of them, on the challenge, with `--olean-dir` for each package the trusted env does not
+    supply.
+    The log `<tools>/islands/<name>/comparator.log` starts with the ISLAND-HEADER, the COMPARATOR_NANODA line and the
+    COMPARATOR_CONFIG line (the sha256 of our comparator.json, which the verdict then requires) and ends with the
+    exit line. The verdict is `evaluate_replay`'s, plus a failed build; `_conclude` writes it."""
+    from .missions.schema import atomic_write_text
+    isl = _registered(root, name)
+    date = date or datetime.date.today().isoformat()
+    _check_date(name, date)
+    tools = Path(tools or DEFAULT_TOOLS)
+    src = tools / ISLANDS_DIR / name / "src"
+    if src.is_symlink() or not src.is_dir():
+        raise IslandError(f"island {name!r}: no clone at {src} (`telperion island add` makes it)")
+    head = run(["git", "-C", str(src), "rev-parse", "HEAD"], cwd=src, timeout=120)
+    if head.rc != 0 or head.output.strip() != isl.commit:
+        raise IslandError(f"island {name!r}: the clone's HEAD {head.output.strip()[:40]!r} is not the pin "
+                          f"{isl.commit}; refusing to replay")
+    problem = _dirty_clone_problem(run, src)
+    if problem:
+        raise IslandError(f"island {name!r}: {problem}; refusing to replay")
+    rel = _module_path(isl.challenge_module)
+    try:
+        toolchain = _clone_read(src, "lean-toolchain", 4096).decode("utf-8", errors="replace").strip()
+        # an overlay island's challenge is not in the clone: it is placed below, once every other refusal has spoken
+        challenge = None if isl.is_overlay else _clone_read(src, rel)
+    except IslandError as exc:
+        raise IslandError(f"island {name!r}: {exc}") from None
+    if challenge is not None and hashlib.sha256(challenge).hexdigest() != isl.challenge_sha256:
+        raise IslandError(f"island {name!r}: the clone's {rel} sha256 {hashlib.sha256(challenge).hexdigest()} is not "
+                          f"the registered challenge_sha256 {isl.challenge_sha256}; refusing to replay")
+    if toolchain != isl.toolchain:
+        raise IslandError(f"island {name!r}: the clone's lean-toolchain {toolchain!r} is not the island toolchain "
+                          f"{isl.toolchain!r}; refusing to replay")
+    tag = _known_tag(name, isl.toolchain, "replay")
+    if (src / ".lake" / "packages").exists() or (src / ".lake" / "packages").is_symlink():
+        raise IslandError(f"island {name!r}: the clone already has a .lake/packages/ (a reused clone); its sources are "
+                          "ignored by git, so an edit there would be built and judged as the pin's. Delete the clone's "
+                          ".lake (or re-clone) first; refusing to replay")
+    pinned, problem = pinned_nanoda_rev()
+    if pinned is None:
+        raise IslandError(f"island {name!r}: cannot read the pinned nanoda rev: {problem}")
+    cmpdir = tools / f"comparator-{tag}"
+    l4x = next(iter(sorted(p for p in (cmpdir / ".lake").rglob("lean4export") if p.parent.name == "bin")), None) \
+        if (cmpdir / ".lake").is_dir() else None
+    nanoda_dir = tools / f"nanoda-{pinned[:8]}"
+    nanoda_bin = nanoda_dir / "target" / "release" / "nanoda_bin"
+    landrun = tools / "bin" / "landrun"
+    comparator_bin = cmpdir / ".lake" / "build" / "bin" / "comparator"
+    for what, path in (("Comparator", comparator_bin), ("lean4export", l4x), ("nanoda_bin", nanoda_bin),
+                       ("the landrun shim", landrun), ("leanlock", leanlock)):
+        if what == "leanlock" and path is None:
+            continue
+        if path is None or not Path(path).is_file():
+            raise IslandError(f"island {name!r}: {what} not found at {path}; build or install it first")
+    nrev = run(["git", "-C", str(nanoda_dir), "rev-parse", "HEAD"], cwd=nanoda_dir, timeout=120)
+    if nrev.rc != 0 or nrev.output.strip() != pinned:
+        raise IslandError(f"island {name!r}: the nanoda checkout {nanoda_dir} is at {nrev.output.strip()[:40]!r}, "
+                          f"not the pinned NANODA_REV {pinned}; refusing to replay")
+    if isl.is_overlay:
+        _place_overlay(run, src, root, isl)          # the one added file; refused unless the tree is then exactly that
+
+    lock = [str(leanlock)] if leanlock is not None else []
+    lock_env = {"ARDA_LEAN_SLOTS": "1", "OPENBLAS_NUM_THREADS": "1"}
+    cfg = (Path(root) / ISLANDS_DIR / name / COMPARATOR_FILE).resolve()
+    py = [python or sys.executable, "-m", "telperion.cli"]
+    # what the log and REPLAY.md show: no machine paths (both end up in a public repo); the argv itself is unchanged
+    shown = [(str(cfg), f"{ISLANDS_DIR}/{name}/{COMPARATOR_FILE}"), (str(src), "<clone>"), (str(tools), "<tools>"),
+             (py[0], "python"), *([(lock[0], "leanlock.sh")] if lock else [])]
+
+    def show(argv) -> str:
+        out = []
+        for a in map(str, argv):
+            for full, short in shown:
+                a = a.replace(full, short)
+            out.append(a)
+        return shlex.join(out)
+
+    log = [f"ISLAND-HEADER island={name} commit={isl.commit} {isl.sha_key}={isl.challenge_sha256}",
+           f"== telperion island replay {name} {date} (Comparator {tag}; this command must run inside a sandbox)",
+           f"COMPARATOR_NANODA {_md5_file(nanoda_bin)} (nanoda_lib {pinned})",
+           f"COMPARATOR_CONFIG sha256 {_config_sha256(root, name)}",
+           f"COMPARATOR_LEAN4EXPORT {_md5_file(l4x)} {show([l4x])}",
+           f"COMPARATOR_LANDRUN {show([landrun])} {_md5_file(landrun)}",
+           f"comparator {show([comparator_bin])} {_md5_file(comparator_bin)} (tag {tag})"]
+    commands: list[tuple[str, RunResult]] = []
+    run_probs: list[str] = []
+
+    def step(argv: list[str], env: dict, limit: float) -> RunResult:
+        r = run(argv, cwd=src, env=env, timeout=limit)
+        commands.append((show(argv), r))
+        return r
+
+    # R-1 (bb, REVIEW_OVERLAY_WEIL_236dea6): build the CHALLENGE only. The solution is never compiled before Comparator
+    # has built and exported the challenge (Comparator's assumption 2: no potentially adversarial file was compiled
+    # before); Comparator builds the solution itself, after its challenge export. A default-target `lake build`
+    # (before 2026-11-07) could compile the solution first, depending on the library's defaultTargets.
+    for argv in ([*lock, "lake", "exe", "cache", "get"], [*lock, "lake", "build", isl.challenge_module]):
+        r = step(argv, lock_env, timeout)
+        log += [f"== {show(argv)}", *r.output.rstrip("\n").splitlines(), f"== exit {r.rc}"]
+        if r.rc != 0:
+            run_probs.append(f"`{shlex.join(argv[len(lock):])}` failed (exit {r.rc})")
+            break
+    probes: list[tuple[str, bytes]] = []
+    probe_docs: list = []
+    fp_raw = fp_doc = None
+    prebuild: dict[str, str] = {}
+    if not run_probs:
+        # the challenge's build as it stood before any solution code ran; it must be unchanged after everything
+        prebuild = _build_snapshot(src)
+        snap = "".join(f"{sha}  {rel}\n" for rel, sha in sorted(prebuild.items()))
+        atomic_write_text(tools / ISLANDS_DIR / name / PREBUILD_SNAPSHOT, snap)
+        log.append(f"COMPARATOR_PREBUILD {len(prebuild)} files sha256 {hashlib.sha256(snap.encode()).hexdigest()} "
+                   f"(the challenge build, before Comparator; listed in {PREBUILD_SNAPSHOT})")
+        env = {**lock_env, "PATH": os.pathsep.join([str(tools / "bin"), str(cmpdir / ".lake" / "build" / "bin"),
+                                                    os.environ.get("PATH", "")]),
+               "COMPARATOR_LANDRUN": str(landrun), "COMPARATOR_LEAN4EXPORT": str(l4x),
+               "COMPARATOR_NANODA": str(nanoda_bin)}
+        argv = [*lock, "lake", "env", "comparator", str(cfg)]
+        r = step(argv, env, timeout)
+        log += ["== comparator", *r.output.rstrip("\n").splitlines(), f"ISLAND-replay-EXIT {r.rc}"]
+        extra = [x for d in _package_olean_dirs(src) for x in ("--olean-dir", str(d))]
+        for thm in isl.theorems:
+            r = step([*lock, *py, "probe-negation", "--project", str(src), "--module", isl.challenge_module,
+                      "--theorem", thm, "--file", str(src / rel), *extra, "--json"], lock_env, check_timeout)
+            doc, raw = _json_output(r.output)
+            if doc is None:
+                run_probs.append(f"probe-negation of {thm!r} printed no JSON object (exit {r.rc})")
+            else:
+                probe_docs.append(doc)
+                probes.append((doc.get("theorem"), raw))
+        targets = [x for t in isl.theorems for x in ("--target", t)]
+        r = step([*lock, *py, "fingerprint", "--project", str(src), "--import", isl.challenge_module, *targets,
+                  "--file", str(src / rel), *extra, "--json"], lock_env, check_timeout)
+        fp_doc, fp_raw = _json_output(r.output)
+        if fp_doc is None:
+            run_probs.append(f"fingerprint printed no JSON object (exit {r.rc})")
+        run_probs += _snapshot_problems(prebuild, _build_snapshot(src))
+    log_bytes = ("\n".join(log) + "\n").encode("utf-8")
+    atomic_write_text(tools / ISLANDS_DIR / name / "comparator.log", log_bytes.decode("utf-8"))
+    v = evaluate_replay(isl, log_text=log_bytes.decode("utf-8"), probe_docs=probe_docs, fingerprint_doc=fp_doc,
+                        nanoda_rev=pinned, comparator_tag=tag, config_sha256=_config_sha256(root, name))
+    problems = run_probs + list(v.problems)
+    return _conclude(root, isl, problems, v.checks, how="island replay", date=date, tag=tag, nanoda_rev=pinned,
+                     log_bytes=log_bytes, probes=probes, fp_raw=fp_raw, commands=commands)

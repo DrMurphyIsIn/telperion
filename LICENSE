@@ -10,7 +10,7 @@ Parameters
 Licensor:             Peter W. Murphy
 
 Licensed Work:        Telperion (the contents of this repository other than
-                      the examples/ and docs/ directories: the
+                      the examples/, docs/ and islands/ directories: the
                       certificate-emission engine in src/telperion/, its
                       emitters, CLI, MCP server and missions framework, and
                       the associated tests and tooling).

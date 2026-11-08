@@ -1,0 +1,37 @@
+name = "riemann-jensen"
+source = "https://github.com/AxiomMath/RiemannJensen"
+commit = "c1e023fa3ae7161219dde3dcb73f0c28ff972be2"
+toolchain = "leanprover/lean4:v4.35.0"
+licence = "Apache-2.0"
+challenge_module = "Challenge.Basic"
+solution_module = "Solution.Basic"
+challenge_sha256 = "eeae0da96ab3d5784522a5745dc46353b1a804c3ea32972be4040cd4cd73354c"
+theorems = [
+  "RiemannJensen.Challenge.exists_isDedekindZetaContinuation",
+  "RiemannJensen.Challenge.isDedekindZetaContinuation_unique",
+  "RiemannJensen.Challenge.dedekind_thm_main",
+  "RiemannJensen.Challenge.riemannJensen_main",
+]
+intended_use = "RH Track 1 (Jensen-Polya hyperbolicity); upstream for Arda's rh_jensen lab"
+
+[replay]
+date = "2026-11-06"
+commit = "c1e023fa3ae7161219dde3dcb73f0c28ff972be2"
+challenge_sha256 = "eeae0da96ab3d5784522a5745dc46353b1a804c3ea32972be4040cd4cd73354c"
+nanoda_rev = "37cb87b7e6cd6862ef2bd121faa9f4604f59fe96"
+comparator_tag = "v4.35.0"
+verdict = "pass"
+log_sha256 = "d60dcee003774797537d0eb93777aed0b013075ed9fe7ab202614e241e3b3ba3"
+fingerprint_sha256 = "383a94a73b572d990e91484ee3d35bc9896831290811f176b03f944c2c80a744"
+
+[replay.probe_sha256]
+"RiemannJensen.Challenge.exists_isDedekindZetaContinuation" = "6e3e1b75b8b1c5df452e1c54e59c95b05d6a9363e7877a380e9f6ae81cd16969"
+"RiemannJensen.Challenge.isDedekindZetaContinuation_unique" = "c13f23819d872ad310ef77906ba5f2809e97c848173c11d4405194d266cf8c0c"
+"RiemannJensen.Challenge.dedekind_thm_main" = "46e205dbbea7358550d9a758c1a78c8e36d1925b720fde0247e38a21d7187e50"
+"RiemannJensen.Challenge.riemannJensen_main" = "f4a9ae03a5417d1a68a6cf06d5759bff84f5402d10bf7abf25b6d23a142d89f3"
+
+[replay.checks]
+"RiemannJensen.Challenge.exists_isDedekindZetaContinuation" = { probe = "PROBE_ONLY", fingerprint = "41c301213afbfd742494a3193790cd1a2597ba3adf09de4d1907baeeafeb7099" }
+"RiemannJensen.Challenge.isDedekindZetaContinuation_unique" = { probe = "PROBE_ONLY", fingerprint = "76fe47f998a4d373c7d1681ae4fc64975719cb8e1ac81bcf3e205de687159617" }
+"RiemannJensen.Challenge.dedekind_thm_main" = { probe = "PROBE_ONLY", fingerprint = "b467aa4c7242e399efe99bd81e960448b2bd0754f8c14775ce879406f1fb7918" }
+"RiemannJensen.Challenge.riemannJensen_main" = { probe = "PROBE_ONLY", fingerprint = "92bd633431229d70a3e6467332e862e5c2f8b6360539a19791e5221fd0e235af" }

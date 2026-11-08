@@ -945,12 +945,16 @@ def checks_problem(campaign_root: Path, node: Node) -> str:
       grammar, declaration-range and accounted-for checks stop accidental and casual mismatches
       between its text and what Lean elaborates, not an adversarial author: freeze an untrusted
       campaign inside the sandbox;
-    - WITNESSED is only as deep as the witness telescope: the probe unfolds NON-library heads
-      of the statement and of each forall-body, but a vacuous sub-proposition under any other
-      conclusion head (`id`, a local structure, `And`, `Iff`, `Not`, a beta-redex, a `let`;
-      e.g. `forall m, m = m -> id (forall n, n < 0 -> n = 7)`) is invisible to it, and a
-      satisfiable pad can still reach WITNESSED without a sign-off. Witnessing over a reducing
-      telescope is a step-5 decision;
+    - WITNESSED is an atomic allowlist (step 6, Rulings 4-5): the witness must also close the
+      exists-closure over the REDUCING telescope of the statement with local definitions unfolded,
+      and that same term must have only atomic hypotheses and conclusions (an allowed head such as
+      `=` or `<` applied to library data with no proposition inside), library binder types and no
+      proposition or predicate variable, and no `=` between functions; everything else is
+      PROBE_ONLY and needs the sign-off. Library definitions are trusted text (their bodies are
+      not walked). WITNESSED targets VACUITY only: the hypotheses can hold together and every
+      bound type is inhabited. It does NOT say the statement is non-trivial (`x = x`, `0 <= n`,
+      equations at `Unit`/`PUnit`/`Fin 1`, bundled maps out of an empty type are WITNESSED);
+      the read-back of the frozen statement is what checks triviality;
     - hand-editing the node file is out of reach of this check: deleting `checks_required`
       from `[grant]`, like back-dating `created` before the first grant, removes the
       requirement. Both are the same documented limitation class (a CI diff check, step 5);
