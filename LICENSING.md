@@ -19,7 +19,7 @@ emitters, the CLI, the MCP server and the missions framework), the tests in `tes
 
 ## The open part: Apache-2.0 / CC-BY-4.0
 
-- The examples in `examples/`, and the documentation in `docs/`, are licensed under the
+- The examples in `examples/`, the island records in `islands/`, and the documentation in `docs/`, are licensed under the
   [Apache License 2.0](LICENSE-APACHE) for code (generators, scripts, Lean sources) and under
   [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) for documents (READMEs, notes, write-ups).
 - Emitted certificates (every `.lean` file a generator writes, and every `frozen/` record) are part of the open
@@ -41,6 +41,15 @@ is otherwise byte-for-byte identical to the source.
 Those headers say "the file LICENSE" — for these files that means
 [`examples/hermitian_moment/lean/LICENSE`](examples/hermitian_moment/lean/LICENSE), a byte-identical
 copy of this repository's [`LICENSE-APACHE`](LICENSE-APACHE), placed alongside them for that reason.
+
+### Islands (`islands/`)
+
+`islands/` records external Lean libraries ("islands") that Telperion replays and fingerprints. The whole directory is
+Apache-2.0 ([`islands/LICENSE`](islands/LICENSE), a byte-identical copy of [`LICENSE-APACHE`](LICENSE-APACHE)), not
+BSL. The challenge files there are third-party: `riemann-jensen` and `zeta-zeros-v2` are verbatim copies of
+Axiom Math's challenge files, and the `weil` overlay quotes two statements verbatim from AxiomMath/Weil. All three are
+Copyright (c) 2026 Axiom Math under Apache-2.0. They are hash-pinned and kept byte-for-byte, so their own headers are
+not edited; [`islands/NOTICE`](islands/NOTICE) carries the attribution.
 
 ## History
 

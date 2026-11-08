@@ -479,7 +479,7 @@ Status as of 2026-11-07. riemann-jensen and zeta-zeros-v2 are both **verified**;
   `sorryAx`. A possible `sorry` in the PrimeNumberTheoremAnd fork was the worry
   going in, and none reached the theorems. A must-reject tamper was rejected. The
   auditor inspected the logs.
-- **Negation probes and fingerprint: not yet run successfully.** The open question
+- **Negation probes and fingerprint: first attempt failed (2026-11-06).** The open question
   was whether Telperion's Lean-side checks run on rc2. The first run answered it: **no,
   at Telperion `289f078`**. It ran on 2026-11-06, in the sandbox, in its own
   v4.34.0-rc2 env (Mathlib `85e3a25e`), and all twelve probes and the fingerprint ended
