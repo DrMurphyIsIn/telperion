@@ -92,6 +92,7 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -879,6 +880,57 @@ def _lean_cmd(prefix, pinned: PinnedEnv, script: Path, memory_mb) -> list[str]:
     return [*prefix, "env", f"LEAN_PATH={os.pathsep.join(pinned.entries)}", pinned.lean, *mem, str(script)]
 
 
+#: Free space the temp dir must keep beyond the private copy of the untrusted closure.
+COPY_FREE_MARGIN = 1 << 30
+
+
+def _fs_type(path) -> str | None:
+    """The filesystem type of *path* from /proc/self/mounts (Linux), or None."""
+    try:
+        mounts = Path("/proc/self/mounts").read_text().splitlines()
+    except OSError:
+        return None
+    real, best = os.path.realpath(path), (None, "")
+    for line in mounts:
+        parts = line.split()
+        if len(parts) >= 3 and (real == parts[1] or real.startswith(parts[1].rstrip("/") + "/")) \
+                and len(parts[1]) >= len(best[1]):
+            best = (parts[2], parts[1])
+    return best[0]
+
+
+def copy_space_problem(files, dest) -> str | None:
+    """R-2 (bb, REVIEW_OVERLAY_WEIL_236dea6): the private copy of the untrusted closure goes to the run dir *dest*,
+    which is under the TEMP dir (TMPDIR), not under the project. Why it cannot fit there (the files' total plus
+    `COPY_FREE_MARGIN` against the free space of *dest*'s filesystem), or None. A large closure (weil's is about 13 GB)
+    on a tmpfs /tmp lands in RAM, so the message names the filesystem type when it can."""
+    need = 0
+    for f in files:
+        try:
+            need += os.path.getsize(f)
+        except OSError:
+            pass                    # a listed file that vanished: the copy itself reports it
+    try:
+        free = shutil.disk_usage(dest).free
+    except OSError as exc:
+        return f"cannot read the free space of the temp dir {dest}: {exc}"
+    if free >= need + COPY_FREE_MARGIN:
+        return None
+    fs = _fs_type(dest)
+    return (f"the private copy of the untrusted closure needs {need} bytes (+{COPY_FREE_MARGIN} margin) in the temp dir "
+            f"{dest} ({fs or 'filesystem type unknown'}), which has {free} free; set TMPDIR to a disk-backed directory "
+            "with room for it")
+
+
+def copy_space_warning(dest) -> str | None:
+    """N-2 (bb, REVIEW_OVERLAY_R1R2_FIX): a warning when the run dir *dest* is on a tmpfs, even though the copy fits:
+    the copy then lives in RAM, next to a replay that may be given most of it (`--memory-mb`). None otherwise."""
+    if _fs_type(dest) != "tmpfs":
+        return None
+    return (f"warning: the private copy of the untrusted closure is on a tmpfs ({dest}), so it takes RAM from the "
+            "replay; set TMPDIR to a disk-backed directory")
+
+
 def run_replay(target_module, callback_src: str, *, project=None, untrusted_paths=(),
                trusted_imports=("Mathlib",), trusted_env=None, manifest=None, elan_home=None,
                wrapper: list[str] | None = None, timeout: int = 1800, heartbeats: int = 200000,
@@ -893,7 +945,8 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
 
     1. a LIST run (``import Lean`` only, nothing replayed) walks the untrusted closure over the submission's dirs and
        prints every file the replay would read;
-    2. those files are COPIED into the private 0700 run dir and hashed there;
+    2. those files are COPIED into the private 0700 run dir and hashed there (the run dir is under the TEMP dir,
+       TMPDIR; `copy_space_problem` refuses first when the copy cannot fit there);
     3. the replay run resolves the untrusted modules ONLY from the copies (expect_oleans = the copies' realpaths) and
        prints every untrusted file it read, which must be exactly the copies; the copies must hash the same after
        the run (a sanity check: no other process should reach them, though a same-user writer still can, as long as
@@ -960,6 +1013,12 @@ def run_replay(target_module, callback_src: str, *, project=None, untrusted_path
                     return ReplayResult("ERROR", f"malformed CLOSURE line {ln!r}", [], out)
                 closure.append((mod, f))
         # 2. copy every listed file into the private run dir, keeping its path below its submission dir
+        problem = copy_space_problem([f for _, f in closure], rdir)
+        if problem:
+            return ReplayResult("ERROR", problem, [], "")
+        warning = copy_space_warning(rdir)
+        if warning:
+            print(warning, file=sys.stderr)
         copies: dict[str, tuple[str, str]] = {}            # copy realpath -> (module, part)
         main_copy: dict[str, str] = {}
         try:

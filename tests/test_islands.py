@@ -12,6 +12,7 @@ import hashlib
 import json
 import lzma
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -1670,3 +1671,522 @@ def test_add_refuses_a_toolchain_without_export_set(tmp_path, tc):
     with pytest.raises(islands.IslandError, match="export set|Comparator tag"):
         _add(tmp_path, fetch=_fake_fetch(toolchain=tc))
     assert not (tmp_path / "repo" / "islands" / "demo").exists()
+
+
+# --- option A: lead-authored challenge overlays ---------------------------------------------------------------------
+#
+# A fake upstream library with no challenge module: Demo/Defs.lean holds the definition, Demo/Main.lean the two
+# theorems (with proofs), Demo/All.lean (the solution) imports Main. The overlay restates both theorems by sorry.
+
+OV_COMMIT = "27cdb2049be62ee2911429b47f54774078450e32"
+OV_PATH = "Demo/TelperionChallenge.lean"
+OV_MODULE = "Demo.TelperionChallenge"
+OV_SOLUTION = "Demo.All"
+OV_THEOREMS = ["Demo.two_eq", "Demo.two_pos"]
+OV_UPSTREAM = {
+    "Demo/Defs.lean": "module\n\npublic import Mathlib\n\nnamespace Demo\n\ndef two : ℕ := 2\n\nend Demo\n",
+    "Demo/Main.lean": ("module\n\npublic import Demo.Defs\n\n@[expose] public section\n\nnamespace Demo\n\n"
+                       "/-- Two is one plus one. -/\n@[simp]\ntheorem two_eq : two = 1 + 1 := by\n  rfl\n\n"
+                       "theorem two_pos :\n    0 < two := by\n  decide\n\nend Demo\n"),
+    "Demo/All.lean": "module\n\npublic import Demo.Main\n",
+    "lean-toolchain": "leanprover/lean4:v4.35.0\n",
+    "LICENSE": APACHE,
+}
+OVERLAY = ("module\n\npublic import Demo.Defs\n\n/-! A statement-only overlay. -/\n\n@[expose] public section\n\n"
+           "namespace Demo\n\n-- upstream: Demo/Main.lean:11\n/-- Two is one plus one. -/\n"
+           "theorem two_eq : two = 1 + 1 := by sorry\n\n-- upstream: Demo/Main.lean:14\n"
+           "theorem two_pos :\n    0 < two := by sorry\n\nend Demo\n")
+OVERLAY_SHA = hashlib.sha256(OVERLAY.encode()).hexdigest()
+
+
+def _ov_tree(d: Path, files=None, *, git=False) -> Path:
+    """The upstream tree at *d*; with *git*, a real committed repo (whose HEAD is then the pin to register)."""
+    for rel, text in (OV_UPSTREAM if files is None else files).items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text(text)
+    (d / ".git" / "info").mkdir(parents=True, exist_ok=True)
+    if git:
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "-C",
+             str(d)]
+        subprocess.run(["git", "init", "-q", str(d)], check=True)
+        subprocess.run([*g, "add", "-A"], check=True)
+        subprocess.run([*g, "commit", "-q", "-m", "pin"], check=True)
+    return d
+
+
+def _ov_fetch(files=None, *, calls=None):
+    def fetch(source, commit, dest):
+        if calls is not None:
+            calls.append(dest)
+        _ov_tree(Path(dest), files)
+        return OV_COMMIT
+    return fetch
+
+
+def _ov_write(tmp_path: Path, overlay: str = OVERLAY) -> Path:
+    p = tmp_path / "authored" / "challenge.lean"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(overlay)
+    return p
+
+
+def _ov_add(tmp_path, *, overlay=OVERLAY, files=None, imports=("Demo.Defs",), solution=OV_SOLUTION, path=OV_PATH,
+            run=None):
+    return islands.add_overlay_island(tmp_path / "repo", "demo", "https://github.com/AxiomMath/Demo", OV_COMMIT,
+                                      "a test overlay island", overlay=_ov_write(tmp_path, overlay),
+                                      overlay_path=path, overlay_imports=list(imports), solution_module=solution,
+                                      fetch=_ov_fetch(files), run=run or FakeRun(), tools=tmp_path / "tools",
+                                      date="2026-11-06")
+
+
+def _ov_island(root: Path, *, commit=OV_COMMIT, overlay=OVERLAY) -> Path:
+    """An unreplayed overlay registration written directly (no clone), as `island add --overlay` writes it."""
+    isl = islands.Island(name="demo", source="https://github.com/AxiomMath/Demo", commit=commit,
+                         toolchain="leanprover/lean4:v4.35.0", licence="Apache-2.0", challenge_module=OV_MODULE,
+                         solution_module=OV_SOLUTION, challenge_sha256=hashlib.sha256(overlay.encode()).hexdigest(),
+                         theorems=tuple(OV_THEOREMS), intended_use="a test overlay island", replay=None,
+                         challenge_source="overlay", overlay_path=OV_PATH, overlay_imports=("Demo.Defs",))
+    d = root / "islands" / "demo"
+    d.mkdir(parents=True)
+    (d / "island.toml").write_text(islands._dumps_island(isl, None))
+    (d / "challenge.lean").write_text(overlay)
+    (d / "comparator.json").write_text(islands.comparator_json_text(OV_MODULE, OV_SOLUTION, OV_THEOREMS))
+    return root
+
+
+def _ov_log(*, header="overlay_sha256", sha=OVERLAY_SHA, commit=OV_COMMIT, **kw) -> str:
+    """A passing Comparator log for the overlay island: the challenge is the overlay module, the solution upstream's."""
+    text = _log(sha=sha, commit=commit, theorems=OV_THEOREMS, **kw)
+    return (text.replace(f"challenge_sha256={sha}", f"{header}={sha}")
+            .replace("Challenge.Basic", OV_MODULE).replace("Solution.Basic", OV_SOLUTION))
+
+
+def _ov_evidence(tmp_path: Path, *, log=None, sha=OVERLAY_SHA) -> dict:
+    ext = tmp_path / "ext"
+    ext.mkdir(exist_ok=True)
+    (ext / "comparator.out").write_text(_ov_log() if log is None else log)
+    paths = []
+    for i, t in enumerate(OV_THEOREMS):
+        (ext / f"probe{i}.json").write_bytes(_dump(_probe_doc(t, module=OV_MODULE, source_sha256=sha)))
+        paths.append(ext / f"probe{i}.json")
+    (ext / "fp.json").write_bytes(_dump(_fp_doc(OV_THEOREMS, module=OV_MODULE, source_sha256=sha)))
+    return {"log": ext / "comparator.out", "probe_jsons": paths, "fingerprint_json": ext / "fp.json"}
+
+
+def test_overlay_add_writes_registration(tmp_path):
+    isl = _ov_add(tmp_path)
+    d = tmp_path / "repo" / "islands" / "demo"
+    assert sorted(p.name for p in d.iterdir()) == ["REPLAY.md", "challenge.lean", "comparator.json", "island.toml"]
+    assert (d / "challenge.lean").read_text() == OVERLAY
+    doc = tomllib.loads((d / "island.toml").read_text())
+    assert doc["challenge_source"] == "overlay" and "challenge_sha256" not in doc and "replay" not in doc
+    assert doc["overlay_path"] == OV_PATH and doc["overlay_sha256"] == OVERLAY_SHA
+    assert doc["overlay_imports"] == ["Demo.Defs"] and doc["challenge_module"] == OV_MODULE
+    assert doc["solution_module"] == OV_SOLUTION and doc["theorems"] == OV_THEOREMS
+    assert json.loads((d / "comparator.json").read_text())["challenge_module"] == OV_MODULE
+    md = (d / "REPLAY.md").read_text()
+    assert "OVERLAY" in md and "`Demo/Main.lean:11`" in md and "`Demo/Main.lean:14`" in md
+    assert isl.is_overlay and isl.sha_key == "overlay_sha256" and isl.challenge_sha256 == OVERLAY_SHA
+    probs = islands.island_problems(tmp_path / "repo", "demo")
+    assert len(probs) == 1 and "not replayed" in probs[0], probs
+
+
+def _swap(old, new):
+    return OVERLAY.replace(old, new)
+
+
+@pytest.mark.parametrize("kw,needle", [
+    ({"overlay": _swap("two = 1 + 1", "two = 2 + 0")}, "differs from upstream"),                   # a changed statement
+    ({"overlay": _swap("two = 1 + 1 :=", "two = 1 + 1 ∨ True :=")}, "differs from upstream"),        # a weaker one
+    ({"overlay": _swap("Main.lean:11", "Main.lean:10")}, "does not begin a `theorem`"),
+    ({"overlay": _swap("Main.lean:14", "Main.lean:11")}, "the theorem there is Demo.two_eq"),
+    ({"overlay": _swap("namespace Demo", "namespace Demo.Sub").replace("end Demo", "end Demo.Sub")},
+     "the theorem there is Demo.two_eq, not Demo.Sub.two_eq"),
+    ({"overlay": _swap("public import Demo.Defs", "public import Demo.Defs\npublic import Demo.Main")},
+     "neither Mathlib nor one of overlay_imports"),
+    ({"overlay": _swap("public import Demo.Defs", "public import Demo.Main"), "imports": ("Demo.Main",)},
+     "would clash"),
+    ({"overlay": _swap("namespace Demo\n", "namespace Demo\n\ndef three : ℕ := 3\n")}, "`def` is not allowed"),
+    ({"overlay": _swap("namespace Demo\n", "namespace Demo\n\ninstance : Inhabited ℕ := ⟨3⟩\n")}, "not allowed"),
+    ({"overlay": _swap("theorem two_pos", "@[simp]\ntheorem two_pos")}, "not allowed"),
+    ({"overlay": _swap("theorem two_pos", "private theorem two_pos")}, "not allowed"),
+    ({"overlay": _swap("namespace Demo\n", "namespace Demo\n\nset_option autoImplicit true\n")}, "not allowed"),
+    ({"overlay": _swap("two = 1 + 1 := by sorry", "two = 1 + 1 := by rfl")}, "not proved `:= by sorry`"),
+    ({"overlay": _swap("two = 1 + 1 := by sorry", "two = 1 + 1 := id (by sorry)")}, "not proved `:= by sorry`"),
+    ({"overlay": _swap("-- upstream: Demo/Main.lean:14\n", "")}, "no `-- upstream:"),
+    ({"overlay": _swap("/-- Two is one plus one. -/", "/-- Two is \"one plus one\". -/") + "#eval \"x\"\n"},
+     "string literal"),
+    ({"overlay": _swap("end Demo", "end Other")}, "does not close"),
+    ({"overlay": OVERLAY + "\nimport Mathlib\n"}, "import after the first command"),
+    ({"overlay": _swap("theorem two_pos", "omit [x] in\nnamespace X\ntheorem two_pos")}, "followed by a theorem"),
+    ({"solution": "Demo.Lone", "files": {**OV_UPSTREAM, "Demo/Lone.lean": "module\n\npublic import Demo.Defs\n"}},
+     "does not import Demo.Main"),
+    ({"files": {**OV_UPSTREAM, OV_PATH: "-- an upstream file of that name\n"}}, "ADDED file"),
+    ({"files": {**OV_UPSTREAM, "Comparator/comparator.json": json.dumps(AXIOM_CONFIG)}}, "ships Comparator"),
+    ({"imports": ("Demo.Defs", "Mathlib.Data.Nat.Basic")}, "Mathlib modules are always allowed"),
+    ({"path": "Other/TelperionChallenge.lean"}, "is not a directory of the tree"),
+    ({"path": "Other/TelperionChallenge.lean"}, "not under the solution module's root"),
+])
+def test_overlay_add_refuses_and_writes_nothing(tmp_path, kw, needle):
+    with pytest.raises(islands.IslandError, match=needle):
+        _ov_add(tmp_path, **kw)
+    assert not (tmp_path / "repo" / "islands" / "demo").exists()
+
+
+def test_overlay_parse_reads_names_pointers_and_headers():
+    p = islands.parse_overlay(OVERLAY)
+    assert p.problems == () and p.imports == ("Demo.Defs",)
+    assert [(t.name, t.upstream) for t in p.theorems] == [("Demo.two_eq", ("Demo/Main.lean", 11)),
+                                                         ("Demo.two_pos", ("Demo/Main.lean", 14))]
+    assert p.theorems[1].header == "theorem two_pos : 0 < two"
+    # nested block comments and `omit ... in` before a theorem; `_root_` names
+    text = ("import Mathlib\n/- a /- nested -/ comment theorem bogus : False := by sorry -/\nnamespace A\n"
+            "variable {n : ℕ} [NeZero n]\n-- upstream: X.lean:3\nomit [NeZero n] in\n"
+            "theorem _root_.B.c : n = n := by sorry\nend A\n")
+    p = islands.parse_overlay(text)
+    assert p.problems == () and [t.name for t in p.theorems] == ["B.c"] and p.theorems[0].upstream == ("X.lean", 3)
+    assert islands.parse_overlay("import Mathlib\n/- open\n").problems
+
+
+def test_overlay_sha_mismatch_is_refused(tmp_path):
+    _ov_add(tmp_path)
+    root = tmp_path / "repo"
+    p = root / "islands" / "demo" / "challenge.lean"
+    p.write_text(OVERLAY + "-- an edit\n")
+    probs = islands.island_problems(root, "demo")
+    assert any("overlay_sha256" in x and "overlay was edited" in x for x in probs), probs
+    with pytest.raises(islands.IslandError, match="overlay_sha256"):
+        islands.record_replay(root, "demo", date="2026-11-06", comparator_tag="v4.35.0", **_ov_evidence(tmp_path))
+    tree = _ov_tree(tmp_path / "tree")
+    with pytest.raises(islands.IslandError, match="overlay_sha256"):
+        islands.place_overlay(root, "demo", tree, run=FakeRun(head=OV_COMMIT))
+    assert not (tree / OV_PATH).exists()
+    # an edit that keeps the overlay statement-only still changes the sha; one that is not, is seen as such too
+    p.write_text(OVERLAY.replace("namespace Demo\n", "namespace Demo\n\ndef three : ℕ := 3\n"))
+    assert any("`def` is not allowed" in x for x in islands.island_problems(root, "demo"))
+
+
+def test_overlay_record_replay_binds_the_overlay_sha(tmp_path):
+    root = _ov_island(tmp_path / "repo")
+    res = islands.record_replay(root, "demo", date="2026-11-06", comparator_tag="v4.35.0", **_ov_evidence(tmp_path))
+    assert res.verdict == "pass", res.problems
+    assert islands.status(root, "demo") == "verified"
+    doc = tomllib.loads((root / "islands" / "demo" / "island.toml").read_text())
+    assert doc["replay"]["overlay_sha256"] == OVERLAY_SHA and "challenge_sha256" not in doc["replay"]
+    assert islands.load_island(root, "demo").replay.challenge_sha256 == OVERLAY_SHA
+
+
+@pytest.mark.parametrize("log,needle", [
+    (_ov_log(header="challenge_sha256"), "binds a challenge_sha256"),
+    (_ov_log(sha="ab" * 32), "is not the registered"),          # a run on another overlay (a changed statement)
+    (_ov_log(drop=("Your solution is okay!",)), "did not accept"),   # Comparator rejecting a statement mismatch
+])
+def test_overlay_record_replay_refuses_a_log_not_bound_to_the_overlay(tmp_path, log, needle):
+    root = _ov_island(tmp_path / "repo")
+    res = islands.record_replay(root, "demo", date="2026-11-06", comparator_tag="v4.35.0",
+                                **_ov_evidence(tmp_path, log=log))
+    assert res.verdict == "fail" and any(needle in p for p in res.problems), res.problems
+    assert islands.status(root, "demo") == "self-reported"
+
+
+def test_upstream_island_refuses_an_overlay_header(tmp_path):
+    _, res = _record(tmp_path, log=_log().replace("challenge_sha256=", "overlay_sha256="))
+    assert res.verdict == "fail" and any("binds a overlay_sha256" in p for p in res.problems), res.problems
+
+
+def test_overlay_place_and_check_with_real_git(tmp_path):
+    tree = _ov_tree(tmp_path / "tree", git=True)
+    head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    root = _ov_island(tmp_path / "repo", commit=head)
+    with pytest.raises(islands.IslandError, match="exactly the pin plus the overlay"):
+        islands.place_overlay(root, "demo", tree, check_only=True)               # not placed yet
+    out = islands.place_overlay(root, "demo", tree)
+    assert out.startswith("OVERLAY-PLACED demo") and OVERLAY_SHA in out
+    assert (tree / OV_PATH).read_text() == OVERLAY
+    assert islands.place_overlay(root, "demo", tree, check_only=True).startswith("OVERLAY-CHECKED")
+    with pytest.raises(islands.IslandError, match="not clean"):
+        islands.place_overlay(root, "demo", tree)                                # never twice into one tree
+    # an extra file next to the overlay: refused
+    (tree / "Demo" / "Extra.lean").write_text("theorem x : True := trivial\n")
+    with pytest.raises(islands.IslandError, match="exactly the pin plus the overlay"):
+        islands.place_overlay(root, "demo", tree, check_only=True)
+    (tree / "Demo" / "Extra.lean").unlink()
+    # an edited upstream file: refused
+    (tree / "Demo" / "Main.lean").write_text(OV_UPSTREAM["Demo/Main.lean"].replace("decide", "simp"))
+    with pytest.raises(islands.IslandError, match="exactly the pin plus the overlay"):
+        islands.place_overlay(root, "demo", tree, check_only=True)
+    subprocess.run(["git", "-C", str(tree), "checkout", "-q", "--", "Demo/Main.lean"], check=True)
+    # the placed overlay edited: refused by its sha
+    (tree / OV_PATH).write_text(OVERLAY + "-- x\n")
+    with pytest.raises(islands.IslandError, match="not the registered overlay_sha256"):
+        islands.place_overlay(root, "demo", tree, check_only=True)
+    # a tree that was not pristine before placing: refused, and nothing is written
+    tree2 = _ov_tree(tmp_path / "tree2", {**OV_UPSTREAM, "README": "another commit\n"}, git=True)
+    head2 = subprocess.run(["git", "-C", str(tree2), "rev-parse", "HEAD"], capture_output=True,
+                           text=True).stdout.strip()
+    root2 = _ov_island(tmp_path / "repo2", commit=head2)
+    (tree2 / "stray.lean").write_text("x\n")
+    with pytest.raises(islands.IslandError, match="not clean"):
+        islands.place_overlay(root2, "demo", tree2)
+    assert not (tree2 / OV_PATH).exists()
+    with pytest.raises(islands.IslandError, match="HEAD"):
+        islands.place_overlay(root, "demo", tree2)                               # another commit's tree
+
+
+class OverlayRun(FakeRun):
+    """FakeRun whose `git status` reports what is really in the clone: the overlay once it has been placed."""
+
+    def __call__(self, argv, *, cwd, env=None, timeout):
+        if "status" in argv:
+            self.calls.append(list(argv))
+            extra = sorted(str(p.relative_to(cwd)) for p in Path(cwd).rglob("*.lean")
+                           if str(p.relative_to(cwd)) not in OV_UPSTREAM)
+            return islands.RunResult(0, "".join(f"?? {p}\n" for p in extra))
+        return super().__call__(argv, cwd=cwd, env=env, timeout=timeout)
+
+
+def _ov_tools(tmp_path) -> Path:
+    t = _tools(tmp_path)
+    src = t / "islands" / "demo" / "src"
+    shutil.rmtree(src / "Challenge")
+    _ov_tree(src)
+    return t
+
+
+def test_overlay_replay_places_the_overlay_and_builds_it(tmp_path):
+    root = _ov_island(tmp_path / "repo")
+    tools = _ov_tools(tmp_path)
+    probes = {t: _probe_doc(t, module=OV_MODULE, source_sha256=OVERLAY_SHA) for t in OV_THEOREMS}
+    run = OverlayRun(head=OV_COMMIT, comparator="\n".join(_ov_log().splitlines()[4:-1]) + "\n", probes=probes,
+                     fp=_fp_doc(OV_THEOREMS, module=OV_MODULE, source_sha256=OVERLAY_SHA))
+    res = islands.replay_island(root, "demo", run=run, tools=tools, date="2026-11-06", leanlock=None)
+    assert res.verdict == "pass", res.problems
+    assert (tools / "islands" / "demo" / "src" / OV_PATH).read_text() == OVERLAY
+    log = (tools / "islands" / "demo" / "comparator.log").read_text()
+    assert log.splitlines()[0] == f"ISLAND-HEADER island=demo commit={OV_COMMIT} overlay_sha256={OVERLAY_SHA}"
+    build = next(c for c in run.calls if "build" in c and "lake" in c)
+    assert build[build.index("build") + 1:] == [OV_MODULE]                     # R-1: the challenge only
+    probe = next(c for c in run.calls if "probe-negation" in c)
+    assert probe[probe.index("--module") + 1] == OV_MODULE and probe[probe.index("--file") + 1].endswith(OV_PATH)
+    assert islands.status(root, "demo") == "verified"
+    # a second replay on the same clone is refused: the overlay is already there, so it is not a fresh copy
+    run2 = OverlayRun(head=OV_COMMIT)
+    with pytest.raises(islands.IslandError, match="not clean"):
+        islands.replay_island(root, "demo", run=run2, tools=tools, date="2026-11-06", leanlock=None)
+    assert not any("lake" in c for c in run2.calls)
+
+
+def test_overlay_replay_refuses_a_clone_that_does_not_match(tmp_path):
+    root = _ov_island(tmp_path / "repo")
+    tools = _ov_tools(tmp_path)
+    main = tools / "islands" / "demo" / "src" / "Demo" / "Main.lean"
+    main.write_text(main.read_text().replace("two = 1 + 1", "two = 2"))     # the pin's statement is not the overlay's
+    run = OverlayRun(head=OV_COMMIT)
+    with pytest.raises(islands.IslandError, match="differs from upstream"):
+        islands.replay_island(root, "demo", run=run, tools=tools, date="2026-11-06", leanlock=None)
+    assert not any("lake" in c for c in run.calls)
+    assert not (tools / "islands" / "demo" / "src" / OV_PATH).exists()
+
+
+@pytest.mark.parametrize("patch,needle", [
+    ({"overlay_path": "Demo/Elsewhere.lean"}, "must be the challenge module's file"),
+    ({"challenge_source": "upstream"}, "must be \"overlay\""),
+    ({"overlay_imports": []}, "non-empty array"),
+    ({"overlay_imports": ["Mathlib"]}, "Mathlib modules are always allowed"),
+    ({"overlay_path": "../Demo/TelperionChallenge.lean"}, "plain relative path"),
+    ({"solution_module": OV_MODULE}, "must differ from its solution_module"),
+    ({"challenge_sha256": "ab" * 32}, "unknown key 'challenge_sha256'"),
+])
+def test_overlay_schema_is_strict(tmp_path, patch, needle):
+    root = _ov_island(tmp_path / "repo")
+    p = root / "islands" / "demo" / "island.toml"
+    doc = tomllib.loads(p.read_text())
+    doc.update(patch)
+    p.write_text("\n".join(f"{k} = {_toml_value(v)}" for k, v in doc.items()) + "\n")
+    probs = islands.island_problems(root, "demo")
+    assert any(needle in x for x in probs), probs
+
+
+def test_upstream_island_refuses_overlay_keys(tmp_path):
+    root = _island(tmp_path, replay=None, overlay_path=OV_PATH)
+    assert any("unknown key 'overlay_path'" in p for p in islands.island_problems(root, "demo"))
+
+
+def test_existing_islands_are_unchanged():
+    # the overlay mode adds keys only to overlay islands: both upstream registrations read and re-serialize byte for
+    # byte, and riemann-jensen is still verified
+    for name in ("riemann-jensen", "zeta-zeros-v2"):
+        isl = islands.load_island(ROOT, name)
+        assert not isl.is_overlay and isl.sha_key == "challenge_sha256"
+        assert islands._dumps_island(isl, isl.replay) == (ROOT / "islands" / name / "island.toml").read_text()
+    assert islands.island_problems(ROOT, "riemann-jensen") == []
+    probs = islands.island_problems(ROOT, "zeta-zeros-v2")
+    assert len(probs) == 1 and "not replayed" in probs[0], probs
+
+
+def test_cli_overlay_flags(tmp_path):
+    root = _island(tmp_path / "repo", replay=None)
+    r = _cli("island", "add", "x", "--source", "https://github.com/AxiomMath/X", "--commit", OV_COMMIT, "--use", "u",
+             "--overlay-path", OV_PATH, "--root", str(root))
+    assert r.returncode == 1 and "only go with --overlay" in r.stderr
+    r = _cli("island", "add", "x", "--source", "https://github.com/AxiomMath/X", "--commit", OV_COMMIT, "--use", "u",
+             "--overlay", str(_ov_write(tmp_path)), "--root", str(root))
+    assert r.returncode == 1 and "--overlay needs --overlay-path, --overlay-import, --solution-module" in r.stderr
+    r = _cli("island", "place-overlay", "demo", "--tree", str(tmp_path), "--root", str(root))
+    assert r.returncode == 1 and "not an overlay island" in r.stderr
+    tree = _ov_tree(tmp_path / "tree", git=True)
+    head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    root2 = _ov_island(tmp_path / "repo2", commit=head)
+    r = _cli("island", "place-overlay", "demo", "--tree", str(tree), "--root", str(root2))
+    assert r.returncode == 0 and r.stdout.startswith("OVERLAY-PLACED"), r.stderr
+    r = _cli("island", "place-overlay", "demo", "--tree", str(tree), "--check-only", "--root", str(root2))
+    assert r.returncode == 0 and r.stdout.startswith("OVERLAY-CHECKED"), r.stderr
+
+
+def test_weil_is_registered_as_an_overlay_island():
+    # island #3 (owner decision 2026-11-06): AxiomMath/Weil @ 27cdb204, a lead-authored overlay of the two point-count
+    # statements; self-reported until the sandbox replay is recorded
+    isl = islands.load_island(ROOT, "weil")
+    assert isl.is_overlay and isl.commit == "27cdb2049be62ee2911429b47f54774078450e32"
+    assert isl.toolchain == "leanprover/lean4:v4.34.0-rc2" and isl.overlay_imports == ("Weil.Definitions",)
+    assert isl.theorems == ("Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd",
+                            "AlgebraicGeometry.exists_mul_zetaSeries_eq")
+    text = (ROOT / "islands" / "weil" / "challenge.lean").read_text()
+    assert islands.overlay_problems(text, isl) == []
+    assert {t.name: t.upstream for t in islands.parse_overlay(text).theorems} == {
+        "Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd":
+            ("Weil/AlgebraicGeometry/EtaleCohomology/Trace/WeilRiemannHypothesisForm.lean", 206),
+        "AlgebraicGeometry.exists_mul_zetaSeries_eq":
+            ("Weil/AlgebraicGeometry/EtaleCohomology/Trace/ZetaRationality.lean", 170)}
+    probs = islands.island_problems(ROOT, "weil")
+    assert len(probs) == 1 and "not replayed" in probs[0], probs
+    assert islands._dumps_island(isl, None) == (ROOT / "islands" / "weil" / "island.toml").read_text()
+
+
+def test_overlay_matches_an_upstream_lemma_with_an_attribute_on_its_line(tmp_path):
+    # `@[simp] lemma` on the declaration's own line: the attribute is not part of the statement, `lemma` is `theorem`
+    main = OV_UPSTREAM["Demo/Main.lean"].replace("@[simp]\ntheorem two_eq", "@[simp] lemma two_eq\n")
+    main = main.replace("lemma two_eq\n : two", "lemma two_eq : two")
+    files = {**OV_UPSTREAM, "Demo/Main.lean": main.replace("/-- Two is one plus one. -/\n", "/-- Two. -/\n\n")}
+    assert "@[simp] lemma two_eq : two = 1 + 1 := by" in files["Demo/Main.lean"]
+    isl = _ov_add(tmp_path, files=files)
+    assert isl.theorems == tuple(OV_THEOREMS)
+
+
+
+# --- R-1 / R-2 (bb, REVIEW_OVERLAY_WEIL_236dea6) ----------------------------------------------------------------------
+
+class TouchingRun(FakeRun):
+    """FakeRun that writes into the clone as the real steps would: `lake build` leaves the challenge build's artifacts
+    (the clone's own and two packages'), and the Comparator step runs *touch* (a solution build)."""
+
+    def __init__(self, *, touch=None, **kw):
+        super().__init__(**kw)
+        self.touch = touch
+
+    def __call__(self, argv, *, cwd, env=None, timeout):
+        if "lake" in argv and "build" in argv:
+            for rel in (".lake/build/lib/lean/Challenge/Basic.olean",
+                        ".lake/packages/mathlib/.lake/build/lib/lean/M.olean",
+                        ".lake/packages/Stacks/.lake/build/lib/lean/S.olean"):
+                (Path(cwd) / rel).parent.mkdir(parents=True, exist_ok=True)
+                (Path(cwd) / rel).write_bytes(rel.encode())
+        if "comparator" in argv and self.touch:
+            self.touch(Path(cwd))
+        return super().__call__(argv, cwd=cwd, env=env, timeout=timeout)
+
+
+def test_replay_never_builds_the_solution_before_comparator(tmp_path):
+    # R-1: the only pre-build names the challenge; Comparator compiles the solution after its challenge export
+    run = FakeRun()
+    root, res = _replay(tmp_path, run)
+    assert res.verdict == "pass", res.problems
+    lake = [c for c in run.calls if "lake" in c]
+    assert [c[c.index("lake") + 1:] for c in lake[:2]] == [["exe", "cache", "get"], ["build", "Challenge.Basic"]]
+    assert lake[2][lake[2].index("lake") + 1:][:2] == ["env", "comparator"]
+    assert not any("Solution.Basic" in a for c in run.calls for a in c)
+    log = (tmp_path / "tools" / "islands" / "demo" / "comparator.log").read_text()
+    assert any(l.startswith("COMPARATOR_PREBUILD ") for l in log.splitlines())
+    assert islands.status(root, "demo") == "verified"
+
+
+def test_replay_snapshots_the_challenge_build_and_refuses_a_change(tmp_path):
+    tools = _tools(tmp_path)
+    root, res = _replay(tmp_path, TouchingRun())
+    assert res.verdict == "pass", res.problems
+    snap = (tools / "islands" / "demo" / "prebuild.sha256").read_text().splitlines()
+    assert len(snap) == 3 and any(l.endswith(".lake/build/lib/lean/Challenge/Basic.olean") for l in snap)
+    # a solution build that rewrites one of the challenge build's artifacts fails the replay; a new file does not
+    def touch(src):
+        (src / ".lake/build/lib/lean/Solution.olean").write_bytes(b"new")
+        (src / ".lake/packages/Stacks/.lake/build/lib/lean/S.olean").write_bytes(b"rewritten")
+    root2, res2 = _replay(tmp_path / "b", TouchingRun(touch=touch))
+    assert res2.verdict == "fail" and any("artifact(s) of the challenge build changed" in p and "S.olean" in p
+                                          for p in res2.problems), res2.problems
+    assert islands.load_island(root2, "demo").replay is None
+
+
+def test_replay_hands_non_env_packages_to_the_checks(tmp_path):
+    run = TouchingRun()
+    _replay(tmp_path, run)
+    for c in (c for c in run.calls if "probe-negation" in c or "fingerprint" in c):
+        dirs = [c[i + 1] for i, a in enumerate(c) if a == "--olean-dir"]
+        assert len(dirs) == 1 and dirs[0].endswith(".lake/packages/Stacks/.lake/build/lib/lean"), c
+
+
+def test_replay_copy_space_gate(tmp_path, monkeypatch):
+    # R-2: the private copy of the untrusted closure goes to the temp dir; refuse before copying when it cannot fit
+    from telperion.checks import lean_replay
+    f = tmp_path / "a.olean"
+    f.write_bytes(b"x" * 1000)
+    assert lean_replay.copy_space_problem([f], tmp_path) is None
+    Usage = type("Usage", (), {})
+    u = Usage()
+    u.total, u.used, u.free = 10 ** 9, 10 ** 9, 10
+    monkeypatch.setattr(lean_replay.shutil, "disk_usage", lambda p: u)
+    problem = lean_replay.copy_space_problem([f], tmp_path)
+    assert problem and "TMPDIR" in problem and "1000" in problem and str(tmp_path) in problem
+
+
+def _replay_calls(tmp_path, kind):
+    """Run replay_island for an upstream or an overlay island with a recording runner; `(calls, solution, challenge)`."""
+    if kind == "upstream":
+        run = FakeRun()
+        _replay(tmp_path, run)
+        return run.calls, "Solution.Basic", "Challenge.Basic"
+    root = _ov_island(tmp_path / "repo")
+    tools = _ov_tools(tmp_path)
+    probes = {t: _probe_doc(t, module=OV_MODULE, source_sha256=OVERLAY_SHA) for t in OV_THEOREMS}
+    run = OverlayRun(head=OV_COMMIT, comparator="\n".join(_ov_log().splitlines()[4:-1]) + "\n", probes=probes,
+                     fp=_fp_doc(OV_THEOREMS, module=OV_MODULE, source_sha256=OVERLAY_SHA))
+    res = islands.replay_island(root, "demo", run=run, tools=tools, date="2026-11-06", leanlock=None)
+    assert res.verdict == "pass", res.problems
+    return run.calls, OV_SOLUTION, OV_MODULE
+
+
+@pytest.mark.parametrize("kind", ["upstream", "overlay"])
+def test_replay_call_order_never_compiles_the_solution_before_comparator(tmp_path, kind):
+    # R-1 (bb): in the recorded subprocess sequence, no step before Comparator names the solution module, the only
+    # build before it is `lake build <challenge>` (never a default-target `lake build`), and Comparator is the first
+    # step that can compile the solution
+    calls, solution, challenge = _replay_calls(tmp_path, kind)
+    cmp_idx = next(i for i, c in enumerate(calls) if "comparator" in c and "env" in c)
+    before = calls[:cmp_idx]
+    assert not any(solution in a for c in before for a in c), before
+    builds = [c[c.index("lake") + 1:] for c in before if "lake" in c and "build" in c]
+    assert builds == [["build", challenge]], builds
+    # nothing before Comparator could run lake or Lean on anything else: only git, the cache fetch and that build
+    for c in before:
+        assert c[0] == "git" or c[c.index("lake") + 1:] in (["exe", "cache", "get"], ["build", challenge]), c
+    # and the solution reaches no later step by name either (Comparator builds it from our config)
+    assert not any(solution in a for c in calls for a in c)
+
+
+def test_replay_copy_on_tmpfs_warns_even_when_it_fits(tmp_path, monkeypatch):
+    # N-2 (bb): a tmpfs temp dir puts the copy in RAM; warn even though it fits, say nothing on disk
+    from telperion.checks import lean_replay
+    monkeypatch.setattr(lean_replay, "_fs_type", lambda p: "tmpfs")
+    w = lean_replay.copy_space_warning(tmp_path)
+    assert w and "tmpfs" in w and "TMPDIR" in w
+    monkeypatch.setattr(lean_replay, "_fs_type", lambda p: "ext4")
+    assert lean_replay.copy_space_warning(tmp_path) is None

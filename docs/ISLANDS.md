@@ -16,8 +16,8 @@ fingerprint). Telperion keeps that evidence and re-checks it every time anyone a
 about the island. A lab may build on an island only once the evidence is complete.
 
 This page covers what is in a registration, the commands, what `verified` does and
-does not mean, how islands fit with the kernel policy, and the two islands that are
-registered today.
+does not mean, overlay islands (for a library that ships no challenge module), how
+islands fit with the kernel policy, and the three islands that are registered today.
 
 ## Where replays run: a sandbox, never this machine
 
@@ -49,6 +49,7 @@ islands/<name>/
   island.toml       the pin (source, commit, toolchain, licence), the challenge module and
                     its sha256, the intended theorems, and, once a replay passes, [replay]
   challenge.lean    a byte copy of the library's challenge file; its sha256 is in island.toml
+                    (for an overlay island: the overlay the lead wrote; see "Overlay islands")
   comparator.json   OUR Comparator config: the three standard axioms, enable_nanoda,
                     exactly the island's theorems
   replay/           the archived evidence of the passing replay (absent until one is recorded):
@@ -80,6 +81,9 @@ A few details matter here.
 
 ```
 telperion island add NAME --source URL --commit SHA --use TEXT [--licence SPDX]
+telperion island add NAME --source URL --commit SHA --use TEXT [--licence SPDX] \
+    --overlay FILE --overlay-path PATH --overlay-import MODULE ... --solution-module MODULE
+telperion island place-overlay NAME --tree DIR [--check-only]   # git only; for a sandbox run by hand
 telperion island record-replay NAME --log FILE --probe-json FILE ... --fingerprint-json FILE \
     --date YYYY-MM-DD --comparator-tag vX.Y.Z[-rcN] [--scratch-prefix PATH]
 telperion island list
@@ -126,7 +130,7 @@ it checked is verified.
 ### `island replay`
 
 `island replay` does the whole replay itself:
-1. `lake exe cache get` and `lake build` in the clone;
+1. `lake exe cache get`, and `lake build` of the challenge module only, in the clone;
 2. Comparator with the pinned nanoda;
 3. the negation probe for each theorem;
 4. the fingerprint.
@@ -199,6 +203,184 @@ Self-reported islands are fine to register, list and talk about, but nothing may
 build on one. No lab in this repository calls `require_verified` yet; riemann-jensen is the
 first verified island (2026-11-06).
 
+## Overlay islands: a challenge the lead writes
+
+Both of the first two islands came with a challenge module of their own:
+`Challenge/Basic.lean`, which states the theorems and proves nothing, plus a
+`Comparator/comparator.json` that names it. Some libraries ship neither. AxiomMath's
+Weil is one of them. Its main theorems sit in the middle of proof files, next to
+their proofs, and there is no file that only states them.
+
+For such a library the owner chose, on 2026-11-06, what we call **option A**. The
+Telperion lead writes the statement-only module, an **overlay**, and Telperion pins it
+by sha256. At replay the overlay is placed into a fresh copy of the pinned tree, and
+Comparator treats it as the challenge.
+
+### What the registration says
+
+An overlay island's island.toml has four keys that an ordinary island does not have:
+
+```toml
+challenge_source = "overlay"
+challenge_module = "Weil.TelperionChallenge"       # the overlay's module, from its path
+solution_module = "Weil.AlgebraicGeometry.EtaleCohomology.Trace.WeilRiemannHypothesisForm"
+overlay_path = "Weil/TelperionChallenge.lean"      # where the overlay goes in the tree
+overlay_sha256 = "012753bf..."                     # in place of challenge_sha256
+overlay_imports = ["Weil.Definitions"]             # the upstream definition modules it may import
+```
+
+`overlay_sha256` is the sha256 of `islands/<name>/challenge.lean`, which for an overlay
+island is the overlay itself. It is called `overlay_sha256`, not `challenge_sha256`,
+everywhere it appears: in island.toml, in `[replay]`, and in the log's first line. That
+way nobody can mistake the lead's file for a byte copy of the library's.
+
+`overlay_imports` is the lead's declaration of which upstream modules are *definition*
+modules. An overlay may import Mathlib and these modules, and nothing else. The tool
+can enforce that list, but it cannot decide what belongs on it, so bb checks the list
+against the library.
+
+### What the tooling enforces
+
+On every `island check`, from the text of challenge.lean alone, with nothing built:
+
+- **The sha256 matches.** challenge.lean must have the recorded `overlay_sha256`. An edit
+  drops the island to self-reported, as it would for an upstream island.
+- **It is statement-only.** After `module` and the imports, the overlay may contain only
+  `namespace`, `section` and `end`, `open`, `universe`, `variable`, `omit ... in`, and
+  theorems. Every theorem must be proved exactly `:= by sorry`. It may contain no `def`,
+  `instance`, `abbrev`, attribute, `set_option`, macro, notation, `axiom`, `#eval`, and
+  no string literal at all. That last rule leaves out tags such as `@[weil "..."]`, which
+  are not part of any statement anyway.
+- **Its imports are Mathlib plus exactly `overlay_imports`.**
+- **It declares exactly the island's theorems,** each one once and under its fully
+  qualified name, and each carries a comment of the form
+  `-- upstream: <path>:<line>` right above it. The comment names the line of the
+  library's own declaration.
+
+At `island add --overlay`, and again every time the overlay is placed, it is checked
+against the pinned tree. This is text only; nothing is built.
+
+- **Each pointer must name a `theorem` with the same fully qualified name,** and with the
+  same statement text, whitespace aside. The statement text runs from `theorem` to the
+  `:=` that ends the statement.
+- **The overlay must import no module that declares one of its theorems,** directly or
+  through the library's own import graph.
+- **The solution module must import every module that declares one of the theorems.**
+- **The overlay's path must not exist in the tree.** An overlay is always an *added*
+  file, never a replacement for one of the library's files. Its directory must exist, and
+  must be under the solution module's root, so that `lake build` finds it in the library.
+
+### Placing the overlay, and the clean-tree guard
+
+The overlay only ever goes into a **fresh** copy of the pin: a git checkout whose HEAD is
+the commit and whose working tree passes the same strict clean check that `island add`
+uses (see "`island add`" above). Once the overlay is placed, the tree must be exactly
+the pin plus that one file. The status check must print exactly `?? <overlay_path>` and
+nothing else, and the placed file must have the registered sha256. Anything else is
+refused: a second untracked file, an edited library file, an overlay that is already
+there (a reused tree), or a placed overlay that was edited.
+
+`island replay` does all of this itself, before it builds anything. It then builds the
+challenge only, by name (`lake build <overlay module>`). It never compiles the solution
+itself: Comparator does that, after it has built and exported the challenge. That is
+Comparator's assumption 2: no potentially adversarial file was compiled before it ran
+(bb, REVIEW_OVERLAY_WEIL_236dea6, R-1). The same holds for upstream islands. Before
+2026-11-07, `island replay` ran a default-target `lake build`, which could compile the
+solution first, depending on the library's `defaultTargets`. That version is in the
+pushed branch, but it never produced evidence: every replay so far was run by hand.
+Between the build and Comparator, `island replay` records the sha256 of every file in
+the clone's build dirs (`prebuild.sha256`, with its digest on a `COMPARATOR_PREBUILD`
+line of the log). Each of those files must be unchanged after Comparator and the
+checks have run. That means hashing every package's build dir twice, Mathlib's (about
+6 GB) included, and for weil Stacks' (about 15 GB) too. It is correct, and it costs
+minutes of disk reads per replay.
+
+In a sandbox that is run by hand, `telperion island place-overlay NAME --tree DIR` does
+the placing. It runs only git. After the last command,
+`telperion island place-overlay NAME --tree DIR --check-only` checks that the tree is
+still exactly the pin plus the overlay.
+
+The log's first line binds the overlay rather than an upstream challenge:
+
+```
+ISLAND-HEADER island=weil commit=<pin> overlay_sha256=<the overlay's sha256>
+```
+
+`evaluate_replay` refuses a `challenge_sha256=` header for an overlay island, an
+`overlay_sha256=` header for an upstream island, and a sha256 other than the registered
+one. A run on an edited overlay therefore cannot be recorded against the registered
+one.
+
+### How Comparator is set up
+
+- **The challenge module is the overlay** (`Weil.TelperionChallenge`).
+- **The solution module is an upstream module that imports the proof of every theorem.**
+  For Weil this is `WeilRiemannHypothesisForm`, which imports `ZetaRationality`. A
+  narrower module also means a smaller build than the library's root module, which
+  imports all 980 files.
+- **Our comparator.json is the config,** as for every island: the three axioms,
+  nanoda on, and exactly the theorems.
+
+The theorem names are the same in the challenge and in the solution, because Comparator
+matches theorems by name. The two declarations never clash, because they are never in
+one environment:
+
+- The overlay imports only definition modules, and their import closure contains no
+  module that declares any of the theorems. `upstream_problems` checks that against
+  the library's own import graph, and if a clash slipped past that check, the overlay
+  would fail to build, which fails closed.
+- Nothing imports the overlay. It is in no library module's imports, and the library's
+  root module does not list it.
+- Comparator builds the two modules separately, and exports each one with
+  `lean4export` in a process of its own. The negation probe and the fingerprint replay
+  only the overlay's closure.
+
+Here is what Comparator then establishes. Each of the overlay's statements has exactly
+the type of the solution's theorem of the same name. Every definition those types
+mention is the same constant on both sides, and comes from the same upstream modules.
+And the solution's proofs pass both kernels with only the three axioms. An overlay
+that changes a statement fails this. It fails earlier too, at `island add` and at
+placement, where the statement text is compared with upstream's
+(`tests/test_islands.py`, `test_overlay_add_refuses_and_writes_nothing`).
+
+### The trust model
+
+**The overlay is a trusted statement layer.** The lead writes it, and nobody runs it as
+evidence of anything. What it contributes is the *choice* of statements: which
+theorems, and the claim that each one says what the island's description says. The
+tooling makes the overlay faithful to the library, in that it has the same names, the
+same statement text and, at replay, the same types. It cannot make the library's
+statements mean what we think they mean. That is the reviewer's job, exactly as it is
+for a library's own challenge file.
+
+**bb checks an overlay against upstream, statement by statement,** before any replay is
+assigned:
+
+1. **Each theorem's `-- upstream:` line is the library's declaration,** and the overlay's
+   text from `theorem` to `:=` is identical to upstream's.
+2. **The context is upstream's.** That means the `open`, `universe` and `variable`
+   commands, and any `omit ... in`, that are in scope at upstream's declaration. The
+   tool does not check these, and Comparator would catch a difference only as a type
+   mismatch, so bb compares them by eye.
+3. **Every module in `overlay_imports` is a definition module.** It must declare
+   definitions and the lemmas their definitions need, not the theorems themselves.
+4. **The definitions that the statements unfold to mean what the island's description
+   claims.** For Weil's point-count statements that is `zetaSeries`, then
+   `pointCountOfDegree`, then `pointCount`, then
+   `Stacks.EtaleCohomology.fieldValuedPoints`, which is a Mathlib-only subtype of
+   morphisms `Spec K ⟶ X`.
+
+**What the overlay adds to the residual gaps above.** An overlay changes nothing about
+what `verified` means. What it adds is one more file whose content is a matter of
+judgement, and so one more thing that bb reviews.
+
+**One cost of an overlay.** The overlay's import closure is the closure of its
+definition modules, and the probe and the fingerprint kernel-replay that whole closure.
+For Weil, `Weil.Definitions` imports `StacksFrontier`'s ℓ-adic trace formula. Its
+closure is therefore about 17,800 modules of AxiomMath/Stacks, roughly 5.3 million
+lines, even though the two statements unfold only to Mathlib and a few small
+definitions. See "weil" below.
+
 ## The kernel policy and islands
 
 Step 3's kernel policy (`telperion kernel-policy check`; see
@@ -209,8 +391,9 @@ from its island.toml and treats `islands/<name>` as a project. Registering a lib
 therefore cannot bypass the floor. A `lean-toolchain` file inside `islands/<name>/`
 is itself an error, because it would be a second, competing pin.
 
-zeta-zeros-v2 is pinned at `leanprover/lean4:v4.34.0-rc2`, which is below the floor,
-so it is on the exception list. Its reason says exactly what is true:
+zeta-zeros-v2 and weil are pinned at `leanprover/lean4:v4.34.0-rc2`, which is below the
+floor, so both are on the exception list, with the same reason. It says exactly what is
+true:
 
 - **v4.34.0-rc2 does have the five v4.33.1 kernel soundness fixes,** as backports:
   the commits between v4.34.0-rc1 and v4.34.0-rc2 include #14582, #14806, #14807,
@@ -264,12 +447,13 @@ current challenge declares one.
 
 ## The current islands
 
-Status as of 2026-11-07. riemann-jensen and zeta-zeros-v2 are both **verified**.
+Status as of 2026-11-07. riemann-jensen and zeta-zeros-v2 are both **verified**; weil is **self-reported** (its replay is deferred).
 
 | island | source @ commit | toolchain | theorems | registered | status |
 |---|---|---|---|---|---|
 | riemann-jensen | [AxiomMath/RiemannJensen](https://github.com/AxiomMath/RiemannJensen) @ `c1e023fa` | v4.35.0 | 4 (`RiemannJensen.Challenge.*`) | 2026-11-05 | verified (2026-11-06) |
 | zeta-zeros-v2 | [AxiomMath/ZetaZerosV2](https://github.com/AxiomMath/ZetaZerosV2) @ `1d7edeb4` | v4.34.0-rc2 (kernel-policy exception) | 12 (`ZetaZeros.Challenge.*`) | 2026-11-05 | verified (2026-11-07) |
+| weil | [AxiomMath/Weil](https://github.com/AxiomMath/Weil) @ `27cdb204` (overlay `012753bf`) | v4.34.0-rc2 (kernel-policy exception) | 2 (point counts) | 2026-11-06 | self-reported |
 
 ### riemann-jensen
 
@@ -315,6 +499,42 @@ Status as of 2026-11-07. riemann-jensen and zeta-zeros-v2 are both **verified**.
   scratch path normalised to `$SCRATCH` in the archived log. `island check` reports
   `verified`.
 
+### weil
+
+This is the first overlay island. It was registered on 2026-11-06 by
+`island add weil --overlay`, at the owner's decision of that day.
+
+- **The pin.** AxiomMath/Weil at `27cdb2049be62ee2911429b47f54774078450e32`, on
+  v4.34.0-rc2 (kernel-policy exception, as for zeta-zeros-v2), with Mathlib `16edf57d`
+  and AxiomMath/Stacks `012108f6`.
+- **The scope: the two point-count statements.** These are stated only through
+  `zetaSeries`, the exponential of the point counts, and so they do not depend on
+  trusting the étale-cohomology definitions.
+  - `Weil.exists_zetaSeries_mul_prod_even_eq_prod_odd`, the classical form of the
+    Riemann hypothesis for the zeta series
+    (`Weil/AlgebraicGeometry/EtaleCohomology/Trace/WeilRiemannHypothesisForm.lean:206`).
+  - `AlgebraicGeometry.exists_mul_zetaSeries_eq`, the rationality of the zeta series
+    (`Weil/AlgebraicGeometry/EtaleCohomology/Trace/ZetaRationality.lean:170`).
+- **The overlay.** `islands/weil/challenge.lean` (sha256 `012753bf…`) imports only
+  `Weil.Definitions`, and is placed at `Weil/TelperionChallenge.lean`. The solution is
+  `Weil.AlgebraicGeometry.EtaleCohomology.Trace.WeilRiemannHypothesisForm`.
+- **Left out: the Betti theorem**
+  (`Weil.natDegree_rationalFrobeniusCharpolyReverse_eq_bettiNumber`, `BettiNumber.lean:48`).
+  Its statement unfolds through `Weil.rationalFrobeniusCharpolyReverse` into
+  StacksFrontier's ℓ-adic compactly supported cohomology and its Frobenius
+  (`LAdicSheaf.rationalGeometricCompactlySupportedCohomology` and
+  `…Frobenius`, which are built on derived functors over the big étale site), and also
+  through `Scheme.complexCohomology`. Those definitions are not small enough to
+  fingerprint. Adding the theorem would also need the library's root module as the
+  solution.
+- **Next:** bb's statement-by-statement check of the overlay, then assignment #20 in a
+  fresh contrarian session (`ASSIGNMENT_20_weil.md`, kept outside this repository), and
+  then `record-replay`.
+- **The cost.** Nothing of Stacks comes from a cache, so the solution's cone, about
+  20,400 Stacks modules, is compiled from source. The probe and fingerprint replay the
+  overlay's whole untrusted closure, about 17,800 modules. Both are large; the
+  assignment estimates them and gates the run on free disk.
+
 ## Open items
 
 - **There is no Comparator tag for v4.34.1.** Comparator's tags go from v4.34.0
@@ -326,3 +546,17 @@ Status as of 2026-11-07. riemann-jensen and zeta-zeros-v2 are both **verified**.
 - **Nested inductives** are refused by the fingerprint's replay (see above).
 - **The trusted env's digest** is not yet recorded in `[replay]` (see "What
   `verified` does not mean").
+- **The replay's private copy goes to the temp dir.** The probe and the fingerprint copy
+  their untrusted closure under `TMPDIR`, not under the project. A sandbox whose `/tmp`
+  is a tmpfs puts that copy in RAM. `run_replay` refuses the copy up front when the temp
+  dir's filesystem cannot hold it (`copy_space_problem`). When the copy fits but the
+  filesystem is a tmpfs, it warns on stderr (`copy_space_warning`), since the copy then
+  competes for RAM with the replay itself. Point `TMPDIR` at disk.
+- **Comparator's export goes to the temp dir too.** Comparator writes each module's
+  export to a temp file, which nanoda reads. For weil that is 5–15 GB. Point `TMPDIR`
+  at disk for the Comparator step as well, not only for the probe and the fingerprint.
+- **An overlay's replay closure is its definition modules' whole closure.** For weil
+  that is about 17,800 Stacks modules, which the probe and the fingerprint each copy
+  and kernel-replay. That costs hours and many GB per run, though the statements unfold
+  to little. Making the replay take only the constants that the statements reach would
+  change the replay's trust argument, and is not done.

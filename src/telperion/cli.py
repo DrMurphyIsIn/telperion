@@ -3191,14 +3191,44 @@ def cmd_island_add(args) -> int:
     Exit 0 when registered, 1 otherwise."""
     from . import islands
 
+    overlay_flags = [f for f, v in (("--overlay-path", args.overlay_path), ("--overlay-import", args.overlay_import),
+                                    ("--solution-module", args.solution_module)) if v]
     try:
-        isl = islands.add_island(Path(args.root), args.name, args.source, args.commit, args.use,
-                                 fetch=islands.git_fetch, tools=Path(args.tools), licence=args.licence)
+        if args.overlay is None:
+            if overlay_flags:
+                raise islands.IslandError(f"{', '.join(overlay_flags)} only go with --overlay")
+            isl = islands.add_island(Path(args.root), args.name, args.source, args.commit, args.use,
+                                     fetch=islands.git_fetch, tools=Path(args.tools), licence=args.licence)
+        else:
+            missing = [f for f, v in (("--overlay-path", args.overlay_path), ("--overlay-import", args.overlay_import),
+                                      ("--solution-module", args.solution_module)) if not v]
+            if missing:
+                raise islands.IslandError(f"--overlay needs {', '.join(missing)}")
+            isl = islands.add_overlay_island(Path(args.root), args.name, args.source, args.commit, args.use,
+                                             overlay=Path(args.overlay), overlay_path=args.overlay_path,
+                                             overlay_imports=args.overlay_import,
+                                             solution_module=args.solution_module, fetch=islands.git_fetch,
+                                             tools=Path(args.tools), licence=args.licence)
         print(f"REGISTERED {isl.name}: {isl.source} @ {isl.commit[:12]}, {isl.toolchain}, {len(isl.theorems)} "
-              f"theorems; self-reported until a replay is recorded (`telperion island record-replay`)")
+              f"theorems{' (overlay ' + isl.challenge_sha256[:12] + ')' if isl.is_overlay else ''}; self-reported "
+              "until a replay is recorded (`telperion island record-replay`)")
         return 0
     except Exception as exc:  # the CLI never prints a traceback (fail closed)
         print(f"island add: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_island_place_overlay(args) -> int:
+    """`island place-overlay NAME --tree DIR [--check-only]`: put an overlay island's overlay into a fresh git copy of
+    the pin, checked against it, leaving the tree exactly the pin plus that file; with --check-only, only check that
+    it still is. Runs git only. Exit 0 when placed (checked), 1 otherwise."""
+    from . import islands
+
+    try:
+        print(islands.place_overlay(Path(args.root), args.name, Path(args.tree), check_only=args.check_only))
+        return 0
+    except Exception as exc:  # the CLI never prints a traceback (fail closed)
+        print(f"island place-overlay: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
 
@@ -4136,10 +4166,27 @@ def main(argv=None) -> int:
     p.add_argument("--use", required=True, help="intended use (island.toml intended_use)")
     p.add_argument("--licence", default=None,
                    help="SPDX licence id (default: detected from the clone's LICENSE: Apache-2.0 or MIT)")
+    p.add_argument("--overlay", default=None, metavar="FILE",
+                   help="register an OVERLAY island: FILE is the lead-authored statement-only challenge (for a "
+                        "library that ships none); needs --overlay-path, --overlay-import and --solution-module")
+    p.add_argument("--overlay-path", default=None, metavar="PATH",
+                   help="where the overlay goes in the tree at replay (its module is the challenge module)")
+    p.add_argument("--overlay-import", action="append", default=None, metavar="MODULE",
+                   help="an upstream definition module the overlay imports (repeat; Mathlib is always allowed)")
+    p.add_argument("--solution-module", default=None, metavar="MODULE",
+                   help="the upstream module that imports every theorem's proof (the Comparator solution)")
     p.add_argument("--tools", default=str(Path.home() / "telperion-tools"),
                    help="tools directory; the clone goes to <tools>/islands/<name>/src (default: ~/telperion-tools)")
     p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
     p.set_defaults(fn=cmd_island_add)
+    p = isp_sub.add_parser("place-overlay", help="put an overlay island's overlay into a fresh git copy of the pin "
+                                                 "(checked against it); --check-only re-checks the tree. Git only")
+    p.add_argument("name")
+    p.add_argument("--tree", required=True, help="a fresh git copy of the pin (HEAD the commit, clean)")
+    p.add_argument("--check-only", action="store_true",
+                   help="only check that the tree is exactly the pin plus the overlay (after the run)")
+    p.add_argument("--root", default=".", help="repo root holding islands/ (default: .)")
+    p.set_defaults(fn=cmd_island_place_overlay)
     p = isp_sub.add_parser("replay", help="build and replay an island's clone (Comparator + nanoda, negation probe, "
                                           "fingerprint). MUST RUN INSIDE A SANDBOX: it runs the library's code")
     p.add_argument("name")
