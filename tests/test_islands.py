@@ -2014,14 +2014,12 @@ def test_upstream_island_refuses_overlay_keys(tmp_path):
 
 def test_existing_islands_are_unchanged():
     # the overlay mode adds keys only to overlay islands: both upstream registrations read and re-serialize byte for
-    # byte, and riemann-jensen is still verified
+    # byte, and both are verified (zeta-zeros-v2's replay was recorded on 2026-11-07, after this test was written)
     for name in ("riemann-jensen", "zeta-zeros-v2"):
         isl = islands.load_island(ROOT, name)
         assert not isl.is_overlay and isl.sha_key == "challenge_sha256"
         assert islands._dumps_island(isl, isl.replay) == (ROOT / "islands" / name / "island.toml").read_text()
-    assert islands.island_problems(ROOT, "riemann-jensen") == []
-    probs = islands.island_problems(ROOT, "zeta-zeros-v2")
-    assert len(probs) == 1 and "not replayed" in probs[0], probs
+        assert islands.island_problems(ROOT, name) == []
 
 
 def test_cli_overlay_flags(tmp_path):
