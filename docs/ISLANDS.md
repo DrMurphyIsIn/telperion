@@ -41,8 +41,11 @@ before anything is recorded here.
 
 ## What a registration holds
 
-Each island lives in `islands/<name>/`. The directory holds the registration and
-the evidence. It never holds library source.
+Each island lives in `islands/<name>/`. The directory holds the registration, the
+evidence, and one byte-exact copy of the library's challenge file (or, for an overlay
+island, the overlay challenge, which quotes the library's statements verbatim). It holds
+no other library source. Those challenge files are third-party Apache-2.0 material; see
+`islands/NOTICE`.
 
 ```
 islands/<name>/
